@@ -34,7 +34,7 @@ import { appendToDraft } from './conversation-draft.ts'
 import {
   BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
-  resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
+  resizeSplitIn, setBottomHeight, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
@@ -547,7 +547,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     const width = !narrow && snapshot.state?.panelOpen === true
       ? Math.min(snapshot.state.width, window.innerWidth)
       : 0
-    const height = !narrow && snapshot.state?.bottomOpen === true
+    // The MAXIMIZED bottom panel (⌘⇧J) COVERS the whole center column — the
+    // layout push is released (0), so the conversation sits behind the
+    // panel instead of being squeezed to nothing.
+    const height = !narrow && snapshot.state?.bottomOpen === true && snapshot.state?.bottomMaximized !== true
       ? Math.min(snapshot.state.bottomHeight, window.innerHeight)
       : 0
     document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
@@ -563,7 +566,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       document.documentElement.style.removeProperty('--dsh-sidebar-width')
       document.documentElement.style.removeProperty('--dsh-sidebar-height')
     }
-  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight])
+  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight, snapshot.state?.bottomMaximized])
   useEffect(() => {
     if (anyDragging) document.body.setAttribute('data-dsh-sidebar-dragging', '')
     else document.body.removeAttribute('data-dsh-sidebar-dragging')
@@ -740,7 +743,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           there is no bottom panel, so its toggle button is not offered.
         */}
         {!narrow && (
-          <Tooltip label={`${state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')} (${panelHotkeyHint('bottom')})`} side="bottom" delayMs={500}>
+          <Tooltip label={`${state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')} (${panelHotkeyHint('bottom')} / ${panelHotkeyHint('maximize')})`} side="bottom" delayMs={500}>
             <button
               type="button"
               className={css.toggleButton}
@@ -817,17 +820,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           />
         </div>
         {/*
-          The shared corner (only while BOTH panels are open): the
-          intersection of the right panel's left edge and the bottom panel's
-          top edge. Horizontal drags resize the right panel's width, vertical
-          drags the bottom panel's height — the two panels drag against each
-          other. Rendered INSIDE the right panel and positioned by CSS
-          relative to it (left edge + the bottom panel's height via the
-          --dsh-sidebar-height layout variable) — no JS-written viewport
-          coordinates to keep in sync. (Never on narrow viewports: the
-          bottom panel does not exist there.)
+          The shared corner (only while BOTH panels are open and the bottom
+          panel is NOT maximized): the intersection of the right panel's left
+          edge and the bottom panel's top edge. Horizontal drags resize the
+          right panel's width, vertical drags the bottom panel's height — the
+          two panels drag against each other. Rendered INSIDE the right panel
+          and positioned by CSS relative to it (left edge + the bottom
+          panel's height via the --dsh-sidebar-height layout variable) — no
+          JS-written viewport coordinates to keep in sync. (Never on narrow
+          viewports: the bottom panel does not exist there.)
         */}
-        {!narrow && state.panelOpen && state.bottomOpen && (
+        {!narrow && state.panelOpen && state.bottomOpen && !state.bottomMaximized && (
           <div
             className={css.cornerHandle}
             data-dragging={draggingCorner || undefined}
@@ -866,15 +869,20 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         shell's own left sidebar and ends at the right panel's left edge —
         neither sidebar gives up any position (the right panel keeps its
         full height). Its resize strip is the top edge; hidden by sliding
-        down like the right panel. On NARROW viewports it does not exist —
-        the bottom workbench lives inside the drawer (MobileWorkbench).
+        down like the right panel. MAXIMIZED (⌘⇧J) it covers the whole
+        center column at full viewport height — the top edge strip and the
+        shared corner are not offered while fullscreen (nothing to drag).
+        On NARROW viewports it does not exist — the bottom workbench lives
+        inside the drawer (MobileWorkbench).
       */}
       {!narrow && (
       <div
         ref={bottomRef}
         className={clsx(css.bottomPanel, !state.bottomOpen && css.bottomPanelHidden)}
         style={{
-          height: Math.min(state.bottomHeight, window.innerHeight),
+          // Maximized: cover the whole center column (bottom:0 + full
+          // viewport height); normal: the drag height.
+          height: state.bottomMaximized ? window.innerHeight : Math.min(state.bottomHeight, window.innerHeight),
           left: centerRect.left,
           // Direct from the center column's measured right edge: the bottom
           // panel spans ONLY the center column, ending exactly at the
@@ -890,6 +898,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
        
         data-dragging={(draggingBottom || draggingCorner) || undefined}
       >
+        {!state.bottomMaximized && (
         <div
           className={clsx(css.bottomResize, draggingBottom && css.bottomResizeActive)}
          
@@ -914,17 +923,23 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             setDraggingBottom(false)
           }}
         />
+        )}
         {/*
           The bottom panel's own close control at its tab strip's right end
           (the strip reserves the width via CSS so the + menu never hides
-          under it): one tap collapses the panel.
+          under it): one tap collapses the panel (and forgets the maximized
+          state — the next open restores the normal height).
         */}
-        <Tooltip label={`${t('collapseBottomPanel')} (${panelHotkeyHint('bottom')})`} side="bottom" delayMs={500}>
+        <Tooltip label={`${state.bottomMaximized ? t('restoreBottomPanel') : t('collapseBottomPanel')} (${panelHotkeyHint('bottom')})`} side="bottom" delayMs={500}>
           <button
             type="button"
             className={css.bottomClose}
-            aria-label={t('collapseBottomPanel')}
-            onClick={() => { store.reduce(toggleBottomPanel) }}
+            aria-label={state.bottomMaximized ? t('restoreBottomPanel') : t('collapseBottomPanel')}
+            // Maximized: the X EXITS the fullscreen (the panel stays open at
+            // its drag height) — the standard "leave fullscreen" affordance.
+            // Normal: it collapses the panel (and forgets the maximized
+            // state, so the next open restores the normal height).
+            onClick={() => { store.reduce(state.bottomMaximized ? toggleBottomMaximized : toggleBottomPanel) }}
           >
             <IconCloseFill14 />
           </button>

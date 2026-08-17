@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Panel-toggle hotkey tests (⌘B / ⌘J / ⌘⌥B, VSCode-style).
+ * Panel-toggle hotkey tests (⌘B / ⌘J / ⌘⇧J / ⌘⌥B, VSCode-style).
  *
  * Two layers:
  *
@@ -11,8 +11,8 @@
  *    toggles the store (or calls the host sidebar toggle) through real
  *    KeyboardEvents, a matched combo is fully consumed (preventDefault +
  *    stopPropagation: a document-bubble listener never sees it), the
- *    disposer restores normal flow (HMR-safe), and the bottom toggle is a
- *    no-op on narrow viewports (the bottom panel does not exist there —
+ *    disposer restores normal flow (HMR-safe), and the bottom toggles are
+ *    no-ops on narrow viewports (the bottom panel does not exist there —
  *    matching the hidden toggle button).
  *
  * Events are dispatched on a deep element (an `<input>` in document.body)
@@ -119,22 +119,32 @@ describe('matchPanelHotkey — the pure decision', () => {
   it('rejects other keys under the same modifiers', () => {
     expect(matchPanelHotkey(like({ code: 'KeyK', metaKey: true }))).toBeNull()
     expect(matchPanelHotkey(like({ code: 'KeyK', metaKey: true, altKey: true }))).toBeNull()
+    expect(matchPanelHotkey(like({ code: 'KeyK', metaKey: true, shiftKey: true }))).toBeNull()
   })
 
-  it('rejects shift-modified combos (exact modifier sets only)', () => {
-    expect(matchPanelHotkey(like({ code: 'KeyJ', metaKey: true, shiftKey: true }))).toBeNull()
+  it('⌘⇧J maximizes the bottom panel (the ONLY shift binding)', () => {
+    expect(matchPanelHotkey(like({ code: 'KeyJ', metaKey: true, shiftKey: true }))).toBe('maximize')
+    expect(matchPanelHotkey(like({ code: 'KeyJ', ctrlKey: true, shiftKey: true }))).toBe('maximize')
+  })
+
+  it('rejects every other shift-modified combo (exact modifier sets only)', () => {
+    expect(matchPanelHotkey(like({ code: 'KeyJ', metaKey: true, altKey: true, shiftKey: true }))).toBeNull()
     expect(matchPanelHotkey(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBeNull()
     expect(matchPanelHotkey(like({ code: 'KeyB', metaKey: true, altKey: true, shiftKey: true }))).toBeNull()
+    // ⌘⇧J without the command modifier is not a binding either.
+    expect(matchPanelHotkey(like({ code: 'KeyJ', shiftKey: true }))).toBeNull()
   })
 
   it('ignores auto-repeat: a held combo toggles once', () => {
     expect(matchPanelHotkey(like({ code: 'KeyJ', metaKey: true, repeat: true }))).toBeNull()
+    expect(matchPanelHotkey(like({ code: 'KeyJ', metaKey: true, shiftKey: true, repeat: true }))).toBeNull()
     expect(matchPanelHotkey(like({ code: 'KeyB', metaKey: true, altKey: true, repeat: true }))).toBeNull()
   })
 
   it('ignores IME composition (isComposing and the legacy keyCode 229 signal)', () => {
     expect(matchPanelHotkey(like({ code: 'KeyJ', metaKey: true, isComposing: true }))).toBeNull()
     expect(matchPanelHotkey(like({ code: 'KeyJ', metaKey: true, keyCode: 229 }))).toBeNull()
+    expect(matchPanelHotkey(like({ code: 'KeyJ', metaKey: true, shiftKey: true, isComposing: true }))).toBeNull()
   })
 
   it('ignores AltGr chords (Windows AltGr reports ctrlKey+altKey)', () => {
@@ -228,6 +238,37 @@ describe('registerPanelHotkeys — the native path', () => {
     expect(seen).toEqual([])
   })
 
+  it('⌘⇧J opens a closed bottom panel MAXIMIZED and consumes the event', () => {
+    dispose = registerPanelHotkeys(store, leftSpy)
+    expect(store.getSnapshot().state?.bottomOpen).toBe(false)
+    expect(store.getSnapshot().state?.bottomMaximized).toBe(false)
+
+    input.dispatchEvent(keyEvent({ key: 'J', code: 'KeyJ', metaKey: true, shiftKey: true }))
+
+    const state = store.getSnapshot().state!
+    expect(state.bottomOpen).toBe(true)
+    expect(state.bottomMaximized).toBe(true)
+    expect(leftSpy).not.toHaveBeenCalled()
+    expect(seen).toEqual([])
+  })
+
+  it('⌘⇧J again restores the drag height (the panel stays open)', () => {
+    dispose = registerPanelHotkeys(store, leftSpy)
+    input.dispatchEvent(keyEvent({ key: 'J', code: 'KeyJ', metaKey: true, shiftKey: true }))
+    input.dispatchEvent(keyEvent({ key: 'J', code: 'KeyJ', metaKey: true, shiftKey: true }))
+    const state = store.getSnapshot().state!
+    expect(state.bottomOpen).toBe(true)
+    expect(state.bottomMaximized).toBe(false)
+  })
+
+  it('⌘⇧B / ⌘⌥⇧B pass through untouched', () => {
+    dispose = registerPanelHotkeys(store, leftSpy)
+    input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }))
+    input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, altKey: true, shiftKey: true }))
+    expect(seen).toEqual(['document:keydown', 'document:keydown'])
+    expect(leftSpy).not.toHaveBeenCalled()
+  })
+
   it('each panel toggles independently (⌘J then ⌘⌥B leaves both flipped)', () => {
     dispose = registerPanelHotkeys(store, leftSpy)
     input.dispatchEvent(keyEvent({ key: 'j', code: 'KeyJ', metaKey: true }))
@@ -252,11 +293,13 @@ describe('registerPanelHotkeys — the native path', () => {
     expect(store.getSnapshot().state).toBeUndefined()
   })
 
-  it('bottom toggle is a no-op on narrow viewports (no bottom panel there)', () => {
+  it('bottom toggles are no-ops on narrow viewports (no bottom panel there)', () => {
     dispose = registerPanelHotkeys(store, leftSpy)
     Object.defineProperty(window, 'innerWidth', { value: 500, configurable: true })
     input.dispatchEvent(keyEvent({ key: 'j', code: 'KeyJ', metaKey: true }))
     expect(store.getSnapshot().state?.bottomOpen).toBe(false)
+    input.dispatchEvent(keyEvent({ key: 'J', code: 'KeyJ', metaKey: true, shiftKey: true }))
+    expect(store.getSnapshot().state?.bottomMaximized).toBe(false)
     // The right toggle still works on narrow (the drawer exists).
     input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
     expect(store.getSnapshot().state?.panelOpen).toBe(false)

@@ -167,6 +167,7 @@ dsh registry enable dsh-external/dsh-better-sidebar
 |---|---|
 | 切换左侧栏（宿主导航） | `Ctrl/Cmd + B` |
 | 切换底部面板 | `Ctrl/Cmd + J` |
+| 底部面板全屏（覆盖中间区域） | `Ctrl/Cmd + Shift + J` |
 | 切换右侧栏 | `Ctrl/Cmd + Alt + B`（macOS：`⌘⌥B`） |
 | 保存编辑 | `Ctrl/Cmd + S` |
 | Git 提交 | `Ctrl + Enter` |
