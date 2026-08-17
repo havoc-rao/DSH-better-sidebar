@@ -25,14 +25,16 @@
  * process; bind/unbind re-parent the live handle instead of respawning),
  * git/subagent render per session from their own scope. Live editor
  * buffers (cursor/scroll/unsaved drafts) are NOT synced — only the window
- * definitions. Bound windows render in the BOTTOM box's first leaf (the
- * pin lives in the bottom panel); the right panel stays session-local.
+ * definitions. Bound windows render in the first leaf of the panel they
+ * were bound from — a pin from the right panel stays in the right panel's
+ * first leaf, a pin from the bottom box stays in the bottom box's.
  */
 import type { Context, SidebarWorkspaceListState, SidebarWorkspaceView } from '../context-types.ts'
 import { api } from './api.ts'
 import {
-  WS_TAB_PREFIX, activateTab, firstLeaf, isAgentTabId, isBoundTabId, mapLeaf, mintTabId,
-  type SidebarDiffRef, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceWindow, type WorkspaceWindowsSource,
+  WS_TAB_PREFIX, activateTab, firstLeaf, isAgentTabId, isBoundTabId, leafWithTab, mapLeaf, mintTabId,
+  type SidebarDiffRef, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceArea,
+  type WorkspaceWindow, type WorkspaceWindowsSource,
 } from './state.ts'
 
 const STORAGE_PREFIX = 'dsh-sidebar:v1'
@@ -174,6 +176,12 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     }
     const id = `${WS_TAB_PREFIX}${workspace.workspaceId.slice(0, 8)}:${blob.nextId}`
     blob.nextId += 1
+    // The pin lands in the area the bound tab occupied: a tab from the
+    // RIGHT tree pins into the right panel's first leaf, one from the
+    // BOTTOM tree into the bottom box's — the stub appears where the
+    // window was, in every session of the workspace.
+    const state = this.sidebarStore?.getSnapshot().state
+    const area: WorkspaceArea = state !== undefined && leafWithTab(state.splits, tab.id) !== undefined ? 'right' : 'bottom'
     if (tab.type === 'terminal' && !isAgentTabId(tab.id)) {
       try {
         await api.ptyReparent({ sessionId }, tab.id, id)
@@ -188,6 +196,7 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
       id,
       type: tab.type,
       title: tab.title,
+      area,
       ...(tab.path !== undefined ? { path: tab.path } : {}),
       ...(tab.diff !== undefined ? { diff: tab.diff } : {}),
       ...(tab.meta !== undefined ? { meta: tab.meta } : {}),
@@ -214,18 +223,25 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
         }
         return { ...node, children: node.children.map(strip) }
       }
-      const target = firstLeaf(s.bottomSplits)
+      const targetKey = area === 'bottom' ? 'bottomSplits' : 'splits'
       const splits = strip(s.splits)
       const bottomSplits = strip(s.bottomSplits)
+      // The active handoff must map the STRIPPED tree (mapping the raw
+      // `s[targetKey]` would resurrect the just-removed tab via the
+      // spread-copied leaf — the bound tab would never leave the tree).
+      const targetTree = targetKey === 'bottomSplits' ? bottomSplits : splits
+      const target = firstLeaf(targetTree)
       return {
         ...s,
-        // Pinned windows live in the BOTTOM box: binding opens the bottom
-        // panel in this session so the result is in sight, and the bottom
-        // first leaf's active moves to the stub when the bound tab was the
-        // active one anywhere.
-        bottomOpen: true,
+        // The pin stays in its original area: a BOTTOM-area pin opens the
+        // bottom panel in this session so the result is in sight (the
+        // right panel is already open — the tab was bound from it), and
+        // the area's first leaf's active moves to the stub when the bound
+        // tab was the active one anywhere.
+        ...(area === 'bottom' ? { bottomOpen: true } : {}),
         splits,
-        bottomSplits: mapLeaf(bottomSplits, target.id, leaf => {
+        bottomSplits,
+        [targetKey]: mapLeaf(targetTree, target.id, leaf => {
           if (wasActiveAnywhere) leaf.active = id
         }),
       }
@@ -272,13 +288,16 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     this.persist(workspace.workspaceId, blob)
     if (keepInSession && localId !== undefined) {
       this.sidebarStore?.reduce(s => {
-        // The stub lives in the BOTTOM box's first leaf: the detached local
-        // tab materializes there (in place of the stub).
-        const target = firstLeaf(s.bottomSplits)
-        if (!target.tabs.some(candidate => candidate.id === tabId)) return s
+        // The stub lives in the area it was bound from (right or bottom):
+        // the detached local tab materializes THERE, in place of the stub.
+        const rightLeaf = leafWithTab(s.splits, tabId)
+        const bottomLeaf = rightLeaf === undefined ? leafWithTab(s.bottomSplits, tabId) : undefined
+        if (rightLeaf === undefined && bottomLeaf === undefined) return s
+        const key = rightLeaf !== undefined ? 'splits' : 'bottomSplits'
+        const leafId = (rightLeaf ?? bottomLeaf)!.id
         return {
           ...s,
-          bottomSplits: mapLeaf(s.bottomSplits, target.id, leaf => {
+          [key]: mapLeaf(s[key], leafId, leaf => {
             leaf.tabs = leaf.tabs.map(candidate => candidate.id === tabId
               ? {
                 id: localId,
@@ -328,13 +347,16 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     return this.workspaceList.items.find(workspace => workspace.sessionIds.includes(sessionId))
   }
 
-  /** Focus a stub in the active session's BOTTOM tree (bind-dedupe path:
-   *  stubs live in the bottom box's first leaf). */
+  /** Focus a stub in whichever tree it lives (the bind-dedupe path: stubs
+   *  live in the first leaf of the area they were bound from — right or
+   *  bottom). */
   private focusStub(tabId: string): void {
     this.sidebarStore?.reduce(s => {
-      const target = firstLeaf(s.bottomSplits)
-      if (!target.tabs.some(candidate => candidate.id === tabId)) return s
-      return activateTab(s, target.id, tabId)
+      const rightLeaf = leafWithTab(s.splits, tabId)
+      if (rightLeaf !== undefined) return activateTab(s, rightLeaf.id, tabId)
+      const bottomLeaf = leafWithTab(s.bottomSplits, tabId)
+      if (bottomLeaf !== undefined) return activateTab(s, bottomLeaf.id, tabId)
+      return s
     })
   }
 
@@ -434,6 +456,9 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
         id: candidate.id,
         type: candidate.type,
         title: candidate.title,
+        // Legacy blobs (pre-area) have no area: default to 'bottom' — the
+        // original always-bottom placement.
+        area: candidate.area === 'right' ? 'right' : 'bottom',
         ...(typeof candidate.path === 'string' ? { path: candidate.path } : {}),
         ...(isDiffRef(candidate.diff) ? { diff: candidate.diff } : {}),
         ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),

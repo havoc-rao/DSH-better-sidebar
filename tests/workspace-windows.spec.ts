@@ -8,7 +8,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  allLeaves, createSidebarStore, firstLeaf, isBoundTabId, openTabInActivePane,
+  allLeaves, createSidebarStore, firstLeaf, isBoundTabId, moveTab, openTabInActivePane, splitPane,
   type SidebarStore, type SidebarTab,
 } from '../src/client/state.ts'
 import { createWorkspaceWindowsStore, type WorkspaceWindowsStore } from '../src/client/workspace-windows.ts'
@@ -35,9 +35,19 @@ function fakeCtx(): Context {
 /** A file tab to bind (content windows only — binding requires a path). */
 const fileTab = (id: string, path: string, title = 'a.ts'): SidebarTab => ({ id, type: 'editor', title, path })
 
-/** The bottom box's first-leaf tabs of a session state (bound-window stubs
- *  live in the BOTTOM tree; switches to the session). */
-function firstLeafTabs(store: SidebarStore, sessionId: string): SidebarTab[] {
+/** The right panel's first-leaf tabs of a session state (the DEFAULT
+ *  landing area: openTabInActivePane targets the active pane, which is
+ *  seeded to the right tree — so a plain bind pins into the right panel;
+ *  switches to the session). */
+function rightLeafTabs(store: SidebarStore, sessionId: string): SidebarTab[] {
+  store.setSession(sessionId)
+  const state = store.getSnapshot().state
+  return state === undefined ? [] : allLeaves(state.splits)[0]!.tabs
+}
+
+/** The bottom box's first-leaf tabs of a session state (a bottom-area pin
+ *  lands here; switches to the session). */
+function bottomLeafTabs(store: SidebarStore, sessionId: string): SidebarTab[] {
   store.setSession(sessionId)
   const state = store.getSnapshot().state
   return state === undefined ? [] : allLeaves(state.bottomSplits)[0]!.tabs
@@ -106,15 +116,18 @@ describe('workspace windows store', () => {
     expect(bound.id).toMatch(/^ws:11111111:[12]$/)
     expect(bound.type).toBe('editor')
     expect(bound.path).toBe('/ws-a/src/a.ts')
+    expect(bound.area).toBe('right') // the tab was in the right panel
     expect(isBoundTabId(bound.id)).toBe(true)
 
-    // Every session of the workspace holds the stub in the BOTTOM box's
-    // first leaf; the binding session's local tab is gone (no local +
-    // bound duplicate), and the bottom panel opened so the pin is in sight.
-    expect(firstLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([bound.id])
-    expect(firstLeafTabs(sidebar, 'b').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([bound.id])
+    // Every session of the workspace holds the stub in the RIGHT panel's
+    // first leaf (the pin lands where the window was); the binding
+    // session's local tab is gone (no local + bound duplicate).
+    expect(rightLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([bound.id])
+    expect(rightLeafTabs(sidebar, 'b').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([bound.id])
     // A session of ANOTHER workspace never sees it.
-    expect(firstLeafTabs(sidebar, 'c').every(t => !isBoundTabId(t.id))).toBe(true)
+    expect(rightLeafTabs(sidebar, 'c').every(t => !isBoundTabId(t.id))).toBe(true)
+    // The bottom box was not touched by a right-area pin.
+    expect(bottomLeafTabs(sidebar, 'a').every(t => !isBoundTabId(t.id))).toBe(true)
 
     // A second bind mints the next id (counter monotonic per workspace).
     const tab2 = openFileTab(sidebar, 'a', '/ws-a/src/b.ts', 'b.ts')
@@ -141,10 +154,12 @@ describe('workspace windows store', () => {
     const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
     windows.bind(tab)
 
-    // The bottom box opened and its first leaf's active moved to the stub.
+    // The pin stays in the RIGHT panel (the tab's original area): its
+    // first leaf's active moved to the stub, and the bottom box was not
+    // forced open for a right-area pin.
     const state = sidebar.getSnapshot().state!
-    expect(state.bottomOpen).toBe(true)
-    expect(firstLeaf(state.bottomSplits).active).toBe(windows.getSnapshot().windows[0]!.id)
+    expect(state.bottomOpen).toBe(false)
+    expect(firstLeaf(state.splits).active).toBe(windows.getSnapshot().windows[0]!.id)
   })
 
   it('bind is a no-op when the session belongs to no workspace', () => {
@@ -165,8 +180,9 @@ describe('workspace windows store', () => {
     windows.bind(dup)
 
     expect(windows.getSnapshot().windows).toHaveLength(1)
-    const leaf = firstLeaf(sidebar.getSnapshot().state!.bottomSplits)
-    // The stray local duplicate is gone (only the id-only stub remains).
+    const leaf = firstLeaf(sidebar.getSnapshot().state!.splits)
+    // The stray local duplicate is gone (only the id-only stub remains),
+    // and the stub lives in the RIGHT panel (the tab's original area).
     expect(leaf.tabs.filter(t => t.path === '/ws-a/src/a.ts')).toHaveLength(0)
     expect(leaf.tabs.filter(t => isBoundTabId(t.id))).toHaveLength(1)
     expect(leaf.active).toBe(windows.getSnapshot().windows[0]!.id)
@@ -181,12 +197,12 @@ describe('workspace windows store', () => {
     windows.unbind(stubId, true)
 
     expect(windows.getSnapshot().windows).toHaveLength(0)
-    const local = firstLeafTabs(sidebar, 'a').filter(t => t.path === '/ws-a/src/a.ts')
+    const local = rightLeafTabs(sidebar, 'a').filter(t => t.path === '/ws-a/src/a.ts')
     expect(local).toHaveLength(1)
     expect(isBoundTabId(local[0]!.id)).toBe(false)
-    expect(firstLeaf(sidebar.getSnapshot().state!.bottomSplits).active).toBe(local[0]!.id)
+    expect(firstLeaf(sidebar.getSnapshot().state!.splits).active).toBe(local[0]!.id)
     // The other session lost the window entirely.
-    expect(firstLeafTabs(sidebar, 'b').every(t => !isBoundTabId(t.id))).toBe(true)
+    expect(rightLeafTabs(sidebar, 'b').every(t => !isBoundTabId(t.id))).toBe(true)
   })
 
   it('unbind(false) closes the window everywhere', () => {
@@ -198,8 +214,8 @@ describe('workspace windows store', () => {
     windows.unbind(stubId, false)
 
     expect(windows.getSnapshot().windows).toHaveLength(0)
-    expect(firstLeafTabs(sidebar, 'a').every(t => !isBoundTabId(t.id))).toBe(true)
-    expect(firstLeafTabs(sidebar, 'b').every(t => !isBoundTabId(t.id))).toBe(true)
+    expect(rightLeafTabs(sidebar, 'a').every(t => !isBoundTabId(t.id))).toBe(true)
+    expect(rightLeafTabs(sidebar, 'b').every(t => !isBoundTabId(t.id))).toBe(true)
   })
 
   it('update rewrites the definition for every session render', () => {
@@ -215,7 +231,7 @@ describe('workspace windows store', () => {
     expect(bound.title).toBe('renamed.ts')
     // The stubs in the session trees keep their id-only shape (the render
     // layer resolves live definitions from the store).
-    expect(firstLeafTabs(sidebar, 'b')[0]!.path).toBeUndefined()
+    expect(rightLeafTabs(sidebar, 'b')[0]!.path).toBeUndefined()
   })
 
   it('update of an unknown id is a strict no-op', () => {
@@ -243,7 +259,7 @@ describe('workspace windows store', () => {
     const { sidebar: reloaded, windows: windows2 } = makePair()
     reloaded.setSession('a')
     expect(windows2.windowsOfSession('a').map(w => w.path)).toEqual(['/ws-a/src/a.ts'])
-    const stubs = firstLeafTabs(reloaded, 'a').filter(t => isBoundTabId(t.id))
+    const stubs = rightLeafTabs(reloaded, 'a').filter(t => isBoundTabId(t.id))
     expect(stubs.map(t => t.id)).toEqual([windows2.getSnapshot().windows[0]!.id])
   })
 
@@ -269,7 +285,7 @@ describe('workspace windows store', () => {
     // The corrupt blob resets to empty; the old valid data is gone.
     expect(reloadedWindows.windowsOfSession('a')).toEqual([])
     // A session load still works (no stubs, no crash).
-    expect(firstLeafTabs(reloaded, 'a').every(t => !isBoundTabId(t.id))).toBe(true)
+    expect(rightLeafTabs(reloaded, 'a').every(t => !isBoundTabId(t.id))).toBe(true)
     void sidebar
     void windows
   })
@@ -285,7 +301,7 @@ describe('workspace windows store', () => {
     expect(windows.windowsOfSession('a').map(w => w.path)).toEqual(['/ws-a/src/a.ts'])
     expect(windows.windowsOfSession('c').map(w => w.path)).toEqual(['/ws-b/src/c.ts'])
     // The 'c' session's tree holds only ITS workspace's stub.
-    const cTabs = firstLeafTabs(sidebar, 'c')
+    const cTabs = rightLeafTabs(sidebar, 'c')
     expect(cTabs.filter(t => isBoundTabId(t.id)).map(t => t.id))
       .toEqual([windows.windowsOfSession('c')[0]!.id])
   })
@@ -309,24 +325,24 @@ describe('workspace windows store', () => {
     expect(bound).toHaveLength(1)
     expect(bound[0]!.type).toBe('terminal')
     expect(bound[0]!.path).toBeUndefined()
+    expect(bound[0]!.area).toBe('right') // the terminal lived in the right panel
     const stubId = bound[0]!.id
     // The bound local tab left the RIGHT tree; the OTHER local terminal
     // survives untouched.
     const rightTabs = firstLeaf(sidebar.getSnapshot().state!.splits).tabs
     expect(rightTabs.some(t => t.id === 'terminal:1')).toBe(false)
     expect(rightTabs.some(t => t.id === 'terminal:2')).toBe(true)
-    // The BOTTOM box now carries the stub (the pin lives in the bottom).
-    expect(firstLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([stubId])
+    // The RIGHT panel now carries the stub (the pin stays where the window
+    // was); the bottom box was not touched by a right-area pin.
+    expect(rightLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([stubId])
+    expect(bottomLeafTabs(sidebar, 'a').every(t => !isBoundTabId(t.id))).toBe(true)
     // The bound tab was NOT the active one (terminal:2 opened last), so
     // the right tree's active stays where it was — only a bound ACTIVE tab
     // hands its slot to the stub.
     expect(firstLeaf(sidebar.getSnapshot().state!.splits).active).toBe('terminal:2')
-    // The bottom box opened (the pin is in sight) but nothing was active
-    // there — the stub did NOT steal the active slot.
-    expect(sidebar.getSnapshot().state!.bottomOpen).toBe(true)
-    expect(firstLeaf(sidebar.getSnapshot().state!.bottomSplits).active).toBeNull()
+    expect(sidebar.getSnapshot().state!.bottomOpen).toBe(false)
     // The sibling session carries the same stub (its own live terminal).
-    expect(firstLeafTabs(sidebar, 'b').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([stubId])
+    expect(rightLeafTabs(sidebar, 'b').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([stubId])
   })
 
   it('binding two path-less windows creates two shared windows (no dedupe)', async () => {
@@ -342,9 +358,33 @@ describe('workspace windows store', () => {
     const bound = windows.getSnapshot().windows
     expect(bound).toHaveLength(2)
     expect(bound[0]!.id).not.toBe(bound[1]!.id)
-    // Both stubs are in the binding session's first leaf.
-    const stubs = firstLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id))
+    // Both stubs are in the binding session's right-panel first leaf.
+    const stubs = rightLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id))
     expect(stubs).toHaveLength(2)
+  })
+
+  it('a tab bound from the BOTTOM panel pins into the bottom box (the area follows the original)', async () => {
+    const { sidebar, windows } = makePair()
+    const t1 = terminalTab('terminal:1')
+    sidebar.setSession('a')
+    // Land the tab in the BOTTOM tree: point the active pane at the bottom
+    // box's first leaf before opening.
+    sidebar.reduce(s => ({ ...s, activePane: firstLeaf(s.bottomSplits).id }))
+    sidebar.reduce(s => openTabInActivePane(s, t1))
+    expect(firstLeaf(sidebar.getSnapshot().state!.bottomSplits).tabs.some(t => t.id === 'terminal:1')).toBe(true)
+
+    await windows.bind(t1)
+
+    const bound = windows.getSnapshot().windows[0]!
+    expect(bound.area).toBe('bottom')
+    // The stub lives in the BOTTOM box and the panel opened for it; the
+    // right panel was not touched by a bottom-area pin.
+    expect(bottomLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([bound.id])
+    expect(rightLeafTabs(sidebar, 'a').every(t => !isBoundTabId(t.id))).toBe(true)
+    expect(sidebar.getSnapshot().state!.bottomOpen).toBe(true)
+    // The bound tab was the ACTIVE one → the bottom first leaf's active
+    // moved to the stub.
+    expect(firstLeaf(sidebar.getSnapshot().state!.bottomSplits).active).toBe(bound.id)
   })
 
   it('binding a diff window carries the diff ref; unbind restores it locally', () => {
@@ -362,9 +402,10 @@ describe('workspace windows store', () => {
     const bound = windows.getSnapshot().windows[0]!
     expect(bound.diff).toEqual({ kind: 'worktree', path: '/ws-a/src/a.ts', staged: true })
 
-    // Unbind keeping the window here: the local tab restores the diff ref.
+    // Unbind keeping the window here: the local tab restores the diff ref
+    // in the same area the stub occupied (the right panel).
     windows.unbind(bound.id, true)
-    const local = firstLeafTabs(sidebar, 'a').find(t => t.type === 'diff')
+    const local = rightLeafTabs(sidebar, 'a').find(t => t.type === 'diff')
     expect(local?.diff).toEqual({ kind: 'worktree', path: '/ws-a/src/a.ts', staged: true })
   })
 
@@ -385,7 +426,7 @@ describe('workspace windows store', () => {
       { method: 'pty.reparent', payload: { sessionId: 'a', from: 'terminal:1', to: stubId } },
     ])
     expect(windows.getSnapshot().windows).toHaveLength(1)
-    expect(firstLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id))).toHaveLength(1)
+    expect(rightLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id))).toHaveLength(1)
   })
 
   it('binding a non-terminal window never touches the pty', async () => {
@@ -408,7 +449,7 @@ describe('workspace windows store', () => {
 
     await windows.unbind(stubId, true)
 
-    const local = firstLeafTabs(sidebar, 'a').find(t => t.type === 'terminal')
+    const local = rightLeafTabs(sidebar, 'a').find(t => t.type === 'terminal')
     expect(local).toBeDefined()
     expect(isBoundTabId(local!.id)).toBe(false)
     // from = the stub (shared key), to = the NEW local id (session key) —
@@ -435,6 +476,29 @@ describe('workspace windows store', () => {
     expect(windows.getSnapshot().windows).toHaveLength(0)
   })
 
+  it('a stub dragged to another leaf keeps its per-session placement (reconcile never re-homes or duplicates it)', () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+    const stubId = windows.getSnapshot().windows[0]!.id
+    // Split the right tree and drag the stub into the new leaf (the drag
+    // path: moveTab).
+    sidebar.reduce(s => splitPane(s, 'row'))
+    const leaves = allLeaves(sidebar.getSnapshot().state!.splits)
+    expect(leaves).toHaveLength(2)
+    sidebar.reduce(s => moveTab(s, leaves[0]!.id, stubId, leaves[1]!.id))
+    expect(allLeaves(sidebar.getSnapshot().state!.splits)[1]!.tabs.some(t => t.id === stubId)).toBe(true)
+    expect(allLeaves(sidebar.getSnapshot().state!.splits)[0]!.tabs.some(t => t.id === stubId)).toBe(false)
+
+    // A workspace-windows change re-reconciles every session: the moved
+    // stub is NOT re-homed to the first leaf and NOT duplicated.
+    windows.update(stubId, { title: 'renamed' })
+    const after = allLeaves(sidebar.getSnapshot().state!.splits)
+    expect(after[1]!.tabs.some(t => t.id === stubId)).toBe(true)
+    expect(after[0]!.tabs.some(t => t.id === stubId)).toBe(false)
+    expect(after.flatMap(l => l.tabs).filter(t => t.id === stubId)).toHaveLength(1)
+  })
+
   it('a failed pty reparent degrades to the old behavior (bind still completes)', async () => {
     const { sidebar, windows } = makePair()
     vi.stubGlobal('fetch', vi.fn(async () => {
@@ -448,6 +512,6 @@ describe('workspace windows store', () => {
 
     // The bind itself still lands (the reparent is best-effort).
     expect(windows.getSnapshot().windows).toHaveLength(1)
-    expect(firstLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id))).toHaveLength(1)
+    expect(rightLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id))).toHaveLength(1)
   })
 })

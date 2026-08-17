@@ -63,6 +63,21 @@ export function isBoundTabId(tabId: string): boolean {
  * subagent/Files home) carry type+title only — each session renders its own
  * live instance of the shared window.
  */
+/** Which panel a workspace-bound window's stub lives in (the area the
+ *  window occupied at bind time). 'right' = the right panel's first leaf
+ *  (`splits`), 'bottom' = the bottom box's first leaf (`bottomSplits`).
+ *  Per-window, so every session renders the shared window in the same
+ *  area. Legacy persisted blobs (pre-area) default to 'bottom' — the
+ *  original always-bottom behavior. */
+export type WorkspaceArea = 'right' | 'bottom'
+
+/** One workspace-bound window ("pinned" tab shared by every session of a
+ *  workspace). The single source of truth for the window's definition: a
+ *  change in one session re-renders in all of them. The stub id is stable
+ *  across reloads (per-workspace persisted counter). Content windows carry
+ *  their full definition (path/diff); session-scoped views (terminal/git/
+ *  subagent/Files home) carry type+title only — each session renders its own
+ *  live instance of the shared window. */
 export interface WorkspaceWindow {
   /** The stable stub id (`ws:<wsId8>:<n>`). */
   id: string
@@ -71,6 +86,9 @@ export interface WorkspaceWindow {
   path?: string
   diff?: SidebarDiffRef
   meta?: unknown
+  /** The panel whose first leaf hosts this window's stub (the area the
+   *  window was bound from). */
+  area: WorkspaceArea
 }
 
 /** The face the SidebarStore consumes from the workspace windows store:
@@ -788,40 +806,74 @@ export function reconcileAgentTerminals(
 // ── Workspace-bound windows ────────────────────────────────────────────────
 
 /**
- * Reconcile a session state against its workspace's bound windows: the
- * FIRST leaf of the BOTTOM tree carries one stub per bound window (pinned
- * windows live in the bottom "box" — the right panel stays session-local).
- * Stale stubs (unbound meanwhile, or a foreign id under the reserved
- * prefix) are dropped and missing stubs are appended in store order; an
- * `active` that pointed at a dropped stub is nulled (a dangling active
- * corrupts the next sanitize pass). Idempotent: an already-synced state
- * returns the same reference.
+ * Reconcile a session state against its workspace's bound windows: stale
+ * stubs (unbound meanwhile, or a foreign id under the reserved prefix) are
+ * dropped from BOTH trees — a dangling `active` pointing at one is nulled
+ * (a dangling active corrupts the next sanitize pass) — and a window whose
+ * stub is missing EVERYWHERE re-merges into the FIRST leaf of the panel it
+ * was bound from (`area: 'right'` → `splits`, `area: 'bottom'` →
+ * `bottomSplits`). Pinned stubs are DRAGGABLE like any tab: a stub the
+ * user moved to another leaf or panel is left exactly where it is (the
+ * per-session placement wins; only reloads fall back to the area's first
+ * leaf, because stub positions never persist). Idempotent: an
+ * already-synced state returns the same reference.
  */
 export function reconcileWorkspaceWindows(state: SidebarState, windows: readonly WorkspaceWindow[]): SidebarState {
-  const target = firstLeaf(state.bottomSplits)
   const boundIds = new Set(windows.map(w => w.id))
-  const existingStubs = new Map(
-    target.tabs.filter(tab => isBoundTabId(tab.id)).map(tab => [tab.id, tab] as const),
+  const stripStale = (node: SplitNode): SplitNode => {
+    if (node.kind === 'leaf') {
+      // filter() always allocates: track real change with a flag, or the
+      // identity check below fails on every leaf and reconcile never
+      // converges (store ↔ windows notify cycle → stack overflow).
+      let changed = false
+      const tabs = node.tabs.filter(tab => {
+        if (isBoundTabId(tab.id) && !boundIds.has(tab.id)) {
+          changed = true
+          return false
+        }
+        return true
+      })
+      const active = node.active !== null && isBoundTabId(node.active) && !boundIds.has(node.active) ? null : node.active
+      if (!changed && active === node.active) return node
+      return { ...node, tabs, active }
+    }
+    const children = node.children.map(stripStale)
+    return children === node.children ? node : { ...node, children }
+  }
+  const splits = stripStale(state.splits)
+  const bottomSplits = stripStale(state.bottomSplits)
+  // A stub present anywhere — including a leaf or panel it was dragged
+  // to — counts as merged; only truly missing windows re-merge.
+  const present = new Set(
+    [...allLeaves(splits), ...allLeaves(bottomSplits)]
+      .flatMap(leaf => leaf.tabs)
+      .filter(tab => isBoundTabId(tab.id))
+      .map(tab => tab.id),
   )
-  const sessionTabs = target.tabs.filter(tab => !isBoundTabId(tab.id))
-  const stubs: SidebarTab[] = []
-  for (const window of windows) {
-    stubs.push(existingStubs.get(window.id) ?? { id: window.id, type: window.type, title: window.title })
+  const rightMissing = windows.filter(w => w.area === 'right' && !present.has(w.id))
+  const bottomMissing = windows.filter(w => w.area === 'bottom' && !present.has(w.id))
+  if (
+    splits === state.splits
+    && bottomSplits === state.bottomSplits
+    && rightMissing.length === 0
+    && bottomMissing.length === 0
+  ) {
+    return state
   }
-  const rebuilt = [...sessionTabs, ...stubs]
-  const sameTabs = rebuilt.length === target.tabs.length && rebuilt.every((tab, index) => tab === target.tabs[index])
-  let active = target.active
-  if (active !== null && isBoundTabId(active) && !boundIds.has(active)) {
-    active = null
-  }
-  if (sameTabs && active === target.active) return state
   return {
     ...state,
-    bottomSplits: mapLeaf(state.bottomSplits, target.id, (leaf) => {
-      leaf.tabs = rebuilt
-      leaf.active = active
-    }),
+    splits: appendStubs(splits, rightMissing),
+    bottomSplits: appendStubs(bottomSplits, bottomMissing),
   }
+}
+
+/** Append one stub per missing window to the tree's FIRST leaf (store order). */
+function appendStubs(tree: SplitNode, windows: readonly WorkspaceWindow[]): SplitNode {
+  if (windows.length === 0) return tree
+  const target = firstLeaf(tree)
+  return mapLeaf(tree, target.id, (leaf) => {
+    leaf.tabs = [...leaf.tabs, ...windows.map(window => ({ id: window.id, type: window.type, title: window.title }))]
+  })
 }
 
 /**

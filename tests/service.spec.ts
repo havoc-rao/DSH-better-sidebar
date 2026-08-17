@@ -1098,9 +1098,9 @@ describe('workspace-bound window routing (workspace windows)', () => {
     const bound = windows.getSnapshot().windows[0]!
     expect(bound.path).toBe('/ws/src/renamed.ts')
     expect(bound.title).toBe('renamed.ts')
-    // The bottom-box stub stays id-only; the render layer resolves the
+    // The right-panel stub stays id-only; the render layer resolves the
     // live definition from the store.
-    const stub = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).find(t => t.id === stubId)!
+    const stub = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.id === stubId)!
     expect(stub.path).toBeUndefined()
   })
 
@@ -1119,19 +1119,19 @@ describe('workspace-bound window routing (workspace windows)', () => {
     const stubId = windows.getSnapshot().windows[0]!.id
 
     // Re-opening the same file: no local duplicate, the stub is focused
-    // (the stub lives in the bottom box, which the focus opens).
+    // (the stub lives in the right panel — the file's original area).
     service.openFile({ sessionId: 's1' }, '/ws/src/a.ts')
     const state = store.getSnapshot().state!
     const editorTabs = allLeaves(state.splits).flatMap(l => l.tabs).filter(t => t.type === 'editor')
     expect(editorTabs.filter(t => t.path === '/ws/src/a.ts')).toHaveLength(0)
-    expect(state.bottomOpen).toBe(true)
-    expect(allLeaves(state.bottomSplits).some(l => l.active === stubId)).toBe(true)
+    expect(state.bottomOpen).toBe(false) // a right-area pin never opens the bottom box
+    expect(allLeaves(state.splits).some(l => l.active === stubId)).toBe(true)
 
     // Opening a DIFFERENT file still lands normally (and activates the stub
     // only when its path matches — the new file gets its own local tab).
     service.openFile({ sessionId: 's1' }, '/ws/src/b.ts', 'b.ts')
     // The new file lands in the LAST-FOCUSED pane (the stub focus moved
-    // activePane into the bottom box) — either tree qualifies.
+    // activePane into the right tree) — either tree qualifies.
     const bothTrees = allLeaves(store.getSnapshot().state!.splits).concat(allLeaves(store.getSnapshot().state!.bottomSplits))
     const bTab = bothTrees.flatMap(l => l.tabs).find(t => t.path === '/ws/src/b.ts')
     expect(bTab).toBeDefined()

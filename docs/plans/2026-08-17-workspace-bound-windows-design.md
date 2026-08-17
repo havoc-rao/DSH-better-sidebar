@@ -9,7 +9,7 @@
 给侧边栏 tab 增加「绑定到工作区」能力：
 
 1. **右键菜单**：tab 上右键出现「绑定到工作区」/「解除工作区绑定」。
-2. **绑定语义**：绑定后，该窗口成为**工作区级共享窗口**——同一 workspace 下的**所有 session** 的底部面板（bottom box）都渲染这个窗口（右面板保持会话本地）。
+2. **绑定语义**：绑定后，该窗口成为**工作区级共享窗口**——同一 workspace 下的**所有 session** 都渲染这个窗口（stub 落在被绑定 tab 当时所在的面板：右区 → 右面板第一叶，下区 → 底部 box 第一叶）。
 3. **状态同步**：窗口的**定义**（type / path / diff / title / meta）跨 session 同步——在 session A 里把绑定的文件窗口切到另一个文件（原地切换 / 打开新文件），session B 的同名窗口立即跟随。
 
 ## 2. 非目标（v1 边界）
@@ -128,7 +128,7 @@ class WorkspaceWindowsStore {
 ### 4.7 渲染层（split-pane.tsx / TabBar.tsx / Sidebar.tsx）
 
 - **分区渲染**：`LeafView` / `TabBar` 把 tabs 分成「本地 tabs + stub tabs」两组渲染（stub 永远排最后，独立于数组顺序——无需改任何插入顺序 reducer）。第一叶内容区在本地 active 与 stub active 之间切换（`leaf.active` 是唯一 active 指针，stub 就是普通 tab，点击 stub 置 `leaf.active = stubId`，现有机制零改动）。
-- **stub 视觉**：pin 图标 + `css.tabBound` 样式；`draggable={false}`；close 按钮 aria-label「解除工作区绑定」。
+- **stub 视觉**：pin 图标 + `css.tabBound` 样式；**可拖拽**（pin 表示共享语义，不表示不可移动——拖动改变该会话内 stub 的位置，reconcile 只归位完全缺失的 stub）；close 按钮 aria-label「解除工作区绑定」。
 - **活定义解析**：`renderTab` / `tabIconOf` / `tabBadgeOf` / TabBar 标题对 stub 走 `windowsStore` 查活定义（路径/标题以 store 为准，别的 session 改了立刻跟随）。
 - **右键菜单**：`TabBar` tab div 的 `onContextMenu`（preventDefault + 记录光标坐标）→ shell 渲染 `Menu`（portal + `getAnchorRect` 定位），项：
   - 未绑定：「绑定到工作区 “<workspace title>”」（无 workspace → disabled + 提示文案）；
@@ -199,5 +199,8 @@ class WorkspaceWindowsStore {
 - **stub 落点改到底部面板（用户要求）**：初稿/首版把 stub 渲染在右面板第一叶 → 用户要求「pin 到底部 box 的就放到底部」，改为 `bottomSplits` 第一叶。连带改动：bind 展开底部面板 + active 移交目标改底部树；unbind 分离物化到底部树；service 的 bound 聚焦路径改查 `bottomSplits`（activateTabReducer 把 activePane 移入底部树，auto-expand 块自动展开底部面板）；store/UI/service 测试全部改树。底部面板首次展开自动终端（`bottomPanelAutoTerminal`）与 pin 窗口共存：展开时既有行为保留。
 - **测试发现的真实 bug**：`resolveTab` 最初定义在 Sidebar 的 no-session 早退 return 之后（hook 顺序破坏，首帧渲染即崩溃）——已上移；UI 测试的 uSES 快照稳定性教训（每次调用返回新对象会死循环）按既有 jsdom 模式处理。
 - **绑定/解绑不再重置终端（PTY 重亲缘化，用户要求）**：初版绑定终端 = 换 tab id（本地 → `ws:` stub 或 stub → 新铸造的本地 id），而 PTY 进程身份 = `sessionId:tabId` / `shared:tabId` 键——旧键被 unmount close 帧释放、新键 attach 时全新 spawn，**每次 pin 切换都会杀掉正在跑的进程**（`npm run dev` 这类长驻进程当场死亡）。修复：host `PtyManager.reparent(fromKey, toKey, sessionId, shared)` 把**活 handle**（进程 + transcript + 命令标题 + 输入行）原地迁到新键（原地变更而非拷贝——onData/onExit 闭包捕获原对象，拷贝会让新键的 transcript 冻结在迁移瞬间）；新增 `migrated` 标记让迁入的 handle 跳过 authoritative-cwd 重 spawn（进程是故意在别处起的，换 id 不是重启理由）；绑定方向 local→shared（转共享、豁免配额）、解绑方向 shared→local（计入该会话配额）。客户端 `bind`/`unbind` 改为 async，**先 await `pty.reparent` 再换树**——旧视图 unmount 的 close 帧因此打在已空的旧键上（host no-op）；WS attach 处理器的 close 帧/掉线宽限/标题注册表改按**socket 附着时的键快照**（socketKey）而非 handle 的活键，迁移中的旧 socket 永远杀不到新键上的进程。失败降级：reparent 是 best-effort（host 无活进程即 no-op），失败回到旧的"重开新 shell"行为。✕ 关闭（unbind keep=false）不 reparent——窗口全工作区关闭仍杀共享 PTY。测试：`tests/pty-shared.spec.ts` 新增 8 例（双向迁移同进程/配额归属/cwd 差异不重 spawn/宽限取消/exited 迁移/往返单进程），`tests/workspace-windows.spec.ts` 新增 5 例（bind/unbind 的 reparent 载荷断言、非终端零调用、关闭路径零调用、失败降级）。
+- **stub 落点跟随绑定时的原始区域（用户要求）**：初版"只进底部 box"再收口——pin 落在**被绑定 tab 当时所在的面板**：右区 tab → 右面板第一叶，下区 tab → 底部 box 第一叶。`WorkspaceWindow` 增 `area: 'right' | 'bottom'`（持久化在 blob；旧 blob 缺省 `'bottom'`）；bind 用 `leafWithTab(state.splits, tab.id)` 判定区域；reconcile 按区域归位缺失 stub；active 移交与 `bottomOpen` 展开只作用于该区域树；service 的 bound 聚焦路径改双树查找（auto-expand 块按 `treeOf` 自动展开宿主面板）。
+- **pin 的 tab 可拖拽（用户要求）**：初版 `draggable={false}`（stub 固定第一叶）改为**可拖拽**——pin 表示"窗口是工作区共享的"，不是"不可移动"。拖动把 stub 移到任意叶/任意面板（per-session 布局），reconcile 只做两件事：从两棵树剥掉已解绑/失效的 stale stub；stub 在**任何**位置都不存在时才按 `area` 归位到第一叶（缺省/刷新回退）。不归位已拖动的 stub、不复制。注意：stub 位置不持久化（session 布局剥离 stub），刷新后回到 area 第一叶。
+- **实现期抓出的两个真实 bug**：(1) 首版 `reconcileArea` 的 `dropStrays` 用 `filter()` 结果与 `node.tabs` 做数组同一性比较——filter 恒分配新数组 → reconcile 永远"有变化" → store ↔ windows 双向 notify 死循环（栈溢出）；改为 flag 跟踪真实变更。(2) bind 的 active 移交 `mapLeaf(s[targetKey], ...)` 误用**未剥离**的原始树，`[targetKey]` 计算属性把剥离结果覆盖——被绑定 tab 永远留在树里；改为 map 剥离后的树。
 - **文档未写明的行为**：设置页禁用某 tab 类型不影响已绑定窗口渲染（显式 pin 优先）；底部面板不渲染 stub（reconcile 只碰右树第一叶）。
 - 未做：`SIDEBAR_FEATURES` 未追加 `'workspaceWindows'`（本期无消费插件需要 gate；发布时按需加）。

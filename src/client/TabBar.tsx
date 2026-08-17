@@ -8,9 +8,9 @@
  * Workspace-bound windows (the "pinned" stubs) render at the END of the
  * strip behind a divider, whatever their array position: the caller hands
  * the full tab list and an `isBoundTabId` predicate, this component
- * partitions. Pinned tabs are NOT draggable (they are shared windows — a
- * per-session move would be meaningless) and their close button routes to
- * the shell's unbind path like any other close.
+ * partitions. Pinned tabs stay draggable like any tab — the pin marks the
+ * window as workspace-shared, not as immovable — and their close button
+ * routes to the shell's unbind path like any other close.
  */
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
@@ -157,15 +157,19 @@ export function TabBar(props: {
   const sessionTabs = tabs.filter(tab => !boundIds.has(tab.id))
   const pinnedTabs = tabs.filter(tab => boundIds.has(tab.id))
 
-  /** One tab element; `bound` renders the pinned variant (pin glyph, not
-   *  draggable, context-menu enabled — same close/activate wiring). */
+  /** One tab element; `bound` renders the pinned variant (pin glyph,
+   *  two-click close confirm, context-menu enabled — same close/activate
+   *  wiring). Pinned tabs ARE draggable like any tab: the pin marks the
+   *  window as workspace-shared, not as immovable — dragging a stub to
+   *  another leaf or panel moves the shared window's per-session
+   *  placement (reconcile only re-homes stubs that are missing entirely). */
   const renderTabEl = (tab: SidebarTab, bound: boolean): ReactNode => (
     <div
       key={tab.id}
       className={clsx(css.tab, active === tab.id && css.tabActive, bound && css.tabBound)}
       title={tab.title}
-      draggable={!bound}
-      onDragStart={bound ? undefined : (event) => {
+      draggable
+      onDragStart={(event) => {
         setTabDragging(true)
         event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
         event.dataTransfer.effectAllowed = 'move'
