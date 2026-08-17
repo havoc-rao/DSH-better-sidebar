@@ -36,7 +36,7 @@ import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { defaultShell, ensureSpawnHelper, PtyManager } from './pty-manager.ts'
+import { defaultShell, ensureSpawnHelper, PtyManager, ptyKeyOf } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
@@ -330,7 +330,8 @@ function buildApi(
       const tab = requireString(payload, 'tab')
       // Degraded mode (node-pty unavailable): no live pty can exist, so a
       // no-op ok is the honest answer — never an error the client must show.
-      ptyManager?.close(`${sessionId}:${tab}`)
+      // The key maps shared stub ids (`ws:`) to the workspace-shared pty.
+      ptyManager?.close(ptyKeyOf(sessionId, tab))
       return { ok: true }
     },
     // Release an agent terminal by uuid. The WS close frame already does
@@ -873,8 +874,11 @@ async function attachTerminal(
       exitSub.dispose()
       // A bare socket drop (refresh, tab switch) leaves the process alive
       // for a grace period so a quick reconnect keeps it; the reconnect's
-      // open() cancels the pending close.
-      ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
+      // open() cancels the pending close. A SHARED pty (workspace-bound
+      // terminal) is exempt: other sessions may still be attached and the
+      // window itself keeps living — only the close frame (the window
+      // closed everywhere) or plugin teardown kills it.
+      if (!handle.shared) ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
     })
   } catch (error) {
     ws.close(1011, error instanceof Error ? error.message : String(error))

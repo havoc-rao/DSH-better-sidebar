@@ -5,6 +5,14 @@
  * Output is mirrored into a bounded transcript ring (capped bytes) so a new
  * connection replays history before live data. Sessions die only when the
  * tab is closed or the plugin tears down.
+ *
+ * Workspace-bound terminal windows (`ws:` stub tab ids, the sidebar's
+ * pinned-to-workspace terminals) are SHARED: their key is `shared:<tabId>`
+ * (no session id), so every session of the workspace attaches to the SAME
+ * process — a long-running process (a server, a watcher) stays live and
+ * visible in every session. The first connection's cwd wins (a shared shell
+ * is never respawned because another session resolves a different cwd), and
+ * shared ptys never count toward a session's per-session quota.
  */
 import { chmodSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -16,6 +24,21 @@ import { SidebarError } from './wire.ts'
 
 /** Per-terminal transcript bound (bytes kept for replay). */
 const TRANSCRIPT_LIMIT = 1 << 20
+
+/**
+ * Reserved tab-id prefix of workspace-bound window stubs (mirror of the
+ * client's `WS_TAB_PREFIX` in state.ts — the host must know the contract to
+ * key the pty without the session). A `ws:` tab opens a workspace-SHARED
+ * pty: every session's stub attaches to the same process.
+ */
+export function isSharedTabId(tabId: string): boolean {
+  return tabId.startsWith('ws:')
+}
+
+/** The registry key for one tab id: shared stubs key WITHOUT the session. */
+export function ptyKeyOf(sessionId: string, tabId: string): string {
+  return isSharedTabId(tabId) ? `shared:${tabId}` : `${sessionId}:${tabId}`
+}
 
 /**
  * Restore the executable bit pnpm strips from node-pty's prebuilt
@@ -44,14 +67,18 @@ export function ensureSpawnHelper(): void {
 
 /** One live terminal. */
 export interface SidebarPty {
-  /** `${sessionId}:${tabId}` registry key. */
+  /** Registry key: `${sessionId}:${tabId}` or `shared:<tabId>` (workspace-bound). */
   key: string
   sessionId: string
   tabId: string
+  /** Whether this is a workspace-SHARED pty (`ws:` stub id): keyed without
+   *  the session, never counted against a session quota, first cwd wins. */
+  shared: boolean
   /** The working directory the process was SPAWNED with (a reconnect that
    *  resolves a different authoritative cwd respawns instead of reusing —
    *  the page-load hydrate race can attach the real cwd after the first
-   *  connect, and a shell in the wrong directory must not linger). */
+   *  connect, and a shell in the wrong directory must not linger; shared
+   *  ptys NEVER respawn for a cwd change — the first spawn wins). */
   cwd: string
   pty: IPty
   /** Output accumulated since spawn (bounded; head dropped when over the limit). */
@@ -76,11 +103,12 @@ export class PtyManager {
     private readonly nodePty: NodePtyModule = loadRequiredNodePty(),
   ) {}
 
-  /** All live terminal keys of one session. */
+  /** All live terminal keys of one session (workspace-shared ptys are
+   *  keyed without a session and never count toward a session quota). */
   keysOf(sessionId: string): string[] {
     const keys: string[] = []
     for (const handle of this.sessions.values()) {
-      if (handle.sessionId === sessionId) keys.push(handle.key)
+      if (handle.sessionId === sessionId && !handle.shared) keys.push(handle.key)
     }
     return keys
   }
@@ -89,38 +117,53 @@ export class PtyManager {
    * Open (or reuse) the terminal for a session/tab key. A handle whose
    * process already exited is replaced with a fresh spawn (reconnecting a
    * dead terminal must yield a live shell, not an input sink), and so is a
-   * live handle whose spawn cwd differs from the now-authoritative one (the
-   * first connect of a page load can arrive before the session hydrates, so
-   * it fell back to the process cwd — reconnecting with the real cwd must
-   * restart the shell in the right directory). Reopening also cancels any
-   * pending scheduled close (a reconnect within the grace window keeps the
-   * process alive).
+   * live PER-SESSION handle whose spawn cwd differs from the now-
+   * authoritative one (the first connect of a page load can arrive before
+   * the session hydrates, so it fell back to the process cwd — reconnecting
+   * with the real cwd must restart the shell in the right directory). A
+   * SHARED handle (`ws:` stub tab id) is never respawned for a cwd change:
+   * it belongs to the workspace, the first connection's cwd wins, and
+   * respawning would kill the long-running process every session switch.
+   * Reopening also cancels any pending scheduled close (a reconnect within
+   * the grace window keeps the process alive).
    * @param sessionId - conversation id.
-   * @param tabId - client tab id.
+   * @param tabId - client tab id (`ws:` prefixed = workspace-shared).
    * @param cwd - initial working directory (the session's cwd).
    * @param cols - initial terminal width.
    * @param rows - initial terminal height.
    * @returns the live handle.
-   * @throws {SidebarError} pty-error when the per-session cap is reached.
+   * @throws {SidebarError} pty-error when the per-session cap is reached
+   *   (shared ptys bypass the cap — they are workspace-level, not session).
    */
   open(sessionId: string, tabId: string, cwd: string, cols: number, rows: number): SidebarPty {
-    const key = `${sessionId}:${tabId}`
+    const shared = isSharedTabId(tabId)
+    const key = shared ? `shared:${tabId}` : `${sessionId}:${tabId}`
     this.cancelClose(key)
     const existing = this.sessions.get(key)
-    if (existing !== undefined && !existing.exited && existing.cwd === cwd) return existing
-    if (existing !== undefined) this.close(key)
-    // Zombie cleanup: a session's exited handles (shell closed, tab dropped
-    // on an old host without the close frame) must not eat the quota.
-    for (const [candidate, handle] of [...this.sessions]) {
-      if (handle.sessionId === sessionId && handle.exited) this.close(candidate)
+    if (existing !== undefined && !existing.exited) {
+      if (!shared && existing.cwd !== cwd) this.close(key)
+      else return existing
     }
-    if (this.keysOf(sessionId).length >= this.maxPerSession) {
-      throw new SidebarError('pty-error', `terminal limit reached (${this.maxPerSession}) for this session`, 400)
+    if (existing !== undefined) this.close(key)
+    // Zombie cleanup + quota are per-session concerns; a shared pty is
+    // workspace-level and bypasses both (its own exited handle is replaced
+    // above).
+    if (!shared) {
+      // Zombie cleanup: a session's exited handles (shell closed, tab
+      // dropped on an old host without the close frame) must not eat the
+      // quota.
+      for (const [candidate, handle] of [...this.sessions]) {
+        if (handle.sessionId === sessionId && handle.exited) this.close(candidate)
+      }
+      if (this.keysOf(sessionId).length >= this.maxPerSession) {
+        throw new SidebarError('pty-error', `terminal limit reached (${this.maxPerSession}) for this session`, 400)
+      }
     }
     const handle: SidebarPty = {
       key,
       sessionId,
       tabId,
+      shared,
       cwd,
       pty: this.nodePty.spawn(this.shell, shellSpawnArgs(), {
         name: 'xterm-256color',

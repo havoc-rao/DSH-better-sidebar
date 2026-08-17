@@ -16,7 +16,7 @@
 
 - **不做编辑器缓冲级同步**：光标、滚动、未保存草稿不跨 session 共享（同一 workspace 目录下文件内容天然一致，各 session 自行 `fs.read` 加载；文档明示该限制）。
 - **agent 终端（`agent:` 前缀）不可绑定**：模型创建/关闭它们，reconcile 会与 pin 冲突；右键菜单对 agent 终端不出现（其余类型全部可绑定）。
-- **终端是「窗口共享、进程独立」**：绑定一个终端 = 每个 session 各有一个自己的实时 shell（host 按 `sessionId:tabId` 键控 PTY，stub id 直接可用，零 host 改动）；git/subagent/Files 首页同理——共享窗口，各 session 渲染自己的实例。
+- **终端是「窗口 + 进程真正共享」**：绑定一个终端 = 整个 workspace **一个共享 PTY**（host 键 `shared:<tabId>`，不带 sessionId）——长期挂起的进程（服务/监听器）在所有 session 同一画面；首个连接的 cwd 生效、不因其他会话 cwd 不同而重启；共享 PTY 不占 per-session 配额，只随窗口全工作区关闭或插件卸载而消亡。git/subagent/Files 首页是共享窗口、各 session 渲染自己的实例（无进程态）。
 - **不做窗口拖拽排序 / 工作区窗口管理器 UI**（绑定顺序 = 绑定时间顺序）。
 - **绑定窗口只进底部面板（bottom box）**：stub 渲染在 `bottomSplits` 第一叶；右面板不受影响。绑定操作会**展开当前会话的底部面板**让结果可见；其他会话保持原样（用户自行展开）。
 - **关闭二次确认**：pin 窗口是共享窗口（✕ = 全工作区关闭），误触代价大——第一次点 ✕ 进入红色待确认态（2s 超时，点其他 tab/开菜单即解除），第二次点击才真正关闭；普通 tab 仍单击即关。
@@ -194,6 +194,7 @@ class WorkspaceWindowsStore {
 - **bind 的 already-bound 路径也清本地重复**：设计初稿只聚焦；实现中 `stripLocalDuplicates` 在两条路径共用（防御 open 管道未拦截的本地重复）。
 - **bind 焦点语义**：仅当被绑定 tab 是激活 tab 时，stub 接替 `leaf.active`（初稿"始终聚焦 stub"改为"跟随原激活"）；判定从"第一叶 active"放宽为"任意位置 active"（path-less 绑定支持后，被绑定 tab 可能不在第一叶）。
 - **绑定范围扩展（用户要求）**：初稿仅内容型（path）可绑定 → 实施为**全部 tab 类型可绑定**（agent 终端除外）。终端/git/subagent/Files 首页为「窗口共享、实例每会话独立」：终端 stub 直接走 UI-tab PTY 路由（host 按 `sessionId:tabId` 键控，stub id 即 tabId，零 host 改动）；`WorkspaceWindow` 增 `diff` 字段（diff 窗口绑定携带 diff ref，解除时原样物化）；bind 的删除规则改为「删被绑定 tab 本身 + 内容重复，不删同类型 path-less tab」；path-less 永不去重。
+- **终端从「每会话独立 PTY」升级为「工作区共享 PTY」（用户要求）**：初版绑定终端是各会话自己的 shell（窗口共享、进程独立）——用户指出挂起的进程状态并不同步。改为 host 侧共享：`pty-manager` 对 `ws:` stub id 用 `shared:<tabId>` 键（`ptyKeyOf`），所有会话 WS 连接到同一进程；首个连接 cwd 生效且永不因 cwd 差异重启；共享 PTY 不计 per-session 配额（workspace 级）；socket 掉线不再调度关闭（其他会话可能仍连着、窗口仍在），只有 close 帧（窗口全工作区关闭）或 teardown 杀死；`pty.close` HTTP 路由与 WS close frame 都经 `ptyKeyOf` 映射。客户端零改动（tabId 透传），仅 Sidebar 的绑定关闭分支补了 WS 断线时的 `api.ptyClose` HTTP 兜底。测试：`tests/pty-shared.spec.ts` 8 例（键映射/跨会话同进程/首 cwd 生效/配额旁路/exited 重启/kill/超时关闭/keysOf 排除）。
 - **stub 落点改到底部面板（用户要求）**：初稿/首版把 stub 渲染在右面板第一叶 → 用户要求「pin 到底部 box 的就放到底部」，改为 `bottomSplits` 第一叶。连带改动：bind 展开底部面板 + active 移交目标改底部树；unbind 分离物化到底部树；service 的 bound 聚焦路径改查 `bottomSplits`（activateTabReducer 把 activePane 移入底部树，auto-expand 块自动展开底部面板）；store/UI/service 测试全部改树。底部面板首次展开自动终端（`bottomPanelAutoTerminal`）与 pin 窗口共存：展开时既有行为保留。
 - **测试发现的真实 bug**：`resolveTab` 最初定义在 Sidebar 的 no-session 早退 return 之后（hook 顺序破坏，首帧渲染即崩溃）——已上移；UI 测试的 uSES 快照稳定性教训（每次调用返回新对象会死循环）按既有 jsdom 模式处理。
 - **文档未写明的行为**：设置页禁用某 tab 类型不影响已绑定窗口渲染（显式 pin 优先）；底部面板不渲染 stub（reconcile 只碰右树第一叶）。

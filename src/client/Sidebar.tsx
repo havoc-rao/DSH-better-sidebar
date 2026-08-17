@@ -625,10 +625,21 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   const actions: WorkbenchActions = useMemo(() => ({
     closeTab: (paneId, tabId) => {
       // A workspace-bound window closes EVERYWHERE (shared-window
-      // semantics): unbind from the workspace store — no per-session tab
-      // teardown, no terminal release (stubs are never terminals).
+      // semantics): unbind from the workspace store. A bound TERMINAL
+      // stub's shared pty dies with the window — the unmount close frame
+      // covers the socket-up case, and the HTTP fallback covers the
+      // socket-down one (a shared pty must never linger after its window
+      // closed everywhere).
       if (windows !== undefined && isBoundTabId(tabId)) {
+        const current = store.getSnapshot().state
+        const leaf = current === undefined
+          ? undefined
+          : leafWithTab(current.splits, tabId) ?? leafWithTab(current.bottomSplits, tabId)
+        const tab = leaf?.tabs.find(candidate => candidate.id === tabId)
         windows.unbind(tabId, false)
+        if (tab?.type === 'terminal' && sessionId !== undefined) {
+          void api.ptyClose({ sessionId, cwd }, tabId).catch(() => { /* the host may already have released it */ })
+        }
         return
       }
       // A closed terminal releases its pty immediately — including when its
