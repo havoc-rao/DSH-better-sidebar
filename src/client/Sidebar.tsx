@@ -29,7 +29,7 @@ import { createElement, useCallback, useEffect, useMemo, useRef, useState, type 
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { Context, SidebarSessionList } from '../context-types.ts'
+import type { Context, SidebarLayoutService, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
   BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
@@ -39,6 +39,7 @@ import {
 } from './state.ts'
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { panelHotkeyHint } from './hotkeys.ts'
+import { createHostSidebarKeeper } from './host-sidebar.ts'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
 import type { NewTabOption } from './TabBar.tsx'
@@ -365,6 +366,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // re-introduce the drag lag this shell deliberately avoids. applyDrag
   // writes the bottom panel's edges directly, so measurement pauses then.
   const centerColRef = useRef<HTMLElement | null>(null)
+  /** The AppFrame grid frame the host-sidebar keeper observes. */
+  const hostFrameRef = useRef<HTMLElement | null>(null)
   const draggingRef = useRef(false)
   const measureCenter = useCallback((): void => {
     if (draggingRef.current) return
@@ -423,6 +426,82 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       centerColRef.current = null
     }
   }, [measureCenter])
+
+  /**
+   * Host left-sidebar keeper: the right panel's layout push squeezes the
+   * AppFrame, and below the host's 1024px breakpoint the host auto-collapses
+   * its OWN left sidebar to the rail. The keeper (host-sidebar.ts) arms on a
+   * real ≥1024 → <1024 frame crossing caused by our push and consumes when
+   * the host's `data-sidebar-collapsed` attribute APPEARS — then re-expands
+   * through `ctx.layout.toggleSidebar()` (narrow-mode toggle flips the
+   * host's re-expand override, so the sidebar returns over the squeezed
+   * center). User ⌘B collapses never change the frame width (no crossing,
+   * no re-expand), and a collapse predating the crossing fires no mutation
+   * (never fought). Resolved lazily via ctx.get, like the ⌘B binding.
+   */
+  useEffect(() => {
+    let disposed = false
+    let resizeObserver: ResizeObserver | undefined
+    let attrObserver: MutationObserver | undefined
+    let watcher: MutationObserver | undefined
+    const keeper = createHostSidebarKeeper({
+      isPushLive: () => store.getSnapshot().state?.panelOpen === true,
+      windowWidth: () => window.innerWidth,
+    })
+    const onFrameResize = (): void => {
+      const frame = hostFrameRef.current
+      if (frame !== null) keeper.onFrameResize(frame.getBoundingClientRect().width)
+    }
+    const onCollapsedAttr = (): void => {
+      const frame = hostFrameRef.current
+      if (frame === null) return
+      const collapsed = frame.getAttribute('data-sidebar-collapsed') !== null
+      if (!keeper.onCollapsedAttrChanged(collapsed)) return
+      try {
+        const layout = ctx.get('layout') as SidebarLayoutService | undefined
+        if (layout === undefined) {
+          console.warn('[dsh-better-sidebar] layout service unavailable — host sidebar re-expand skipped')
+          return
+        }
+        layout.toggleSidebar()
+      } catch (error) {
+        console.warn('[dsh-better-sidebar] host sidebar re-expand failed:', error)
+      }
+    }
+    // Same locate dance as the center-column effect above: the AppFrame
+    // frame is the center column's parent, and the boot page swap may
+    // replace it after this effect's first query.
+    const locate = (): void => {
+      if (disposed) return
+      const col = document.querySelector('#root [data-slot="conversation"]')
+        ?.parentElement as HTMLElement | undefined
+      const frame = col?.parentElement as HTMLElement | undefined
+      if (frame === hostFrameRef.current) return
+      hostFrameRef.current = frame ?? null
+      resizeObserver?.disconnect()
+      attrObserver?.disconnect()
+      resizeObserver = undefined
+      attrObserver = undefined
+      if (frame === undefined) return
+      resizeObserver = new ResizeObserver(onFrameResize)
+      resizeObserver.observe(frame)
+      attrObserver = new MutationObserver(onCollapsedAttr)
+      attrObserver.observe(frame, { attributes: true, attributeFilter: ['data-sidebar-collapsed'] })
+    }
+    locate()
+    const root = document.getElementById('root')
+    if (root !== null) {
+      watcher = new MutationObserver(locate)
+      watcher.observe(root, { childList: true })
+    }
+    return () => {
+      disposed = true
+      resizeObserver?.disconnect()
+      attrObserver?.disconnect()
+      watcher?.disconnect()
+      hostFrameRef.current = null
+    }
+  }, [ctx, store])
 
   /**
    * Bottom-panel first-expansion auto terminal: the FIRST time the user
