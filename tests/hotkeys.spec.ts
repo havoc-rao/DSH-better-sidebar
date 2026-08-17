@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Panel-toggle hotkey tests (⌘J / ⌘⌥B, VSCode-style).
+ * Panel-toggle hotkey tests (⌘B / ⌘J / ⌘⌥B, VSCode-style).
  *
  * Two layers:
  *
@@ -8,18 +8,19 @@
  *    toggle which panel, and every guard (key repeat, IME composition,
  *    AltGraph, shift, wrong modifiers);
  * 2. the NATIVE path (`registerPanelHotkeys`) — a document-capture keydown
- *    toggles the store through real KeyboardEvents, a matched combo is
- *    fully consumed (preventDefault + stopPropagation: a document-bubble
- *    listener never sees it), the disposer restores normal flow (HMR-safe),
- *    and the bottom toggle is a no-op on narrow viewports (the bottom
- *    panel does not exist there — matching the hidden toggle button).
+ *    toggles the store (or calls the host sidebar toggle) through real
+ *    KeyboardEvents, a matched combo is fully consumed (preventDefault +
+ *    stopPropagation: a document-bubble listener never sees it), the
+ *    disposer restores normal flow (HMR-safe), and the bottom toggle is a
+ *    no-op on narrow viewports (the bottom panel does not exist there —
+ *    matching the hidden toggle button).
  *
  * Events are dispatched on a deep element (an `<input>` in document.body)
  * like the browser does, so capture-phase blocking behaves like in
  * production. Matching is by `event.code` (physical key) so the US-layout
  * Option+B quirk ("∫") and non-Latin layouts cannot break the bindings.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   matchPanelHotkey,
   registerPanelHotkeys,
@@ -83,6 +84,14 @@ describe('matchPanelHotkey — the pure decision', () => {
     expect(matchPanelHotkey(like({ code: 'KeyJ', ctrlKey: true }))).toBe('bottom')
   })
 
+  it('⌘B toggles the host LEFT sidebar', () => {
+    expect(matchPanelHotkey(like({ code: 'KeyB', metaKey: true }))).toBe('left')
+  })
+
+  it('Ctrl+B toggles the host LEFT sidebar (Windows/Linux equivalent)', () => {
+    expect(matchPanelHotkey(like({ code: 'KeyB', ctrlKey: true }))).toBe('left')
+  })
+
   it('⌘⌥B toggles the right panel', () => {
     expect(matchPanelHotkey(like({ code: 'KeyB', metaKey: true, altKey: true }))).toBe('right')
   })
@@ -107,10 +116,6 @@ describe('matchPanelHotkey — the pure decision', () => {
     expect(matchPanelHotkey(like({ code: 'KeyJ', altKey: true }))).toBeNull()
   })
 
-  it('rejects B without Option (plain ⌘B stays free for the app shell)', () => {
-    expect(matchPanelHotkey(like({ code: 'KeyB', metaKey: true }))).toBeNull()
-  })
-
   it('rejects other keys under the same modifiers', () => {
     expect(matchPanelHotkey(like({ code: 'KeyK', metaKey: true }))).toBeNull()
     expect(matchPanelHotkey(like({ code: 'KeyK', metaKey: true, altKey: true }))).toBeNull()
@@ -118,6 +123,7 @@ describe('matchPanelHotkey — the pure decision', () => {
 
   it('rejects shift-modified combos (exact modifier sets only)', () => {
     expect(matchPanelHotkey(like({ code: 'KeyJ', metaKey: true, shiftKey: true }))).toBeNull()
+    expect(matchPanelHotkey(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBeNull()
     expect(matchPanelHotkey(like({ code: 'KeyB', metaKey: true, altKey: true, shiftKey: true }))).toBeNull()
   })
 
@@ -150,6 +156,7 @@ describe('registerPanelHotkeys — the native path', () => {
   let store: SidebarStore
   let input: HTMLInputElement
   let dispose: (() => void) | undefined
+  let leftSpy: ReturnType<typeof vi.fn<() => void>>
   const seen: string[] = []
 
   const onDocumentBubble = (event: Event): void => {
@@ -160,6 +167,7 @@ describe('registerPanelHotkeys — the native path', () => {
     store = createSidebarStore()
     // Fresh-session seed: right panel OPEN by default, bottom panel closed.
     store.setSession('s1')
+    leftSpy = vi.fn<() => void>()
     input = document.createElement('input')
     document.body.appendChild(input)
     seen.length = 0
@@ -175,29 +183,53 @@ describe('registerPanelHotkeys — the native path', () => {
   })
 
   it('⌘J toggles the bottom panel and consumes the event', () => {
-    dispose = registerPanelHotkeys(store)
+    dispose = registerPanelHotkeys(store, leftSpy)
     expect(store.getSnapshot().state?.bottomOpen).toBe(false)
 
     input.dispatchEvent(keyEvent({ key: 'j', code: 'KeyJ', metaKey: true }))
 
     expect(store.getSnapshot().state?.bottomOpen).toBe(true)
+    expect(leftSpy).not.toHaveBeenCalled()
     // Consumed at the document capture phase: neither the input target nor
     // the document bubble phase ever sees the event.
     expect(seen).toEqual([])
   })
 
+  it('⌘B calls the host sidebar toggle, consumes the event, and leaves the store alone', () => {
+    dispose = registerPanelHotkeys(store, leftSpy)
+    const panelOpenBefore = store.getSnapshot().state?.panelOpen
+
+    input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true }))
+
+    expect(leftSpy).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().state?.panelOpen).toBe(panelOpenBefore)
+    expect(store.getSnapshot().state?.bottomOpen).toBe(false)
+    expect(seen).toEqual([])
+  })
+
+  it('⌘B still toggles the host sidebar without a current session (host-side transition)', () => {
+    dispose = registerPanelHotkeys(store, leftSpy)
+    store.setSession(undefined)
+
+    input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true }))
+
+    expect(leftSpy).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().state).toBeUndefined()
+  })
+
   it('⌘⌥B toggles the right panel and consumes the event', () => {
-    dispose = registerPanelHotkeys(store)
+    dispose = registerPanelHotkeys(store, leftSpy)
     expect(store.getSnapshot().state?.panelOpen).toBe(true)
 
     input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
 
     expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    expect(leftSpy).not.toHaveBeenCalled()
     expect(seen).toEqual([])
   })
 
   it('each panel toggles independently (⌘J then ⌘⌥B leaves both flipped)', () => {
-    dispose = registerPanelHotkeys(store)
+    dispose = registerPanelHotkeys(store, leftSpy)
     input.dispatchEvent(keyEvent({ key: 'j', code: 'KeyJ', metaKey: true }))
     input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
     const state = store.getSnapshot().state!
@@ -206,7 +238,7 @@ describe('registerPanelHotkeys — the native path', () => {
   })
 
   it('unmatched keys pass through untouched', () => {
-    dispose = registerPanelHotkeys(store)
+    dispose = registerPanelHotkeys(store, leftSpy)
     input.dispatchEvent(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))
     input.dispatchEvent(keyEvent({ key: 'j', code: 'KeyJ' }))
     expect(seen).toEqual(['document:keydown', 'document:keydown'])
@@ -214,14 +246,14 @@ describe('registerPanelHotkeys — the native path', () => {
   })
 
   it('is a strict no-op without a current session', () => {
-    dispose = registerPanelHotkeys(store)
+    dispose = registerPanelHotkeys(store, leftSpy)
     store.setSession(undefined)
     input.dispatchEvent(keyEvent({ key: 'j', code: 'KeyJ', metaKey: true }))
     expect(store.getSnapshot().state).toBeUndefined()
   })
 
   it('bottom toggle is a no-op on narrow viewports (no bottom panel there)', () => {
-    dispose = registerPanelHotkeys(store)
+    dispose = registerPanelHotkeys(store, leftSpy)
     Object.defineProperty(window, 'innerWidth', { value: 500, configurable: true })
     input.dispatchEvent(keyEvent({ key: 'j', code: 'KeyJ', metaKey: true }))
     expect(store.getSnapshot().state?.bottomOpen).toBe(false)
@@ -231,7 +263,7 @@ describe('registerPanelHotkeys — the native path', () => {
   })
 
   it('disposer restores normal flow (HMR-safe)', () => {
-    dispose = registerPanelHotkeys(store)
+    dispose = registerPanelHotkeys(store, leftSpy)
     dispose()
     dispose = undefined
     input.dispatchEvent(keyEvent({ key: 'j', code: 'KeyJ', metaKey: true }))

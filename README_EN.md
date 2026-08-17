@@ -165,6 +165,7 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 
 | Action | Keys |
 |---|---|
+| Toggle left sidebar (host nav) | `Ctrl/Cmd + B` |
 | Toggle bottom panel | `Ctrl/Cmd + J` |
 | Toggle sidebar | `Ctrl/Cmd + Alt + B` (macOS: `⌘⌥B`) |
 | Save edits | `Ctrl/Cmd + S` |
