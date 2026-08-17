@@ -38,6 +38,7 @@ import {
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
+import { panelHotkeyHint } from './hotkeys.ts'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
 import type { NewTabOption } from './TabBar.tsx'
@@ -739,7 +740,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           there is no bottom panel, so its toggle button is not offered.
         */}
         {!narrow && (
-          <Tooltip label={state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')} side="bottom" delayMs={500}>
+          <Tooltip label={`${state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')} (${panelHotkeyHint('bottom')})`} side="bottom" delayMs={500}>
             <button
               type="button"
               className={css.toggleButton}
@@ -750,7 +751,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             </button>
           </Tooltip>
         )}
-        <Tooltip label={state.panelOpen ? t('collapse') : t('expand')} side="bottom" delayMs={500}>
+        <Tooltip label={`${state.panelOpen ? t('collapse') : t('expand')} (${panelHotkeyHint('right')})`} side="bottom" delayMs={500}>
           <button
             type="button"
             className={css.toggleButton}
@@ -918,7 +919,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           (the strip reserves the width via CSS so the + menu never hides
           under it): one tap collapses the panel.
         */}
-        <Tooltip label={t('collapseBottomPanel')} side="bottom" delayMs={500}>
+        <Tooltip label={`${t('collapseBottomPanel')} (${panelHotkeyHint('bottom')})`} side="bottom" delayMs={500}>
           <button
             type="button"
             className={css.bottomClose}

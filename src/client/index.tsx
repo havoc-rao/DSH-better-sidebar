@@ -20,6 +20,7 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
+import { registerPanelHotkeys } from './hotkeys.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
@@ -212,6 +213,22 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: IME composition guard',
+    )
+
+    // The panel-toggle hotkeys (⌘J / ⌘⌥B, VSCode-style): document-capture
+    // keydown that toggles the bottom panel and the right sidebar through
+    // the store. Self-guarded (IME composition, AltGr, key repeat, narrow
+    // viewports) and a strict no-op without a current session.
+    ctx.effect(
+      () => {
+        try {
+          return registerPanelHotkeys(sidebarStore)
+        } catch (error) {
+          fail('panel hotkeys', error)
+          return undefined
+        }
+      },
+      'dsh-better-sidebar: panel-toggle hotkeys',
     )
 
     // DSH 0.1.x does not yet carry an icon through the settings.section

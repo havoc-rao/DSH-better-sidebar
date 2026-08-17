@@ -165,6 +165,8 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 
 | Action | Keys |
 |---|---|
+| Toggle bottom panel | `Ctrl/Cmd + J` |
+| Toggle sidebar | `Ctrl/Cmd + Alt + B` (macOS: `⌘⌥B`) |
 | Save edits | `Ctrl/Cmd + S` |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |
