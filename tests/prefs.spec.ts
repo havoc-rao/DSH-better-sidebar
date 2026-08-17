@@ -36,6 +36,7 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
+        editorExplorer: true,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -53,7 +54,7 @@ describe('side card preferences', () => {
   it('falls back per-field when a stored field is malformed', async () => {
     expect(await loadPrefs(wire({ openByDefault: 'yes', defaultWidthPercent: 33, autoOpenSubagent: 'no', agentTerminalTools: 'yes' })))
       .toEqual({
-        openByDefault: true,
+        openByDefault: false,
         defaultWidthPercent: 33,
         autoOpenSubagent: true,
         autoOpenJobs: true,
@@ -62,6 +63,7 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
+        editorExplorer: true,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -88,6 +90,7 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
+        editorExplorer: true,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -124,6 +127,16 @@ describe('side card preferences', () => {
     // Explicit booleans survive verbatim.
     expect((await loadPrefs(wire({ interceptOpenPath: false }))).interceptOpenPath).toBe(false)
     expect((await loadPrefs(wire({ interceptOpenPath: true }))).interceptOpenPath).toBe(true)
+  })
+
+  it('defaults editorExplorer to true; only an explicit false restores the plain editor', async () => {
+    // Absent or malformed → on (the merged editor-explorer is the default).
+    expect((await loadPrefs(wire({}))).editorExplorer).toBe(true)
+    expect((await loadPrefs(wire({ editorExplorer: 'yes' }))).editorExplorer).toBe(true)
+    expect((await loadPrefs(wire({ editorExplorer: 0 }))).editorExplorer).toBe(true)
+    // Explicit booleans survive verbatim.
+    expect((await loadPrefs(wire({ editorExplorer: false }))).editorExplorer).toBe(false)
+    expect((await loadPrefs(wire({ editorExplorer: true }))).editorExplorer).toBe(true)
   })
 
   it('defaults titleBarCompat to false; only an explicit true turns the position-compat mode on', async () => {
@@ -198,17 +211,17 @@ describe('side card preferences', () => {
     const store = createSidebarStore()
     // Node environment: no window → the width falls back to PANEL_DEFAULT,
     // while the open flag still follows the preference.
-    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('fresh-session')
-    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     const snapshot = store.getSnapshot()
     expect(snapshot.sessionId).toBe('fresh-session')
     expect(snapshot.state?.panelOpen).toBe(false)
     expect(snapshot.state?.width).toBe(400)
-    // The default prefs keep the panel open.
+    // The default prefs keep the panel closed (openByDefault defaults off).
     const openStore = createSidebarStore()
     openStore.setSession('another-fresh')
-    expect(openStore.getSnapshot().state?.panelOpen).toBe(true)
+    expect(openStore.getSnapshot().state?.panelOpen).toBe(false)
   })
 
   it('seeds a brand-new session COLLAPSED on narrow viewports (the panel is a full-screen drawer there)', () => {
@@ -222,8 +235,8 @@ describe('side card preferences', () => {
     }
     try {
       const store = createSidebarStore()
-      // Default prefs say openByDefault: true — the narrow viewport overrides
-      // it for the FIRST seeding only (a later user expansion persists).
+      // The narrow viewport keeps a fresh session collapsed for the FIRST
+      // seeding only (a later user expansion persists).
       store.setSession('narrow-fresh')
       expect(store.getSnapshot().state?.panelOpen).toBe(false)
       // The width seeding still follows the window (clamped to the floor).
@@ -234,20 +247,37 @@ describe('side card preferences', () => {
     }
   })
 
-  it('skips the default explorer tab when the explorer type is disabled', () => {
+  it('skips the default seed tab when the editor (files window) type is disabled', () => {
     const store = createSidebarStore()
-    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { explorer: false }, viewersEnabled: {}, pluginSettings: {} })
-    store.setSession('no-explorer')
+    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { editor: false }, viewersEnabled: {}, pluginSettings: {} })
+    store.setSession('no-editor')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
     expect(tabs).toHaveLength(0)
     expect(state.splits.kind).toBe('leaf')
-    // Re-enabling seeds the explorer tab again.
-    const openStore = createSidebarStore()
-    openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
-    openStore.setSession('with-explorer')
-    const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
-    expect(openTabs.map(tab => tab.type)).toEqual(['explorer'])
+    // Re-enabling seeds the files window (editor home tab) again — in BOTH
+    // editorExplorer modes.
+    for (const editorExplorer of [true, false]) {
+      const openStore = createSidebarStore()
+      openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      openStore.setSession(`with-editor-${editorExplorer}`)
+      const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      expect(openTabs.map(tab => tab.type)).toEqual(['editor'])
+    }
+  })
+
+  it('seeds the empty editor home tab (files window) in both editorExplorer modes', () => {
+    for (const editorExplorer of [true, false]) {
+      const store = createSidebarStore()
+      store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      store.setSession(`fresh-${editorExplorer}`)
+      const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      expect(tabs).toHaveLength(1)
+      expect(tabs[0]!.type).toBe('editor')
+      expect(tabs[0]!.title).toBe('Files')
+      expect(tabs[0]!.path).toBeUndefined()
+      expect(tabs[0]!.meta).toEqual({ treeOpen: true })
+    }
   })
 
   it('derives the default width from the window percent with clamps', () => {
@@ -260,8 +290,8 @@ describe('side card preferences', () => {
     expect(makeDefaultState().panelOpen).toBe(true)
     expect(makeDefaultState(400, false).panelOpen).toBe(false)
     expect(makeDefaultState(400, false).width).toBe(400)
-    // The seedExplorer flag controls the default explorer tab.
-    expect(makeDefaultState(400, true, false).splits.kind).toBe('leaf')
-    expect((makeDefaultState(400, true, false).splits as { tabs: unknown[] }).tabs).toHaveLength(0)
+    // The 'none' seed starts with an empty pane (no default tab).
+    expect(makeDefaultState(400, true, 'none').splits.kind).toBe('leaf')
+    expect((makeDefaultState(400, true, 'none').splits as { tabs: unknown[] }).tabs).toHaveLength(0)
   })
 })

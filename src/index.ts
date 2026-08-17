@@ -29,6 +29,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
@@ -212,6 +213,14 @@ function buildApi(
       const record = payload as { path?: unknown }
       const target = record.path === undefined ? cwd : requireAbsolute(requireString(payload, 'path'))
       return listDirectory(target, resolved.listLimit)
+    },
+    'fs.search': async (payload) => {
+      // The editor side panel's global name search: rooted at the session
+      // cwd (not caller-targetable — the walk is unbounded by design and
+      // must never escape the workspace), budgeted inside searchFiles.
+      const { cwd } = cwdOf(payload)
+      const query = requireString(payload, 'query')
+      return searchFiles(cwd, query)
     },
     'fs.read': async (payload) => {
       const { cwd } = cwdOf(payload)

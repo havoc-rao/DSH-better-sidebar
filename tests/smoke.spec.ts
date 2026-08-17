@@ -566,8 +566,8 @@ describe('side card settings routes', () => {
     expect(read.ok).toBe(true)
     expect(read.value).toEqual({
       value: {
-        openByDefault: true,
-        defaultWidthPercent: 30,
+        openByDefault: false,
+        defaultWidthPercent: 35,
         autoOpenSubagent: true,
         autoOpenJobs: true,
         agentTerminalTools: false,
@@ -575,6 +575,7 @@ describe('side card settings routes', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
+        editorExplorer: true,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -592,11 +593,11 @@ describe('side card settings routes', () => {
       revision: 0,
     })
 
-    const written = await invoke(route, 'settings.update', { patch: { openByDefault: false } })
+    const written = await invoke(route, 'settings.update', { patch: { openByDefault: true } })
     expect(written.ok).toBe(true)
     const view = written.value as { value: { openByDefault: boolean; defaultWidthPercent: number }; revision: number }
-    expect(view.value.openByDefault).toBe(false)
-    expect(view.value.defaultWidthPercent).toBe(30)
+    expect(view.value.openByDefault).toBe(true)
+    expect(view.value.defaultWidthPercent).toBe(35)
     expect(view.revision).toBe(1)
   })
 
