@@ -85,7 +85,39 @@ export function TabBar(props: {
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  /** The bound stub whose close button is ARMED (first click of the
+   *  two-step close confirm); null = nothing armed. */
+  const [armedCloseId, setArmedCloseId] = useState<string | null>(null)
+  const armedTimerRef = useRef<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+
+  /** How long the armed state survives without a confirming click. */
+  const ARMED_MS = 2000
+
+  /** Arm the two-step close on a bound stub (first click). */
+  const armClose = (tabId: string): void => {
+    if (armedTimerRef.current !== null) window.clearTimeout(armedTimerRef.current)
+    setArmedCloseId(tabId)
+    armedTimerRef.current = window.setTimeout(() => {
+      armedTimerRef.current = null
+      setArmedCloseId(null)
+    }, ARMED_MS)
+  }
+
+  /** Disarm (any other interaction: tab click, menu open, unmount). */
+  const disarmClose = (): void => {
+    if (armedTimerRef.current !== null) {
+      window.clearTimeout(armedTimerRef.current)
+      armedTimerRef.current = null
+    }
+    setArmedCloseId(null)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (armedTimerRef.current !== null) window.clearTimeout(armedTimerRef.current)
+    }
+  }, [])
 
   // Wheel over the strip scrolls the tab row horizontally (a plain mouse
   // wheel emits deltaY, which overflow-x alone never consumes). Bound as a
@@ -148,18 +180,28 @@ export function TabBar(props: {
         const payload = parseDrag(raw)
         if (payload !== null) onDropTab(payload, tab.id)
       }}
-      onClick={() => { onActivate(tab.id) }}
+      onClick={() => {
+        // Any tab activation disarms a pending close confirm.
+        disarmClose()
+        onActivate(tab.id)
+      }}
       onAuxClick={(event) => {
-        // Middle-click closes the tab (and suppresses autoscroll).
+        // Middle-click closes the tab (and suppresses autoscroll). Bound
+        // stubs share the two-step confirm: the first middle-click arms.
         if (event.button === 1) {
           event.preventDefault()
-          onClose(tab.id)
+          if (!bound) onClose(tab.id)
+          else if (armedCloseId === tab.id) {
+            disarmClose()
+            onClose(tab.id)
+          } else armClose(tab.id)
         }
       }}
       onContextMenu={(event) => {
         if (onTabContextMenu === undefined) return
         event.preventDefault()
         event.stopPropagation()
+        disarmClose()
         onTabContextMenu(tab, event)
       }}
     >
@@ -169,11 +211,24 @@ export function TabBar(props: {
       <span className={css.tabTitle}>{tab.title}</span>
       <button
         type="button"
-        className={css.tabClose}
-        aria-label={t('close')}
+        className={clsx(css.tabClose, bound && armedCloseId === tab.id && css.tabCloseArmed)}
+        aria-label={bound && armedCloseId === tab.id ? t('closeBoundConfirm') : t('close')}
+        title={bound && armedCloseId === tab.id ? t('closeBoundConfirm') : undefined}
         onClick={(event) => {
           event.stopPropagation()
-          onClose(tab.id)
+          // Bound stubs close EVERYWHERE (shared windows): the first click
+          // arms a red confirm state, the second click really closes — an
+          // accidental ✕ must never wipe the window from every session.
+          if (!bound) {
+            onClose(tab.id)
+            return
+          }
+          if (armedCloseId === tab.id) {
+            disarmClose()
+            onClose(tab.id)
+          } else {
+            armClose(tab.id)
+          }
         }}
       >
         <IconCloseFill14 />

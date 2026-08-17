@@ -148,7 +148,7 @@ describe('workspace-bound windows UI', () => {
     unmount()
   })
 
-  it('a bound stub is not draggable and its close button unbinds everywhere', () => {
+  it('a bound stub is not draggable and its close button needs a two-click confirm', () => {
     const { container, store, service, unmount } = mountSidebar()
     act(() => { service.openFile({ sessionId: 's1', cwd: '/ws-a' }, '/ws-a/src/a.ts') })
     act(() => { service.openFile({ sessionId: 's1', cwd: '/ws-a' }, '/ws-a/src/b.ts', 'b.ts') })
@@ -161,17 +161,29 @@ describe('workspace-bound windows UI', () => {
     const pinned = tabEl(container, 'a.ts')!
     expect(pinned.getAttribute('draggable')).toBe('false')
 
-    // Its close button is the second button inside the tab (the ✕) — the
-    // close routes to unbind(false): gone from the store AND the tree.
+    // Its close button is the second button inside the tab (the ✕). The
+    // close routes to unbind(false) — but a SHARED window must survive an
+    // accidental click: the first click ARMS the confirm (danger state,
+    // label flips), the second click really closes.
     const close = pinned.querySelector('button')
     expect(close).not.toBeNull()
     act(() => { close!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
-    expect(store.getSnapshot().state!.splits !== undefined).toBe(true)
+    // Armed: nothing closed yet, the button shows the confirm state.
+    const stubsArmed = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
+    expect(stubsArmed).toHaveLength(1)
+    expect(close!.getAttribute('aria-label')).toBe(t('closeBoundConfirm'))
+
+    // A second click on the SAME button confirms: gone from store + tree.
+    act(() => { close!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     const stubs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
     expect(stubs).toHaveLength(0)
-    // b.ts (a plain local tab) survived.
+    // b.ts (a plain local tab) survived — and its close is a ONE-click close.
     expect(tabEl(container, 'b.ts')).not.toBeNull()
+    const bTab = tabEl(container, 'b.ts')!
+    const bClose = bTab.querySelector('button')!
+    act(() => { bClose.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(tabEl(container, 'b.ts')).toBeNull()
 
     unmount()
   })

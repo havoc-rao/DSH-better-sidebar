@@ -609,6 +609,15 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* The two-step close confirm on workspace-bound stubs: the first click
+   arms the button (danger ink + tint, the repo's color-mix error pattern);
+   the second click really closes the shared window. */
+.tabCloseArmed,
+.tabCloseArmed:hover {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .tabBarPlus {
   flex: none;
   align-self: center;
