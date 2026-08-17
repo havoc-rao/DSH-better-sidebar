@@ -47,6 +47,10 @@ interface TerminalViewProps {
   scope: SessionScope
   tabId: string
   store: SidebarStore
+  /** Host-downlink command-title updates; routes through updateTab so the
+   *  tab title follows the running command's first token (workspace-bound
+   *  stubs retitle in EVERY session via the windows store). */
+  onTitleChange?: (title: string) => void
 }
 
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
@@ -199,7 +203,14 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
-      component: ({ tab, scope, store }) => <LazyTerminal scope={scope} store={store} tabId={tab.id} />,
+      component: ({ tab, scope, store, ctx }) => (
+        <LazyTerminal
+          scope={scope}
+          store={store}
+          tabId={tab.id}
+          onTitleChange={(title) => { ctx.betterSidebar?.updateTab(tab.id, { title }) }}
+        />
+      ),
     },
     {
       id: 'browser',

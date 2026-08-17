@@ -43,6 +43,27 @@ const FAILURE_LIMIT = 3
  */
 const PTY_DEPS_MISSING = 'pty-deps-missing'
 
+/**
+ * Parse one host-downlink control frame. Only the `title` frame exists
+ * today ({type:'title', title}); anything else — including terminal output
+ * that merely looks like JSON — returns null and is written verbatim.
+ * Bounded length so a huge program output blob cannot be parsed as JSON.
+ */
+export function parseDownlinkFrame(data: string): { type: 'title'; title: string } | null {
+  if (data.length > 512) return null
+  try {
+    const parsed = JSON.parse(data) as unknown
+    if (parsed === null || typeof parsed !== 'object') return null
+    const record = parsed as Record<string, unknown>
+    if (record.type === 'title' && typeof record.title === 'string') {
+      return { type: 'title', title: record.title }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 /** The degraded-mode payload rendered by {@link TerminalDepsBanner}. */
 type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
 
@@ -91,8 +112,17 @@ function xtermTheme(): ITheme {
   }
 }
 
-export function TerminalView(props: { scope: SessionScope; tabId: string; store: SidebarStore }) {
-  const { scope, tabId, store } = props
+export function TerminalView(props: {
+  scope: SessionScope
+  tabId: string
+  store: SidebarStore
+  /** Host-downlink command-title updates (the tab title follows the running
+   *  command's first token). The caller routes it through updateTab so both
+   *  local tabs (patchTab) and workspace-bound stubs (windows store →
+   *  every session) retitle. */
+  onTitleChange?: (title: string) => void
+}) {
+  const { scope, tabId, store, onTitleChange } = props
   const hostRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
@@ -166,7 +196,16 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
         sendResize()
       }
       socket.onmessage = (event) => {
-        if (typeof event.data === 'string') term.write(event.data)
+        if (typeof event.data !== 'string') return
+        // Host downlink control frames ({type:'title',…}) are intercepted;
+        // anything else — including terminal output that merely looks like
+        // JSON — is written verbatim.
+        const frame = parseDownlinkFrame(event.data)
+        if (frame !== null) {
+          if (frame.type === 'title') onTitleChange?.(frame.title)
+          return
+        }
+        term.write(event.data)
       }
       socket.onclose = (event) => {
         setConnected(false)
@@ -291,7 +330,7 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
       term.dispose()
       connectRef.current = null
     }
-  }, [scope.sessionId, scope.cwd, tabId, store])
+  }, [scope.sessionId, scope.cwd, tabId, store, onTitleChange])
 
   return (
     <div className={css.terminalWrap}>

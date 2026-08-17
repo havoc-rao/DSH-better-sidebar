@@ -86,6 +86,91 @@ export interface SidebarPty {
   /** Whether the top-level process exited (transcript stays replayable). */
   exited: boolean
   exitCode?: number | null
+  /** The settled command title (first token of the last executed command
+   *  line, VSCode-style; '' until the first command). Fed by
+   *  {@link digestCommandInput} at the attach layer and broadcast to every
+   *  connected socket — the client tab title follows. */
+  title: string
+  /** The in-progress input line (unsettled keystrokes), shared across
+   *  every connection of this pty. */
+  inputLine: string
+}
+
+/**
+ * The digest state of one pty's command-line tracking (see
+ * {@link digestCommandInput}).
+ */
+export interface CommandTitleState {
+  /** The last settled command token ('' until the first command). */
+  title: string
+  /** The in-progress input line (unsettled). */
+  line: string
+}
+
+/**
+ * Digest one chunk of terminal INPUT (the user's keystrokes as the host
+ * receives them) into the running command-line buffer, settling a title on
+ * Enter. Heuristic — no shell integration: the echoed command line is
+ * rebuilt from input, and the FIRST token of the last settled line becomes
+ * the tab title (`npm run dev` → `npm`, `git log` → `git`). Edit keys are
+ * honored (backspace pops the last char), ANSI control sequences are
+ * skipped (arrows/home/end never pollute the line), C0 controls are
+ * stripped at settlement, and only a non-empty settlement updates the
+ * title (a bare Enter keeps the previous title). A multi-line paste settles
+ * one line at a time — the LAST line wins.
+ */
+export function digestCommandInput(state: CommandTitleState, text: string): CommandTitleState {
+  let { title, line } = state
+  let i = 0
+  while (i < text.length) {
+    const ch = text[i]!
+    if (ch === '\r' || ch === '\n') {
+      const token = firstTokenOf(line)
+      line = ''
+      if (token !== '') title = token
+      i += 1
+      continue
+    }
+    if (ch === '\x1b') {
+      i = skipEscapeSequence(text, i)
+      continue
+    }
+    if (ch === '\x7f' || ch === '\b') {
+      line = line.slice(0, -1)
+      i += 1
+      continue
+    }
+    line += ch
+    i += 1
+  }
+  return { title, line }
+}
+
+/** Advance past one ESC-introduced sequence starting at `i` (the ESC). */
+function skipEscapeSequence(text: string, i: number): number {
+  i += 1
+  if (i >= text.length) return i
+  const intro = text[i]!
+  if (intro === '[' || intro === ']') {
+    // CSI or OSC: skip to the final byte (@-~) or the OSC BEL terminator.
+    i += 1
+    while (i < text.length) {
+      const c = text[i]!
+      i += 1
+      if (c === '\x07') break
+      if (c >= '@' && c <= '~') break
+    }
+    return i
+  }
+  if (intro === '(' || intro === ')') return Math.min(text.length, i + 2)
+  return i + 1 // lone ESC
+}
+
+/** The first whitespace-delimited token of a line, C0-stripped ('' if empty). */
+function firstTokenOf(line: string): string {
+  const cleaned = line.replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  if (cleaned === '') return ''
+  return cleaned.split(/\s+/)[0]!
 }
 
 /**
@@ -174,6 +259,8 @@ export class PtyManager {
       }),
       transcript: '',
       exited: false,
+      title: '',
+      inputLine: '',
     }
     handle.pty.onData((data) => {
       handle.transcript += data
