@@ -677,7 +677,10 @@ export function createBetterSidebarService(store: SidebarStore, windows?: Worksp
         const bound = windows.windowsOfSession(targetSessionId)
           .find(window => window.type === tab.type && window.path === seed.path)
         if (bound !== undefined) {
-          const stubLeaf = leafWithTab(landed.splits, bound.id)
+          // Stubs live in the BOTTOM box's first leaf. The activate reducer
+          // moves activePane into the bottom tree, so the auto-expand block
+          // below opens the bottom panel — the focus lands in sight.
+          const stubLeaf = leafWithTab(landed.bottomSplits, bound.id)
           if (stubLeaf !== undefined) {
             landed = removeTabId(landed, tab.id)
             landed = activateTabReducer(landed, stubLeaf.id, bound.id)

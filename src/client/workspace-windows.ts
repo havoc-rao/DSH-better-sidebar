@@ -195,15 +195,18 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
         }
         return { ...node, children: node.children.map(strip) }
       }
-      const target = firstLeaf(s.splits)
+      const target = firstLeaf(s.bottomSplits)
       const splits = strip(s.splits)
       const bottomSplits = strip(s.bottomSplits)
-      if (splits === s.splits && bottomSplits === s.bottomSplits) return s
       return {
         ...s,
-        splits: mapLeaf(splits, target.id, leaf => {
-          // The bound window's old slot is gone; the new stub takes the
-          // active slot when the bound tab was the active one anywhere.
+        // Pinned windows live in the BOTTOM box: binding opens the bottom
+        // panel in this session so the result is in sight, and the bottom
+        // first leaf's active moves to the stub when the bound tab was the
+        // active one anywhere.
+        bottomOpen: true,
+        splits,
+        bottomSplits: mapLeaf(bottomSplits, target.id, leaf => {
           if (wasActiveAnywhere) leaf.active = id
         }),
       }
@@ -229,11 +232,13 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     if (keepInSession) {
       const localId = mintTabId()
       this.sidebarStore?.reduce(s => {
-        const target = firstLeaf(s.splits)
+        // The stub lives in the BOTTOM box's first leaf: the detached local
+        // tab materializes there (in place of the stub).
+        const target = firstLeaf(s.bottomSplits)
         if (!target.tabs.some(candidate => candidate.id === tabId)) return s
         return {
           ...s,
-          splits: mapLeaf(s.splits, target.id, leaf => {
+          bottomSplits: mapLeaf(s.bottomSplits, target.id, leaf => {
             leaf.tabs = leaf.tabs.map(candidate => candidate.id === tabId
               ? {
                 id: localId,
@@ -283,10 +288,11 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     return this.workspaceList.items.find(workspace => workspace.sessionIds.includes(sessionId))
   }
 
-  /** Focus a stub in the active session's tree (bind-dedupe path). */
+  /** Focus a stub in the active session's BOTTOM tree (bind-dedupe path:
+   *  stubs live in the bottom box's first leaf). */
   private focusStub(tabId: string): void {
     this.sidebarStore?.reduce(s => {
-      const target = firstLeaf(s.splits)
+      const target = firstLeaf(s.bottomSplits)
       if (!target.tabs.some(candidate => candidate.id === tabId)) return s
       return activateTab(s, target.id, tabId)
     })

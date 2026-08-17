@@ -70,6 +70,9 @@ function mountSidebar(): MountedSidebar {
   } as unknown as Context
   const windows = createWorkspaceWindowsStore(ctx)
   windows.attachSidebarStore(store)
+  // The bottom panel's first-expansion auto-terminal would open a stray
+  // local terminal whenever a bind expands the panel — keep it off here.
+  store.setPrefs({ ...store.getPrefs(), bottomPanelAutoTerminal: false })
   // Fresh-session seed before the first render (same as the other shell tests).
   store.setSession('s1')
   const serviceWithWindows = createBetterSidebarService(store, windows)
@@ -130,11 +133,12 @@ describe('workspace-bound windows UI', () => {
     const bindItem = openTabMenu(container, 'a.ts', t('bindToWorkspaceWithName', { title: 'Workspace A' }))
     act(() => { bindItem.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
-    // The window moved into the workspace store; the stub renders pinned.
-    const bound = store.getSnapshot().state ? firstLeaf(store.getSnapshot().state!.splits).tabs.find(t => isBoundTabId(t.id)) : undefined
-    expect(bound).toBeDefined()
-    expect(store.getSnapshot().state!.splits !== undefined).toBe(true)
-    const stubs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
+    // The window moved into the workspace store; the stub renders pinned
+    // in the BOTTOM box (which the bind just opened).
+    const state = store.getSnapshot().state!
+    expect(state.bottomOpen).toBe(true)
+    expect(firstLeaf(state.bottomSplits).tabs.some(t => isBoundTabId(t.id))).toBe(true)
+    const stubs = allLeaves(state.bottomSplits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
     expect(stubs).toHaveLength(1)
     // The pinned tab keeps its title and shows the pin glyph.
     expect(tabEl(container, 'a.ts')).not.toBeNull()
@@ -142,7 +146,7 @@ describe('workspace-bound windows UI', () => {
 
     // Every session of the workspace sees the window (s2 was not loaded).
     act(() => { store.setSession('s2') })
-    const s2Stubs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
+    const s2Stubs = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
     expect(s2Stubs.map(t => t.id)).toEqual([stubs[0]!.id])
 
     unmount()
@@ -170,13 +174,13 @@ describe('workspace-bound windows UI', () => {
     act(() => { close!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
     // Armed: nothing closed yet, the button shows the confirm state.
-    const stubsArmed = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
+    const stubsArmed = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
     expect(stubsArmed).toHaveLength(1)
     expect(close!.getAttribute('aria-label')).toBe(t('closeBoundConfirm'))
 
     // A second click on the SAME button confirms: gone from store + tree.
     act(() => { close!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-    const stubs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
+    const stubs = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).filter(t => isBoundTabId(t.id))
     expect(stubs).toHaveLength(0)
     // b.ts (a plain local tab) survived — and its close is a ONE-click close.
     expect(tabEl(container, 'b.ts')).not.toBeNull()
@@ -198,13 +202,14 @@ describe('workspace-bound windows UI', () => {
     const unbindItem = openTabMenu(container, 'a.ts', t('unbindFromWorkspace'))
     act(() => { unbindItem.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
-    // The window left the workspace store; a local tab materialized here.
+    // The window left the workspace store; a local tab materialized here
+    // in the bottom box (in place of the stub).
     expect(container.querySelector('[class*="tabPin"]')).toBeNull()
-    const local = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.path === '/ws-a/src/a.ts')
+    const local = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).find(t => t.path === '/ws-a/src/a.ts')
     expect(local).toBeDefined()
     expect(isBoundTabId(local!.id)).toBe(false)
     // And it is the active tab again (the stub slot keeps the focus).
-    expect(firstLeaf(store.getSnapshot().state!.splits).active).toBe(local!.id)
+    expect(firstLeaf(store.getSnapshot().state!.bottomSplits).active).toBe(local!.id)
 
     unmount()
   })
@@ -235,10 +240,11 @@ describe('workspace-bound windows UI', () => {
 
     expect(windows.getSnapshot().windows).toHaveLength(1)
     expect(windows.getSnapshot().windows[0]!.type).toBe('terminal')
-    // The local terminal left the tree; the stub (pinned, same title) is there.
-    const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs)
-    expect(tabs.some(t => t.id === 'terminal:1')).toBe(false)
-    const stub = tabs.find(t => isBoundTabId(t.id))
+    // The local terminal left the right tree; the stub (pinned, same
+    // title) lives in the bottom box.
+    const rightTabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs)
+    expect(rightTabs.some(t => t.id === 'terminal:1')).toBe(false)
+    const stub = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).find(t => isBoundTabId(t.id))
     expect(stub).toBeDefined()
     expect(tabEl(container, 'Terminal')).not.toBeNull()
     expect(container.querySelector('[class*="tabPin"]')).not.toBeNull()

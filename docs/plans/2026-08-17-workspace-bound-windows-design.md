@@ -9,7 +9,7 @@
 给侧边栏 tab 增加「绑定到工作区」能力：
 
 1. **右键菜单**：tab 上右键出现「绑定到工作区」/「解除工作区绑定」。
-2. **绑定语义**：绑定后，该窗口成为**工作区级共享窗口**——同一 workspace 下的**所有 session** 的侧边栏都渲染这个窗口。
+2. **绑定语义**：绑定后，该窗口成为**工作区级共享窗口**——同一 workspace 下的**所有 session** 的底部面板（bottom box）都渲染这个窗口（右面板保持会话本地）。
 3. **状态同步**：窗口的**定义**（type / path / diff / title / meta）跨 session 同步——在 session A 里把绑定的文件窗口切到另一个文件（原地切换 / 打开新文件），session B 的同名窗口立即跟随。
 
 ## 2. 非目标（v1 边界）
@@ -18,9 +18,11 @@
 - **agent 终端（`agent:` 前缀）不可绑定**：模型创建/关闭它们，reconcile 会与 pin 冲突；右键菜单对 agent 终端不出现（其余类型全部可绑定）。
 - **终端是「窗口共享、进程独立」**：绑定一个终端 = 每个 session 各有一个自己的实时 shell（host 按 `sessionId:tabId` 键控 PTY，stub id 直接可用，零 host 改动）；git/subagent/Files 首页同理——共享窗口，各 session 渲染自己的实例。
 - **不做窗口拖拽排序 / 工作区窗口管理器 UI**（绑定顺序 = 绑定时间顺序）。
+- **绑定窗口只进底部面板（bottom box）**：stub 渲染在 `bottomSplits` 第一叶；右面板不受影响。绑定操作会**展开当前会话的底部面板**让结果可见；其他会话保持原样（用户自行展开）。
 - **关闭二次确认**：pin 窗口是共享窗口（✕ = 全工作区关闭），误触代价大——第一次点 ✕ 进入红色待确认态（2s 超时，点其他 tab/开菜单即解除），第二次点击才真正关闭；普通 tab 仍单击即关。
 - **只进右面板**：绑定窗口渲染在右面板 split 树的**第一叶**；底部面板不渲染（v1 保持单一工作台语义，避免"两处不同步"的新困惑）。
 - **不做窗口拖拽排序 / 工作区窗口管理器 UI**（绑定顺序 = 绑定时间顺序）。
+- **绑定窗口只进底部面板（bottom box）**：stub 渲染在 `bottomSplits` 第一叶；右面板不受影响。绑定操作会**展开当前会话的底部面板**让结果可见；其他会话保持原样（用户自行展开）。
 - **关闭二次确认**：pin 窗口是共享窗口（✕ = 全工作区关闭），误触代价大——第一次点 ✕ 进入红色待确认态（2s 超时，点其他 tab/开菜单即解除），第二次点击才真正关闭；普通 tab 仍单击即关。
 - **不改 host 半逻辑、不修改 DSH 源码**；不新增 PrefsSchema 字段（无设置项）。
 - 不做跨浏览器 tab 的实时同步（localStorage 同源共享，同浏览器多窗口天然同步；跨设备/多窗口实时推送是 host 存储改造，超出插件范围）。
@@ -98,7 +100,7 @@ class WorkspaceWindowsStore {
 
 `reconcileWorkspaceWindows(state, windows): SidebarState`（state.ts 的纯函数）：
 
-- 取 `splits` 树**第一叶**：
+- 取 `bottomSplits` 树**第一叶**（pin 窗口放底部 box）：
   1. 移除 id 以 `ws:` 开头、但不在 `windows` 里的 stub（解除绑定的残留）；
   2. 为 store 里缺失的窗口追加 stub（`{ id, type, title }`，title 仅作持久化占位）；
   3. `active` 指向已移除 stub 时置 null。
@@ -115,7 +117,7 @@ class WorkspaceWindowsStore {
 1. 校验：当前 session 有 workspace；非 agent 终端（模型托管，排除）。
 2. 铸造 stub id：`ws:<wsId8>:<n>`（per-workspace 计数器，持久化在 blob 里，跨 reload 稳定）。
 3. 定义（type/title/path/diff/meta）写入 store → store 变更 → 全量 reconcile。
-4. 本 session 树里删除**被绑定的 tab 本身**（两个树）；内容窗口（有 path）同时删同 type+path 的重复——path-less（终端等）**不**删同类型本地 tab（其他本地终端不是重复）。active 若指向被删 tab，交给新 stub。
+4. 本 session 树里删除**被绑定的 tab 本身**（两个树）；内容窗口（有 path）同时删同 type+path 的重复——path-less（终端等）**不**删同类型本地 tab（其他本地终端不是重复）。绑定后**展开底部面板**（`bottomOpen: true`）；若被绑定 tab 曾是 active（任意位置），底部第一叶的 active 交给新 stub。
 5. 身份规则：内容窗口按 type+path 去重（重复绑定聚焦既有 stub）；path-less 窗口**永不去重**——绑定两个本地终端 = 两个共享终端窗口。
 
 ### 4.6 解除绑定（unbind）——两种出口
@@ -132,7 +134,7 @@ class WorkspaceWindowsStore {
   - 未绑定：「绑定到工作区 “<workspace title>”」（无 workspace → disabled + 提示文案）；
   - 已绑定：「解除工作区绑定」；
   - agent 终端（`agent:` 前缀）：菜单不出现（模型托管）。
-- **底部面板**：不渲染 stub（reconcile 只碰 `splits` 第一叶）。
+- **渲染位置**：stub 渲染在**底部面板**（bottom box）第一叶——reconcile 只碰 `bottomSplits` 第一叶，右面板零变化；两个面板的 TabBar 分区逻辑通用，底部面板的 strip 同样把 stub 分区显示在尾部。
 
 ### 4.8 服务路由（service.ts）
 
@@ -192,6 +194,7 @@ class WorkspaceWindowsStore {
 - **bind 的 already-bound 路径也清本地重复**：设计初稿只聚焦；实现中 `stripLocalDuplicates` 在两条路径共用（防御 open 管道未拦截的本地重复）。
 - **bind 焦点语义**：仅当被绑定 tab 是激活 tab 时，stub 接替 `leaf.active`（初稿"始终聚焦 stub"改为"跟随原激活"）；判定从"第一叶 active"放宽为"任意位置 active"（path-less 绑定支持后，被绑定 tab 可能不在第一叶）。
 - **绑定范围扩展（用户要求）**：初稿仅内容型（path）可绑定 → 实施为**全部 tab 类型可绑定**（agent 终端除外）。终端/git/subagent/Files 首页为「窗口共享、实例每会话独立」：终端 stub 直接走 UI-tab PTY 路由（host 按 `sessionId:tabId` 键控，stub id 即 tabId，零 host 改动）；`WorkspaceWindow` 增 `diff` 字段（diff 窗口绑定携带 diff ref，解除时原样物化）；bind 的删除规则改为「删被绑定 tab 本身 + 内容重复，不删同类型 path-less tab」；path-less 永不去重。
+- **stub 落点改到底部面板（用户要求）**：初稿/首版把 stub 渲染在右面板第一叶 → 用户要求「pin 到底部 box 的就放到底部」，改为 `bottomSplits` 第一叶。连带改动：bind 展开底部面板 + active 移交目标改底部树；unbind 分离物化到底部树；service 的 bound 聚焦路径改查 `bottomSplits`（activateTabReducer 把 activePane 移入底部树，auto-expand 块自动展开底部面板）；store/UI/service 测试全部改树。底部面板首次展开自动终端（`bottomPanelAutoTerminal`）与 pin 窗口共存：展开时既有行为保留。
 - **测试发现的真实 bug**：`resolveTab` 最初定义在 Sidebar 的 no-session 早退 return 之后（hook 顺序破坏，首帧渲染即崩溃）——已上移；UI 测试的 uSES 快照稳定性教训（每次调用返回新对象会死循环）按既有 jsdom 模式处理。
 - **文档未写明的行为**：设置页禁用某 tab 类型不影响已绑定窗口渲染（显式 pin 优先）；底部面板不渲染 stub（reconcile 只碰右树第一叶）。
 - 未做：`SIDEBAR_FEATURES` 未追加 `'workspaceWindows'`（本期无消费插件需要 gate；发布时按需加）。

@@ -789,15 +789,16 @@ export function reconcileAgentTerminals(
 
 /**
  * Reconcile a session state against its workspace's bound windows: the
- * FIRST leaf of the right tree carries one stub per bound window. Stale
- * stubs (unbound meanwhile, or a foreign id under the reserved prefix) are
- * dropped and missing stubs are appended in store order; an `active` that
- * pointed at a dropped stub is nulled (a dangling active corrupts the next
- * sanitize pass). Idempotent: an already-synced state returns the same
- * reference.
+ * FIRST leaf of the BOTTOM tree carries one stub per bound window (pinned
+ * windows live in the bottom "box" — the right panel stays session-local).
+ * Stale stubs (unbound meanwhile, or a foreign id under the reserved
+ * prefix) are dropped and missing stubs are appended in store order; an
+ * `active` that pointed at a dropped stub is nulled (a dangling active
+ * corrupts the next sanitize pass). Idempotent: an already-synced state
+ * returns the same reference.
  */
 export function reconcileWorkspaceWindows(state: SidebarState, windows: readonly WorkspaceWindow[]): SidebarState {
-  const target = firstLeaf(state.splits)
+  const target = firstLeaf(state.bottomSplits)
   const boundIds = new Set(windows.map(w => w.id))
   const existingStubs = new Map(
     target.tabs.filter(tab => isBoundTabId(tab.id)).map(tab => [tab.id, tab] as const),
@@ -816,7 +817,7 @@ export function reconcileWorkspaceWindows(state: SidebarState, windows: readonly
   if (sameTabs && active === target.active) return state
   return {
     ...state,
-    splits: mapLeaf(state.splits, target.id, (leaf) => {
+    bottomSplits: mapLeaf(state.bottomSplits, target.id, (leaf) => {
       leaf.tabs = rebuilt
       leaf.active = active
     }),
