@@ -180,6 +180,14 @@ export const api = {
    *  this explicit route). */
   ptyClose: (scope: SessionScope, tab: string) =>
     call<{ ok: true }>('pty.close', scopePayload(scope, { tab })),
+  /** Re-parent a live terminal process to another tab id — the workspace
+   *  bind/unbind path keeps the shell alive across the tab-id change
+   *  (local ↔ `ws:` stub): the host moves the process + transcript to the
+   *  new key instead of releasing + respawning. Best-effort: a no-op when
+   *  the source has no live process, so a failure degrades to the old
+   *  spawn-fresh behavior. */
+  ptyReparent: (scope: SessionScope, from: string, to: string) =>
+    call<{ ok: true }>('pty.reparent', scopePayload(scope, { from, to })),
   /** Release an agent terminal by uuid (tab closed while WS was down). */
   agentPtyClose: (uuid: string) =>
     call<{ ok: true }>('agent-pty.close', { uuid }),

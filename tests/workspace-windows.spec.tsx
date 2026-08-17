@@ -227,7 +227,7 @@ describe('workspace-bound windows UI', () => {
     unmount()
   })
 
-  it('terminal tabs can be bound too (path-less windows share the window)', () => {
+  it('terminal tabs can be bound too (path-less windows share the window)', async () => {
     const { container, store, windows, unmount } = mountSidebar()
     // Open a local terminal (directly into the tree — the + menu flow
     // would go through the descriptor's createTab).
@@ -237,6 +237,10 @@ describe('workspace-bound windows UI', () => {
 
     const bindItem = openTabMenu(container, 'Terminal', t('bindToWorkspaceWithName', { title: 'Workspace A' }))
     act(() => { bindItem.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    // The bind AWAITS the best-effort pty re-parent (a real fetch that
+    // fails here and is swallowed) before swapping the trees — flush the
+    // microtasks inside act so the follow-up re-render stays wrapped.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 
     expect(windows.getSnapshot().windows).toHaveLength(1)
     expect(windows.getSnapshot().windows[0]!.type).toBe('terminal')

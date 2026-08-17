@@ -36,7 +36,7 @@ import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { defaultShell, digestCommandInput, ensureSpawnHelper, PtyManager, ptyKeyOf } from './pty-manager.ts'
+import { defaultShell, digestCommandInput, ensureSpawnHelper, isSharedTabId, PtyManager, ptyKeyOf } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
@@ -332,6 +332,26 @@ function buildApi(
       // no-op ok is the honest answer — never an error the client must show.
       // The key maps shared stub ids (`ws:`) to the workspace-shared pty.
       ptyManager?.close(ptyKeyOf(sessionId, tab))
+      return { ok: true }
+    },
+    // Re-parent a live terminal process to another tab id — the workspace
+    // bind/unbind path. Binding a terminal swaps its tab id (local →
+    // `ws:` stub) and unbinding mints a fresh local id; without
+    // re-parenting the old key's process is released (the unmount close
+    // frame) while the new key's attach spawns a fresh shell, so a
+    // long-running process dies on every pin toggle. This route moves the
+    // LIVE handle (process + transcript + command title) to the new key
+    // instead; both keys derive exactly like the attach path (`ws:` =
+    // workspace-shared, otherwise session-scoped). No-op when the source
+    // has no live process (never opened or already exited) — the new tab
+    // spawns fresh, status quo.
+    'pty.reparent': (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      const from = requireString(payload, 'from')
+      const to = requireString(payload, 'to')
+      const fromKey = isSharedTabId(from) ? `shared:${from}` : `${sessionId}:${from}`
+      const toKey = isSharedTabId(to) ? `shared:${to}` : `${sessionId}:${to}`
+      ptyManager?.reparent(fromKey, toKey, sessionId, isSharedTabId(to))
       return { ok: true }
     },
     // Release an agent terminal by uuid. The WS close frame already does
@@ -831,16 +851,26 @@ async function attachTerminal(
     }
     const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
     const handle = ptyManager.open(sessionId, tabId, cwd, 80, 24)
+    // The socket's OWN key snapshot: a workspace bind/unbind may
+    // RE-PARENT this handle to a new key while this socket is still
+    // attached (the migration is awaited before the old view unmounts).
+    // Every keyed decision of this socket — its title-registry slot, the
+    // close frame, the drop grace — must target the key it ATTACHED to,
+    // never the handle's (possibly migrated) live key: the old tab's
+    // close frame must not kill the re-parented process, and its drop
+    // must not schedule a grace close on the new key.
+    const socketKey = handle.key
+    const socketShared = handle.shared
     // Replay the transcript, then follow live output.
     if (handle.transcript !== '') ws.send(handle.transcript)
     // The command-title registry: every socket attached to a pty, so a
     // title settlement (see digestCommandInput) reaches ALL connected
     // sessions — a workspace-shared terminal's tab title updates in every
     // session at once.
-    let sockets = terminalSockets.get(handle.key)
+    let sockets = terminalSockets.get(socketKey)
     if (sockets === undefined) {
       sockets = new Set()
-      terminalSockets.set(handle.key, sockets)
+      terminalSockets.set(socketKey, sockets)
     }
     sockets.add(ws)
     const broadcastTitle = (): void => {
@@ -877,8 +907,11 @@ async function attachTerminal(
         // Not JSON: terminal input.
       }
       if (control !== null && control.type === 'close') {
-        // The owning tab was closed: release the quota immediately.
-        ptyManager.scheduleClose(handle.key, 0)
+        // The owning tab was closed: release the quota immediately. The
+        // socket's ATTACHED key (not the handle's live key): a bind/unbind
+        // may have re-parented the process away, and the old tab's close
+        // must not kill it.
+        ptyManager.scheduleClose(socketKey, 0)
         return
       }
       if (handle.exited) return
@@ -907,16 +940,18 @@ async function attachTerminal(
       dataSub.dispose()
       exitSub.dispose()
       // Drop this socket from the title registry; an empty registry entry
-      // is cleaned up so dead keys do not accumulate.
+      // is cleaned up so dead keys do not accumulate. The socket's own
+      // attached key (see socketKey above): a re-parented handle must not
+      // let a dying socket wipe the new key's registry entry.
       sockets?.delete(ws)
-      if (sockets !== undefined && sockets.size === 0) terminalSockets.delete(handle.key)
+      if (sockets !== undefined && sockets.size === 0) terminalSockets.delete(socketKey)
       // A bare socket drop (refresh, tab switch) leaves the process alive
       // for a grace period so a quick reconnect keeps it; the reconnect's
       // open() cancels the pending close. A SHARED pty (workspace-bound
       // terminal) is exempt: other sessions may still be attached and the
       // window itself keeps living — only the close frame (the window
       // closed everywhere) or plugin teardown kills it.
-      if (!handle.shared) ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
+      if (!socketShared) ptyManager.scheduleClose(socketKey, resolved.reconnectGraceMs)
     })
   } catch (error) {
     ws.close(1011, error instanceof Error ? error.message : String(error))

@@ -94,6 +94,13 @@ export interface SidebarPty {
   /** The in-progress input line (unsettled keystrokes), shared across
    *  every connection of this pty. */
   inputLine: string
+  /** Whether the handle was RE-PARENTED from another key (workspace
+   *  bind/unbind keep the process across the tab-id change). A migrated
+   *  process must survive a cwd difference at its new key — it was
+   *  spawned deliberately elsewhere and the tab-id change is not a reason
+   *  to restart it (the authoritative-cwd respawn exists for the
+   *  page-load hydrate race of freshly spawned per-session ptys). */
+  migrated?: boolean
 }
 
 /**
@@ -226,7 +233,12 @@ export class PtyManager {
     this.cancelClose(key)
     const existing = this.sessions.get(key)
     if (existing !== undefined && !existing.exited) {
-      if (!shared && existing.cwd !== cwd) this.close(key)
+      // A MIGRATED handle (workspace bind/unbind re-parented a live
+      // process to this key) must survive a cwd difference: the shell was
+      // deliberately spawned elsewhere and the id change is not a reason
+      // to restart it. Only never-migrated per-session handles respawn on
+      // the authoritative-cwd race.
+      if (!shared && !existing.migrated && existing.cwd !== cwd) this.close(key)
       else return existing
     }
     if (existing !== undefined) this.close(key)
@@ -274,6 +286,40 @@ export class PtyManager {
     })
     this.sessions.set(key, handle)
     return handle
+  }
+
+  /**
+   * Re-parent a live handle to another key (workspace bind/unbind keep
+   * the running process alive across the tab-id change: bind moves
+   * `sessionId:tab` → `shared:ws:…`, unbind moves back). The handle keeps
+   * its process, transcript, command title and input line; `sessionId` /
+   * `shared` adopt the TARGET key's domain — a bound terminal becomes
+   * workspace-shared and quota-exempt, an unbound one becomes
+   * session-scoped and counts toward that session's quota. The handle is
+   * MUTATED in place (never copied): the pty's onData/onExit closures
+   * captured the original object, so a copy would diverge — new output
+   * would keep appending to the old object while the migrated key's
+   * transcript froze. Cancels any pending scheduled close so the process
+   * cannot die mid-flight, and defensively closes a handle already
+   * present at the target key (the minted ids make that unreachable).
+   * No-op (false) when the source key has no live handle — the new tab
+   * spawns fresh, status quo.
+   */
+  reparent(fromKey: string, toKey: string, sessionId: string, shared: boolean): boolean {
+    const handle = this.sessions.get(fromKey)
+    if (handle === undefined) return false
+    if (fromKey !== toKey) {
+      this.cancelClose(fromKey)
+      const existing = this.sessions.get(toKey)
+      if (existing !== undefined) this.close(toKey)
+      this.sessions.delete(fromKey)
+    }
+    handle.key = toKey
+    handle.sessionId = sessionId
+    handle.shared = shared
+    handle.migrated = true
+    this.sessions.set(toKey, handle)
+    return true
   }
 
   /**

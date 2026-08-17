@@ -6,7 +6,7 @@
  * session layouts never persist stubs).
  */
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   allLeaves, createSidebarStore, firstLeaf, isBoundTabId, openTabInActivePane,
   type SidebarStore, type SidebarTab,
@@ -46,6 +46,28 @@ function firstLeafTabs(store: SidebarStore, sessionId: string): SidebarTab[] {
 /** Flush the debounced localStorage writes (both stores use a 200ms timer). */
 const flushPersist = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 260))
 
+/** Stub the client API's fetch with fake sidebar RPC responses and return
+ *  the captured calls ({method, payload}) — used to assert the pty
+ *  re-parenting the store issues around terminal bind/unbind. */
+function stubSidebarApi(): Array<{ method: string; payload: Record<string, unknown> }> {
+  const calls: Array<{ method: string; payload: Record<string, unknown> }> = []
+  vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const href = String(url)
+    calls.push({
+      method: href.slice(href.lastIndexOf('/') + 1),
+      payload: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+    })
+    return {
+      ok: true,
+      json: async () => ({ ok: true, value: { ok: true } }),
+    } as unknown as Response
+  }))
+  return calls
+}
+
+/** A session-local terminal tab (path-less; binding never dedupes it). */
+const terminalTab = (id: string): SidebarTab => ({ id, type: 'terminal', title: 'Terminal' })
+
 /** Open a file tab in the session's first leaf via the state-level open. */
 function openFileTab(store: SidebarStore, sessionId: string, path: string, title = 'a.ts'): SidebarTab {
   store.setSession(sessionId)
@@ -64,7 +86,10 @@ function makePair() {
 }
 
 beforeEach(() => { localStorage.clear() })
-afterEach(() => { localStorage.clear() })
+afterEach(() => {
+  localStorage.clear()
+  vi.unstubAllGlobals()
+})
 
 describe('workspace windows store', () => {
   it('bind mints a stable stub id and syncs every session of the workspace', () => {
@@ -265,20 +290,20 @@ describe('workspace windows store', () => {
       .toEqual([windows.windowsOfSession('c')[0]!.id])
   })
 
-  it('binds a path-less window (terminal): local tab replaced, other sessions get the stub, same-type tabs untouched', () => {
+  it('binds a path-less window (terminal): local tab replaced, other sessions get the stub, same-type tabs untouched', async () => {
     const { sidebar, windows } = makePair()
     // Two local terminals side by side; bind ONLY the first. (The bind
     // always runs in the session that owns the tab — the context menu
     // lives there — so we bind while 'a' is active.)
-    const t1 = { id: 'terminal:1', type: 'terminal', title: 'Terminal' }
-    const t2 = { id: 'terminal:2', type: 'terminal', title: 'Terminal' }
+    const t1 = terminalTab('terminal:1')
+    const t2 = terminalTab('terminal:2')
     sidebar.setSession('a')
     sidebar.reduce(s => openTabInActivePane(s, t1))
     sidebar.reduce(s => openTabInActivePane(s, t2))
     sidebar.setSession('b') // load the sibling session into the cache
     sidebar.setSession('a') // back to the session that owns the terminals
 
-    windows.bind(t1)
+    await windows.bind(t1)
 
     const bound = windows.getSnapshot().windows
     expect(bound).toHaveLength(1)
@@ -304,15 +329,15 @@ describe('workspace windows store', () => {
     expect(firstLeafTabs(sidebar, 'b').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([stubId])
   })
 
-  it('binding two path-less windows creates two shared windows (no dedupe)', () => {
+  it('binding two path-less windows creates two shared windows (no dedupe)', async () => {
     const { sidebar, windows } = makePair()
-    const t1 = { id: 'terminal:1', type: 'terminal', title: 'Terminal' }
-    const t2 = { id: 'terminal:2', type: 'terminal', title: 'Terminal' }
+    const t1 = terminalTab('terminal:1')
+    const t2 = terminalTab('terminal:2')
     sidebar.setSession('a')
     sidebar.reduce(s => openTabInActivePane(s, t1))
-    windows.bind(t1)
+    await windows.bind(t1)
     sidebar.reduce(s => openTabInActivePane(s, t2))
-    windows.bind(t2)
+    await windows.bind(t2)
 
     const bound = windows.getSnapshot().windows
     expect(bound).toHaveLength(2)
@@ -341,5 +366,88 @@ describe('workspace windows store', () => {
     windows.unbind(bound.id, true)
     const local = firstLeafTabs(sidebar, 'a').find(t => t.type === 'diff')
     expect(local?.diff).toEqual({ kind: 'worktree', path: '/ws-a/src/a.ts', staged: true })
+  })
+
+  it('binding a TERMINAL re-parents its pty to the stub key BEFORE the tree swap', async () => {
+    const { sidebar, windows } = makePair()
+    const calls = stubSidebarApi()
+    const t1 = terminalTab('terminal:1')
+    sidebar.setSession('a')
+    sidebar.reduce(s => openTabInActivePane(s, t1))
+
+    await windows.bind(t1)
+
+    const stubId = windows.getSnapshot().windows[0]!.id
+    // The reparent call precedes the swap: from the local tab to the
+    // stub's shared key, so the host moves the LIVE process there and the
+    // stub's attach reuses it instead of spawning a fresh shell.
+    expect(calls).toEqual([
+      { method: 'pty.reparent', payload: { sessionId: 'a', from: 'terminal:1', to: stubId } },
+    ])
+    expect(windows.getSnapshot().windows).toHaveLength(1)
+    expect(firstLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id))).toHaveLength(1)
+  })
+
+  it('binding a non-terminal window never touches the pty', async () => {
+    const { sidebar, windows } = makePair()
+    const calls = stubSidebarApi()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    await windows.bind(tab)
+    expect(calls).toEqual([])
+  })
+
+  it('unbinding a TERMINAL (keep) re-parents the shared pty to the minted local id', async () => {
+    const { sidebar, windows } = makePair()
+    const calls = stubSidebarApi()
+    const t1 = terminalTab('terminal:1')
+    sidebar.setSession('a')
+    sidebar.reduce(s => openTabInActivePane(s, t1))
+    await windows.bind(t1)
+    const stubId = windows.getSnapshot().windows[0]!.id
+    calls.length = 0
+
+    await windows.unbind(stubId, true)
+
+    const local = firstLeafTabs(sidebar, 'a').find(t => t.type === 'terminal')
+    expect(local).toBeDefined()
+    expect(isBoundTabId(local!.id)).toBe(false)
+    // from = the stub (shared key), to = the NEW local id (session key) —
+    // the host moves the process back into this session.
+    expect(calls).toEqual([
+      { method: 'pty.reparent', payload: { sessionId: 'a', from: stubId, to: local!.id } },
+    ])
+    expect(windows.getSnapshot().windows).toHaveLength(0)
+  })
+
+  it('closing a bound terminal (unbind keep=false) does NOT reparent — the pty dies with the window', async () => {
+    const { sidebar, windows } = makePair()
+    const calls = stubSidebarApi()
+    const t1 = terminalTab('terminal:1')
+    sidebar.setSession('a')
+    sidebar.reduce(s => openTabInActivePane(s, t1))
+    await windows.bind(t1)
+    const stubId = windows.getSnapshot().windows[0]!.id
+    calls.length = 0
+
+    await windows.unbind(stubId, false)
+
+    expect(calls).toEqual([])
+    expect(windows.getSnapshot().windows).toHaveLength(0)
+  })
+
+  it('a failed pty reparent degrades to the old behavior (bind still completes)', async () => {
+    const { sidebar, windows } = makePair()
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('network down')
+    }))
+    const t1 = terminalTab('terminal:1')
+    sidebar.setSession('a')
+    sidebar.reduce(s => openTabInActivePane(s, t1))
+
+    await windows.bind(t1)
+
+    // The bind itself still lands (the reparent is best-effort).
+    expect(windows.getSnapshot().windows).toHaveLength(1)
+    expect(firstLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id))).toHaveLength(1)
   })
 })

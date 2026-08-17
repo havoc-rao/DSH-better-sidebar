@@ -186,8 +186,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     const current = tabMenu
     setTabMenu(null)
     if (current === null) return
-    if (id === 'bind') windows?.bind(current.tab)
-    else if (id === 'unbind') windows?.unbind(current.tab.id, true)
+    if (id === 'bind') void windows?.bind(current.tab)
+    else if (id === 'unbind') void windows?.unbind(current.tab.id, true)
   }, [tabMenu, windows])
 
   /**
@@ -636,7 +636,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           ? undefined
           : leafWithTab(current.splits, tabId) ?? leafWithTab(current.bottomSplits, tabId)
         const tab = leaf?.tabs.find(candidate => candidate.id === tabId)
-        windows.unbind(tabId, false)
+        void windows.unbind(tabId, false)
         if (tab?.type === 'terminal' && sessionId !== undefined) {
           void api.ptyClose({ sessionId, cwd }, tabId).catch(() => { /* the host may already have released it */ })
         }

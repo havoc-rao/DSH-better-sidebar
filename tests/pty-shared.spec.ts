@@ -147,3 +147,137 @@ describe('workspace-shared pty (bound terminals)', () => {
     manager.close(`shared:${STUB_ID}`)
   })
 })
+
+describe('pty re-parenting (bind/unbind keep the process alive)', () => {
+  it('bind direction: a session pty moves to the shared key, same process', () => {
+    const { module, spawns } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 3, module)
+    const local = manager.open('session-a', 'terminal:1', '/ws-a', 80, 24)
+    spawns[0]!.pty.emit('running npm run dev…')
+    expect(local.title).toBe('') // not digested here; transcript is what matters
+
+    const moved = manager.reparent('session-a:terminal:1', `shared:${STUB_ID}`, 'session-a', true)
+
+    expect(moved).toBe(true)
+    expect(manager.get('session-a:terminal:1')).toBeUndefined()
+    const shared = manager.get(`shared:${STUB_ID}`)!
+    expect(shared).toBe(local) // SAME handle: same process, transcript intact
+    expect(shared.key).toBe(`shared:${STUB_ID}`)
+    expect(shared.shared).toBe(true)
+    expect(shared.migrated).toBe(true)
+    expect(shared.transcript).toContain('running npm run dev…')
+    expect(spawns[0]!.pty.kill).not.toHaveBeenCalled() // nothing killed
+    // The stub attaches from any session of the workspace to that process.
+    expect(manager.open('session-b', STUB_ID, '/elsewhere', 80, 24)).toBe(local)
+    expect(spawns).toHaveLength(1)
+    manager.close(`shared:${STUB_ID}`)
+  })
+
+  it('unbind direction: a shared pty moves to the session key and counts toward its quota', () => {
+    const { module } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 1, module)
+    manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
+    // Before unbind the shared pty is quota-exempt…
+    expect(manager.keysOf('session-a')).toEqual([])
+
+    const moved = manager.reparent(`shared:${STUB_ID}`, 'session-a:terminal:9', 'session-a', false)
+
+    expect(moved).toBe(true)
+    const local = manager.get('session-a:terminal:9')!
+    expect(local.shared).toBe(false)
+    expect(local.sessionId).toBe('session-a')
+    expect(local.migrated).toBe(true)
+    // …after unbind it is a session terminal: counted in keysOf, so the
+    // per-session cap is now exhausted (a second local terminal is refused).
+    expect(manager.keysOf('session-a')).toEqual(['session-a:terminal:9'])
+    expect(() => manager.open('session-a', 'terminal:2', '/ws-a', 80, 24)).toThrow(/limit reached/)
+    manager.close('session-a:terminal:9')
+  })
+
+  it('a migrated handle survives an open() with a different cwd (no respawn)', () => {
+    const { module, spawns } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 3, module)
+    const shared = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
+    manager.reparent(`shared:${STUB_ID}`, 'session-a:terminal:9', 'session-a', false)
+
+    // The unbinding session's cwd differs from the pty's spawn cwd: the
+    // migrated process must NOT be respawned (it was spawned deliberately
+    // in /ws-a and the tab-id change is not a reason to restart it).
+    const attached = manager.open('session-a', 'terminal:9', '/elsewhere', 80, 24)
+    expect(attached).toBe(shared)
+    expect(spawns).toHaveLength(1)
+    expect(attached.cwd).toBe('/ws-a')
+    manager.close('session-a:terminal:9')
+  })
+
+  it('a NON-migrated per-session handle still respawns on a cwd change', () => {
+    const { module, spawns } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 3, module)
+    const first = manager.open('session-a', 'terminal:1', '/ws-a', 80, 24)
+    expect(first.migrated).toBeUndefined()
+
+    const reopened = manager.open('session-a', 'terminal:1', '/elsewhere', 80, 24)
+    expect(spawns).toHaveLength(2)
+    expect(reopened).not.toBe(first)
+    expect(reopened.cwd).toBe('/elsewhere')
+    manager.close('session-a:terminal:1')
+  })
+
+  it('reparent cancels a pending grace close (the process survives the timer)', async () => {
+    const { module, spawns } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 3, module)
+    const local = manager.open('session-a', 'terminal:1', '/ws-a', 80, 24)
+    manager.scheduleClose('session-a:terminal:1', 20) // bare socket drop, grace pending
+    expect(manager.reparent('session-a:terminal:1', `shared:${STUB_ID}`, 'session-a', true)).toBe(true)
+
+    await new Promise(resolve => setTimeout(resolve, 60))
+    expect(spawns[0]!.pty.kill).not.toHaveBeenCalled()
+    expect(manager.get(`shared:${STUB_ID}`)).toBe(local)
+    manager.close(`shared:${STUB_ID}`)
+  })
+
+  it('reparent with no source handle is a no-op (the new tab spawns fresh)', () => {
+    const { module, spawns } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 3, module)
+    expect(manager.reparent('session-a:terminal:1', `shared:${STUB_ID}`, 'session-a', true)).toBe(false)
+    expect(spawns).toHaveLength(0)
+
+    const fresh = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
+    expect(spawns).toHaveLength(1)
+    expect(fresh.migrated).toBeUndefined()
+    manager.close(fresh.key)
+  })
+
+  it('an exited handle migrates and the new attach respawns fresh (status quo for dead shells)', () => {
+    const { module, spawns } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 3, module)
+    const shared = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
+    spawns[0]!.pty.exit(0)
+    expect(manager.reparent(`shared:${STUB_ID}`, 'session-a:terminal:9', 'session-a', false)).toBe(true)
+
+    const reopened = manager.open('session-a', 'terminal:9', '/ws-a', 80, 24)
+    expect(spawns).toHaveLength(2)
+    expect(reopened).not.toBe(shared)
+    expect(reopened.exited).toBe(false)
+    manager.close('session-a:terminal:9')
+  })
+
+  it('round trip local → shared → local keeps ONE process end to end', () => {
+    const { module, spawns } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 3, module)
+    const original = manager.open('session-a', 'terminal:1', '/ws-a', 80, 24)
+    spawns[0]!.pty.emit('server listening on :3000')
+
+    manager.reparent('session-a:terminal:1', `shared:${STUB_ID}`, 'session-a', true)
+    expect(spawns).toHaveLength(1)
+    const viaStub = manager.open('session-b', STUB_ID, '/ws-a', 80, 24)
+    expect(viaStub).toBe(original)
+
+    manager.reparent(`shared:${STUB_ID}`, 'session-a:terminal:9', 'session-a', false)
+    expect(spawns).toHaveLength(1)
+    const back = manager.open('session-a', 'terminal:9', '/ws-a', 80, 24)
+    expect(back).toBe(original)
+    expect(back.transcript).toContain('server listening on :3000')
+    manager.close('session-a:terminal:9')
+  })
+})

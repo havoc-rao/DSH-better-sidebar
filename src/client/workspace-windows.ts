@@ -20,16 +20,18 @@
  * Content windows (editor file tabs / browser / diff) share their full
  * definition (path / diff) — the same content everywhere. Session-scoped
  * views (terminal / git / subagent / the path-less Files home) share the
- * WINDOW only: every session renders its own live instance — a bound
- * terminal is a fresh PTY per session (the host keys PTYs by
- * `sessionId:tabId`, so the stub id just works), git/subagent render per
- * session from their own scope. Live editor buffers (cursor/scroll/unsaved
- * drafts) are NOT synced — only the window definitions. Bound windows
- * render in the right panel's first leaf; the bottom panel is untouched.
+ * WINDOW only: a bound TERMINAL is one workspace-shared PTY (host keys
+ * `ws:` stubs by `shared:<tabId>`, so every session attaches to the same
+ * process; bind/unbind re-parent the live handle instead of respawning),
+ * git/subagent render per session from their own scope. Live editor
+ * buffers (cursor/scroll/unsaved drafts) are NOT synced — only the window
+ * definitions. Bound windows render in the BOTTOM box's first leaf (the
+ * pin lives in the bottom panel); the right panel stays session-local.
  */
 import type { Context, SidebarWorkspaceListState, SidebarWorkspaceView } from '../context-types.ts'
+import { api } from './api.ts'
 import {
-  WS_TAB_PREFIX, activateTab, firstLeaf, isBoundTabId, mapLeaf, mintTabId,
+  WS_TAB_PREFIX, activateTab, firstLeaf, isAgentTabId, isBoundTabId, mapLeaf, mintTabId,
   type SidebarDiffRef, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceWindow, type WorkspaceWindowsSource,
 } from './state.ts'
 
@@ -142,8 +144,17 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
    * plumbing prevents local duplicates) and bind as THE window; path-less
    * windows (terminal/git/subagent/Files…) NEVER dedupe — binding two local
    * terminals creates two shared terminal windows.
+   *
+   * A bound TERMINAL keeps its process: the tab id changes (local →
+   * stub), and without re-parenting the unmount close frame releases the
+   * old key's pty while the stub's attach spawns a fresh shell under the
+   * shared key — a running process would die on every bind. The live
+   * handle is re-parented to the stub's shared key BEFORE the tree swap,
+   * so the old view's close frame targets a key that no longer holds a
+   * process (host no-op). Best-effort: a failed reparent (host down,
+   * degraded node-pty, pty never opened) degrades to the old behavior.
    */
-  bind(tab: SidebarTab): void {
+  async bind(tab: SidebarTab): Promise<void> {
     const sessionId = this.sidebarStore?.getSnapshot().sessionId
     if (sessionId === undefined) return
     const workspace = this.workspaceOfSession(sessionId)
@@ -163,6 +174,14 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     }
     const id = `${WS_TAB_PREFIX}${workspace.workspaceId.slice(0, 8)}:${blob.nextId}`
     blob.nextId += 1
+    if (tab.type === 'terminal' && !isAgentTabId(tab.id)) {
+      try {
+        await api.ptyReparent({ sessionId }, tab.id, id)
+      } catch {
+        // Best-effort: a failed reparent leaves the old pty to be released
+        // by the unmount close frame — the stub spawns fresh, status quo.
+      }
+    }
     // Never mutate the tabs array in place: the snapshot hands it to React
     // (uSES reference identity), so every mutation must mint a new array.
     blob.tabs = [...blob.tabs, {
@@ -219,18 +238,39 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
    * `keepInSession` materializes the window as a plain local tab in the
    * binding session's first leaf (the "stop sharing, keep it here" path);
    * otherwise the window closes everywhere (the stub's ✕ close path).
+   *
+   * An UNBOUND TERMINAL keeps its process: the stub is replaced by a
+   * freshly minted local tab id, and without re-parenting the stub's
+   * unmount close frame kills the shared pty while the local tab's attach
+   * spawns a fresh shell — a running process would die on every unbind.
+   * The live handle is re-parented to the local id's session key BEFORE
+   * the tree swap (the local id is minted here so the migration target is
+   * known), so the stub view's close frame targets a key that no longer
+   * holds a process (host no-op). Best-effort: a failed reparent degrades
+   * to the old behavior. The ✕ close path (`keepInSession: false`) sends
+   * no reparent — closing the shared window everywhere still kills the pty.
    */
-  unbind(tabId: string, keepInSession: boolean): void {
+  async unbind(tabId: string, keepInSession: boolean): Promise<void> {
     const sessionId = this.sidebarStore?.getSnapshot().sessionId
-    const workspace = sessionId === undefined ? undefined : this.workspaceOfSession(sessionId)
+    if (sessionId === undefined) return
+    const workspace = this.workspaceOfSession(sessionId)
     if (workspace === undefined) return
     const blob = this.blobOf(workspace.workspaceId)
     const boundWindow = blob.tabs.find(candidate => candidate.id === tabId)
     if (boundWindow === undefined) return
+    const localId = keepInSession ? mintTabId() : undefined
+    if (keepInSession && boundWindow.type === 'terminal' && localId !== undefined) {
+      try {
+        await api.ptyReparent({ sessionId }, tabId, localId)
+      } catch {
+        // Best-effort: a failed reparent leaves the shared pty to be
+        // released by the stub's unmount close frame — the local tab
+        // spawns fresh, status quo.
+      }
+    }
     blob.tabs = blob.tabs.filter(candidate => candidate.id !== tabId)
     this.persist(workspace.workspaceId, blob)
-    if (keepInSession) {
-      const localId = mintTabId()
+    if (keepInSession && localId !== undefined) {
       this.sidebarStore?.reduce(s => {
         // The stub lives in the BOTTOM box's first leaf: the detached local
         // tab materializes there (in place of the stub).
