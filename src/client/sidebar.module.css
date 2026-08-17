@@ -635,6 +635,37 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* The hairline before the workspace-bound (pinned) tab group. */
+.tabBarDivider {
+  flex: none;
+  width: 1px;
+  margin: 7px 2px;
+  background: var(--dsw-alias-border-l1);
+}
+
+/* A workspace-bound window stub: pinned after the session's own tabs.
+   Tinted (not translucent — the skin surface rule) so shared windows read
+   as a distinct group without breaking the token contract. */
+.tabBound {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.tabBound:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.tabBound.tabActive {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+/* The pushpin glyph of a bound stub. */
+.tabPin {
+  flex: none;
+  color: var(--dsw-alias-brand-primary);
+}
+
 /* ── Explorer ──────────────────────────────────────────────────────────── */
 
 .explorer {

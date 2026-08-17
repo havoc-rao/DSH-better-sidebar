@@ -13,6 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { createSidebarStore } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
+import { createWorkspaceWindowsStore } from './workspace-windows.ts'
 import { resetChunks } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
@@ -60,11 +61,17 @@ export function apply(ctx: Context): void {
   // registrations (the official createXXXStore() factory rule — no
   // module-level singleton).
   const sidebarStore = createSidebarStore()
+  // The workspace windows store: workspace-bound windows ("pinned" content
+  // tabs shared by every session of a workspace). Attached to the sidebar
+  // store so bound windows merge into every session's first leaf and strip
+  // out of persistence; the service routes stub updates/opens through it.
+  const workspaceWindows = createWorkspaceWindowsStore(ctx)
+  workspaceWindows.attachSidebarStore(sidebarStore)
   // The sidebar registry service: external plugins register tab types and
   // file previewers through `ctx.betterSidebar.registerTab/registerFileViewer`.
   // Published before the panel mounts so consumers injecting 'betterSidebar'
   // are ready by the time the sidebar renders.
-  const service = createBetterSidebarService(sidebarStore)
+  const service = createBetterSidebarService(sidebarStore, workspaceWindows)
   ctx.provide('betterSidebar', service)
   // Register the plugin's own built-in tabs and viewers through the same
   // service (eating our own dogfood). The disposer unregisters them on
@@ -115,7 +122,7 @@ export function apply(ctx: Context): void {
           host.setAttribute('data-dsh-better-sidebar', '')
           document.body.appendChild(host)
           root = createRoot(host)
-          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
+          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore, windows: workspaceWindows })))
         } catch (error) {
           fail('mount', error)
         }

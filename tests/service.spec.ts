@@ -21,7 +21,9 @@ if (g.localStorage === undefined) {
 }
 
 import { createBetterSidebarService, matchUrlTarget, SIDEBAR_FEATURES, SIDEBAR_SERVICE_VERSION } from '../src/client/service.ts'
-import { createSidebarStore, allLeaves, makeDefaultState, openDiffTab, openTabInActivePane, sanitizeState } from '../src/client/state.ts'
+import { createSidebarStore, allLeaves, makeDefaultState, openDiffTab, openTabInActivePane, sanitizeState, type SidebarTab } from '../src/client/state.ts'
+import { createWorkspaceWindowsStore, type WorkspaceWindowsStore } from '../src/client/workspace-windows.ts'
+import type { Context } from '../src/context-types.ts'
 
 describe('BetterSidebar service', () => {
   it('registerTab adds to the registry and dispose removes it', () => {
@@ -1054,5 +1056,80 @@ describe('independent CR follow-up fixes', () => {
     const service = createBetterSidebarService(store)
     service.registerFileViewer({ id: 'csv', exts: ['csv'], fetchStrategy: 'custom', component: () => null })
     expect(() => service.registerFileViewer({ id: 'csv', exts: ['csv'], fetchStrategy: 'custom', component: () => null })).toThrow(/already registered/)
+  })
+})
+
+describe('workspace-bound window routing (workspace windows)', () => {
+  const makeWindows = (): { store: ReturnType<typeof createSidebarStore>; windows: WorkspaceWindowsStore; service: ReturnType<typeof createBetterSidebarService> } => {
+    const ctx = {
+      workspaces: {
+        openPath: async () => {},
+        list: {
+          getSnapshot: () => ({
+            items: [
+              { workspaceId: 'aaaaaaaa-1111-0000-0000-000000000001', path: '/ws', title: 'WS', sessionIds: ['s1', 's2'], createdAt: '', updatedAt: '' },
+            ],
+          }),
+          subscribe: () => () => {},
+        },
+      },
+    } as unknown as Context
+    const store = createSidebarStore()
+    const windows = createWorkspaceWindowsStore(ctx)
+    windows.attachSidebarStore(store)
+    const service = createBetterSidebarService(store, windows)
+    service.registerTab({ id: 'editor', title: () => 'Editor', component: () => null })
+    store.setSession('s1')
+    return { store, windows, service }
+  }
+
+  /** The first editor tab that carries a path (the seeded home tab has none). */
+  const fileTabOf = (store: ReturnType<typeof createSidebarStore>): SidebarTab =>
+    allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.type === 'editor' && t.path !== undefined)!
+
+  it('updateTab routes workspace-bound stubs to the windows store', () => {
+    const { store, windows, service } = makeWindows()
+    service.openFile({ sessionId: 's1' }, '/ws/src/a.ts')
+    windows.bind(fileTabOf(store))
+    const stubId = windows.getSnapshot().windows[0]!.id
+
+    service.updateTab(stubId, { path: '/ws/src/renamed.ts', title: 'renamed.ts' })
+
+    const bound = windows.getSnapshot().windows[0]!
+    expect(bound.path).toBe('/ws/src/renamed.ts')
+    expect(bound.title).toBe('renamed.ts')
+    // The session tree stub stays id-only; the render layer resolves the
+    // live definition from the store.
+    const stub = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.id === stubId)!
+    expect(stub.path).toBeUndefined()
+  })
+
+  it('updateTab on a plain tab still patches the session tree', () => {
+    const { store, service } = makeWindows()
+    service.openFile({ sessionId: 's1' }, '/ws/src/a.ts')
+    const tab = fileTabOf(store)
+    service.updateTab(tab.id, { title: 'renamed.ts' })
+    expect(fileTabOf(store).title).toBe('renamed.ts')
+  })
+
+  it('openTab focuses an existing bound window instead of opening a local duplicate', () => {
+    const { store, windows, service } = makeWindows()
+    service.openFile({ sessionId: 's1' }, '/ws/src/a.ts')
+    windows.bind(fileTabOf(store))
+    const stubId = windows.getSnapshot().windows[0]!.id
+
+    // Re-opening the same file: no local duplicate, the stub is focused.
+    service.openFile({ sessionId: 's1' }, '/ws/src/a.ts')
+    const state = store.getSnapshot().state!
+    const editorTabs = allLeaves(state.splits).flatMap(l => l.tabs).filter(t => t.type === 'editor')
+    expect(editorTabs.filter(t => t.path === '/ws/src/a.ts')).toHaveLength(0)
+    expect(allLeaves(state.splits)[0]!.active).toBe(stubId)
+
+    // Opening a DIFFERENT file still lands normally (and activates the stub
+    // only when its path matches — the new file gets its own local tab).
+    service.openFile({ sessionId: 's1' }, '/ws/src/b.ts', 'b.ts')
+    const bTab = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.path === '/ws/src/b.ts')
+    expect(bTab).toBeDefined()
+    void windows
   })
 })

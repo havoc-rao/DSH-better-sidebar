@@ -1,0 +1,263 @@
+/**
+ * Workspace-windows store tests: bind/unbind/update semantics, the
+ * per-workspace persistence blob (sanitize, stable stub ids), the
+ * session→workspace resolution, and the SidebarStore reconcile wiring
+ * (bound windows appear/update/disappear in every session of a workspace;
+ * session layouts never persist stubs).
+ */
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  allLeaves, createSidebarStore, firstLeaf, isBoundTabId, openTabInActivePane,
+  type SidebarStore, type SidebarTab,
+} from '../src/client/state.ts'
+import { createWorkspaceWindowsStore, type WorkspaceWindowsStore } from '../src/client/workspace-windows.ts'
+import type { Context } from '../src/context-types.ts'
+
+/** A fake client workspaces list feed (structural mirror of WorkspaceRuntime.list). */
+function fakeCtx(): Context {
+  return {
+    workspaces: {
+      openPath: async () => {},
+      list: {
+        getSnapshot: () => ({
+          items: [
+            { workspaceId: '11111111-aaaa-0000-0000-000000000001', path: '/ws-a', title: 'Workspace A', sessionIds: ['a', 'b'], createdAt: '', updatedAt: '' },
+            { workspaceId: '22222222-bbbb-0000-0000-000000000002', path: '/ws-b', title: 'Workspace B', sessionIds: ['c'], createdAt: '', updatedAt: '' },
+          ],
+        }),
+        subscribe: () => () => {},
+      },
+    },
+  } as unknown as Context
+}
+
+/** A file tab to bind (content windows only — binding requires a path). */
+const fileTab = (id: string, path: string, title = 'a.ts'): SidebarTab => ({ id, type: 'editor', title, path })
+
+/** The first leaf's tabs of a session state (switches to the session). */
+function firstLeafTabs(store: SidebarStore, sessionId: string): SidebarTab[] {
+  store.setSession(sessionId)
+  const state = store.getSnapshot().state
+  return state === undefined ? [] : allLeaves(state.splits)[0]!.tabs
+}
+
+/** Flush the debounced localStorage writes (both stores use a 200ms timer). */
+const flushPersist = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 260))
+
+/** Open a file tab in the session's first leaf via the state-level open. */
+function openFileTab(store: SidebarStore, sessionId: string, path: string, title = 'a.ts'): SidebarTab {
+  store.setSession(sessionId)
+  const tab = fileTab(`editor:${path}`, path, title)
+  store.reduce(s => openTabInActivePane(s, tab))
+  return tab
+}
+
+/** Create the store pair wired like apply() does. */
+function makePair() {
+  const ctx = fakeCtx()
+  const sidebar = createSidebarStore()
+  const windows = createWorkspaceWindowsStore(ctx)
+  windows.attachSidebarStore(sidebar)
+  return { ctx, sidebar, windows }
+}
+
+beforeEach(() => { localStorage.clear() })
+afterEach(() => { localStorage.clear() })
+
+describe('workspace windows store', () => {
+  it('bind mints a stable stub id and syncs every session of the workspace', () => {
+    const { sidebar, windows } = makePair()
+    // Load session 'b' into the cache so the reconcile pass reaches it.
+    sidebar.setSession('b')
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+
+    const snapshot = windows.getSnapshot()
+    expect(snapshot.workspaceId).toBe('11111111-aaaa-0000-0000-000000000001')
+    expect(snapshot.windows).toHaveLength(1)
+    const bound = snapshot.windows[0]!
+    expect(bound.id).toMatch(/^ws:11111111:[12]$/)
+    expect(bound.type).toBe('editor')
+    expect(bound.path).toBe('/ws-a/src/a.ts')
+    expect(isBoundTabId(bound.id)).toBe(true)
+
+    // Every session of the workspace holds the stub in its first leaf; the
+    // binding session's local tab is gone (no local + bound duplicate).
+    expect(firstLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([bound.id])
+    expect(firstLeafTabs(sidebar, 'b').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([bound.id])
+    // A session of ANOTHER workspace never sees it.
+    expect(firstLeafTabs(sidebar, 'c').every(t => !isBoundTabId(t.id))).toBe(true)
+
+    // A second bind mints the next id (counter monotonic per workspace).
+    const tab2 = openFileTab(sidebar, 'a', '/ws-a/src/b.ts', 'b.ts')
+    windows.bind(tab2)
+    const second = windows.getSnapshot().windows[1]!
+    expect(second.id).toBe(`ws:11111111:${Number(bound.id.split(':')[2]) + 1}`)
+  })
+
+  it('bind keeps the active slot when the bound tab was NOT the active one', () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    // Open a SECOND file so the first is no longer active.
+    const other = openFileTab(sidebar, 'a', '/ws-a/src/other.ts', 'other.ts')
+    windows.bind(tab) // a.ts is inactive now
+
+    const leaf = firstLeaf(sidebar.getSnapshot().state!.splits)
+    expect(leaf.active).toBe(other.id) // unchanged
+    expect(leaf.tabs.some(t => t.id === other.id)).toBe(true)
+  })
+
+  it('bind moves the active slot to the stub when the bound tab WAS active', () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+
+    const leaf = firstLeaf(sidebar.getSnapshot().state!.splits)
+    const stub = windows.getSnapshot().windows[0]!
+    expect(leaf.active).toBe(stub.id)
+  })
+
+  it('bind is a no-op when the session belongs to no workspace', () => {
+    const { sidebar, windows } = makePair()
+    sidebar.setSession('orphan')
+    const tab = fileTab('tab:1', '/tmp/x.ts')
+    windows.bind(tab)
+    expect(windows.getSnapshot().workspaceId).toBeUndefined()
+    expect(windows.getSnapshot().windows).toHaveLength(0)
+  })
+
+  it('bind of an already-bound window strips the stray duplicate and focuses the stub', () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+    // Simulate a stray local duplicate (the open plumbing normally prevents it).
+    const dup = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(dup)
+
+    expect(windows.getSnapshot().windows).toHaveLength(1)
+    const leaf = firstLeaf(sidebar.getSnapshot().state!.splits)
+    // The stray local duplicate is gone (only the id-only stub remains).
+    expect(leaf.tabs.filter(t => t.path === '/ws-a/src/a.ts')).toHaveLength(0)
+    expect(leaf.tabs.filter(t => isBoundTabId(t.id))).toHaveLength(1)
+    expect(leaf.active).toBe(windows.getSnapshot().windows[0]!.id)
+  })
+
+  it('unbind(keepInSession) materializes a local tab in the binding session only', () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+    const stubId = windows.getSnapshot().windows[0]!.id
+
+    windows.unbind(stubId, true)
+
+    expect(windows.getSnapshot().windows).toHaveLength(0)
+    const local = firstLeafTabs(sidebar, 'a').filter(t => t.path === '/ws-a/src/a.ts')
+    expect(local).toHaveLength(1)
+    expect(isBoundTabId(local[0]!.id)).toBe(false)
+    expect(firstLeaf(sidebar.getSnapshot().state!.splits).active).toBe(local[0]!.id)
+    // The other session lost the window entirely.
+    expect(firstLeafTabs(sidebar, 'b').every(t => !isBoundTabId(t.id))).toBe(true)
+  })
+
+  it('unbind(false) closes the window everywhere', () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+    const stubId = windows.getSnapshot().windows[0]!.id
+
+    windows.unbind(stubId, false)
+
+    expect(windows.getSnapshot().windows).toHaveLength(0)
+    expect(firstLeafTabs(sidebar, 'a').every(t => !isBoundTabId(t.id))).toBe(true)
+    expect(firstLeafTabs(sidebar, 'b').every(t => !isBoundTabId(t.id))).toBe(true)
+  })
+
+  it('update rewrites the definition for every session render', () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+    const stubId = windows.getSnapshot().windows[0]!.id
+
+    windows.update(stubId, { path: '/ws-a/src/renamed.ts', title: 'renamed.ts' })
+
+    const bound = windows.getSnapshot().windows[0]!
+    expect(bound.path).toBe('/ws-a/src/renamed.ts')
+    expect(bound.title).toBe('renamed.ts')
+    // The stubs in the session trees keep their id-only shape (the render
+    // layer resolves live definitions from the store).
+    expect(firstLeafTabs(sidebar, 'b')[0]!.path).toBeUndefined()
+  })
+
+  it('update of an unknown id is a strict no-op', () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+    const before = windows.getSnapshot().windows
+    windows.update('ws:11111111:99', { path: '/nope' })
+    expect(windows.getSnapshot().windows).toBe(before)
+  })
+
+  it('session layouts never persist stubs (strip on write, re-merge on load)', async () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+    await flushPersist()
+
+    const persisted = JSON.parse(localStorage.getItem('dsh-sidebar:v1:a')!) as {
+      splits: { tabs: Array<{ id: string }>; active: string | null }
+    }
+    expect(persisted.splits.tabs.every(t => !isBoundTabId(t.id))).toBe(true)
+    expect(persisted.splits.active === null || !isBoundTabId(persisted.splits.active)).toBe(true)
+
+    // Reload: a fresh pair re-merges the bound window from the store blob.
+    const { sidebar: reloaded, windows: windows2 } = makePair()
+    reloaded.setSession('a')
+    expect(windows2.windowsOfSession('a').map(w => w.path)).toEqual(['/ws-a/src/a.ts'])
+    const stubs = firstLeafTabs(reloaded, 'a').filter(t => isBoundTabId(t.id))
+    expect(stubs.map(t => t.id)).toEqual([windows2.getSnapshot().windows[0]!.id])
+  })
+
+  it('windowsOfSession resolves per workspace and returns [] for ungrouped sessions', () => {
+    const { sidebar, windows } = makePair()
+    expect(windows.windowsOfSession('a')).toEqual([])
+    expect(windows.windowsOfSession('c')).toEqual([])
+    expect(windows.windowsOfSession('nope')).toEqual([])
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+    expect(windows.windowsOfSession('b')).toHaveLength(1) // same workspace
+    expect(windows.windowsOfSession('c')).toHaveLength(0) // other workspace
+  })
+
+  it('corrupt persisted blobs reset to an empty blob', async () => {
+    const { sidebar, windows } = makePair()
+    const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tab)
+    await flushPersist()
+    localStorage.setItem('dsh-sidebar:v1:ws-windows:11111111-aaaa-0000-0000-000000000001', '{"version":1,"nextId":1,"tabs":[{"id":42}]}')
+
+    const { sidebar: reloaded, windows: reloadedWindows } = makePair()
+    // The corrupt blob resets to empty; the old valid data is gone.
+    expect(reloadedWindows.windowsOfSession('a')).toEqual([])
+    // A session load still works (no stubs, no crash).
+    expect(firstLeafTabs(reloaded, 'a').every(t => !isBoundTabId(t.id))).toBe(true)
+    void sidebar
+    void windows
+  })
+
+  it('a bind while another workspace is current never leaks across workspaces', () => {
+    const { sidebar, windows } = makePair()
+    const tabA = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
+    windows.bind(tabA)
+    sidebar.setSession('c')
+    const tabC = openFileTab(sidebar, 'c', '/ws-b/src/c.ts', 'c.ts')
+    windows.bind(tabC)
+
+    expect(windows.windowsOfSession('a').map(w => w.path)).toEqual(['/ws-a/src/a.ts'])
+    expect(windows.windowsOfSession('c').map(w => w.path)).toEqual(['/ws-b/src/c.ts'])
+    // The 'c' session's tree holds only ITS workspace's stub.
+    const cTabs = firstLeafTabs(sidebar, 'c')
+    expect(cTabs.filter(t => isBoundTabId(t.id)).map(t => t.id))
+      .toEqual([windows.windowsOfSession('c')[0]!.id])
+  })
+})

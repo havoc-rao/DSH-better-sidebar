@@ -25,23 +25,24 @@
  * drawer floats). Widening does not migrate back: the tabs keep living in
  * the right tree.
  */
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
-import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, isBoundTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
-import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
+import { IconPanelBottomOutline16, IconPanelRightOutline16, IconPinOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
 import type { NewTabOption } from './TabBar.tsx'
 import type { TabDragPayload } from './TabBar.tsx'
+import type { WorkspaceWindowsSnapshot, WorkspaceWindowsStore } from './workspace-windows.ts'
 import { relativeTo } from './paths.ts'
 import { OrphanedTab } from './OrphanedTab.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
@@ -54,6 +55,14 @@ import css from './sidebar.module.css'
 /** How many consecutive reconnect failures stop the agent-terminals push loop
  * (mirror of the terminal view's own cap; the loop restarts on session switch). */
 const FAILURE_LIMIT = 3
+
+/** The uSES fallback snapshot when no workspace windows store is attached. */
+const EMPTY_WS_SNAPSHOT: WorkspaceWindowsSnapshot = {
+  sessionId: undefined,
+  workspaceId: undefined,
+  workspaceTitle: undefined,
+  windows: [],
+}
 
 /** Render the content of one tab (dispatched by type). */
 function TabContent(props: {
@@ -115,8 +124,8 @@ function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionSco
     }))
 }
 
-export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
-  const { ctx, store } = props
+export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: WorkspaceWindowsStore }) {
+  const { ctx, store, windows } = props
 
   // Copy freshness: re-render the whole tree when the DSH locale switches.
   // The module-level t() reads the active locale at call time, so a root
@@ -150,6 +159,46 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     useCallback(() => store.getSnapshot(), [store]),
   )
   useEffect(() => { store.setSession(current) }, [current, store])
+
+  // Workspace-bound windows (the store resolves the active session's
+  // workspace itself; absent store → the empty fallback).
+  const wsSnapshot = useSyncExternalStore(
+    useCallback((callback: () => void) => windows?.subscribe(callback) ?? (() => {}), [windows]),
+    useCallback(() => windows?.getSnapshot() ?? EMPTY_WS_SNAPSHOT, [windows]),
+  )
+
+  /**
+   * The tab right-click menu (workspace bind/unbind). Only content windows
+   * (tabs carrying a path) offer binding; the menu opens at the cursor via
+   * getAnchorRect, exactly like the file tree's row menu.
+   */
+  const [tabMenu, setTabMenu] = useState<{ tab: SidebarTab; x: number; y: number } | null>(null)
+  const openTabMenu = useCallback((tab: SidebarTab, event: ReactMouseEvent): void => {
+    if (tab.path === undefined || tab.path === '') return
+    setTabMenu({ tab, x: event.clientX, y: event.clientY })
+  }, [])
+  const closeTabMenu = useCallback((): void => { setTabMenu(null) }, [])
+  const selectTabMenu = useCallback((id: string): void => {
+    const current = tabMenu
+    setTabMenu(null)
+    if (current === null) return
+    if (id === 'bind') windows?.bind(current.tab)
+    else if (id === 'unbind') windows?.unbind(current.tab.id, true)
+  }, [tabMenu, windows])
+
+  /**
+   * Resolve a workspace-bound stub to its LIVE definition: the session tree
+   * holds only the stub (id + type); title/path/meta always come from the
+   * workspace windows store, so an update in another session re-renders
+   * here on the next store change. Non-stubs pass through unchanged.
+   * Declared BEFORE the no-session early return — it is a hook and the
+   * hook order must be identical on every render.
+   */
+  const resolveTab = useCallback((tab: SidebarTab): SidebarTab => {
+    if (windows === undefined || !isBoundTabId(tab.id)) return tab
+    const live = wsSnapshot.windows.find(window => window.id === tab.id)
+    return live === undefined ? tab : { ...tab, ...live }
+  }, [windows, wsSnapshot.windows])
 
   const state = snapshot.state
   const sessionId = snapshot.sessionId
@@ -571,6 +620,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   const actions: WorkbenchActions = useMemo(() => ({
     closeTab: (paneId, tabId) => {
+      // A workspace-bound window closes EVERYWHERE (shared-window
+      // semantics): unbind from the workspace store — no per-session tab
+      // teardown, no terminal release (stubs are never terminals).
+      if (windows !== undefined && isBoundTabId(tabId)) {
+        windows.unbind(tabId, false)
+        return
+      }
       // A closed terminal releases its pty immediately — including when its
       // socket is mid-reconnect, where the unmount close frame never reaches
       // the host and the process would hold the quota until the grace ends.
@@ -622,7 +678,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     resizeSplit: (splitId, index, deltaFrac) => {
       store.reduce(s => resizeSplitIn(s, splitId, index, deltaFrac))
     },
-  }), [store, sessionId, cwd])
+  }), [store, sessionId, cwd, windows])
 
   /**
    * The explorer's @-reference button: append `@<relative path>` to the
@@ -813,6 +869,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            isBoundTabId={isBoundTabId}
+            resolveTab={resolveTab}
+            onTabContextMenu={openTabMenu}
           />
         </div>
         {/*
@@ -938,10 +997,42 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            isBoundTabId={isBoundTabId}
+            resolveTab={resolveTab}
+            onTabContextMenu={openTabMenu}
           />
         </div>
       </div>
       )}
+      {/*
+        The tab right-click menu (workspace bind/unbind), positioned at the
+        cursor like the file tree's row menu (portal so nothing crops it).
+        Bound stubs offer "unbind" (the window stays HERE as a local tab and
+        leaves the other sessions); bindable content tabs offer "bind to
+        workspace", disabled with a hint when the session belongs to no
+        workspace.
+      */}
+      <Menu
+        open={tabMenu !== null}
+        onClose={closeTabMenu}
+        items={tabMenu === null ? [] : isBoundTabId(tabMenu.tab.id)
+          ? [{ id: 'unbind', label: t('unbindFromWorkspace'), icon: <IconPinOutline16 size={14} /> }]
+          : [{
+            id: 'bind',
+            label: wsSnapshot.workspaceId === undefined
+              ? t('bindToWorkspaceNoWorkspace')
+              : wsSnapshot.workspaceTitle !== undefined
+                ? t('bindToWorkspaceWithName', { title: wsSnapshot.workspaceTitle })
+                : t('bindToWorkspace'),
+            icon: <IconPinOutline16 size={14} />,
+            disabled: wsSnapshot.workspaceId === undefined,
+          }]}
+        onSelect={selectTabMenu}
+        portal
+        align="start"
+        getAnchorRect={() => (tabMenu === null ? null : new DOMRect(tabMenu.x, tabMenu.y, 0, 0))}
+        anchor={<span />}
+      />
     </>
   )
 }

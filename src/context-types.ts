@@ -332,15 +332,49 @@ export interface SidebarConversation {
   }
 }
 
+/** One workspace row of the client workspaces list (structural mirror of
+ *  the wire `WorkspaceView`: durable registry order, header-validated
+ *  session membership). */
+export interface SidebarWorkspaceView {
+  workspaceId: string
+  /** Canonical directory path (host-side realpath canon). */
+  path: string
+  /** Display title (defaults to the path basename at create). */
+  title: string
+  /** Sessions accounted under this workspace, in manually owned order. */
+  sessionIds: readonly string[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** The client workspaces list snapshot (structural mirror of the runtime
+ *  `WorkspaceListState` — only the slices the sidebar touches). */
+export interface SidebarWorkspaceListState {
+  /** Durable workspace rows in registry order. */
+  items: readonly SidebarWorkspaceView[]
+  /** Registry-global archive set (grouping surfaces hide these sessions). */
+  archivedSessionIds?: readonly string[]
+  state?: 'idle' | 'loading' | 'error'
+  /** True only after both workspace.list and session.list have succeeded. */
+  baselinesReady?: boolean
+  /** Most recently active Workspace (derived, never reorders `items`). */
+  recentWorkspaceId?: string | undefined
+}
+
 /**
- * The client workspaces service face (mirror of the runtime IWorkspaces). Only
- * the chat's file-open funnel is touched: `openPath` hands an absolute path
- * to the Host OS's default application, and every chat-side file open
- * (tool rows, produced-files, prose mentions) funnels through it.
+ * The client workspaces service face (mirror of the runtime IWorkspaces).
+ * The chat's file-open funnel uses `openPath`; the workspace-bound windows
+ * feature reads the `list` feed (the runtime's `WorkspaceRuntime.list`
+ * SnapshotStore) to resolve which workspace a session belongs to.
  */
 export interface SidebarWorkspacesService {
   /** Open a filesystem path with the Host operating system's default application. */
   openPath(path: string): Promise<void>
+  /** The workspace list feed (mirror of `WorkspaceRuntime.list`). */
+  list: {
+    getSnapshot(): SidebarWorkspaceListState
+    subscribe(fn: () => void): () => void
+  }
 }
 
 /**
