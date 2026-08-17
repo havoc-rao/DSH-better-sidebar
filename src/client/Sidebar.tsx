@@ -168,13 +168,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   )
 
   /**
-   * The tab right-click menu (workspace bind/unbind). Only content windows
-   * (tabs carrying a path) offer binding; the menu opens at the cursor via
-   * getAnchorRect, exactly like the file tree's row menu.
+   * The tab right-click menu (workspace bind/unbind). ANY tab can be bound
+   * — content windows share their definition, session-scoped views
+   * (terminal/git/subagent/Files…) share the window (each session renders
+   * its own live instance) — EXCEPT agent-owned terminals (`agent:` ids):
+   * the model creates/closes them and the reconcile would fight the pin.
+   * The menu opens at the cursor via getAnchorRect, like the file tree's
+   * row menu.
    */
   const [tabMenu, setTabMenu] = useState<{ tab: SidebarTab; x: number; y: number } | null>(null)
   const openTabMenu = useCallback((tab: SidebarTab, event: ReactMouseEvent): void => {
-    if (tab.path === undefined || tab.path === '') return
+    if (isAgentTabId(tab.id)) return
     setTabMenu({ tab, x: event.clientX, y: event.clientY })
   }, [])
   const closeTabMenu = useCallback((): void => { setTabMenu(null) }, [])

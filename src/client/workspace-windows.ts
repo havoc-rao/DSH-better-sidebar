@@ -1,13 +1,13 @@
 /**
- * The workspace windows store: workspace-bound windows ("pinned" content
- * tabs shared by every session of a workspace). One blob per workspace,
+ * The workspace windows store: workspace-bound windows ("pinned" tabs
+ * shared by every session of a workspace). One blob per workspace,
  * persisted in localStorage — the single source of truth for the bound
- * window definitions (type/title/path/meta). Sessions never persist bound
- * windows: they hold only `ws:`-prefixed STUBS in their first leaf (see
- * state.ts `reconcileWorkspaceWindows` / `stripWorkspaceWindows`), and the
- * render layer resolves stub ids against this store's live definitions — so
- * a bind/unbind/update in one session re-renders in every session of the
- * workspace for free (no per-session copies, no back-propagation).
+ * window definitions (type/title/path/diff/meta). Sessions never persist
+ * bound windows: they hold only `ws:`-prefixed STUBS in their first leaf
+ * (see state.ts `reconcileWorkspaceWindows` / `stripWorkspaceWindows`), and
+ * the render layer resolves stub ids against this store's live definitions
+ * — so a bind/unbind/update in one session re-renders in every session of
+ * the workspace for free (no per-session copies, no back-propagation).
  *
  * The store resolves session → workspace through the client runtime's
  * workspaces list feed (`ctx.workspaces.list`, mirror of
@@ -15,17 +15,22 @@
  * `sessionIds` contains it; sessions outside any workspace have no bound
  * windows (the bind menu is disabled for them).
  *
- * v1 scope: bindable tabs are content windows whose definition is fully
- * carried by `path` (editor file tabs and browser tabs); terminal/git/
- * subagent/diff and the path-less editor home are session-scoped by design
- * and never offer binding. Bound windows render only in the right panel's
- * first leaf; the bottom panel is untouched. Live editor buffers (cursor/
- * scroll/unsaved drafts) are NOT synced — only the window definitions.
+ * Scope: ANY tab can be bound except agent-owned terminals (`agent:` ids —
+ * the model creates/closes them, and the reconcile would fight the pin).
+ * Content windows (editor file tabs / browser / diff) share their full
+ * definition (path / diff) — the same content everywhere. Session-scoped
+ * views (terminal / git / subagent / the path-less Files home) share the
+ * WINDOW only: every session renders its own live instance — a bound
+ * terminal is a fresh PTY per session (the host keys PTYs by
+ * `sessionId:tabId`, so the stub id just works), git/subagent render per
+ * session from their own scope. Live editor buffers (cursor/scroll/unsaved
+ * drafts) are NOT synced — only the window definitions. Bound windows
+ * render in the right panel's first leaf; the bottom panel is untouched.
  */
 import type { Context, SidebarWorkspaceListState, SidebarWorkspaceView } from '../context-types.ts'
 import {
   WS_TAB_PREFIX, activateTab, firstLeaf, isBoundTabId, mapLeaf, mintTabId,
-  type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceWindow, type WorkspaceWindowsSource,
+  type SidebarDiffRef, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceWindow, type WorkspaceWindowsSource,
 } from './state.ts'
 
 const STORAGE_PREFIX = 'dsh-sidebar:v1'
@@ -123,14 +128,20 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
   // ── Mutations (act on the ACTIVE session's workspace) ────────────────────
 
   /**
-   * Bind a session-local content tab to the active session's workspace.
-   * The window's definition (type/title/path/meta) moves into the store
+   * Bind a session-local tab to the active session's workspace. The
+   * window's definition (type/title/path/diff/meta) moves into the store
    * under a fresh stable stub id; every session of the workspace re-renders
    * it (the store change reconciles all cached session states). The binding
-   * session also loses any local tab with the same type+path from BOTH
-   * trees — a local and a bound window for one file would be a duplicate —
-   * and the first leaf's active moves to the new stub when the bound tab
-   * was the active one.
+   * session loses the local tab itself from BOTH trees — plus any content
+   * duplicate (same type + path, e.g. the same file open twice) — and the
+   * first leaf's active moves to the new stub when the bound tab was the
+   * active one anywhere.
+   *
+   * Identity rules: content windows (with a path) dedupe against an
+   * existing bound window of the same type+path (paranoia — the open
+   * plumbing prevents local duplicates) and bind as THE window; path-less
+   * windows (terminal/git/subagent/Files…) NEVER dedupe — binding two local
+   * terminals creates two shared terminal windows.
    */
   bind(tab: SidebarTab): void {
     const sessionId = this.sidebarStore?.getSnapshot().sessionId
@@ -138,7 +149,10 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     const workspace = this.workspaceOfSession(sessionId)
     if (workspace === undefined) return
     const blob = this.blobOf(workspace.workspaceId)
-    const existing = blob.tabs.find(window => window.type === tab.type && window.path === tab.path)
+    const hasPath = tab.path !== undefined && tab.path !== ''
+    const existing = hasPath
+      ? blob.tabs.find(window => window.type === tab.type && window.path === tab.path)
+      : undefined
     if (existing !== undefined) {
       // Already bound (paranoia path — the open/dedupe plumbing prevents
       // local duplicates): drop any stray local duplicate and focus the
@@ -156,24 +170,41 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
       type: tab.type,
       title: tab.title,
       ...(tab.path !== undefined ? { path: tab.path } : {}),
+      ...(tab.diff !== undefined ? { diff: tab.diff } : {}),
       ...(tab.meta !== undefined ? { meta: tab.meta } : {}),
     }]
     this.persist(workspace.workspaceId, blob)
     this.sidebarStore?.reduce(s => {
-      const target = firstLeaf(s.splits)
-      const wasActiveInFirstLeaf = target.active === tab.id
-      // Drop local duplicates of the bound window (same type + path) from
-      // BOTH trees; a dangling `active` (it pointed at a removed tab) is
+      // The bound tab itself always leaves the tree (the window moved into
+      // the shared set); content duplicates (same type + path) leave too —
+      // but NEVER same-type path-less tabs (other local terminals are not
+      // duplicates). A dangling `active` (it pointed at a removed tab) is
       // nulled so no later sanitize pass sees a corrupt pointer.
-      const splits = stripLocalTabs(s.splits, tab)
-      const bottomSplits = stripLocalTabs(s.bottomSplits, tab)
+      let wasActiveAnywhere = false
+      const strip = (node: SplitNode): SplitNode => {
+        if (node.kind === 'leaf') {
+          const tabs = node.tabs.filter(candidate => {
+            if (candidate.id === tab.id) return false
+            if (hasPath && candidate.type === tab.type && candidate.path === tab.path) return false
+            return true
+          })
+          if (tabs === node.tabs) return node
+          if (node.active === tab.id) wasActiveAnywhere = true
+          const active = node.active !== null && !tabs.some(candidate => candidate.id === node.active) ? null : node.active
+          return { ...node, tabs, active }
+        }
+        return { ...node, children: node.children.map(strip) }
+      }
+      const target = firstLeaf(s.splits)
+      const splits = strip(s.splits)
+      const bottomSplits = strip(s.bottomSplits)
       if (splits === s.splits && bottomSplits === s.bottomSplits) return s
       return {
         ...s,
         splits: mapLeaf(splits, target.id, leaf => {
           // The bound window's old slot is gone; the new stub takes the
-          // active slot only when the bound tab WAS the active one.
-          if (wasActiveInFirstLeaf) leaf.active = id
+          // active slot when the bound tab was the active one anywhere.
+          if (wasActiveAnywhere) leaf.active = id
         }),
       }
     })
@@ -209,6 +240,7 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
                 type: boundWindow.type,
                 title: boundWindow.title,
                 ...(boundWindow.path !== undefined ? { path: boundWindow.path } : {}),
+                ...(boundWindow.diff !== undefined ? { diff: boundWindow.diff } : {}),
                 ...(boundWindow.meta !== undefined ? { meta: boundWindow.meta } : {}),
               }
               : candidate)
@@ -357,6 +389,7 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
         type: candidate.type,
         title: candidate.title,
         ...(typeof candidate.path === 'string' ? { path: candidate.path } : {}),
+        ...(isDiffRef(candidate.diff) ? { diff: candidate.diff } : {}),
         ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),
       })
     }
@@ -364,6 +397,13 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
   } catch {
     return undefined
   }
+}
+
+/** Loose shape check for a persisted diff ref (both kinds are plain data). */
+function isDiffRef(value: unknown): value is SidebarDiffRef {
+  if (value === null || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return record.kind === 'worktree' || record.kind === 'commit'
 }
 
 /** Drop local tabs matching a just-bound window (same type + path) from one

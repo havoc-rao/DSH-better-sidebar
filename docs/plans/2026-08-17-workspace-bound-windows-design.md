@@ -10,12 +10,14 @@
 
 1. **右键菜单**：tab 上右键出现「绑定到工作区」/「解除工作区绑定」。
 2. **绑定语义**：绑定后，该窗口成为**工作区级共享窗口**——同一 workspace 下的**所有 session** 的侧边栏都渲染这个窗口。
-3. **状态同步**：窗口的**定义**（type / path / title / meta）跨 session 同步——在 session A 里把绑定的文件窗口切到另一个文件（原地切换 / 打开新文件），session B 的同名窗口立即跟随。
+3. **状态同步**：窗口的**定义**（type / path / diff / title / meta）跨 session 同步——在 session A 里把绑定的文件窗口切到另一个文件（原地切换 / 打开新文件），session B 的同名窗口立即跟随。
 
 ## 2. 非目标（v1 边界）
 
 - **不做编辑器缓冲级同步**：光标、滚动、未保存草稿不跨 session 共享（同一 workspace 目录下文件内容天然一致，各 session 自行 `fs.read` 加载；文档明示该限制）。
-- **终端 / git / subagent / diff / 无 path 的 editor-home 不可绑定**：终端 PTY 按 `sessionId:tabId` 归属 session，git/subagent 面板是会话视图；只有「内容完全由 `tab.path` 决定」的窗口可绑定（editor 文件窗口 + browser）。不可绑定的类型在右键菜单里不出现绑定项。
+- **agent 终端（`agent:` 前缀）不可绑定**：模型创建/关闭它们，reconcile 会与 pin 冲突；右键菜单对 agent 终端不出现（其余类型全部可绑定）。
+- **终端是「窗口共享、进程独立」**：绑定一个终端 = 每个 session 各有一个自己的实时 shell（host 按 `sessionId:tabId` 键控 PTY，stub id 直接可用，零 host 改动）；git/subagent/Files 首页同理——共享窗口，各 session 渲染自己的实例。
+- **不做窗口拖拽排序 / 工作区窗口管理器 UI**（绑定顺序 = 绑定时间顺序）。
 - **只进右面板**：绑定窗口渲染在右面板 split 树的**第一叶**；底部面板不渲染（v1 保持单一工作台语义，避免"两处不同步"的新困惑）。
 - **不做窗口拖拽排序 / 工作区窗口管理器 UI**（绑定顺序 = 绑定时间顺序）。
 - **不改 host 半逻辑、不修改 DSH 源码**；不新增 PrefsSchema 字段（无设置项）。
@@ -76,7 +78,7 @@ class WorkspaceWindowsStore {
   windowsOfSession(sessionId: string): readonly WorkspaceWindow[]   // 经 session→workspace 解析
   isBoundTabId(id: string): boolean                                  // 'ws:' 前缀
   // 变更（作用于当前 active session 所属 workspace）
-  bind(tab: SidebarTab): void        // 铸造 stub id；删除本 session 树中同 type+path 的本地 tab（见 4.5）
+  bind(tab: SidebarTab): void        // 铸造 stub id；删除本 session 树中被绑定 tab 本身 + 同 type+path 的内容重复（见 4.5）
   unbind(tabId: string): void        // 从 store 移除（所有 session 消失）；本 session 转为本地 tab（见 4.6）
   update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
   // 内部
@@ -108,10 +110,11 @@ class WorkspaceWindowsStore {
 
 ### 4.5 绑定（bind）
 
-1. 校验：当前 session 有 workspace；tab 可绑定（type 有 `path` 且非 stub）。
-2. 铸造 stub id：`ws:<nextId++>`（per-workspace 计数器，持久化在 blob 里，跨 reload 稳定）。
-3. 定义（type/title/path/meta）写入 store → store 变更 → 全量 reconcile。
-4. 本 session 树里删除**同 type 且同 path** 的本地 tab（避免"本地 + 共享"双窗口）；焦点交给 stub（若原 tab 是 active，则 active 指向新 stub）。
+1. 校验：当前 session 有 workspace；非 agent 终端（模型托管，排除）。
+2. 铸造 stub id：`ws:<wsId8>:<n>`（per-workspace 计数器，持久化在 blob 里，跨 reload 稳定）。
+3. 定义（type/title/path/diff/meta）写入 store → store 变更 → 全量 reconcile。
+4. 本 session 树里删除**被绑定的 tab 本身**（两个树）；内容窗口（有 path）同时删同 type+path 的重复——path-less（终端等）**不**删同类型本地 tab（其他本地终端不是重复）。active 若指向被删 tab，交给新 stub。
+5. 身份规则：内容窗口按 type+path 去重（重复绑定聚焦既有 stub）；path-less 窗口**永不去重**——绑定两个本地终端 = 两个共享终端窗口。
 
 ### 4.6 解除绑定（unbind）——两种出口
 
@@ -124,9 +127,9 @@ class WorkspaceWindowsStore {
 - **stub 视觉**：pin 图标 + `css.tabBound` 样式；`draggable={false}`；close 按钮 aria-label「解除工作区绑定」。
 - **活定义解析**：`renderTab` / `tabIconOf` / `tabBadgeOf` / TabBar 标题对 stub 走 `windowsStore` 查活定义（路径/标题以 store 为准，别的 session 改了立刻跟随）。
 - **右键菜单**：`TabBar` tab div 的 `onContextMenu`（preventDefault + 记录光标坐标）→ shell 渲染 `Menu`（portal + `getAnchorRect` 定位），项：
-  - 未绑定且可绑定：「绑定到工作区 “<workspace title>”」（无 workspace → disabled + 提示文案）；
+  - 未绑定：「绑定到工作区 “<workspace title>”」（无 workspace → disabled + 提示文案）；
   - 已绑定：「解除工作区绑定」；
-  - 不可绑定（terminal/git/…）：不出现绑定项。
+  - agent 终端（`agent:` 前缀）：菜单不出现（模型托管）。
 - **底部面板**：不渲染 stub（reconcile 只碰 `splits` 第一叶）。
 
 ### 4.8 服务路由（service.ts）
@@ -185,7 +188,8 @@ class WorkspaceWindowsStore {
 - **`attachWorkspaceWindows` 双向往返**：`WorkspaceWindowsStore.attachSidebarStore` 内同时调用 `SidebarStore.attachWorkspaceWindows(this)`——reconcile 订阅在应用层只写一行，测试的 `makePair` 也只需一行。
 - **`openTab` 的 bound 聚焦多一步撤消**：`applyDedupe` 已把本地 tab 插入树后，bound 命中时需用新的 `removeTabId` 帮助函数把它再撤掉（否则本地 + 共享双窗口）。该路径归类为激活（`isCreation = false`），生命周期回调与自动展开语义与 dedupe 聚焦一致。
 - **bind 的 already-bound 路径也清本地重复**：设计初稿只聚焦；实现中 `stripLocalDuplicates` 在两条路径共用（防御 open 管道未拦截的本地重复）。
-- **bind 焦点语义**：仅当被绑定 tab 是当前激活 tab 时，stub 接替 `leaf.active`（设计初稿"始终聚焦 stub"改为"跟随原激活"，避免打断用户正在看的另一个窗口）。
+- **bind 焦点语义**：仅当被绑定 tab 是激活 tab 时，stub 接替 `leaf.active`（初稿"始终聚焦 stub"改为"跟随原激活"）；判定从"第一叶 active"放宽为"任意位置 active"（path-less 绑定支持后，被绑定 tab 可能不在第一叶）。
+- **绑定范围扩展（用户要求）**：初稿仅内容型（path）可绑定 → 实施为**全部 tab 类型可绑定**（agent 终端除外）。终端/git/subagent/Files 首页为「窗口共享、实例每会话独立」：终端 stub 直接走 UI-tab PTY 路由（host 按 `sessionId:tabId` 键控，stub id 即 tabId，零 host 改动）；`WorkspaceWindow` 增 `diff` 字段（diff 窗口绑定携带 diff ref，解除时原样物化）；bind 的删除规则改为「删被绑定 tab 本身 + 内容重复，不删同类型 path-less tab」；path-less 永不去重。
 - **测试发现的真实 bug**：`resolveTab` 最初定义在 Sidebar 的 no-session 早退 return 之后（hook 顺序破坏，首帧渲染即崩溃）——已上移；UI 测试的 uSES 快照稳定性教训（每次调用返回新对象会死循环）按既有 jsdom 模式处理。
 - **文档未写明的行为**：设置页禁用某 tab 类型不影响已绑定窗口渲染（显式 pin 优先）；底部面板不渲染 stub（reconcile 只碰右树第一叶）。
 - 未做：`SIDEBAR_FEATURES` 未追加 `'workspaceWindows'`（本期无消费插件需要 gate；发布时按需加）。

@@ -56,9 +56,12 @@ export function isBoundTabId(tabId: string): boolean {
  * One workspace-bound window: the workspace-scoped definition of a pinned
  * tab, shared by every session of a workspace. Sessions hold only a stub
  * reference (id + type) in their first leaf; the live definition
- * (title/path/meta) always comes from the workspace windows store, so a
- * change in one session re-renders in all of them. The stub id is stable
- * across reloads (per-workspace persisted counter).
+ * (title/path/diff/meta) always comes from the workspace windows store, so
+ * a change in one session re-renders in all of them. The stub id is stable
+ * across reloads (per-workspace persisted counter). Content windows carry
+ * their full definition (path/diff); session-scoped views (terminal/git/
+ * subagent/Files home) carry type+title only — each session renders its own
+ * live instance of the shared window.
  */
 export interface WorkspaceWindow {
   /** The stable stub id (`ws:<wsId8>:<n>`). */
@@ -66,6 +69,7 @@ export interface WorkspaceWindow {
   type: TabType
   title: string
   path?: string
+  diff?: SidebarDiffRef
   meta?: unknown
 }
 

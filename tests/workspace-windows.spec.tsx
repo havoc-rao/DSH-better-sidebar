@@ -15,7 +15,7 @@ import { act } from 'react-dom/test-utils'
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
-import { allLeaves, createSidebarStore, firstLeaf, isBoundTabId, type SidebarStore } from '../src/client/state.ts'
+import { allLeaves, createSidebarStore, firstLeaf, isBoundTabId, openTabInActivePane, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { createWorkspaceWindowsStore, type WorkspaceWindowsStore } from '../src/client/workspace-windows.ts'
 import type { Context } from '../src/context-types.ts'
@@ -77,6 +77,11 @@ function mountSidebar(): MountedSidebar {
     id: 'editor',
     title: () => 'Editor',
     component: () => createElement('div', null, 'editor-content'),
+  })
+  serviceWithWindows.registerTab({
+    id: 'terminal',
+    title: () => 'Terminal',
+    component: () => createElement('div', null, 'terminal-stub-content'),
   })
   const root: Root = createRoot(container)
   act(() => { root.render(createElement(Sidebar, { ctx, store, windows })) })
@@ -201,6 +206,46 @@ describe('workspace-bound windows UI', () => {
     // The native button is disabled (ui-primitives renders disabled rows).
     expect((item as HTMLButtonElement).disabled).toBe(true)
     expect(container.querySelector('[class*="tabPin"]')).toBeNull()
+
+    unmount()
+  })
+
+  it('terminal tabs can be bound too (path-less windows share the window)', () => {
+    const { container, store, windows, unmount } = mountSidebar()
+    // Open a local terminal (directly into the tree — the + menu flow
+    // would go through the descriptor's createTab).
+    act(() => {
+      store.reduce(s => openTabInActivePane(s, { id: 'terminal:1', type: 'terminal', title: 'Terminal' }))
+    })
+
+    const bindItem = openTabMenu(container, 'Terminal', t('bindToWorkspaceWithName', { title: 'Workspace A' }))
+    act(() => { bindItem.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+
+    expect(windows.getSnapshot().windows).toHaveLength(1)
+    expect(windows.getSnapshot().windows[0]!.type).toBe('terminal')
+    // The local terminal left the tree; the stub (pinned, same title) is there.
+    const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs)
+    expect(tabs.some(t => t.id === 'terminal:1')).toBe(false)
+    const stub = tabs.find(t => isBoundTabId(t.id))
+    expect(stub).toBeDefined()
+    expect(tabEl(container, 'Terminal')).not.toBeNull()
+    expect(container.querySelector('[class*="tabPin"]')).not.toBeNull()
+
+    unmount()
+  })
+
+  it('agent-owned terminals never offer the bind menu (model-managed)', () => {
+    const { container, store, unmount } = mountSidebar()
+    act(() => {
+      store.reduce(s => openTabInActivePane(s, { id: 'agent:some-uuid', type: 'terminal', title: 'agent shell' }))
+    })
+
+    const el = tabEl(container, 'agent shell')
+    expect(el).not.toBeNull()
+    act(() => {
+      el!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 80 }))
+    })
+    expect(document.body.querySelectorAll('[role="menuitem"]')).toHaveLength(0)
 
     unmount()
   })

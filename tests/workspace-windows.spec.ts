@@ -260,4 +260,76 @@ describe('workspace windows store', () => {
     expect(cTabs.filter(t => isBoundTabId(t.id)).map(t => t.id))
       .toEqual([windows.windowsOfSession('c')[0]!.id])
   })
+
+  it('binds a path-less window (terminal): local tab replaced, other sessions get the stub, same-type tabs untouched', () => {
+    const { sidebar, windows } = makePair()
+    // Two local terminals side by side; bind ONLY the first. (The bind
+    // always runs in the session that owns the tab — the context menu
+    // lives there — so we bind while 'a' is active.)
+    const t1 = { id: 'terminal:1', type: 'terminal', title: 'Terminal' }
+    const t2 = { id: 'terminal:2', type: 'terminal', title: 'Terminal' }
+    sidebar.setSession('a')
+    sidebar.reduce(s => openTabInActivePane(s, t1))
+    sidebar.reduce(s => openTabInActivePane(s, t2))
+    sidebar.setSession('b') // load the sibling session into the cache
+    sidebar.setSession('a') // back to the session that owns the terminals
+
+    windows.bind(t1)
+
+    const bound = windows.getSnapshot().windows
+    expect(bound).toHaveLength(1)
+    expect(bound[0]!.type).toBe('terminal')
+    expect(bound[0]!.path).toBeUndefined()
+    // The bound local tab is gone; the OTHER local terminal survives.
+    const aTabs = firstLeafTabs(sidebar, 'a')
+    expect(aTabs.some(t => t.id === 'terminal:1')).toBe(false)
+    expect(aTabs.some(t => t.id === 'terminal:2')).toBe(true)
+    const stubId = bound[0]!.id
+    expect(aTabs.some(t => t.id === stubId)).toBe(true)
+    // The bound tab was NOT the active one (terminal:2 opened last), so
+    // the active slot stays where it was — only a bound ACTIVE tab hands
+    // its slot to the stub.
+    expect(firstLeaf(sidebar.getSnapshot().state!.splits).active).toBe('terminal:2')
+    // The sibling session carries the same stub (its own live terminal).
+    expect(firstLeafTabs(sidebar, 'b').filter(t => isBoundTabId(t.id)).map(t => t.id)).toEqual([stubId])
+  })
+
+  it('binding two path-less windows creates two shared windows (no dedupe)', () => {
+    const { sidebar, windows } = makePair()
+    const t1 = { id: 'terminal:1', type: 'terminal', title: 'Terminal' }
+    const t2 = { id: 'terminal:2', type: 'terminal', title: 'Terminal' }
+    sidebar.setSession('a')
+    sidebar.reduce(s => openTabInActivePane(s, t1))
+    windows.bind(t1)
+    sidebar.reduce(s => openTabInActivePane(s, t2))
+    windows.bind(t2)
+
+    const bound = windows.getSnapshot().windows
+    expect(bound).toHaveLength(2)
+    expect(bound[0]!.id).not.toBe(bound[1]!.id)
+    // Both stubs are in the binding session's first leaf.
+    const stubs = firstLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id))
+    expect(stubs).toHaveLength(2)
+  })
+
+  it('binding a diff window carries the diff ref; unbind restores it locally', () => {
+    const { sidebar, windows } = makePair()
+    const diff = {
+      id: 'diff:1',
+      type: 'diff',
+      title: 'a.ts (staged)',
+      diff: { kind: 'worktree', path: '/ws-a/src/a.ts', staged: true } as const,
+    }
+    sidebar.setSession('a')
+    sidebar.reduce(s => openTabInActivePane(s, diff))
+    windows.bind(diff)
+
+    const bound = windows.getSnapshot().windows[0]!
+    expect(bound.diff).toEqual({ kind: 'worktree', path: '/ws-a/src/a.ts', staged: true })
+
+    // Unbind keeping the window here: the local tab restores the diff ref.
+    windows.unbind(bound.id, true)
+    const local = firstLeafTabs(sidebar, 'a').find(t => t.type === 'diff')
+    expect(local?.diff).toEqual({ kind: 'worktree', path: '/ws-a/src/a.ts', staged: true })
+  })
 })
