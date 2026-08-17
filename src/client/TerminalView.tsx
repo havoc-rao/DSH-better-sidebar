@@ -47,10 +47,11 @@ const PTY_DEPS_MISSING = 'pty-deps-missing'
  * Parse one host-downlink control frame. Only the `title` frame exists
  * today ({type:'title', title}); anything else — including terminal output
  * that merely looks like JSON — returns null and is written verbatim.
- * Bounded length so a huge program output blob cannot be parsed as JSON.
+ * Bounded length and a leading-`{` fast path so high-volume program output
+ * never pays a JSON.parse per chunk.
  */
 export function parseDownlinkFrame(data: string): { type: 'title'; title: string } | null {
-  if (data.length > 512) return null
+  if (data.length > 512 || data.charCodeAt(0) !== 0x7b) return null // '{'
   try {
     const parsed = JSON.parse(data) as unknown
     if (parsed === null || typeof parsed !== 'object') return null
@@ -124,6 +125,15 @@ export function TerminalView(props: {
 }) {
   const { scope, tabId, store, onTitleChange } = props
   const hostRef = useRef<HTMLDivElement>(null)
+  // onTitleChange is a fresh closure on every parent render (the tab
+  // descriptor builds it inline) — it must NEVER ride the effect deps: a
+  // title update flows back into updateTab → store change → re-render →
+  // new closure → effect restart → xterm dispose + reconnect LOOP (and a
+  // dispose/rebuild race in a zero-size container crashes the Viewport:
+  // "Cannot read properties of undefined (reading 'dimensions')"). The ref
+  // keeps the effect stable while the latest callback stays reachable.
+  const onTitleChangeRef = useRef(onTitleChange)
+  onTitleChangeRef.current = onTitleChange
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
   const [depsFatal, setDepsFatal] = useState<TerminalDepsInfo | null>(null)
@@ -202,7 +212,7 @@ export function TerminalView(props: {
         // JSON — is written verbatim.
         const frame = parseDownlinkFrame(event.data)
         if (frame !== null) {
-          if (frame.type === 'title') onTitleChange?.(frame.title)
+          if (frame.type === 'title') onTitleChangeRef.current?.(frame.title)
           return
         }
         term.write(event.data)
@@ -330,7 +340,7 @@ export function TerminalView(props: {
       term.dispose()
       connectRef.current = null
     }
-  }, [scope.sessionId, scope.cwd, tabId, store, onTitleChange])
+  }, [scope.sessionId, scope.cwd, tabId, store])
 
   return (
     <div className={css.terminalWrap}>
