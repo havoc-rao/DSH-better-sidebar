@@ -1,20 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
+import { loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
 import { allLeaves, createSidebarStore, defaultWidthFor, makeDefaultState } from '../src/client/state.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 
+/** A fake settings wire face whose settingsGet resolves to one raw value. */
+const wire = (value: unknown): SidebarSettingsClient => ({
+  settingsGet: async () => ({ value, revision: 1 }),
+  settingsUpdate: async () => ({ value, revision: 2 }),
+})
+
+/** A fake wire carrying an explicit externalDisable flag. */
+const wireWithDisable = (externalDisable: boolean): SidebarSettingsClient => ({
+  settingsGet: async () => ({ value: {}, revision: 1, externalDisable }),
+  settingsUpdate: async () => ({ value: {}, revision: 2 }),
+})
+
+const rejecting = (): SidebarSettingsClient => ({
+  settingsGet: async () => { throw new Error('route rejected') },
+  settingsUpdate: async () => { throw new Error('route rejected') },
+})
+
 describe('side card preferences', () => {
-  /** A fake settings wire face whose settingsGet resolves to one raw value. */
-  const wire = (value: unknown): SidebarSettingsClient => ({
-    settingsGet: async () => ({ value, revision: 1 }),
-    settingsUpdate: async () => ({ value, revision: 2 }),
-  })
-
-  const rejecting = (): SidebarSettingsClient => ({
-    settingsGet: async () => { throw new Error('route rejected') },
-    settingsUpdate: async () => { throw new Error('route rejected') },
-  })
-
   it('falls back to the defaults when the settings route rejects', async () => {
     expect(await loadPrefs(rejecting())).toEqual(SIDEBAR_PREFS_DEFAULTS)
   })
@@ -293,5 +299,20 @@ describe('side card preferences', () => {
     // The 'none' seed starts with an empty pane (no default tab).
     expect(makeDefaultState(400, true, 'none').splits.kind).toBe('leaf')
     expect((makeDefaultState(400, true, 'none').splits as { tabs: unknown[] }).tabs).toHaveLength(0)
+  })
+})
+
+describe('external disable (aionui-panel provider choice)', () => {
+  it('reads true when the host reports the aionui provider active', async () => {
+    expect(await loadExternalDisable(wireWithDisable(true))).toBe(true)
+  })
+
+  it('reads false when the host reports no external disable', async () => {
+    expect(await loadExternalDisable(wireWithDisable(false))).toBe(false)
+  })
+
+  it('reads false when the flag is absent or the wire rejects', async () => {
+    expect(await loadExternalDisable(wire({}))).toBe(false)
+    expect(await loadExternalDisable(rejecting())).toBe(false)
   })
 })

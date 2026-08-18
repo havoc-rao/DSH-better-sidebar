@@ -211,7 +211,7 @@ export const api = {
     })),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
-    call<{ value?: unknown; revision?: number }>('settings.get', {}),
+    call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),
   /** Merge a patch into the side card preferences (revision-guarded). */
   settingsUpdate: (patch: Record<string, unknown>, expectedRevision?: number) =>
     call<{ value?: unknown; revision?: number }>('settings.update', {

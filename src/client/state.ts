@@ -1214,6 +1214,27 @@ export class SidebarStore {
   }
 
   /**
+   * External disable (the dsh-web-ui family's aionui-panel provider choice):
+   * while true the sidebar must not mount at all. Not part of the snapshot —
+   * nothing renders on it; the mount gate and the intercept predicates read
+   * it directly.
+   */
+  private suspended = false
+
+  /**
+   * Set the external-disable flag (from the settings route) and remember it
+   * for the mount gate and the intercept predicates.
+   */
+  setSuspended(suspended: boolean): void {
+    this.suspended = suspended
+  }
+
+  /** Whether the sidebar is externally disabled (aionui-panel chosen). */
+  getSuspended(): boolean {
+    return this.suspended
+  }
+
+  /**
    * Replace the side card prefs (the settings RPC result / settings page
    * write). Notifies like any store change: the snapshot carries the prefs,
    * so consumers that gate on enable switches (the + menu, derived flows)
