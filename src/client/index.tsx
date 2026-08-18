@@ -126,7 +126,15 @@ export function apply(ctx: Context): void {
           // line box (≈18px) into the page and grow body → a page scrollbar.
           // fixed + full-bleed + click-through makes the host a zero-impact
           // root; the panels restore pointer-events on their own surfaces.
-          host.style.cssText = 'position: fixed; inset: 0; pointer-events: none;'
+          //
+          // z-index 40 is REQUIRED, not cosmetic: a fixed-positioned host
+          // forms its own stacking context, so the panels' z-40 lives INSIDE
+          // it and the host itself competes with the host app's UI at
+          // z-index auto (0). The app's composer sits at z-1 — without an
+          // explicit host z-index the bottom/right panels can never cover
+          // the conversation area (regression after the host became fixed;
+          // verified: even z-1000 on the panel does not win).
+          host.style.cssText = 'position: fixed; inset: 0; z-index: 40; pointer-events: none;'
           document.body.appendChild(host)
           root = createRoot(host)
           root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore, windows: workspaceWindows })))
