@@ -10,7 +10,7 @@
  * state.ts; this file is pure presentation over them.
  */
 import { Fragment, useEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import clsx from 'clsx'
 import type { SidebarState, SidebarTab, SplitNode } from './state.ts'
 import type { DropZone } from './state.ts'
@@ -124,10 +124,22 @@ function LeafView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Workspace-bound stub detection (pinned strip partition; absent → none). */
+  isBoundTabId?: (tabId: string) => boolean
+  /** Resolve a workspace-bound stub to its LIVE definition (title/path/meta
+   *  from the workspace windows store); absent → identity. */
+  resolveTab?: (tab: SidebarTab) => SidebarTab
+  /** Right-click on a tab (the shell positions its workspace menu). */
+  onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
 }) {
-  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const {
+    leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
+    isBoundTabId, resolveTab, onTabContextMenu,
+  } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
-  const activeTab = leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
+  const resolve = (tab: SidebarTab): SidebarTab => resolveTab?.(tab) ?? tab
+  const tabs = leaf.tabs.map(resolve)
+  const activeTab = tabs.find(tab => tab.id === leaf.active) ?? tabs[tabs.length - 1]
 
   useEffect(() => {
     const clear = (): void => { setDropZone(null) }
@@ -172,7 +184,7 @@ function LeafView(props: {
       */}
       <TabBar
         paneId={leaf.id}
-        tabs={leaf.tabs}
+        tabs={tabs}
         active={leaf.active}
         onActivate={(tabId) => { actions.activateTab(leaf.id, tabId) }}
         onClose={(tabId) => { actions.closeTab(leaf.id, tabId) }}
@@ -180,12 +192,14 @@ function LeafView(props: {
         newTabOptions={newTabOptions}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        isBoundTabId={isBoundTabId}
+        onTabContextMenu={onTabContextMenu}
         onDropTab={(payload, before) => {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
         }}
       />
-      {leaf.tabs.length > 0 ? (
+      {tabs.length > 0 ? (
         /*
           Every tab stays MOUNTED (inactive ones hidden), so switching tabs
           never tears down the content: a terminal keeps its pty connection
@@ -194,7 +208,7 @@ function LeafView(props: {
           terminal's close frame) happens only when a tab is truly closed.
         */
         <div className={css.paneContent}>
-          {leaf.tabs.map(tab => (
+          {tabs.map(tab => (
             <div
               key={tab.id}
               className={clsx(css.paneTab, tab.id !== activeTab?.id && css.paneTabHidden)}
@@ -220,8 +234,14 @@ function NodeView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  isBoundTabId?: (tabId: string) => boolean
+  resolveTab?: (tab: SidebarTab) => SidebarTab
+  onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
 }) {
-  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const {
+    node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
+    isBoundTabId, resolveTab, onTabContextMenu,
+  } = props
   if (node.kind === 'leaf') {
     return (
       <LeafView
@@ -232,6 +252,9 @@ function NodeView(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        isBoundTabId={isBoundTabId}
+        resolveTab={resolveTab}
+        onTabContextMenu={onTabContextMenu}
       />
     )
   }
@@ -259,6 +282,9 @@ function NodeView(props: {
               renderTab={renderTab}
               getTabIcon={getTabIcon}
               getTabBadge={getTabBadge}
+              isBoundTabId={isBoundTabId}
+              resolveTab={resolveTab}
+              onTabContextMenu={onTabContextMenu}
             />
           </div>
         </Fragment>
@@ -280,8 +306,14 @@ export function Workbench(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  isBoundTabId?: (tabId: string) => boolean
+  resolveTab?: (tab: SidebarTab) => SidebarTab
+  onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
 }) {
-  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const {
+    state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
+    isBoundTabId, resolveTab, onTabContextMenu,
+  } = props
   return (
     <div className={css.workbench}>
       <NodeView
@@ -293,6 +325,9 @@ export function Workbench(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        isBoundTabId={isBoundTabId}
+        resolveTab={resolveTab}
+        onTabContextMenu={onTabContextMenu}
       />
     </div>
   )

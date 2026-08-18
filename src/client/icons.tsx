@@ -1,11 +1,28 @@
 /**
  * Icons the sidebar needs beyond the primitives set: a terminal glyph (the
- * icon library has none), a diff glyph, and the two panel-toggle glyphs for
- * the top-right cluster. Per-tab icons live on the tab descriptors
- * (`descriptor.icon`), not in a type-keyed switch — the icon mapping was
- * registry-ized with the tab types.
+ * icon library has none), a diff glyph, the two panel-toggle glyphs for
+ * the top-right cluster, and a pushpin for workspace-bound windows. Per-tab
+ * icons live on the tab descriptors (`descriptor.icon`), not in a type-keyed
+ * switch — the icon mapping was registry-ized with the tab types.
  */
 import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
+
+/**
+ * Pushpin glyph for workspace-bound window stubs (the "绑定到工作区" pin),
+ * in the app's outline style (1.5px stroke, currentColor).
+ */
+export const IconPinOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      d="M9.9 2.2 13.8 6.1a.6.6 0 0 1-.5 1l-1.3.2-2.5 2.6.4 2.5a.6.6 0 0 1-1 .5L6.2 10.3 2.9 13.6a.6.6 0 0 1-.9-.9l3.3-3.3L2.9 7a.6.6 0 0 1 .5-1l2.5.4 2.6-2.5.2-1.3a.6.6 0 0 1 1.2-.4Z"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinejoin="round"
+    />
+    <path d="m8.9 3.2 3.9 3.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+)
 
 /**
  * Right-panel toggle glyph (the "侧拉" button): a frame with a filled strip

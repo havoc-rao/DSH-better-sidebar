@@ -22,10 +22,11 @@
 import type { ReactNode } from 'react'
 import type { Context } from '../context-types.ts'
 import {
-  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, leafWithTab,
+  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, isBoundTabId, leafWithTab,
   openTabInActivePane, patchTab, tabOpenIn, togglePanel, treeOf,
-  type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab,
+  type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
+import type { WorkspaceWindowsStore } from './workspace-windows.ts'
 import { isNarrowWidth } from './breakpoints.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
@@ -513,7 +514,7 @@ function safeCall(fn: () => void): void {
  * tab/viewer registries (Map + listener set) and proxies openTab/closeTab
  * to the store's reducer. One instance per client plugin activation.
  */
-export function createBetterSidebarService(store: SidebarStore): BetterSidebarService {
+export function createBetterSidebarService(store: SidebarStore, windows?: WorkspaceWindowsStore): BetterSidebarService {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
   const listeners = new Set<() => void>()
@@ -654,7 +655,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       const existedByKey = key !== undefined
         && inputTabs.some(candidate => candidate.type === tab.type && dedupeKey!(candidate) === key)
       const existedById = tabOpenIn(state, tab.id)
-      const isCreation = !existedByKey && !existedById
+      let isCreation = !existedByKey && !existedById
       // A URL seed pre-fills a NEWLY CREATED tab's path (the browser tab
       // navigates to it on mount); a FOCUS must never have its path
       // overwritten. An explicit seed.title still wins over a createTab-
@@ -665,6 +666,32 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
           path: seed.url,
           ...(seed.title !== undefined ? { title: seed.title } : {}),
         })
+      }
+      // A content open whose path matches a BOUND WINDOW of the target
+      // session's workspace focuses the shared stub instead of opening a
+      // local duplicate — the workspace windows store is the single source
+      // of truth (the stub renders its live definition). The dedupe pass
+      // above already landed the local tab, so it is dropped again here; a
+      // missing stub (paranoia) falls through to the regular open.
+      if (isCreation && seed.path !== undefined && windows !== undefined) {
+        const bound = windows.windowsOfSession(targetSessionId)
+          .find(window => window.type === tab.type && window.path === seed.path)
+        if (bound !== undefined) {
+          // Stubs live in the first leaf of the area they were bound from
+          // (right or bottom). The activate reducer moves activePane into
+          // that area's tree, so the auto-expand block below opens the
+          // hosting panel — the focus lands in sight.
+          const stubLeaf = leafWithTab(landed.splits, bound.id) ?? leafWithTab(landed.bottomSplits, bound.id)
+          if (stubLeaf !== undefined) {
+            landed = removeTabId(landed, tab.id)
+            landed = activateTabReducer(landed, stubLeaf.id, bound.id)
+            // A bound-window focus is an ACTIVATION, not a creation: flip
+            // the classification so the capture below reports the focus
+            // (the auto-expand block still opens the panel — a content
+            // open must land in sight).
+            isCreation = false
+          }
+        }
       }
       // Lifecycle capture (before the auto-expand block, which early-returns).
       if (isCreation) {
@@ -751,6 +778,14 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   /** Patch an open tab's display fields (a missing tab id is a no-op). */
   const updateTab = (tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void => {
+    // A workspace-bound stub's display fields live in the workspace windows
+    // store — patching the session tree would be a no-op (stubs resolve
+    // their live definition at render). Route to the store so every session
+    // of the workspace follows (e.g. the editorExplorer in-place switch).
+    if (windows !== undefined && isBoundTabId(tabId)) {
+      windows.update(tabId, patch)
+      return
+    }
     store.reduce((state) => patchTab(state, tabId, {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
@@ -835,4 +870,27 @@ function findPaneIdOf(state: SidebarState, tabId: string): string {
     if (leaf.tabs.some(t => t.id === tabId)) return leaf.id
   }
   return state.activePane ?? ''
+}
+
+/**
+ * Remove every tab with `tabId` from both trees (the bound-window focus
+ * path drops the local duplicate the dedupe pass just landed). A dangling
+ * `active` (it pointed at the removed tab) is nulled — the same rule as
+ * closeTab's cleanup, minus the emptied-leaf removal.
+ */
+function removeTabId(state: SidebarState, tabId: string): SidebarState {
+  const walk = (node: SplitNode): SplitNode => {
+    if (node.kind === 'leaf') {
+      const tabs = node.tabs.filter(tab => tab.id !== tabId)
+      if (tabs === node.tabs) return node
+      const active = node.active !== null && !tabs.some(tab => tab.id === node.active) ? null : node.active
+      return { ...node, tabs, active }
+    }
+    return { ...node, children: node.children.map(walk) }
+  }
+  const splits = walk(state.splits)
+  const bottomSplits = walk(state.bottomSplits)
+  return splits === state.splits && bottomSplits === state.bottomSplits
+    ? state
+    : { ...state, splits, bottomSplits }
 }

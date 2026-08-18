@@ -5,6 +5,14 @@
  * Output is mirrored into a bounded transcript ring (capped bytes) so a new
  * connection replays history before live data. Sessions die only when the
  * tab is closed or the plugin tears down.
+ *
+ * Workspace-bound terminal windows (`ws:` stub tab ids, the sidebar's
+ * pinned-to-workspace terminals) are SHARED: their key is `shared:<tabId>`
+ * (no session id), so every session of the workspace attaches to the SAME
+ * process — a long-running process (a server, a watcher) stays live and
+ * visible in every session. The first connection's cwd wins (a shared shell
+ * is never respawned because another session resolves a different cwd), and
+ * shared ptys never count toward a session's per-session quota.
  */
 import { chmodSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -16,6 +24,21 @@ import { SidebarError } from './wire.ts'
 
 /** Per-terminal transcript bound (bytes kept for replay). */
 const TRANSCRIPT_LIMIT = 1 << 20
+
+/**
+ * Reserved tab-id prefix of workspace-bound window stubs (mirror of the
+ * client's `WS_TAB_PREFIX` in state.ts — the host must know the contract to
+ * key the pty without the session). A `ws:` tab opens a workspace-SHARED
+ * pty: every session's stub attaches to the same process.
+ */
+export function isSharedTabId(tabId: string): boolean {
+  return tabId.startsWith('ws:')
+}
+
+/** The registry key for one tab id: shared stubs key WITHOUT the session. */
+export function ptyKeyOf(sessionId: string, tabId: string): string {
+  return isSharedTabId(tabId) ? `shared:${tabId}` : `${sessionId}:${tabId}`
+}
 
 /**
  * Restore the executable bit pnpm strips from node-pty's prebuilt
@@ -44,14 +67,18 @@ export function ensureSpawnHelper(): void {
 
 /** One live terminal. */
 export interface SidebarPty {
-  /** `${sessionId}:${tabId}` registry key. */
+  /** Registry key: `${sessionId}:${tabId}` or `shared:<tabId>` (workspace-bound). */
   key: string
   sessionId: string
   tabId: string
+  /** Whether this is a workspace-SHARED pty (`ws:` stub id): keyed without
+   *  the session, never counted against a session quota, first cwd wins. */
+  shared: boolean
   /** The working directory the process was SPAWNED with (a reconnect that
    *  resolves a different authoritative cwd respawns instead of reusing —
    *  the page-load hydrate race can attach the real cwd after the first
-   *  connect, and a shell in the wrong directory must not linger). */
+   *  connect, and a shell in the wrong directory must not linger; shared
+   *  ptys NEVER respawn for a cwd change — the first spawn wins). */
   cwd: string
   pty: IPty
   /** Output accumulated since spawn (bounded; head dropped when over the limit). */
@@ -59,6 +86,98 @@ export interface SidebarPty {
   /** Whether the top-level process exited (transcript stays replayable). */
   exited: boolean
   exitCode?: number | null
+  /** The settled command title (first token of the last executed command
+   *  line, VSCode-style; '' until the first command). Fed by
+   *  {@link digestCommandInput} at the attach layer and broadcast to every
+   *  connected socket — the client tab title follows. */
+  title: string
+  /** The in-progress input line (unsettled keystrokes), shared across
+   *  every connection of this pty. */
+  inputLine: string
+  /** Whether the handle was RE-PARENTED from another key (workspace
+   *  bind/unbind keep the process across the tab-id change). A migrated
+   *  process must survive a cwd difference at its new key — it was
+   *  spawned deliberately elsewhere and the tab-id change is not a reason
+   *  to restart it (the authoritative-cwd respawn exists for the
+   *  page-load hydrate race of freshly spawned per-session ptys). */
+  migrated?: boolean
+}
+
+/**
+ * The digest state of one pty's command-line tracking (see
+ * {@link digestCommandInput}).
+ */
+export interface CommandTitleState {
+  /** The last settled command token ('' until the first command). */
+  title: string
+  /** The in-progress input line (unsettled). */
+  line: string
+}
+
+/**
+ * Digest one chunk of terminal INPUT (the user's keystrokes as the host
+ * receives them) into the running command-line buffer, settling a title on
+ * Enter. Heuristic — no shell integration: the echoed command line is
+ * rebuilt from input, and the FIRST token of the last settled line becomes
+ * the tab title (`npm run dev` → `npm`, `git log` → `git`). Edit keys are
+ * honored (backspace pops the last char), ANSI control sequences are
+ * skipped (arrows/home/end never pollute the line), C0 controls are
+ * stripped at settlement, and only a non-empty settlement updates the
+ * title (a bare Enter keeps the previous title). A multi-line paste settles
+ * one line at a time — the LAST line wins.
+ */
+export function digestCommandInput(state: CommandTitleState, text: string): CommandTitleState {
+  let { title, line } = state
+  let i = 0
+  while (i < text.length) {
+    const ch = text[i]!
+    if (ch === '\r' || ch === '\n') {
+      const token = firstTokenOf(line)
+      line = ''
+      if (token !== '') title = token
+      i += 1
+      continue
+    }
+    if (ch === '\x1b') {
+      i = skipEscapeSequence(text, i)
+      continue
+    }
+    if (ch === '\x7f' || ch === '\b') {
+      line = line.slice(0, -1)
+      i += 1
+      continue
+    }
+    line += ch
+    i += 1
+  }
+  return { title, line }
+}
+
+/** Advance past one ESC-introduced sequence starting at `i` (the ESC). */
+function skipEscapeSequence(text: string, i: number): number {
+  i += 1
+  if (i >= text.length) return i
+  const intro = text[i]!
+  if (intro === '[' || intro === ']') {
+    // CSI or OSC: skip to the final byte (@-~) or the OSC BEL terminator.
+    i += 1
+    while (i < text.length) {
+      const c = text[i]!
+      i += 1
+      if (c === '\x07') break
+      if (c >= '@' && c <= '~') break
+    }
+    return i
+  }
+  if (intro === '(' || intro === ')') return Math.min(text.length, i + 2)
+  return i + 1 // lone ESC
+}
+
+/** The first whitespace-delimited token of a line, C0-stripped ('' if empty). */
+function firstTokenOf(line: string): string {
+  const cleaned = line.replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  if (cleaned === '') return ''
+  return cleaned.split(/\s+/)[0]!
 }
 
 /**
@@ -76,11 +195,12 @@ export class PtyManager {
     private readonly nodePty: NodePtyModule = loadRequiredNodePty(),
   ) {}
 
-  /** All live terminal keys of one session. */
+  /** All live terminal keys of one session (workspace-shared ptys are
+   *  keyed without a session and never count toward a session quota). */
   keysOf(sessionId: string): string[] {
     const keys: string[] = []
     for (const handle of this.sessions.values()) {
-      if (handle.sessionId === sessionId) keys.push(handle.key)
+      if (handle.sessionId === sessionId && !handle.shared) keys.push(handle.key)
     }
     return keys
   }
@@ -89,38 +209,58 @@ export class PtyManager {
    * Open (or reuse) the terminal for a session/tab key. A handle whose
    * process already exited is replaced with a fresh spawn (reconnecting a
    * dead terminal must yield a live shell, not an input sink), and so is a
-   * live handle whose spawn cwd differs from the now-authoritative one (the
-   * first connect of a page load can arrive before the session hydrates, so
-   * it fell back to the process cwd — reconnecting with the real cwd must
-   * restart the shell in the right directory). Reopening also cancels any
-   * pending scheduled close (a reconnect within the grace window keeps the
-   * process alive).
+   * live PER-SESSION handle whose spawn cwd differs from the now-
+   * authoritative one (the first connect of a page load can arrive before
+   * the session hydrates, so it fell back to the process cwd — reconnecting
+   * with the real cwd must restart the shell in the right directory). A
+   * SHARED handle (`ws:` stub tab id) is never respawned for a cwd change:
+   * it belongs to the workspace, the first connection's cwd wins, and
+   * respawning would kill the long-running process every session switch.
+   * Reopening also cancels any pending scheduled close (a reconnect within
+   * the grace window keeps the process alive).
    * @param sessionId - conversation id.
-   * @param tabId - client tab id.
+   * @param tabId - client tab id (`ws:` prefixed = workspace-shared).
    * @param cwd - initial working directory (the session's cwd).
    * @param cols - initial terminal width.
    * @param rows - initial terminal height.
    * @returns the live handle.
-   * @throws {SidebarError} pty-error when the per-session cap is reached.
+   * @throws {SidebarError} pty-error when the per-session cap is reached
+   *   (shared ptys bypass the cap — they are workspace-level, not session).
    */
   open(sessionId: string, tabId: string, cwd: string, cols: number, rows: number): SidebarPty {
-    const key = `${sessionId}:${tabId}`
+    const shared = isSharedTabId(tabId)
+    const key = shared ? `shared:${tabId}` : `${sessionId}:${tabId}`
     this.cancelClose(key)
     const existing = this.sessions.get(key)
-    if (existing !== undefined && !existing.exited && existing.cwd === cwd) return existing
-    if (existing !== undefined) this.close(key)
-    // Zombie cleanup: a session's exited handles (shell closed, tab dropped
-    // on an old host without the close frame) must not eat the quota.
-    for (const [candidate, handle] of [...this.sessions]) {
-      if (handle.sessionId === sessionId && handle.exited) this.close(candidate)
+    if (existing !== undefined && !existing.exited) {
+      // A MIGRATED handle (workspace bind/unbind re-parented a live
+      // process to this key) must survive a cwd difference: the shell was
+      // deliberately spawned elsewhere and the id change is not a reason
+      // to restart it. Only never-migrated per-session handles respawn on
+      // the authoritative-cwd race.
+      if (!shared && !existing.migrated && existing.cwd !== cwd) this.close(key)
+      else return existing
     }
-    if (this.keysOf(sessionId).length >= this.maxPerSession) {
-      throw new SidebarError('pty-error', `terminal limit reached (${this.maxPerSession}) for this session`, 400)
+    if (existing !== undefined) this.close(key)
+    // Zombie cleanup + quota are per-session concerns; a shared pty is
+    // workspace-level and bypasses both (its own exited handle is replaced
+    // above).
+    if (!shared) {
+      // Zombie cleanup: a session's exited handles (shell closed, tab
+      // dropped on an old host without the close frame) must not eat the
+      // quota.
+      for (const [candidate, handle] of [...this.sessions]) {
+        if (handle.sessionId === sessionId && handle.exited) this.close(candidate)
+      }
+      if (this.keysOf(sessionId).length >= this.maxPerSession) {
+        throw new SidebarError('pty-error', `terminal limit reached (${this.maxPerSession}) for this session`, 400)
+      }
     }
     const handle: SidebarPty = {
       key,
       sessionId,
       tabId,
+      shared,
       cwd,
       pty: this.nodePty.spawn(this.shell, shellSpawnArgs(), {
         name: 'xterm-256color',
@@ -131,6 +271,8 @@ export class PtyManager {
       }),
       transcript: '',
       exited: false,
+      title: '',
+      inputLine: '',
     }
     handle.pty.onData((data) => {
       handle.transcript += data
@@ -144,6 +286,40 @@ export class PtyManager {
     })
     this.sessions.set(key, handle)
     return handle
+  }
+
+  /**
+   * Re-parent a live handle to another key (workspace bind/unbind keep
+   * the running process alive across the tab-id change: bind moves
+   * `sessionId:tab` → `shared:ws:…`, unbind moves back). The handle keeps
+   * its process, transcript, command title and input line; `sessionId` /
+   * `shared` adopt the TARGET key's domain — a bound terminal becomes
+   * workspace-shared and quota-exempt, an unbound one becomes
+   * session-scoped and counts toward that session's quota. The handle is
+   * MUTATED in place (never copied): the pty's onData/onExit closures
+   * captured the original object, so a copy would diverge — new output
+   * would keep appending to the old object while the migrated key's
+   * transcript froze. Cancels any pending scheduled close so the process
+   * cannot die mid-flight, and defensively closes a handle already
+   * present at the target key (the minted ids make that unreachable).
+   * No-op (false) when the source key has no live handle — the new tab
+   * spawns fresh, status quo.
+   */
+  reparent(fromKey: string, toKey: string, sessionId: string, shared: boolean): boolean {
+    const handle = this.sessions.get(fromKey)
+    if (handle === undefined) return false
+    if (fromKey !== toKey) {
+      this.cancelClose(fromKey)
+      const existing = this.sessions.get(toKey)
+      if (existing !== undefined) this.close(toKey)
+      this.sessions.delete(fromKey)
+    }
+    handle.key = toKey
+    handle.sessionId = sessionId
+    handle.shared = shared
+    handle.migrated = true
+    this.sessions.set(toKey, handle)
+    return true
   }
 
   /**

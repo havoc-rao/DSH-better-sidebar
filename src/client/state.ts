@@ -39,6 +39,71 @@ export interface SidebarTab {
   meta?: unknown
 }
 
+/**
+ * Reserved tab-id prefix for workspace-bound windows (the "stub" tabs).
+ * Stub ids are minted by the workspace windows store (`ws:<wsId8>:<n>`)
+ * and never by tab descriptors — like `agent:`, the prefix is a namespace
+ * contract: external code must not mint ids under it.
+ */
+export const WS_TAB_PREFIX = 'ws:'
+
+/** Whether a tab id refers to a workspace-bound window stub. */
+export function isBoundTabId(tabId: string): boolean {
+  return tabId.startsWith(WS_TAB_PREFIX)
+}
+
+/**
+ * One workspace-bound window: the workspace-scoped definition of a pinned
+ * tab, shared by every session of a workspace. Sessions hold only a stub
+ * reference (id + type) in their first leaf; the live definition
+ * (title/path/diff/meta) always comes from the workspace windows store, so
+ * a change in one session re-renders in all of them. The stub id is stable
+ * across reloads (per-workspace persisted counter). Content windows carry
+ * their full definition (path/diff); session-scoped views (terminal/git/
+ * subagent/Files home) carry type+title only — each session renders its own
+ * live instance of the shared window.
+ */
+/** Which panel a workspace-bound window's stub lives in (the area the
+ *  window occupied at bind time). 'right' = the right panel's first leaf
+ *  (`splits`), 'bottom' = the bottom box's first leaf (`bottomSplits`).
+ *  Per-window, so every session renders the shared window in the same
+ *  area. Legacy persisted blobs (pre-area) default to 'bottom' — the
+ *  original always-bottom behavior. */
+export type WorkspaceArea = 'right' | 'bottom'
+
+/** One workspace-bound window ("pinned" tab shared by every session of a
+ *  workspace). The single source of truth for the window's definition: a
+ *  change in one session re-renders in all of them. The stub id is stable
+ *  across reloads (per-workspace persisted counter). Content windows carry
+ *  their full definition (path/diff); session-scoped views (terminal/git/
+ *  subagent/Files home) carry type+title only — each session renders its own
+ *  live instance of the shared window. */
+export interface WorkspaceWindow {
+  /** The stable stub id (`ws:<wsId8>:<n>`). */
+  id: string
+  type: TabType
+  title: string
+  path?: string
+  diff?: SidebarDiffRef
+  meta?: unknown
+  /** The panel whose first leaf hosts this window's stub (the area the
+   *  window was bound from). */
+  area: WorkspaceArea
+}
+
+/** The face the SidebarStore consumes from the workspace windows store:
+ *  session→windows resolution and change subscription. Defined here (not in
+ *  workspace-windows.ts) so state.ts stays free of a runtime dependency on
+ *  the store module. */
+export interface WorkspaceWindowsSource {
+  /** The bound windows of the workspace owning `sessionId` ([] when the
+   *  session belongs to no workspace, or the feed is unavailable). */
+  windowsOfSession(sessionId: string): readonly WorkspaceWindow[]
+  /** Fires on ANY workspace-windows change (bind/unbind/update, workspace
+   *  membership changes). Returns the disposer. */
+  subscribe(listener: () => void): () => void
+}
+
 /** A tab group. */
 export interface SidebarLeaf {
   kind: 'leaf'
@@ -762,6 +827,106 @@ export function reconcileAgentTerminals(
   return next
 }
 
+// ── Workspace-bound windows ────────────────────────────────────────────────
+
+/**
+ * Reconcile a session state against its workspace's bound windows: stale
+ * stubs (unbound meanwhile, or a foreign id under the reserved prefix) are
+ * dropped from BOTH trees — a dangling `active` pointing at one is nulled
+ * (a dangling active corrupts the next sanitize pass) — and a window whose
+ * stub is missing EVERYWHERE re-merges into the FIRST leaf of the panel it
+ * was bound from (`area: 'right'` → `splits`, `area: 'bottom'` →
+ * `bottomSplits`). Pinned stubs are DRAGGABLE like any tab: a stub the
+ * user moved to another leaf or panel is left exactly where it is (the
+ * per-session placement wins; only reloads fall back to the area's first
+ * leaf, because stub positions never persist). Idempotent: an
+ * already-synced state returns the same reference.
+ */
+export function reconcileWorkspaceWindows(state: SidebarState, windows: readonly WorkspaceWindow[]): SidebarState {
+  const boundIds = new Set(windows.map(w => w.id))
+  const stripStale = (node: SplitNode): SplitNode => {
+    if (node.kind === 'leaf') {
+      // filter() always allocates: track real change with a flag, or the
+      // identity check below fails on every leaf and reconcile never
+      // converges (store ↔ windows notify cycle → stack overflow).
+      let changed = false
+      const tabs = node.tabs.filter(tab => {
+        if (isBoundTabId(tab.id) && !boundIds.has(tab.id)) {
+          changed = true
+          return false
+        }
+        return true
+      })
+      const active = node.active !== null && isBoundTabId(node.active) && !boundIds.has(node.active) ? null : node.active
+      if (!changed && active === node.active) return node
+      return { ...node, tabs, active }
+    }
+    const children = node.children.map(stripStale)
+    return children === node.children ? node : { ...node, children }
+  }
+  const splits = stripStale(state.splits)
+  const bottomSplits = stripStale(state.bottomSplits)
+  // A stub present anywhere — including a leaf or panel it was dragged
+  // to — counts as merged; only truly missing windows re-merge.
+  const present = new Set(
+    [...allLeaves(splits), ...allLeaves(bottomSplits)]
+      .flatMap(leaf => leaf.tabs)
+      .filter(tab => isBoundTabId(tab.id))
+      .map(tab => tab.id),
+  )
+  const rightMissing = windows.filter(w => w.area === 'right' && !present.has(w.id))
+  const bottomMissing = windows.filter(w => w.area === 'bottom' && !present.has(w.id))
+  if (
+    splits === state.splits
+    && bottomSplits === state.bottomSplits
+    && rightMissing.length === 0
+    && bottomMissing.length === 0
+  ) {
+    return state
+  }
+  return {
+    ...state,
+    splits: appendStubs(splits, rightMissing),
+    bottomSplits: appendStubs(bottomSplits, bottomMissing),
+  }
+}
+
+/** Append one stub per missing window to the tree's FIRST leaf (store order). */
+function appendStubs(tree: SplitNode, windows: readonly WorkspaceWindow[]): SplitNode {
+  if (windows.length === 0) return tree
+  const target = firstLeaf(tree)
+  return mapLeaf(tree, target.id, (leaf) => {
+    leaf.tabs = [...leaf.tabs, ...windows.map(window => ({ id: window.id, type: window.type, title: window.title }))]
+  })
+}
+
+/**
+ * Strip every workspace stub from a state (the persistence filter): bound
+ * windows never persist inside session layouts — the workspace windows
+ * store is the single source of truth and reload re-merges. An `active`
+ * pointer into a stripped stub is nulled for the same reason.
+ */
+export function stripWorkspaceWindows(state: SidebarState): SidebarState {
+  let changed = false
+  const walk = (node: SplitNode): SplitNode => {
+    if (node.kind === 'leaf') {
+      const tabs = node.tabs.filter(tab => {
+        if (!isBoundTabId(tab.id)) return true
+        changed = true
+        return false
+      })
+      const active = node.active !== null && isBoundTabId(node.active) ? null : node.active
+      if (active !== node.active) changed = true
+      return tabs === node.tabs && active === node.active ? node : { ...node, tabs, active }
+    }
+    const children = node.children.map(walk)
+    return children === node.children ? node : { ...node, children }
+  }
+  const splits = walk(state.splits)
+  const bottomSplits = walk(state.bottomSplits)
+  return changed ? { ...state, splits, bottomSplits } : state
+}
+
 // ── The per-session store ──────────────────────────────────────────────────
 
 const STORAGE_PREFIX = 'dsh-sidebar:v1'
@@ -785,7 +950,8 @@ export function defaultWidthFor(viewport: number, percent: number): number {
   return Math.min(viewport, Math.max(PANEL_MIN, Math.round(viewport * percent / 100)))
 }
 
-function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
+function loadState(sessionId: string, prefs: SidebarPrefs, source?: WorkspaceWindowsSource): SidebarState {
+  let state: SidebarState | undefined
   try {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}:${sessionId}`)
     if (raw !== null) {
@@ -793,12 +959,29 @@ function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
       // Seed the uid counter past the persisted ids (it resets on reload);
       // sanitize re-ids any duplicates the pre-seeding counter left behind.
       nextIdCounter = maxCounterId(parsed)
-      const sanitized = sanitizeState(parsed)
-      if (sanitized !== undefined) return sanitized
+      state = sanitizeState(parsed)
     }
   } catch {
     // Corrupt or unavailable storage: fall through to the default.
   }
+  if (state === undefined) {
+    state = defaultState(prefs)
+  }
+  // Workspace-bound windows merge into the first leaf at load: the store is
+  // the single source of truth (session layouts never persist stubs), so
+  // every load re-materializes them. A failing resolution degrades to the
+  // unmerged state rather than blocking the session.
+  try {
+    const windows = source?.windowsOfSession(sessionId) ?? []
+    if (windows.length > 0) state = reconcileWorkspaceWindows(state, windows)
+  } catch (error) {
+    console.error('[dsh-better-sidebar] workspace windows merge failed:', error)
+  }
+  return state
+}
+
+/** The fresh default state (extracted from loadState's fallback path). */
+function defaultState(prefs: SidebarPrefs): SidebarState {
   // New sessions seed from the user's side card prefs: the width is the
   // chosen percent of the window (clamped to the panel floor and the
   // viewport so a huge percent can never crush the app shell), the panel
@@ -1000,6 +1183,35 @@ export class SidebarStore {
   private readonly persistTimers = new Map<string, number>()
   /** User-facing side card prefs seeding brand-new session states (defaults until the settings RPC resolves). */
   private prefs: SidebarPrefs = { ...SIDEBAR_PREFS_DEFAULTS }
+  /** The workspace windows source (attached in apply): bound windows merge
+   *  into every session's first leaf and strip out of persistence. */
+  private workspaceWindows: WorkspaceWindowsSource | null = null
+
+  /**
+   * Attach the workspace windows source (bound-window resolution + change
+   * feed). Every workspace-windows change re-reconciles ALL cached session
+   * states (and the active snapshot): a bind/unbind/update must appear,
+   * update, or disappear in every session of the workspace — including the
+   * ones the user is not looking at right now. Attach exactly once, before
+   * any session loads.
+   */
+  attachWorkspaceWindows(source: WorkspaceWindowsSource): void {
+    this.workspaceWindows = source
+    source.subscribe(() => {
+      for (const [sessionId, state] of this.bySession) {
+        const next = reconcileWorkspaceWindows(state, source.windowsOfSession(sessionId))
+        if (next !== state) this.bySession.set(sessionId, next)
+      }
+      const activeSessionId = this.snapshot.sessionId
+      if (activeSessionId !== undefined && this.snapshot.state !== undefined) {
+        const next = reconcileWorkspaceWindows(this.snapshot.state, source.windowsOfSession(activeSessionId))
+        if (next !== this.snapshot.state) {
+          this.snapshot = { ...this.snapshot, state: next }
+          this.notify()
+        }
+      }
+    })
+  }
 
   /**
    * Replace the side card prefs (the settings RPC result / settings page
@@ -1026,7 +1238,7 @@ export class SidebarStore {
     } else {
       let state = this.bySession.get(sessionId)
       if (state === undefined) {
-        state = loadState(sessionId, this.prefs)
+        state = loadState(sessionId, this.prefs, this.workspaceWindows ?? undefined)
         this.bySession.set(sessionId, state)
       } else {
         // Cache hit: another session's load/ops may have left the uid
@@ -1110,7 +1322,7 @@ export class SidebarStore {
     const counterBefore = nextIdCounter
     let state = this.bySession.get(sessionId)
     if (state === undefined) {
-      state = loadState(sessionId, this.prefs)
+      state = loadState(sessionId, this.prefs, this.workspaceWindows ?? undefined)
       this.bySession.set(sessionId, state)
     } else {
       // Re-seed the uid counter past THIS session's persisted ids, exactly
@@ -1137,7 +1349,12 @@ export class SidebarStore {
     const timer = window.setTimeout(() => {
       this.persistTimers.delete(sessionId)
       try {
-        localStorage.setItem(`${STORAGE_PREFIX}:${sessionId}`, JSON.stringify(state))
+        // Workspace stubs never persist: the workspace windows store is the
+        // single source of truth and every load re-merges (stripping also
+        // nulls an active that pointed at a stripped stub — a dangling
+        // active would fail sanitize on the next load and reset the layout).
+        const clean = stripWorkspaceWindows(state)
+        localStorage.setItem(`${STORAGE_PREFIX}:${sessionId}`, JSON.stringify(clean))
       } catch {
         // Storage full or unavailable: layout memory is best-effort.
       }

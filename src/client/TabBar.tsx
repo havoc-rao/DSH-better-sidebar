@@ -4,13 +4,21 @@
  * button cluster, and the + menu that opens new tabs (explorer / git /
  * terminal). Tabs are draggable; dropping onto another tab inserts before it,
  * dropping on the strip background appends to this pane.
+ *
+ * Workspace-bound windows (the "pinned" stubs) render at the END of the
+ * strip behind a divider, whatever their array position: the caller hands
+ * the full tab list and an `isBoundTabId` predicate, this component
+ * partitions. Pinned tabs stay draggable like any tab — the pin marks the
+ * window as workspace-shared, not as immovable — and their close button
+ * routes to the shell's unbind path like any other close.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCloseFill14, IconPlusOutline16, Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
+import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
@@ -66,13 +74,50 @@ export function TabBar(props: {
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Workspace-bound stub detection (pinned rendering; absent → no pins). */
+  isBoundTabId?: (tabId: string) => boolean
+  /** Right-click on a tab: the shell positions its workspace menu here. */
+  onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
 }) {
   const {
     paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
+    isBoundTabId, onTabContextMenu,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  /** The bound stub whose close button is ARMED (first click of the
+   *  two-step close confirm); null = nothing armed. */
+  const [armedCloseId, setArmedCloseId] = useState<string | null>(null)
+  const armedTimerRef = useRef<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+
+  /** How long the armed state survives without a confirming click. */
+  const ARMED_MS = 2000
+
+  /** Arm the two-step close on a bound stub (first click). */
+  const armClose = (tabId: string): void => {
+    if (armedTimerRef.current !== null) window.clearTimeout(armedTimerRef.current)
+    setArmedCloseId(tabId)
+    armedTimerRef.current = window.setTimeout(() => {
+      armedTimerRef.current = null
+      setArmedCloseId(null)
+    }, ARMED_MS)
+  }
+
+  /** Disarm (any other interaction: tab click, menu open, unmount). */
+  const disarmClose = (): void => {
+    if (armedTimerRef.current !== null) {
+      window.clearTimeout(armedTimerRef.current)
+      armedTimerRef.current = null
+    }
+    setArmedCloseId(null)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (armedTimerRef.current !== null) window.clearTimeout(armedTimerRef.current)
+    }
+  }, [])
 
   // Wheel over the strip scrolls the tab row horizontally (a plain mouse
   // wheel emits deltaY, which overflow-x alone never consumes). Bound as a
@@ -106,6 +151,95 @@ export function TabBar(props: {
     }
   }, [])
 
+  // Partition: the session's own tabs first, the workspace-bound stubs
+  // (pinned) behind a divider at the end — independent of array order.
+  const boundIds = new Set(isBoundTabId === undefined ? [] : tabs.filter(tab => isBoundTabId(tab.id)).map(tab => tab.id))
+  const sessionTabs = tabs.filter(tab => !boundIds.has(tab.id))
+  const pinnedTabs = tabs.filter(tab => boundIds.has(tab.id))
+
+  /** One tab element; `bound` renders the pinned variant (pin glyph,
+   *  two-click close confirm, context-menu enabled — same close/activate
+   *  wiring). Pinned tabs ARE draggable like any tab: the pin marks the
+   *  window as workspace-shared, not as immovable — dragging a stub to
+   *  another leaf or panel moves the shared window's per-session
+   *  placement (reconcile only re-homes stubs that are missing entirely). */
+  const renderTabEl = (tab: SidebarTab, bound: boolean): ReactNode => (
+    <div
+      key={tab.id}
+      className={clsx(css.tab, active === tab.id && css.tabActive, bound && css.tabBound)}
+      title={tab.title}
+      draggable
+      onDragStart={(event) => {
+        setTabDragging(true)
+        event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
+        event.dataTransfer.effectAllowed = 'move'
+      }}
+      onDragEnd={() => { setTabDragging(false); setDragOver(false) }}
+      onDragOver={(event) => { event.preventDefault(); event.stopPropagation() }}
+      onDrop={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        setTabDragging(false)
+        const raw = event.dataTransfer.getData(TAB_DRAG_TYPE)
+        const payload = parseDrag(raw)
+        if (payload !== null) onDropTab(payload, tab.id)
+      }}
+      onClick={() => {
+        // Any tab activation disarms a pending close confirm.
+        disarmClose()
+        onActivate(tab.id)
+      }}
+      onAuxClick={(event) => {
+        // Middle-click closes the tab (and suppresses autoscroll). Bound
+        // stubs share the two-step confirm: the first middle-click arms.
+        if (event.button === 1) {
+          event.preventDefault()
+          if (!bound) onClose(tab.id)
+          else if (armedCloseId === tab.id) {
+            disarmClose()
+            onClose(tab.id)
+          } else armClose(tab.id)
+        }
+      }}
+      onContextMenu={(event) => {
+        if (onTabContextMenu === undefined) return
+        event.preventDefault()
+        event.stopPropagation()
+        disarmClose()
+        onTabContextMenu(tab, event)
+      }}
+    >
+      {getTabIcon?.(tab) ?? null}
+      {bound && <IconPinOutline16 size={12} className={css.tabPin} />}
+      {getTabBadge?.(tab) ?? null}
+      <span className={css.tabTitle}>{tab.title}</span>
+      <button
+        type="button"
+        className={clsx(css.tabClose, bound && armedCloseId === tab.id && css.tabCloseArmed)}
+        aria-label={bound && armedCloseId === tab.id ? t('closeBoundConfirm') : t('close')}
+        title={bound && armedCloseId === tab.id ? t('closeBoundConfirm') : undefined}
+        onClick={(event) => {
+          event.stopPropagation()
+          // Bound stubs close EVERYWHERE (shared windows): the first click
+          // arms a red confirm state, the second click really closes — an
+          // accidental ✕ must never wipe the window from every session.
+          if (!bound) {
+            onClose(tab.id)
+            return
+          }
+          if (armedCloseId === tab.id) {
+            disarmClose()
+            onClose(tab.id)
+          } else {
+            armClose(tab.id)
+          }
+        }}
+      >
+        <IconCloseFill14 />
+      </button>
+    </div>
+  )
+
   return (
     <div
       className={clsx(css.tabBar, dragOver && css.tabBarDrop)}
@@ -129,52 +263,9 @@ export function TabBar(props: {
       }}
     >
       <div ref={listRef} className={css.tabList}>
-        {tabs.map(tab => (
-          <div
-            key={tab.id}
-            className={clsx(css.tab, active === tab.id && css.tabActive)}
-            title={tab.title}
-            draggable
-            onDragStart={(event) => {
-              setTabDragging(true)
-              event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
-              event.dataTransfer.effectAllowed = 'move'
-            }}
-            onDragEnd={() => { setTabDragging(false); setDragOver(false) }}
-            onDragOver={(event) => { event.preventDefault(); event.stopPropagation() }}
-            onDrop={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              setTabDragging(false)
-              const raw = event.dataTransfer.getData(TAB_DRAG_TYPE)
-              const payload = parseDrag(raw)
-              if (payload !== null) onDropTab(payload, tab.id)
-            }}
-            onClick={() => { onActivate(tab.id) }}
-            onAuxClick={(event) => {
-              // Middle-click closes the tab (and suppresses autoscroll).
-              if (event.button === 1) {
-                event.preventDefault()
-                onClose(tab.id)
-              }
-            }}
-          >
-            {getTabIcon?.(tab) ?? null}
-            {getTabBadge?.(tab) ?? null}
-            <span className={css.tabTitle}>{tab.title}</span>
-            <button
-              type="button"
-              className={css.tabClose}
-              aria-label={t('close')}
-              onClick={(event) => {
-                event.stopPropagation()
-                onClose(tab.id)
-              }}
-            >
-              <IconCloseFill14 />
-            </button>
-          </div>
-        ))}
+        {sessionTabs.map(tab => renderTabEl(tab, false))}
+        {pinnedTabs.length > 0 && <div className={css.tabBarDivider} role="separator" />}
+        {pinnedTabs.map(tab => renderTabEl(tab, true))}
         {/*
           The + sits immediately after the rightmost tab (sticky at the
           right edge of the scrollport when the tabs overflow, so it stays
