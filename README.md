@@ -44,9 +44,15 @@
 
 ### v0.13.1
 
+**✨ 新功能**
+
+- 📊 **Markdown 预览安全渲染 Mermaid 图表**（[#164](https://github.com/omdsh-dev/DSH-better-sidebar/pull/164)）：预览的 md 含 mermaid fence 时按需下发 `client-mermaid.js` chunk（~7MB，无 mermaid 文件零加载）；纵深防御渲染——`securityLevel: 'strict'` + `htmlLabels: false`（节点文字走真实 SVG `<text>`）+ SVG 注入前二次清洗（删 `foreignObject`/`script`/外来 HTML 元素、剥 `@*`/`on*`/`href` 属性）；点击图表在弹窗中放大（滚轮以鼠标为中心缩放、拖拽平移、工具栏与快捷键），深浅色跟随重渲、解析失败回退原码
+- 🖥️ **终端 shell 与 shellArgs 可配置**（[#125](https://github.com/omdsh-dev/DSH-better-sidebar/pull/125)）：`cordis.patch.yml` 的 `better-sidebar.config` 可指定 `shell` / `shellArgs`（`shellArgs` 非空时完全替换默认参数；未配置维持自动解析 `$SHELL` / 登录 shell / `powershell.exe` 原行为），UI 终端与 agent 终端（`terminal_create`）同时生效；终端 tab 标题改用 shell 名（bash / zsh / powershell），内部标识改 UUID，同 shell 可开多个终端
+
 **🐛 修复**
 
-- 🔧 **peer 依赖对齐 DSH 0.1.0-rc.7**（[#206](https://github.com/omdsh-dev/DSH-better-sidebar/issues/206)）：全部 `@deepseek-ai/*` peer / devDependencies 从 `^0.1.0-rc.6` 升至 `^0.1.0-rc.7`，CI 挂载冒烟同步钉版——消除主框架升至 rc.7 后 rc.6 / rc.7 混用依赖树导致的 `agent-presets: refusing to compose an unscoped context`（选模型 / 发消息报错）
+- 🔗 **聚合双挂载自动退让**（[#200](https://github.com/omdsh-dev/DSH-better-sidebar/pull/200)）：聚合包（如 dsh-web-ui-all）以独立条目 id 挂载同包时，`cordis.patch.yml` 的守卫表达式自动禁用自身 `better-sidebar` 行，不再重复注册 `/sidebar/api` 导致 `duplicate prefix route` 整个插件树启动失败（`dsh web` 崩溃）；独立安装行为不变
+- 🔧 **peer 依赖对齐 DSH 0.1.0-rc.7**（[#207](https://github.com/omdsh-dev/DSH-better-sidebar/pull/207)，修复 [#206](https://github.com/omdsh-dev/DSH-better-sidebar/issues/206)）：全部 `@deepseek-ai/*` peer / devDependencies 从 `^0.1.0-rc.6` 升至 `^0.1.0-rc.7`，CI 挂载冒烟同步钉版——消除主框架升至 rc.7 后 rc.6 / rc.7 混用依赖树导致的 `agent-presets: refusing to compose an unscoped context`（选模型 / 发消息报错）
 
 ### v0.13.0
 

@@ -43,9 +43,15 @@
 
 ### v0.13.1
 
+**✨ New features**
+
+- 📊 **Safe Mermaid rendering in the Markdown preview** ([#164](https://github.com/omdsh-dev/DSH-better-sidebar/pull/164)): when a previewed md file contains mermaid fences, a `client-mermaid.js` chunk (~7MB) is served on demand (zero load without mermaid); defense-in-depth rendering — `securityLevel: 'strict'` + `htmlLabels: false` (node labels use real SVG `<text>`) + a second sanitize pass before SVG injection (foreignObject/script/foreign HTML elements removed, `@*`/`on*`/`href` attributes stripped); click a diagram to zoom in a modal overlay (wheel zoom centered on the cursor, drag pan, toolbar & shortcuts), re-renders with light/dark theme, falls back to the raw code block on parse failure
+- 🖥️ **Configurable terminal shell & shellArgs** ([#125](https://github.com/omdsh-dev/DSH-better-sidebar/pull/125)): `cordis.patch.yml` `better-sidebar.config` can set `shell` / `shellArgs` (a non-empty `shellArgs` fully replaces the defaults; unset keeps the previous auto-resolution of `$SHELL` / login shell / `powershell.exe`), applied to both UI terminals and agent terminals (`terminal_create`); terminal tab titles now show the shell name (bash/zsh/powershell) and internal tab ids use UUIDs so the same shell can open multiple terminals
+
 **🐛 Fixes**
 
-- 🔧 **Peer dependencies aligned to DSH 0.1.0-rc.7** ([#206](https://github.com/omdsh-dev/DSH-better-sidebar/issues/206)): all `@deepseek-ai/*` peer/devDependencies raised from `^0.1.0-rc.6` to `^0.1.0-rc.7`, and the CI mount lane pins the same version — eliminating the mixed rc.6/rc.7 dependency tree (after the main framework moved to rc.7) that surfaced as `agent-presets: refusing to compose an unscoped context` when picking a model / sending a message
+- 🔗 **Aggregate double-mount auto-yield** ([#200](https://github.com/omdsh-dev/DSH-better-sidebar/pull/200)): when an aggregate package (e.g. dsh-web-ui-all) mounts the same package under its own entry id, the guard expression in `cordis.patch.yml` disables the plugin's own `better-sidebar` row so `/sidebar/api` is no longer registered twice (`duplicate prefix route` crashing the whole plugin tree / `dsh web`); standalone installs behave as before
+- 🔧 **Peer dependencies aligned to DSH 0.1.0-rc.7** ([#207](https://github.com/omdsh-dev/DSH-better-sidebar/pull/207), fixes [#206](https://github.com/omdsh-dev/DSH-better-sidebar/issues/206)): all `@deepseek-ai/*` peer/devDependencies raised from `^0.1.0-rc.6` to `^0.1.0-rc.7`, and the CI mount lane pins the same version — eliminating the mixed rc.6/rc.7 dependency tree (after the main framework moved to rc.7) that surfaced as `agent-presets: refusing to compose an unscoped context` when picking a model / sending a message
 
 ### v0.13.0
 
