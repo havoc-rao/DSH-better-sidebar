@@ -675,6 +675,22 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   // crush the app shell to zero. Dragging disables the layout transition.
   // On NARROW viewports the drawer FLOATS over the app shell — no push, the
   // conversation keeps the full width behind the drawer.
+  // The push's RELEASE lives in a separate mount/unmount-only effect: the
+  // update effect below must NEVER remove the variables during the
+  // component's life. A mid-life removal resolves `margin-right` to its
+  // 0px fallback for one style recalculation, and the just-re-enabled
+  // transitions then animate the FULL width back in — the conversation
+  // visibly "springs" on every drag release (the issue-#92 family: the chat
+  // box must not jiggle around drags). Unmount (or a boundary swap after a
+  // render crash, or fiber disposal via HMR) runs this cleanup and releases
+  // the push (issue #31: without it the stale variables keep squeezing
+  // #root — "the sidebar cannot be hidden" until a full reload).
+  useEffect(() => {
+    return () => {
+      document.documentElement.style.removeProperty('--dsh-sidebar-width')
+      document.documentElement.style.removeProperty('--dsh-sidebar-height')
+    }
+  }, [])
   useEffect(() => {
     const width = !narrow && snapshot.state?.panelOpen === true
       ? Math.min(snapshot.state.width, window.innerWidth)
@@ -687,17 +703,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       : 0
     document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
     document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
-    // Unmount must release the push (issue #31): when the boundary swaps the
-    // whole sidebar after a render crash (or the plugin fiber is disposed /
-    // HMR), the CSS variables would otherwise stay on <html> and layout.css
-    // keeps squeezing #root with a stale margin — "the sidebar cannot be
-    // hidden" until a full reload. removeProperty restores the CSS fallback
-    // (var(--dsh-sidebar-width, 0px)); React re-runs cleanup+setup in the
-    // same commit on state changes, so there is no visible flicker.
-    return () => {
-      document.documentElement.style.removeProperty('--dsh-sidebar-width')
-      document.documentElement.style.removeProperty('--dsh-sidebar-height')
-    }
   }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight, snapshot.state?.bottomMaximized])
   useEffect(() => {
     if (anyDragging) document.body.setAttribute('data-dsh-sidebar-dragging', '')
@@ -952,8 +957,21 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
                 if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
                 event.currentTarget.releasePointerCapture(event.pointerId)
                 const { startX, startWidth } = widthDrag.current
+                // Write the FINAL size to the DOM synchronously, BEFORE the
+                // store commit re-enables the layout transitions (the commit
+                // removes `data-dsh-sidebar-dragging` / `data-dragging`).
+                // During the drag the DOM lags the pointer by up to one
+                // frame (applyDrag is rAF-batched; a fast nudge never even
+                // flushes), so without this the just-re-enabled `margin-right`
+                // / width / height transitions animate the residual delta —
+                // the chat box audibly "bounces" on release. Writing the
+                // committed size first makes the commit a visual no-op: no
+                // computed change, no transition (issue #92 family).
+                const width = clampWidth(startWidth + (startX - event.clientX))
+                const height = state.bottomOpen ? Math.min(state.bottomHeight, window.innerHeight) : 0
                 stopDragScheduling()
-                store.reduce(s => setWidth(s, startWidth + (startX - event.clientX)))
+                applyDrag(width, height)
+                store.reduce(s => setWidth(s, width))
                 setDraggingWidth(false)
               }}
             />
@@ -1009,8 +1027,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
               event.currentTarget.releasePointerCapture(event.pointerId)
               const { startX, startY, startWidth, startHeight } = cornerDrag.current
+              // Same release contract as the width drag: apply the final size
+              // synchronously so the store commit (which re-enables the
+              // transitions) lands on already-current DOM values — no
+              // animated residual delta, no bounce.
+              const width = clampWidth(startWidth + (startX - event.clientX))
+              const height = clampHeight(startHeight + (startY - event.clientY))
               stopDragScheduling()
-              store.reduce(s => setBottomHeight(setWidth(s, startWidth + (startX - event.clientX)), startHeight + (startY - event.clientY)))
+              applyDrag(width, height)
+              store.reduce(s => setBottomHeight(setWidth(s, width), height))
               setDraggingCorner(false)
             }}
           />
@@ -1071,8 +1096,14 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
             event.currentTarget.releasePointerCapture(event.pointerId)
             const { startY, startHeight } = bottomDrag.current
+            // Same release contract as the width drag: apply the final size
+            // synchronously before the store commit re-enables the
+            // transitions, so the vertical push (and the panel) never animate
+            // the one-frame residual (`--dsh-sidebar-height` / margin-bottom).
+            const height = clampHeight(startHeight + (startY - event.clientY))
             stopDragScheduling()
-            store.reduce(s => setBottomHeight(s, startHeight + (startY - event.clientY)))
+            applyDrag(Math.min(state.width, window.innerWidth), height)
+            store.reduce(s => setBottomHeight(s, height))
             setDraggingBottom(false)
           }}
         />

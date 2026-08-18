@@ -80,14 +80,37 @@ interface FrameSample {
   transitionDuration: string
 }
 
-test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', async ({ page }) => {
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
-  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
-  const sidebar = page.locator('[data-dsh-better-sidebar]')
-  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+type StripBox = { x: number; y: number; width: number; height: number; varWidth: number; innerWidth: number }
 
-  // Dismiss whatever onboarding takeover is present (same dance as the mount
-  // lane), so the pointer can reach the strip without a masking overlay.
+/** The width drag strip's geometry: the sidebar's LEFTMOST `cursor:
+ *  col-resize` element (the files window's tree-dock handle is further
+ *  right), plus the live `--dsh-sidebar-width` layout variable. */
+const LOCATE_STRIP_SNIPPET = `(() => {
+  const host = document.querySelector('[data-dsh-better-sidebar]')
+  if (host === null) return null
+  const boxes = [...host.querySelectorAll('*')]
+    .filter(el => getComputedStyle(el).cursor === 'col-resize')
+    .map(el => el.getBoundingClientRect())
+    .filter(r => r.width > 0 && r.height > 0)
+    .sort((a, b) => a.x - b.x)
+  const r = boxes[0]
+  if (r === undefined) return null
+  const varWidth = parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+  return {
+    x: r.x, y: r.y, width: r.width, height: r.height,
+    varWidth: Number.isNaN(varWidth) ? 0 : varWidth,
+    innerWidth: window.innerWidth,
+  }
+})()`
+
+function locateStripInPage(page: import('@playwright/test').Page): Promise<StripBox | null> {
+  return page.evaluate<StripBox | null>(LOCATE_STRIP_SNIPPET)
+}
+
+/** Dismiss whatever onboarding takeover is present, so the pointer can reach
+ *  the strips without a masking overlay (the same dance both drag lanes use:
+ *  a stacked takeover may mask the button, so retry in rounds). */
+async function dismissOnboarding(page: import('@playwright/test').Page): Promise<void> {
   try {
     await expect
       .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
@@ -110,6 +133,17 @@ test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', as
     }
     if (!dismissed) break
   }
+}
+
+test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', async ({ page }) => {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+
+  // Dismiss whatever onboarding takeover is present, so the pointer can reach
+  // the strip without a masking overlay.
+  await dismissOnboarding(page)
 
   // openByDefault defaults OFF: a fresh session's panel starts collapsed, and
   // the collapsed layout push still writes `--dsh-sidebar-width: 0px` — so the
@@ -132,37 +166,19 @@ test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', as
   // dedicated hook (the skinning contract is token-driven), so locate it
   // semantically among the sidebar's `cursor: col-resize` elements — the files
   // window's tree-dock handle matches too, but the panel strip is always the
-  // LEFTMOST one (the dock sits at the panel's right edge).
-  const locateStrip = `(() => {
-    const host = document.querySelector('[data-dsh-better-sidebar]')
-    if (host === null) return null
-    const boxes = [...host.querySelectorAll('*')]
-      .filter(el => getComputedStyle(el).cursor === 'col-resize')
-      .map(el => el.getBoundingClientRect())
-      .filter(r => r.width > 0 && r.height > 0)
-      .sort((a, b) => a.x - b.x)
-    const r = boxes[0]
-    if (r === undefined) return null
-    const varWidth = parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
-    return {
-      x: r.x, y: r.y, width: r.width, height: r.height,
-      varWidth: Number.isNaN(varWidth) ? 0 : varWidth,
-      innerWidth: window.innerWidth,
-    }
-  })()`
-  type StripBox = { x: number; y: number; width: number; height: number; varWidth: number; innerWidth: number }
-  // The panel SLIDES IN from the right on expand: locating the strip before
-  // the open transition settles captures a mid-animation box at the viewport
-  // edge, and the drag lands off-panel. Wait until the strip sits at the
-  // pushed layout edge (its right edge ≈ innerWidth - the push variable).
+  // LEFTMOST one (the dock sits at the panel's right edge). The panel SLIDES
+  // IN from the right on expand: locating the strip before the open
+  // transition settles captures a mid-animation box at the viewport edge, and
+  // the drag lands off-panel. Wait until the strip sits at the pushed layout
+  // edge (its right edge ≈ innerWidth - the push variable).
   await expect
     .poll(async () => {
-      const box = await page.evaluate<StripBox | null>(locateStrip)
+      const box = await locateStripInPage(page)
       if (box === null) return false
       return Math.abs((box.x + box.width) - (box.innerWidth - box.varWidth)) <= 8
     }, { timeout: 30_000 })
     .toBe(true)
-  const stripBox = await page.evaluate<StripBox | null>(locateStrip)
+  const stripBox = await locateStripInPage(page)
   expect(stripBox, 'the width drag strip must be present (cursor: col-resize)').not.toBeNull()
 
   // Instrument a per-frame sampler BEFORE the drag begins.
@@ -255,4 +271,134 @@ test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', as
   const stripTravel = first!.stripX - last!.stripX
   const convoTravel = first!.convoRight - last!.convoRight
   expect(Math.abs(convoTravel - stripTravel), 'conversation must track the panel edge 1:1').toBeLessThanOrEqual(8)
+})
+
+/**
+ * Fast-nudge release lane — the regression test for the release-time
+ * "bounce" (the same issue-#92 family as the lane above: the conversation
+ * box must not jiggle around drags).
+ *
+ * The lane above pins the MID-drag contract. This lane pins the RELEASE
+ * contract. Drags write the DOM (panel size + the --dsh-sidebar-width /
+ * --dsh-sidebar-height layout variables) through a requestAnimationFrame
+ * batch, so the DOM trails the pointer by up to one frame — and a quick
+ * nudge (down → small move → up within a frame) never flushes a write at
+ * all. On pointer up the old code cancelled the pending frame and only
+ * committed the store; the commit then re-enabled the layout transitions
+ * (it removes `body[data-dsh-sidebar-dragging]` and `data-dragging`) while
+ * the DOM still sat at the pre-drag size, and the post-paint layout effect
+ * wrote the new width into the CSS variable — the just-re-enabled
+ * `margin-right` transition animated the residual, so the conversation
+ * visibly bounced after the drag ended ("突然拖动一下的时候弹一下").
+ *
+ * The fix writes the FINAL size to the DOM synchronously inside the
+ * pointer-up handler, before the store commit, so the commit is a visual
+ * no-op: no computed change, no transition. This lane forces the worst case
+ * deterministically by stubbing requestAnimationFrame during the drag (no
+ * frame can flush), releasing a single 60px nudge, then sampling every
+ * frame after the release: the conversation edge must land at its settled
+ * value and stay there — a non-empty spread of intermediate values is the
+ * animated transition tail (the bug).
+ */
+test('fast-nudge release lands in one frame (no transition tail)', async ({ page }) => {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+
+  await dismissOnboarding(page)
+
+  // openByDefault defaults OFF; a fresh page load starts collapsed. Expand
+  // through the toggle cluster like the mid-drag lane.
+  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
+  await expect(expandButton).toHaveCount(1)
+  await expandButton.click()
+
+  // Wait until the strip sits at the pushed layout edge (post-transition).
+  await expect
+    .poll(async () => {
+      const box = await locateStripInPage(page)
+      if (box === null) return false
+      return Math.abs((box.x + box.width) - (box.innerWidth - box.varWidth)) <= 8
+    }, { timeout: 30_000 })
+    .toBe(true)
+  const stripBox = await locateStripInPage(page)
+  expect(stripBox, 'the width drag strip must be present (cursor: col-resize)').not.toBeNull()
+
+  // Force the worst case: freeze requestAnimationFrame so no drag write can
+  // flush during the fast nudge (the DOM must still hold the PRE-drag size
+  // when the pointer is released). The drag's own rAF batch and the frame
+  // sampler are parked; only the pointer events flow.
+  const beforeConvoRight = await page.evaluate(
+    () => document.querySelector('#root > div[data-slot="root"] > div > div:nth-child(2)')?.getBoundingClientRect().right ?? 0,
+  )
+  await page.evaluate(() => {
+    const win = window as unknown as typeof window & { __origRaf?: typeof requestAnimationFrame }
+    win.__origRaf = win.requestAnimationFrame.bind(win)
+    win.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame
+  })
+  const startX = stripBox!.x + stripBox!.width / 2
+  const startY = stripBox!.y + Math.min(120, stripBox!.height / 2 + 60)
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX - 60, startY)
+  await page.mouse.up()
+
+  // Restore rAF and sample every frame after the release. The stubbed
+  // (never-run) drag write is discarded: the fix's pointer-up handler has
+  // already applied the final size synchronously.
+  await page.evaluate(() => {
+    const win = window as unknown as typeof window & {
+      __origRaf?: typeof requestAnimationFrame
+      __releaseSamples?: Array<{ t: number; convoRight: number; dragging: boolean }>
+    }
+    win.requestAnimationFrame = win.__origRaf!
+    const samples: Array<{ t: number; convoRight: number; dragging: boolean }> = []
+    win.__releaseSamples = samples
+    const center = document.querySelector('#root > div[data-slot="root"] > div > div:nth-child(2)')
+    const loop = (): void => {
+      const rect = center?.getBoundingClientRect() ?? { right: 0 }
+      samples.push({
+        t: performance.now(),
+        convoRight: rect.right,
+        dragging: document.body.hasAttribute('data-dsh-sidebar-dragging'),
+      })
+      requestAnimationFrame(loop)
+    }
+    requestAnimationFrame(loop)
+  })
+  await page.waitForTimeout(400)
+
+  const samples = await page.evaluate(
+    () => (window as unknown as { __releaseSamples: Array<{ t: number; convoRight: number; dragging: boolean }> }).__releaseSamples,
+  )
+  expect(samples.length, 'the release sampler must have collected frames').toBeGreaterThan(5)
+  expect(samples.some(s => s.dragging), 'the drag must have ended (dragging attribute cleared)').toBe(false)
+  // The nudge must actually have moved the layout (sanity: 60px left into
+  // the conversation area).
+  const settled = samples[samples.length - 1]!.convoRight
+  expect(
+    beforeConvoRight - settled,
+    'the conversation edge must have moved left with the committed width',
+  ).toBeGreaterThan(40)
+
+  // The regression: every post-release frame must already read the settled
+  // value — a spread of intermediate values is a just-re-enabled transition
+  // animating a stale layout (the bounce). The fix does two things: the
+  // pointer-up handler snaps the CSS variables to the committed size
+  // BEFORE the commit re-enables the transitions (no one-frame residual),
+  // and the layout-push effect no longer removes the variables mid-life (a
+  // removal resolves the margin to its 0 fallback once and the transitions
+  // then animate the FULL width back in). Either path would show up here as
+  // a non-flat conversation edge after the release.
+  const min = Math.min(...samples.map(s => s.convoRight))
+  const max = Math.max(...samples.map(s => s.convoRight))
+  expect(
+    max - min,
+    `conversation edge must not move after release (transition tail): spread ${(max - min).toFixed(2)}px`,
+  ).toBeLessThanOrEqual(2)
+  expect(
+    Math.abs(samples[0]!.convoRight - settled),
+    'the very first post-release frame must already be at the settled position',
+  ).toBeLessThanOrEqual(2)
 })
