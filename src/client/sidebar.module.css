@@ -36,6 +36,10 @@
   display: flex;
   flex-direction: row;
   gap: 4px;
+  /* The host root is click-through (position: fixed; pointer-events: none —
+     it must never occupy document flow): every interactive surface restores
+     pointer events on itself. */
+  pointer-events: auto;
 }
 
 /* The tab strip of the OPEN right panel reserves the cluster's width at its
@@ -80,6 +84,9 @@
   position: fixed;
   top: 0;
   right: 0;
+  /* See .toggleCluster: the click-through host root needs every interactive
+     surface to restore pointer events explicitly. */
+  pointer-events: auto;
   /* Full height: the bottom panel squeezes only the center column, so the
      right panel never gives up any vertical position. */
   bottom: 0;
@@ -157,6 +164,9 @@
   z-index: 40;
   display: flex;
   flex-direction: column;
+  /* See .toggleCluster: the click-through host root needs every interactive
+     surface to restore pointer events explicitly. */
+  pointer-events: auto;
   background: var(--dsw-alias-bg-layer-1);
   border-top: 1px solid var(--dsw-alias-border-l2);
   /* Expand/collapse slides the panel; height drags animate the height. */

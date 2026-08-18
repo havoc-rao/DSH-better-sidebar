@@ -120,6 +120,13 @@ export function apply(ctx: Context): void {
         try {
           host = document.createElement('div')
           host.setAttribute('data-dsh-better-sidebar', '')
+          // The host must NEVER occupy document flow: everything inside is
+          // fixed-positioned, but the right-click Menu (anchor wrapper span)
+          // and any future inline content would otherwise push an empty
+          // line box (≈18px) into the page and grow body → a page scrollbar.
+          // fixed + full-bleed + click-through makes the host a zero-impact
+          // root; the panels restore pointer-events on their own surfaces.
+          host.style.cssText = 'position: fixed; inset: 0; pointer-events: none;'
           document.body.appendChild(host)
           root = createRoot(host)
           root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore, windows: workspaceWindows })))
