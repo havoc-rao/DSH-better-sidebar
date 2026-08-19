@@ -43,6 +43,42 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="33%" alt="添加插件截图" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
+### v0.14.0
+
+**✨ 新功能**
+
+- ⌨️ **键盘优先交互 + 快捷键系统**：一套统一的快捷键注册表（`ctx.betterSidebar.registerKeybinding`，能力清单 `keybindings`）——物理键匹配（不受键盘布局影响）、IME / AltGr / 连按守卫、`when` 上下文谓词、`priority` 仲裁，内置快捷键与插件注册共用同一分发器。新增快捷键：`⌘/Ctrl+P` 快速打开（展开面板并聚焦文件搜索）、`⌘/Ctrl+F` 聚焦文件搜索、`⌘/Ctrl+Tab` / `⌘/Ctrl+Shift+Tab` 切换当前窗格标签、`⌘/Ctrl+1…9` 跳到第 n 个标签、`⌘/Ctrl+W` 关闭当前标签（后四者仅在焦点位于侧边栏内时生效）；面板开关（⌘B / ⌘J / ⌘⇧J / ⌘⌥B）迁入同一系统
+- 🔍 **文件搜索键盘导航**：搜索框支持 ↑↓ 移动高亮（环绕）、Enter 打开、Esc 清除（空查询时失焦）；结果高亮行带独立按压样式与导航提示
+- ➕ **+ 菜单键盘操作**：打开后直接按 `1-9`（位置）或选项首字母选择，↑↓ / Home / End 移动高亮，Enter 确认，Esc 关闭——每行名称右侧显示数字 + 首字母 chip，菜单底部另有操作提示行
+
+## ⌨️ 键盘快捷键
+
+> macOS 用 ⌘，Windows / Linux 用 Ctrl（下表以 ⌘ 表示，Ctrl 等价）。`Cmd+` 绑定同时接受 ⌘ 与 Ctrl；实测中若与宿主快捷键冲突，可在宿主侧调整。
+
+| 快捷键 | 作用 | 生效条件 |
+|---|---|---|
+| ⌘B | 切换宿主左侧栏 | 全局 |
+| ⌘⌥B | 切换右侧栏 | 全局 |
+| ⌘J | 切换底部面板 | 桌面宽度 |
+| ⌘⇧J | 最大化 / 还原底部面板 | 桌面宽度 |
+| ⌘P | 快速打开：展开面板 → 打开文件窗口 → 聚焦文件搜索 | 未在侧边栏外输入时 |
+| ⌘F | 聚焦文件搜索框 | 当前标签是文件窗口 |
+| ⌘Tab / ⌘Shift+Tab | 下一个 / 上一个标签 | 焦点在侧边栏内 |
+| ⌘1…⌘9 | 跳到当前窗格第 n 个标签 | 焦点在侧边栏内 |
+| ⌘W | 关闭当前标签 | 焦点在侧边栏内 |
+
+**+ 菜单**（打开后直接按）：`1-9` 按位置选择 · 首字母按选项名选择（重复按同字母继续循环） · `↑↓` / `Home` / `End` 移动高亮 · `Enter` 确认 · `Esc` 关闭——每行名称右侧显示数字 + 首字母 chip。
+
+**文件搜索框**：`↑↓` 移动结果高亮 · `Enter` 打开高亮项 · `Esc` 清除查询（空查询失焦）。
+
+外部插件可用 `ctx.betterSidebar.registerKeybinding({ id, title, key, when?, priority?, run })` 注入自己的快捷键（见 [AGENTS.md](./AGENTS.md) 与 [外部插件接入指南](./docs/external-plugin-guide.md)）。
+
+### v0.15.0
+
+**✨ 新功能**
+
+- 🧱 **VSCode 风格工作台布局**：新 `sidebarLayout` 设置（默认 `docked`，编辑器卡齿轮下拉）——`vscode` 模式把文件树从编辑器 tab 内搬到**独立 Side Bar 列**（编辑器左 | 侧栏中 | 活动栏右的镜像排列，编辑器贴近聊天区），并在面板右缘加一条 **Activity Bar**（48px 图标化 `+` 菜单：点击即打开对应 tab，活动 tab 类型带内缘指示条；与 `+` 菜单同一套注册表/排序/禁用判定）；编辑器 tab 在 vscode 模式下去掉内嵌树与树开关，文件经 Side Bar 树打开为 per-path 标签；窄视口自动回退 docked 抽屉；legacy `vscode-left`/`vscode-right` 值自动迁移
+
 ### v0.13.0
 
 **✨ 新功能**

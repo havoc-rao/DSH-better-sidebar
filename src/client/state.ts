@@ -9,7 +9,7 @@
  * divides the space row- or column-wise with fractional sizes. All tree
  * operations are pure functions over the node, unit-tested in tests/state.spec.ts.
  */
-import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../prefs-shared.ts'
+import { SIDEBAR_BAR_WIDTH_DEFAULT, SIDEBAR_PREFS_DEFAULTS, clampSidebarBarWidth, type SidebarPrefs } from '../prefs-shared.ts'
 import { isNarrowWidth } from './breakpoints.ts'
 
 /**
@@ -160,6 +160,16 @@ export interface SidebarState {
   /** The bottom panel's own split tree (panes/tabs live only in ONE tree;
    *  tabs never cross panels — the two panels only share panel-size drags). */
   bottomSplits: SplitNode
+  /**
+   * The vscode Side Bar's active view id (the independent file-tree column
+   * shown in `sidebarLayout: 'vscode'`). Currently only `'explorer'` is
+   * rendered (the file tree + search); the field is reserved for future
+   * view switching. Defaults to `'explorer'`; ignored in docked mode.
+   */
+  sideBarView: string
+  /** The vscode Side Bar's width in px (clamped to the contract range).
+   *  Ignored in docked mode. */
+  sideBarWidth: number
 }
 
 export const PANEL_MIN = 280
@@ -170,6 +180,11 @@ export const TAB_MAX_WIDTH = 160
  * bound is the viewport, enforced by {@link setBottomHeight}). */
 export const BOTTOM_MIN = 120
 export const BOTTOM_DEFAULT = 220
+
+/** The vscode Side Bar width contract (mirrors the docked tree's bounds;
+ *  the constants live in prefs-shared so both halves share them, but the
+ *  defaults are repeated here for the state seed). */
+const SIDEBAR_BAR_VIEW_DEFAULT = 'explorer'
 
 let nextIdCounter = 0
 /** Unique pane/tab id within one state instance. */
@@ -255,6 +270,8 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seed: 
     bottomOpenedOnce: false,
     bottomMaximized: false,
     bottomSplits: bottomLeaf,
+    sideBarView: SIDEBAR_BAR_VIEW_DEFAULT,
+    sideBarWidth: SIDEBAR_BAR_WIDTH_DEFAULT,
   }
 }
 
@@ -361,6 +378,30 @@ export function allLeaves(node: SplitNode): SidebarLeaf[] {
 export function tabOpenIn(state: SidebarState, tabId: string): boolean {
   return allLeaves(state.splits).some(leaf => leaf.tabs.some(tab => tab.id === tabId))
     || allLeaves(state.bottomSplits).some(leaf => leaf.tabs.some(tab => tab.id === tabId))
+}
+
+/** The leaf owning `paneId` (the active pane), wherever it lives. */
+export function leafById(state: SidebarState, paneId: string): SidebarLeaf | undefined {
+  return allLeaves(state[treeOf(state, paneId)]).find(leaf => leaf.id === paneId)
+}
+
+/** The active pane's leaf (the pane receiving newly opened tabs). */
+export function activeLeafOf(state: SidebarState): SidebarLeaf | undefined {
+  const paneId = state.activePane ?? firstLeaf(state.splits).id
+  return leafById(state, paneId)
+}
+
+/** The active tab of the active pane (its `active` pointer, else the last
+ *  tab — the fallback the workbench render uses). */
+export function activeTabOf(state: SidebarState): SidebarTab | undefined {
+  const leaf = activeLeafOf(state)
+  if (leaf === undefined) return undefined
+  return leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
+}
+
+/** All tabs of the active pane, in strip order (keyboard tab cycling). */
+export function activePaneTabsOf(state: SidebarState): SidebarTab[] {
+  return activeLeafOf(state)?.tabs ?? []
 }
 
 /** Replace a leaf with a split of it plus a fresh empty leaf. */
@@ -730,6 +771,19 @@ export function setBottomHeight(state: SidebarState, height: number): SidebarSta
   return { ...state, bottomHeight: Math.min(max, Math.max(BOTTOM_MIN, Math.round(height))) }
 }
 
+/** Set the vscode Side Bar's active view id (the independent file-tree
+ *  column). Inert in docked mode — the caller only dispatches this while
+ *  `sidebarLayout === 'vscode'`. */
+export function setSideBarView(state: SidebarState, view: string): SidebarState {
+  if (view === state.sideBarView) return state
+  return { ...state, sideBarView: view }
+}
+
+/** Set the vscode Side Bar's width (clamped to the contract range). */
+export function setSideBarWidth(state: SidebarState, width: number): SidebarState {
+  return { ...state, sideBarWidth: clampSidebarBarWidth(width) }
+}
+
 /** Toggle a directory in the explorer expansion set. */
 export function toggleExpanded(state: SidebarState, path: string): SidebarState {
   const expanded = state.expanded.includes(path)
@@ -1069,6 +1123,15 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     // The maximized flag arrived later still: older states restore normal.
     bottomMaximized: record.bottomMaximized === true,
     bottomSplits,
+    // The vscode Side Bar fields arrived later: older states restore the
+    // explorer view at the default width (the fields are inert in docked
+    // mode anyway, so the default is harmless for pre-vscode layouts).
+    sideBarView: typeof record.sideBarView === 'string' && record.sideBarView !== ''
+      ? record.sideBarView
+      : 'explorer',
+    sideBarWidth: typeof record.sideBarWidth === 'number' && Number.isFinite(record.sideBarWidth)
+      ? clampSidebarBarWidth(record.sideBarWidth)
+      : SIDEBAR_BAR_WIDTH_DEFAULT,
   }
 }
 

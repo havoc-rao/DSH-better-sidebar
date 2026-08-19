@@ -11,21 +11,23 @@
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Context, SidebarLayoutService } from '../context-types.ts'
-import { createSidebarStore } from './state.ts'
+import { createSidebarStore, activeTabOf, activePaneTabsOf } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { createWorkspaceWindowsStore } from './workspace-windows.ts'
 import { resetChunks } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
+import { registerBuiltinKeybindings } from './builtins/keybindings.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
-import { registerPanelHotkeys } from './hotkeys.ts'
+import { KeybindingRuntime, isPlusMenuOpen, isSearchActive, type SidebarKeybindingContext } from './keybindings.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
+import { isNarrowWidth } from './breakpoints.ts'
 import { LOCALE_NS, attachLocale, t, zh, en } from './locales.ts'
 import css from './sidebar.module.css'
 import './layout.css'
@@ -68,11 +70,45 @@ export function apply(ctx: Context): void {
   // out of persistence; the service routes stub updates/opens through it.
   const workspaceWindows = createWorkspaceWindowsStore(ctx)
   workspaceWindows.attachSidebarStore(sidebarStore)
+  // The ONE keybinding runtime: every built-in shortcut (panel toggles,
+  // quick open, search focus, tab keys) and every plugin registration share
+  // this document-capture dispatcher. Its context is rebuilt per key event
+  // from the store snapshot, the DOM focus, and the transient UI markers
+  // (the + menu / search states published by the components).
+  const keybindingRuntime = new KeybindingRuntime((): SidebarKeybindingContext => {
+    const snapshot = sidebarStore.getSnapshot()
+    const state = snapshot.state ?? null
+    const activeTab = state === null ? undefined : activeTabOf(state)
+    let focusInSidebar = false
+    let textEditing = false
+    try {
+      const activeElement = document.activeElement as HTMLElement | null
+      if (activeElement !== null) {
+        focusInSidebar = activeElement.closest?.('[data-dsh-better-sidebar]') !== null
+        textEditing = !focusInSidebar
+          && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)
+      }
+    } catch {
+      // Degraded focus context: bindings fall back to their other gates.
+    }
+    return {
+      state,
+      narrow: isNarrowWidth(window.innerWidth),
+      focusInSidebar,
+      textEditing,
+      plusMenuOpen: isPlusMenuOpen(),
+      searchActive: isSearchActive(),
+      activeTab: activeTab ?? null,
+      activeTabType: activeTab?.type ?? '',
+      activePaneTabs: state === null ? [] : activePaneTabsOf(state),
+    }
+  })
   // The sidebar registry service: external plugins register tab types and
-  // file previewers through `ctx.betterSidebar.registerTab/registerFileViewer`.
-  // Published before the panel mounts so consumers injecting 'betterSidebar'
-  // are ready by the time the sidebar renders.
-  const service = createBetterSidebarService(sidebarStore, workspaceWindows)
+  // file previewers through `ctx.betterSidebar.registerTab/registerFileViewer`,
+  // and keybindings through `registerKeybinding` — all landing on the shared
+  // runtime above. Published before the panel mounts so consumers injecting
+  // 'betterSidebar' are ready by the time the sidebar renders.
+  const service = createBetterSidebarService(sidebarStore, workspaceWindows, keybindingRuntime)
   ctx.provide('betterSidebar', service)
   // Register the plugin's own built-in tabs and viewers through the same
   // service (eating our own dogfood). The disposer unregisters them on
@@ -267,33 +303,28 @@ export function apply(ctx: Context): void {
       'dsh-better-sidebar: IME composition guard',
     )
 
-    // The panel-toggle hotkeys (⌘B / ⌘J / ⌘⌥B, VSCode-style):
-    // document-capture keydown that toggles the host's LEFT sidebar
-    // (ui-layout's ctx.layout, resolved lazily like 'conversation'), the
-    // bottom panel, and the right sidebar through the store. Self-guarded
-    // (IME composition, AltGr, key repeat, narrow viewports) and a strict
-    // no-op without a current session.
+    // The keybinding runtime (⌘B / ⌘J / ⌘⌥B panel toggles, ⌘P quick open,
+    // ⌘F search focus, ⌘Tab / ⌘1…9 tab keys — and every plugin
+    // registration): one document-capture dispatcher with the shared
+    // IME/AltGr/repeat guards and a per-event context. The built-ins
+    // register through the same API plugins use; the left sidebar toggle
+    // resolves ui-layout's ctx.layout lazily like 'conversation'. A strict
+    // no-op without a current session (the store reduce is the gate).
     ctx.effect(
       () => {
         try {
-          return registerPanelHotkeys(sidebarStore, () => {
-            try {
-              const layout = ctx.get('layout') as SidebarLayoutService | undefined
-              if (layout === undefined) {
-                console.warn('[dsh-better-sidebar] layout service unavailable — ⌘B left-sidebar toggle skipped')
-                return
-              }
-              layout.toggleSidebar()
-            } catch (error) {
-              console.warn('[dsh-better-sidebar] left-sidebar toggle failed:', error)
-            }
-          })
+          const disposeBindings = registerBuiltinKeybindings(keybindingRuntime, ctx, sidebarStore)
+          const disposeAttach = keybindingRuntime.attach()
+          return () => {
+            disposeBindings()
+            disposeAttach()
+          }
         } catch (error) {
-          fail('panel hotkeys', error)
+          fail('keybindings', error)
           return undefined
         }
       },
-      'dsh-better-sidebar: panel-toggle hotkeys',
+      'dsh-better-sidebar: keybindings',
     )
 
     // DSH 0.1.x does not yet carry an icon through the settings.section

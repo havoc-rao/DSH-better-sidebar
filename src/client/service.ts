@@ -30,6 +30,7 @@ import type { WorkspaceWindowsStore } from './workspace-windows.ts'
 import { isNarrowWidth } from './breakpoints.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
+import { KeybindingRuntime, type KeybindingDescriptor } from './keybindings.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -47,6 +48,7 @@ export type {
 } from './state.ts'
 export type { SessionScope } from './api.ts'
 export type { SidebarPrefs } from '../prefs-shared.ts'
+export type { KeybindingDescriptor, KeybindingEventLike, KeySpec, SidebarKeybindingContext } from './keybindings.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -154,6 +156,11 @@ export interface TabComponentProps {
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
+  /** Whether the VSCode-style layout is in effect for this render
+   *  (`sidebarLayout === 'vscode'` AND not a narrow viewport). The editor
+   *  tab uses it to drop its docked file tree (the tree lives in the
+   *  independent Side Bar in that mode). Absent = docked behavior. */
+  vscodeLayout?: boolean
 }
 
 /** Describes one kind of sidebar tab (builtins register themselves too). */
@@ -397,6 +404,27 @@ export interface BetterSidebarService {
   closeTab(tabId: string, scope?: SessionScope): void
   /** Subscribe to registry changes (register/dispose). */
   subscribe(listener: () => void): () => void
+  /**
+   * Register a keybinding (v0.14.0+): the hotkey injection point. External
+   * plugins contribute shortcuts to the sidebar's shared keybinding
+   * dispatch — a document-capture listener that matches PHYSICAL keys
+   * (`event.code`, layout-independent), guards IME/AltGr/key-repeat
+   * globally, and runs the first binding whose key AND `when` context
+   * match (ties break by `priority`, higher first). A matched binding
+   * fully consumes the event (preventDefault + stopPropagation); `run`
+   * returning `false` explicitly yields to the next matching binding.
+   * Register through `ctx.effect` — the disposer unregisters on fiber
+   * disposal (HMR-safe). A duplicate id throws (like tabs/viewers).
+   *
+   * Key syntax (simple, VSCode-flavoured): `Cmd+P` / `Ctrl+Alt+B` /
+   * `Alt+1` / `F5` / `ArrowUp` / `Space` — `Cmd` matches the platform
+   * command key (⌘ on macOS, Ctrl elsewhere), `Ctrl` is the literal
+   * physical Ctrl. Physical codes (`KeyP`, `Digit1`) are accepted too.
+   * Multi-key chords (two keys) are NOT supported — keep it simple.
+   */
+  registerKeybinding(descriptor: KeybindingDescriptor): () => void
+  /** The registered keybindings in dispatch order (priority desc). */
+  getKeybindings(): readonly KeybindingDescriptor[]
   /** The plugin version this service instance was built from ('0.12.0'). */
   readonly version: string
   /**
@@ -471,7 +499,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.13.0'
+export const SIDEBAR_SERVICE_VERSION = '0.14.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -486,6 +514,7 @@ export const SIDEBAR_SERVICE_VERSION = '0.13.0'
  * - 'pluginSettings': SidebarSettingsDeclaration.pluginToggles/render
  * - 'urlTarget' (v0.13.0): TabDescriptor.urlTarget (external-link claims)
  * - 'settingSelect': SidebarSettingToggle type 'select' (options/multi)
+ * - 'keybindings' (v0.14.0): registerKeybinding / getKeybindings
  */
 export const SIDEBAR_FEATURES = [
   'badge',
@@ -498,6 +527,7 @@ export const SIDEBAR_FEATURES = [
   'pluginSettings',
   'urlTarget',
   'settingSelect',
+  'keybindings',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -513,11 +543,35 @@ function safeCall(fn: () => void): void {
  * Create one BetterSidebar service bound to a store. The service owns the
  * tab/viewer registries (Map + listener set) and proxies openTab/closeTab
  * to the store's reducer. One instance per client plugin activation.
+ *
+ * `keybindings` (v0.14.0+) is the shared keybinding runtime: when passed
+ * (production), plugin `registerKeybinding` calls land on the live
+ * document-capture dispatcher; without it (tests) the service spins up a
+ * private runtime so the API stays fully exercisable — those bindings are
+ * simply never dispatched.
  */
-export function createBetterSidebarService(store: SidebarStore, windows?: WorkspaceWindowsStore): BetterSidebarService {
+export function createBetterSidebarService(
+  store: SidebarStore,
+  windows?: WorkspaceWindowsStore,
+  keybindings?: KeybindingRuntime,
+): BetterSidebarService {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
   const listeners = new Set<() => void>()
+  // A private runtime when none is shared (standalone/tests): the registry
+  // semantics (dup ids, disposal, listing) work the same either way, only
+  // the document dispatch is absent.
+  const bindingRuntime = keybindings ?? new KeybindingRuntime(() => ({
+    state: null,
+    narrow: false,
+    focusInSidebar: false,
+    textEditing: false,
+    plusMenuOpen: false,
+    searchActive: false,
+    activeTab: null,
+    activeTabType: '',
+    activePaneTabs: [],
+  }))
 
   const notify = (): void => {
     for (const fn of [...listeners]) fn()
@@ -527,6 +581,13 @@ export function createBetterSidebarService(store: SidebarStore, windows?: Worksp
     listeners.add(listener)
     return () => { listeners.delete(listener) }
   }
+
+  /** Keybinding register path: delegate to the shared (or private) runtime. */
+  const registerKeybinding = (descriptor: KeybindingDescriptor): (() => void) =>
+    bindingRuntime.register(descriptor)
+
+  /** The registered keybindings in dispatch order. */
+  const getKeybindings = (): readonly KeybindingDescriptor[] => bindingRuntime.list()
 
   const registerTab = (descriptor: TabDescriptor): (() => void) => {
     if (tabs.has(descriptor.id)) {
@@ -833,6 +894,8 @@ export function createBetterSidebarService(store: SidebarStore, windows?: Worksp
     openTab,
     closeTab,
     subscribe,
+    registerKeybinding,
+    getKeybindings,
     version: SIDEBAR_SERVICE_VERSION,
     features: SIDEBAR_FEATURES,
     getSnapshot,

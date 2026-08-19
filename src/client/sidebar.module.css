@@ -149,6 +149,116 @@
   display: flex;
 }
 
+/* ── VSCode-style Activity Bar + Side Bar (sidebarLayout: 'vscode') ────── */
+
+/* The mirror arrangement (editor | side bar | activity bar) is laid out as a
+   row inside .panelBody: the Workbench (editor group) takes the remaining
+   space, the side bar a fixed-width column, the activity bar a 48px strip on
+   the panel's RIGHT edge. The side bar's resize handle rides its LEFT edge
+   (the editor|side-bar boundary) — dragging left widens it. All surfaces
+   follow the generic card/layer tokens; never --dsw-specific-sidebar-fill
+   (that belongs to the app's own left nav — see the skin contract). */
+.activityBar {
+  flex: 0 0 48px;
+  width: 48px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--dsw-alias-bg-layer-2);
+  border-left: 1px solid var(--dsw-alias-border-l2);
+  overflow: hidden;
+}
+
+.activityBarIcon {
+  position: relative;
+  flex: 0 0 48px;
+  height: 48px;
+  width: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-fg-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.activityBarIcon:hover:not(:disabled) {
+  color: var(--dsw-alias-fg-base);
+}
+
+.activityBarIcon:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* The active view's inner-edge indicator bar (the panel-edge side: RIGHT in
+   the mirror layout, since the activity bar sits at the panel's right edge). */
+.activityBarIconActive {
+  color: var(--dsw-alias-fg-base);
+}
+
+.activityBarIconActive::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--dsw-alias-border-active, var(--dsw-alias-fg-accent));
+}
+
+.sideBarPane {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-alias-bg-layer-1);
+  border-left: 1px solid var(--dsw-alias-border-l2);
+  position: relative;
+  overflow: hidden;
+}
+
+/* The resize handle rides the side bar's LEFT edge (editor|side-bar
+   boundary). An 8px hit strip straddling the border, like the panel edge. */
+.sideBarResize {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 3;
+  touch-action: none;
+}
+
+.sideBarResize:hover {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.sideBarHeader {
+  flex: 0 0 35px;
+  height: 35px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-fg-muted);
+  font-weight: 600;
+}
+
+.sideBarBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 /* ── Bottom panel ──────────────────────────────────────────────────────── */
 
 /* The bottom panel: an independent workbench at the bottom of the CENTER
@@ -520,6 +630,104 @@
 .paneCard:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* ── The + menu dropdown (custom, v0.14.0+) ───────────────────────────────
+   The keyboard-first + menu: portaled to body, fixed under the + button,
+   with a digit chip (1-9 / 0) and a first-letter chip right-aligned on
+   every row so the shortcuts are visible at a glance. Token-driven surface
+   like every other panel chrome. */
+
+.plusMenu {
+  position: fixed;
+  z-index: 900;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.plusMenuList {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.plusMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  text-align: left;
+  cursor: pointer;
+}
+
+.plusMenuItem:hover:not(:disabled),
+.plusMenuItemActive {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.plusMenuItemActive {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.plusMenuItemDisabled,
+.plusMenuItem:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.plusMenuItemLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The right-aligned shortcut chips (digit + first letter). */
+.plusMenuKeys {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+}
+
+.plusMenuKey {
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  line-height: 16px;
+  text-align: center;
+}
+
+.plusMenuItemActive .plusMenuKey {
+  background: var(--dsw-alias-bg-layer-1);
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.plusMenuFooter {
+  margin-top: 4px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
 }
 
 /* ── Tab strip ─────────────────────────────────────────────────────────── */
@@ -991,6 +1199,21 @@
 
 .editorSearchResult:hover {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The keyboard-highlighted search result row (v0.14.0+): a strong accent
+   so the ↑↓-selected row is obvious without a mouse. */
+.editorSearchResultActive,
+.editorSearchResultActive:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The search keyboard-navigation hint line (v0.14.0+). */
+.editorSearchNavHint {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  padding-top: 6px;
+  margin-top: 4px;
 }
 
 .editorStatus {

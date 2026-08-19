@@ -23,6 +23,7 @@ if (g.localStorage === undefined) {
 import { createBetterSidebarService, matchUrlTarget, SIDEBAR_FEATURES, SIDEBAR_SERVICE_VERSION } from '../src/client/service.ts'
 import { createSidebarStore, allLeaves, makeDefaultState, openDiffTab, openTabInActivePane, sanitizeState, type SidebarTab } from '../src/client/state.ts'
 import { createWorkspaceWindowsStore, type WorkspaceWindowsStore } from '../src/client/workspace-windows.ts'
+import { KeybindingRuntime } from '../src/client/keybindings.ts'
 import type { Context } from '../src/context-types.ts'
 
 describe('BetterSidebar service', () => {
@@ -1136,5 +1137,34 @@ describe('workspace-bound window routing (workspace windows)', () => {
     const bTab = bothTrees.flatMap(l => l.tabs).find(t => t.path === '/ws/src/b.ts')
     expect(bTab).toBeDefined()
     void windows
+  })
+})
+
+describe('keybindings injection point (v0.14.0)', () => {
+  it('registerKeybinding/getKeybindings delegate to the INJECTED runtime (the live dispatcher)', () => {
+    const runtime = new KeybindingRuntime(() => ({
+      state: null, narrow: false, focusInSidebar: false, textEditing: false,
+      plusMenuOpen: false, searchActive: false, activeTab: null, activeTabType: '', activePaneTabs: [],
+    }))
+    const service = createBetterSidebarService(createSidebarStore(), undefined, runtime)
+    const dispose = service.registerKeybinding({ id: 'x', title: 'X', key: 'Cmd+P', run: () => {} })
+    expect(service.getKeybindings().map(binding => binding.id)).toContain('x')
+    expect(runtime.get('x')).toBeDefined()
+    dispose()
+    expect(runtime.get('x')).toBeUndefined()
+    expect(service.getKeybindings()).toHaveLength(0)
+  })
+
+  it('works without an injected runtime (a private fallback the API stays exercisable)', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    const dispose = service.registerKeybinding({ id: 'y', title: 'Y', key: 'F5', run: () => {} })
+    expect(service.getKeybindings().some(binding => binding.id === 'y')).toBe(true)
+    expect(() => service.registerKeybinding({ id: 'y', title: 'Y2', key: 'F6', run: () => {} }))
+      .toThrow(/already registered/)
+    dispose()
+  })
+
+  it('advertises the keybindings capability', () => {
+    expect(SIDEBAR_FEATURES).toContain('keybindings')
   })
 })

@@ -29,6 +29,12 @@ import type {
   TabDescriptor,
 } from '../src/client/service.ts'
 import type {
+  KeybindingDescriptor,
+  KeybindingEventLike,
+  KeySpec,
+  SidebarKeybindingContext,
+} from '../src/client/service.ts'
+import type {
   SessionScope,
   SidebarDiffRef,
   SidebarPrefs,
@@ -124,6 +130,25 @@ service.subscribeState(() => {})
 service.updateTab('tab:1', { title: 'T', path: '/p', meta: 1 })
 service.activateTab('tab:1')
 service.openFile({ sessionId: 's1', cwd: '/p' }, '/p/a.csv', 'Data')
+
+/** The v0.14.0 keybinding surface, exercised exactly as consumers call it. */
+const binding: KeybindingDescriptor = {
+  id: 'my-plugin:open-notes',
+  title: () => 'Open notes',
+  key: 'Cmd+Alt+N',
+  when: (context: SidebarKeybindingContext) => context.state !== null && !context.plusMenuOpen,
+  priority: 10,
+  run: (event: KeybindingEventLike, context: SidebarKeybindingContext) => {
+    void event; void context
+  },
+}
+service.registerKeybinding(binding)
+service.registerKeybinding({ id: 'my-plugin:pick', title: 'Pick a file', key: ['Cmd+P', 'Ctrl+P'], run: () => true })
+const bindings: readonly KeybindingDescriptor[] = service.getKeybindings()
+void bindings
+const keySpec: KeySpec = null as unknown as KeySpec
+const eventLike: KeybindingEventLike = null as unknown as KeybindingEventLike
+void keySpec; void eventLike
 
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }

@@ -42,6 +42,42 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
+### v0.15.0
+
+**✨ New features**
+
+- 🧱 **VSCode-style workbench layout**: a new `sidebarLayout` setting (default `docked`, under the editor card's gear) — `vscode` mode moves the file tree out of the editor tab into an **independent Side Bar column** (mirror arrangement: editor | side bar | activity bar, the editor stays by the chat) and adds a **48px Activity Bar** on the panel's right edge that iconizes the `+` menu (each icon opens its tab type; the active tab's type gets an inner-edge indicator; same registry/order/`available` gating as the `+` menu). In vscode mode editor tabs drop their docked tree + toggle, files open as per-path tabs through the Side Bar's tree; narrow viewports fall back to the docked drawer automatically; legacy `vscode-left`/`vscode-right` values migrate on read
+
+### v0.14.0
+
+**✨ New features**
+
+- ⌨️ **Keyboard-first interactions + a shortcut system**: one unified keybinding registry (`ctx.betterSidebar.registerKeybinding`, capability `keybindings`) — physical-key matching (layout-independent), IME / AltGr / auto-repeat guards, `when` context predicates, `priority` arbitration; built-in shortcuts and plugin registrations share the same dispatcher. New shortcuts: `Cmd/Ctrl+P` quick open (expands the panel and focuses the file search), `Cmd/Ctrl+F` focus the file search, `Cmd/Ctrl+Tab` / `Cmd/Ctrl+Shift+Tab` switch the active pane's tabs, `Cmd/Ctrl+1…9` jump to the nth tab, `Cmd/Ctrl+W` close the active tab (the last four only while focus is inside the sidebar); the panel toggles (⌘B / ⌘J / ⌘⇧J / ⌘⌥B) migrated onto the same system
+- 🔍 **Keyboard-navigable file search**: ↑/↓ move the highlighted result (wrap-around), Enter opens it, Esc clears the query (blurs on an empty query); the highlighted row has a distinct pressed style plus a navigation hint line
+- ➕ **Keyboard-operable + menu**: once open, press `1-9` (position) or the option's first letter to pick, ↑↓ / Home / End to move the highlight, Enter to confirm, Esc to close — each row shows digit + first-letter chips on its right, plus a hint row at the bottom
+
+## ⌨️ Keyboard shortcuts
+
+> macOS uses ⌘, Windows / Linux use Ctrl (`Cmd+` bindings accept both). If a host shortcut conflicts, adjust it on the host side.
+
+| Shortcut | Action | When |
+|---|---|---|
+| ⌘B | Toggle the host left sidebar | Always |
+| ⌘⌥B | Toggle the right sidebar | Always |
+| ⌘J | Toggle the bottom panel | Desktop width |
+| ⌘⇧J | Maximize / restore the bottom panel | Desktop width |
+| ⌘P | Quick open: expand the panel → open the Files window → focus the search | Not while typing outside the sidebar |
+| ⌘F | Focus the files search box | Active tab is a Files window |
+| ⌘Tab / ⌘Shift+Tab | Next / previous tab in the active pane | Focus inside the sidebar |
+| ⌘1…⌘9 | Jump to the nth tab of the active pane | Focus inside the sidebar |
+| ⌘W | Close the active tab | Focus inside the sidebar |
+
+**+ menu** (after opening): `1-9` pick by position · a letter picks the option whose label starts with it (repeat cycles) · `↑↓` / `Home` / `End` move the highlight · `Enter` confirms · `Esc` closes.
+
+**Files search box**: `↑↓` move the result highlight · `Enter` open the highlighted result · `Esc` clear the query (blur on an empty query).
+
+External plugins can inject their own shortcuts via `ctx.betterSidebar.registerKeybinding({ id, title, key, when?, priority?, run })` (see [AGENTS.md](./AGENTS.md) and [the external plugin guide](./docs/external-plugin-guide.md)).
+
 ### v0.13.0
 
 **✨ New features**

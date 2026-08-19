@@ -180,7 +180,7 @@ interface TabDescriptor {
    */
   settings?: {
     toggles?: readonly {
-      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'terminalFontFamily' / 'editorExplorer' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks' / 'browserInterceptHttp' / 'browserInterceptHttps'） */
+      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'terminalFontFamily' / 'editorExplorer' / 'sidebarLayout' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks' / 'browserInterceptHttp' / 'browserInterceptHttps'） */
       key: string
       title: string | (() => string)
       desc?: string | (() => string)
@@ -277,6 +277,9 @@ interface TabComponentProps {
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
+  // v0.15.0+：VSCode 风格布局是否生效（sidebarLayout === 'vscode' 且非窄视口）。
+  // editor tab 据此去掉内嵌文件树（树在独立 Side Bar）；其他 tab 通常忽略。
+  vscodeLayout?: boolean
 }
 ```
 
@@ -350,7 +353,7 @@ ctx.effect(() => {
 
 | id | order | single | hidden | 用途 |
 |---|---|---|---|---|
-| `editor` | 10 | 否（按 path 去重） | 否 | 唯一的「文件窗口」（文件编辑/预览 + 文件资源管理）：文件 tab（有 path）在两种 `editorExplorer` 模式下 chrome 恒为合并形态——头部路径输入框 + 文本编辑器预览/编辑/保存控件 + 可开关的内嵌文件树面板（含全局文件名搜索，走 host `fs.search` 路由；左缘拖拽调宽），状态存 `tab.meta.treeOpen` / `tab.meta.treeWidth`；pref 控制**打开行为与无路径窗口形态**：开（默认，合并）= 树点击/输入框 Enter 原地切换当前 tab（`updateTab` 重写 path/title，id 与 meta 不变），无路径窗口 = 带 chrome 的空文件窗口（树默认展开）；关（独立）= 走 `openSidebarFile` 按 path 新开，**无路径窗口即独立资源管理器——只渲染文件树面板**（搜索 + FileTree 撑满全窗，无编辑器 chrome）。树右键菜单提供「在新 Tab 中打开」「在侧边打开」（后者在当前 pane 右侧 split 出新 editor tab）。新会话在两种模式下都默认 seed 空文件窗口（`title: 'Files'`，无 path，树面板展开）；持久化的旧 `explorer` tab 经 `sanitizeState` 迁移为该 home tab |
+| `editor` | 10 | 否（按 path 去重） | 否 | 唯一的「文件窗口」（文件编辑/预览 + 文件资源管理）：文件 tab（有 path）在两种 `editorExplorer` 模式下 chrome 恒为合并形态——头部路径输入框 + 文本编辑器预览/编辑/保存控件 + 可开关的内嵌文件树面板（含全局文件名搜索，走 host `fs.search` 路由；左缘拖拽调宽），状态存 `tab.meta.treeOpen` / `tab.meta.treeWidth`；pref 控制**打开行为与无路径窗口形态**：开（默认，合并）= 树点击/输入框 Enter 原地切换当前 tab（`updateTab` 重写 path/title，id 与 meta 不变），无路径窗口 = 带 chrome 的空文件窗口（树默认展开）；关（独立）= 走 `openSidebarFile` 按 path 新开，**无路径窗口即独立资源管理器——只渲染文件树面板**（搜索 + FileTree 撑满全窗，无编辑器 chrome）。树右键菜单提供「在新 Tab 中打开」「在侧边打开」（后者在当前 pane 右侧 split 出新 editor tab）。新会话在两种模式下都默认 seed 空文件窗口（`title: 'Files'`，无 path，树面板展开）；持久化的旧 `explorer` tab 经 `sanitizeState` 迁移为该 home tab。**`sidebarLayout: 'vscode'`（v0.15.0+）时**：editor tab 不再内嵌树（树移到独立 Side Bar 列），无 tree toggle 按钮，无路径窗口恒为空提示；文件打开走 Side Bar 的 TreePanel → per-path tab |
 | `git` | 20 | 是 | 否 | Git 面板 |
 | `subagent` | 30 | 是 | 否 | 子代理拓扑 |
 | `terminal` | 40 | 否 | 否 | 终端（nextTerminal 自增） |
@@ -568,7 +571,70 @@ interface OpenTabSeed {
 }
 ```
 
-> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，勾选徽标钉在卡片最右端，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`、终端的 `terminalFontFamily`/`terminalFontSize`）通过卡片右下角的齿轮按钮在**原生弹窗**中编辑——`type: 'switch'` 行是复选框，`type: 'text'`/`'number'` 行是输入框（v0.11.0+），`type: 'select'` 行是下拉选择（options 带 icon 时为大图标选项卡，`multi: true` 多选存 value 数组）——父级卡片关闭时齿轮隐藏；`settings.toggles` 的 **key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `terminalFontFamily` / `terminalFontSize` / `editorExplorer` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks` / `browserInterceptHttp` / `browserInterceptHttps`）。**v0.12.0 起设置 seam 已开放**：外部插件用 `settings.pluginToggles`（同款行控件，key 插件局部）或 `settings.render`（自定义面板）声明自己的设置，值持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，宿主 schema 已有字段，无需注册）——齿轮弹窗对 tab 与 viewer 都可用（viewer 卡片 v0.12.0 起也有齿轮）。
+> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，勾选徽标钉在卡片最右端，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`、终端的 `terminalFontFamily`/`terminalFontSize`）通过卡片右下角的齿轮按钮在**原生弹窗**中编辑——`type: 'switch'` 行是复选框，`type: 'text'`/`'number'` 行是输入框（v0.11.0+），`type: 'select'` 行是下拉选择（options 带 icon 时为大图标选项卡，`multi: true` 多选存 value 数组）——父级卡片关闭时齿轮隐藏；`settings.toggles` 的 **key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `terminalFontFamily` / `terminalFontSize` / `editorExplorer` / `sidebarLayout` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks` / `browserInterceptHttp` / `browserInterceptHttps`）。**v0.12.0 起设置 seam 已开放**：外部插件用 `settings.pluginToggles`（同款行控件，key 插件局部）或 `settings.render`（自定义面板）声明自己的设置，值持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，宿主 schema 已有字段，无需注册）——齿轮弹窗对 tab 与 viewer 都可用（viewer 卡片 v0.12.0 起也有齿轮）。
+
+### 5.1 快捷键注册 API（v0.14.0+，`features.includes('keybindings')` gate）
+
+插件的第三个扩展点：`ctx.betterSidebar.registerKeybinding(descriptor)` 向侧边栏的**共享快捷键分发器**注入一条快捷键。内置快捷键（面板开关 / 快速打开 / 搜索聚焦 / 标签切换）与插件注册走**同一个** document-capture 分发器——一条匹配即**完全消费**（preventDefault + stopPropagation），快捷键属于侧边栏，不落到编辑器 / 终端 / 输入框。
+
+```ts
+interface KeybindingDescriptor {
+  /** 唯一 id（重复注册抛错，建议包前缀：'my-plugin:open-notes'） */
+  id: string
+  /** 展示名（i18n 友好：字符串或 () => string） */
+  title: string | (() => string)
+  /** 一个键位字符串或别名数组：'Cmd+P' / ['Cmd+P', 'Ctrl+Alt+P'] */
+  key: string | readonly string[]
+  /** 上下文谓词（返回 false 则该键位放行给下一个匹配或页面） */
+  when?: (context: SidebarKeybindingContext) => boolean
+  /** 同键位多绑定时的仲裁：高者先执行；默认 0 */
+  priority?: number
+  /** 允许按住连发（滚动类键位用）；默认 false（连按只触发一次） */
+  allowRepeat?: boolean
+  /** 动作：返回 false 显式放行给下一个匹配绑定（罕见）；缺省即消费 */
+  run: (event: KeybindingEventLike, context: SidebarKeybindingContext) => boolean | void
+}
+```
+
+**键位语法**（`+` 连接的 token，顺序无关，大小写不敏感）：修饰符 `Cmd`（= `Command`/`Meta`/`⌘`/`Super`，匹配**平台主修饰键**——macOS 的 ⌘ 或其它平台的 Ctrl，二者皆可）、`Ctrl`（**字面**物理 Ctrl，meta 必须不存在）、`Alt`（= `Opt`/`Option`/`⌥`）、`Shift`；键部分支持字母（`p`）、数字（`1`）、功能键（`F5`）、方向键（`ArrowUp` 等）、命名键（`Space`/`Tab`/`Enter`/`Escape`/`Backspace`/`Delete`/`Home`/`End`/`PageUp`/`PageDown`/`Insert`）、标点键（`/` `.` `,` `;` `'` `` ` `` `-` `=` `[` `]` `\`）或**显式 `KeyboardEvent.code`**（`KeyP`/`Digit1`/`Numpad4`）。带 Shift 的符号（`+`）写作带移位和弦（`Shift+Equal`）。匹配是**物理键**（`event.code`），与面板快捷键一致——US 布局的 Option+B 键值为「∫」、非拉丁布局整体重映射键值，`code` 永远不变。
+
+**全局守卫**（所有绑定自动继承）：IME 组合中（复用 `isImeComposition`，候选窗的箭头/确认/取消属于输入法）、Windows AltGr 和弦（AltGr 报 ctrl+alt，不得命中 `Ctrl+Alt` 绑定）、自动连按（除非 `allowRepeat`）。`when` 上下文在每次按键时现算：
+
+```ts
+interface SidebarKeybindingContext {
+  state: SidebarState | null          // 当前会话状态（无会话为 null）
+  narrow: boolean                     // 窄视口（底部面板不存在）
+  focusInSidebar: boolean             // 焦点是否在侧边栏宿主内
+  textEditing: boolean                // 是否在侧边栏外的可编辑字段中输入
+  plusMenuOpen: boolean               // 某个窗格的 + 菜单是否打开
+  searchActive: boolean               // 文件搜索框是否激活（有查询或聚焦）
+  activeTab: SidebarTab | null        // 当前窗格的活动 tab
+  activeTabType: string               // 其 type（'' = 无）
+  activePaneTabs: readonly SidebarTab[] // 当前窗格全部 tab（条带顺序，供切换/跳转）
+}
+```
+
+**内置快捷键**（全部经 `registerKeybinding` 注册，同一条 API）：
+
+| key | 作用 | when 门 |
+|---|---|---|
+| `Cmd+B` | 切换宿主左侧栏 | 恒真 |
+| `Cmd+Alt+B` | 切换右侧栏 | 恒真 |
+| `Cmd+J` | 切换底部面板 | `!narrow` |
+| `Cmd+Shift+J` | 最大化/还原底部面板 | `!narrow` |
+| `Cmd+P` | 快速打开：展开面板 → 保证文件窗口 → 聚焦其搜索框 | `!textEditing && !plusMenuOpen` |
+| `Cmd+F` | 聚焦文件搜索框 | 活动 tab 是文件窗口，且 `!textEditing && !plusMenuOpen` |
+| `Cmd+Tab` / `Cmd+Shift+Tab` | 当前窗格下/上一个 tab | `focusInSidebar && !plusMenuOpen` |
+| `Cmd+1…Cmd+9` | 跳到当前窗格第 n 个 tab | `focusInSidebar && !plusMenuOpen` |
+| `Cmd+W` | 关闭当前活动 tab | `focusInSidebar && !plusMenuOpen` |
+
+> 标注 `focusInSidebar` 的键位在面板内交互时才生效（⌘B 打开面板后焦点尚在会话区，需点击面板内再按）——**有意为之**：避免在会话编辑区吞掉 Ctrl+Tab / Ctrl+W 等宿主键；`Cmd+P` / `Cmd+F` 在侧边栏外输入（composer / 终端 / 编辑框）时同样放行给页面。插件绑定若要避开 + 菜单打开状态，`when` 里判 `!context.plusMenuOpen`。
+
+**键盘优先的界面**（同版随附，插件可直接复用这套心智模型）：
+
+- **文件搜索框**：↑↓ 移动高亮（环绕）、Enter 打开、Esc 清除查询（空查询失焦）；高亮行 `css.editorSearchResultActive` 按压样式 + 底部导航提示行。
+- **+ 菜单**：打开后 `1-9` 按位置选择（禁用项自动顺延）、首字母按选项名选择（同字母连按循环到下一个匹配）、↑↓ / Home / End 移动高亮、Enter 确认、Esc 关闭；**每行名称右侧渲染数字 + 首字母 chip**（`PlusMenu.tsx` 自绘 portal 下拉——primitives `Menu` 的行内 CSS 是哈希的、无法右对齐 chip），菜单底部另有提示行（`t('menuKeyboardHint')`）。
+- 组件用 `keybindings.ts` 导出的模块级标记发布瞬态状态（`setPlusMenuOpen` / `setSearchActive` / `setSearchInputElement`），分发器的 context 构建器读取——**插件组件不要**直接读写这些标记，那是内置组件与运行时之间的通道。
 
 ---
 
@@ -703,6 +769,7 @@ better-sidebar 自己的内置 tab 和 viewer 就是参考实现（"吃狗粮"�
 - **`tests/builtins.spec.ts`**：内置注册清单断言（7 tab + 6 viewer + 声明式元数据）
 - **`src/client/plugins-tabs.ts`** / **`src/client/plugins-viewers.ts`**：推荐插件目录（名字/url/简介/安装脚本，分别对应 Tab 注册与文件预览注册），在设置页两个「添加插件」弹窗展示（共享类型在 `plugins-shared.ts`）；插件作者可按扩展点加一条数据（弹窗内「跳转」直达仓库、「复制」把安装命令写入剪贴板，粘贴到 DSH 所在环境的终端执行）——数据完整性由 `tests/plugin-list.spec.ts` 守护
 - **`src/client/FileTree.tsx`** / **`src/client/TreePanel.tsx`** / **`src/fs-search.ts`**：受控文件树组件（纯树体，文件行右键菜单含「在新 Tab 中打开」「在侧边打开」，仅宿主编排提供回调时渲染）/ 树面板（搜索框 + 刷新 + FileTree，文件窗口的内嵌 dock 使用）与 host 侧递归文件名搜索（`fs.search` 路由，预算兜底 + 跳过 `.git`/symlink 目录；测试 `tests/fs-search.spec.ts`、组件测试 `tests/editor-host.spec.tsx`）
-- **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`** / **`docs/plans/2026-08-14-add-plugins-modal-design.md`**：设计文档（含实施偏差记录）
+- **`src/client/keybindings.ts`** / **`src/client/builtins/keybindings.ts`** / **`src/client/search-keys.ts`** / **`src/client/menu-keys.ts`**：快捷键系统的运行时（spec 解析 / 纯匹配 / 优先级仲裁 / 全局守卫 / 瞬态 UI 标记）与内置绑定（面板开关 / 快速打开 / 搜索聚焦 / 标签切换）和键盘优先的搜索 / + 菜单决策（测试 `tests/keybindings.spec.ts` / `tests/search-keys.spec.ts` / `tests/menu-keys.spec.ts`；`src/client/hotkeys.ts` 保留纯 matcher 并把注册迁到运行时）
+- **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`** / **`docs/plans/2026-08-14-add-plugins-modal-design.md`** / **`docs/plans/2026-08-19-keybindings-design.md`**：设计文档（含实施偏差记录）
 
 调试时直接读这些文件即可看到所有 API 的真实用法。

@@ -175,8 +175,12 @@ describe('registerPanelHotkeys — the native path', () => {
 
   beforeEach(() => {
     store = createSidebarStore()
-    // Fresh-session seed: right panel OPEN by default, bottom panel closed.
+    // Fresh-session seed: the panel starts CLOSED by default (the
+    // openByDefault pref defaults to off), so the toggling tests pin the
+    // precondition explicitly instead of relying on the seed (the bottom
+    // panel always starts closed).
     store.setSession('s1')
+    store.reduce(state => ({ ...state, panelOpen: true }))
     leftSpy = vi.fn<() => void>()
     input = document.createElement('input')
     document.body.appendChild(input)

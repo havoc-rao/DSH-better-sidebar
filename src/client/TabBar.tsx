@@ -14,12 +14,16 @@
  */
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
-import {
-  IconCloseFill14, IconPlusOutline16, Menu,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
 import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
+import {
+  enabledMenuIndices, isMenuImeComposition, menuAnchorIndex, menuDigitIndex, menuLetterMatches, menuMoveIndex,
+  type MenuKeyOption,
+} from './menu-keys.ts'
+import { setPlusMenuOpen } from './keybindings.ts'
+import { PlusMenu } from './PlusMenu.tsx'
 import css from './sidebar.module.css'
 
 /** One + menu option. */
@@ -90,9 +94,149 @@ export function TabBar(props: {
   const [armedCloseId, setArmedCloseId] = useState<string | null>(null)
   const armedTimerRef = useRef<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  /** The + button (the PlusMenu dropdown's position anchor). */
+  const plusButtonRef = useRef<HTMLButtonElement | null>(null)
+  /** The + menu's keyboard highlight (drives Menu's `selectedId`). */
+  const [menuHighlightId, setMenuHighlightId] = useState<string | null>(null)
+  /** The letter-typeahead cursor: the same letter re-pressed advances to the
+   *  NEXT matching option (standard menu typeahead). */
+  const letterCursorRef = useRef<{ letter: string; index: number } | null>(null)
 
   /** How long the armed state survives without a confirming click. */
   const ARMED_MS = 2000
+
+  /** The + menu options as the keyboard mapper reads them (label text only). */
+  const menuKeyOptions: MenuKeyOption[] = newTabOptions.map(option => ({
+    id: option.id,
+    label: option.label,
+    disabled: option.disabled,
+  }))
+
+  /** Close the + menu and publish the transient keybinding-context marker. */
+  const closeMenu = (): void => {
+    setMenuOpen(false)
+    setMenuHighlightId(null)
+    letterCursorRef.current = null
+    setPlusMenuOpen(false)
+  }
+
+  /** Pick one option (by keyboard or click): opens the tab, closes the menu. */
+  const pickOption = (id: string): void => {
+    const option = newTabOptions.find(candidate => candidate.id === id)
+    if (option === undefined || option.disabled === true) return
+    onNewTab(id)
+    closeMenu()
+  }
+
+  /** Open the + menu and settle its keyboard highlight on the first option. */
+  const openMenu = (): void => {
+    if (menuKeyOptions.length === 0) return
+    setMenuHighlightId(newTabOptions[menuAnchorIndex(menuKeyOptions)]?.id ?? null)
+    letterCursorRef.current = null
+    setPlusMenuOpen(true)
+    setMenuOpen(true)
+  }
+
+  /**
+   * The + menu keyboard layer (v0.14.0+): a document-CAPTURE handler active
+   * only while the menu is open. Digits (1…9, 0) select positionally
+   * (skipping disabled rows by cycling forward), letters select the first
+   * enabled option whose label starts with the letter (repeat advances),
+   * arrows / Home / End move the highlight, Enter picks it, Escape closes.
+   * Composition keys (the IME guard) and typed form fields yield entirely.
+   */
+  useEffect(() => {
+    if (!menuOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (isMenuImeComposition(event)) return
+      const target = event.target as HTMLElement | null
+      // Defensive: if focus somehow sits in a real form field, keep the keys
+      // native (normally the + button holds focus while the menu is open).
+      if (target !== null
+        && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      const key = event.key
+      // Positional digits: 1…9 = the 1st…9th option, 0 = the 10th; a disabled
+      // row is skipped by cycling forward around the list.
+      if (/^[0-9]$/.test(key)) {
+        let index = menuDigitIndex(menuKeyOptions, Number(key))
+        if (index !== null && index < menuKeyOptions.length) {
+          const start = index
+          while (menuKeyOptions[index]?.disabled === true) {
+            index = (index + 1) % menuKeyOptions.length
+            if (index === start) break
+          }
+          if (menuKeyOptions[index]?.disabled !== true) {
+            event.preventDefault()
+            event.stopPropagation()
+            pickOption(menuKeyOptions[index]!.id)
+          }
+        }
+        return
+      }
+      // Letter typeahead (labels are localized; matching is on the visible
+      // text). Re-pressing the same letter advances to the next match.
+      if (/^[a-z]$/i.test(key)) {
+        const matches = menuLetterMatches(menuKeyOptions, key)
+        if (matches.length > 0) {
+          event.preventDefault()
+          event.stopPropagation()
+          const cursor = letterCursorRef.current
+          let pick = matches[0]!
+          if (cursor !== null && cursor.letter === key.toLowerCase()) {
+            const at = matches.indexOf(cursor.index)
+            pick = matches[(at + 1) % matches.length]!
+          }
+          letterCursorRef.current = { letter: key.toLowerCase(), index: pick }
+          pickOption(menuKeyOptions[pick]!.id)
+        }
+        return
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        event.stopPropagation()
+        const base = menuHighlightId === null
+          ? -1
+          : menuKeyOptions.findIndex(option => option.id === menuHighlightId)
+        const next = menuMoveIndex(base, event.key === 'ArrowDown' ? 1 : -1, menuKeyOptions)
+        if (next !== -1 && menuKeyOptions[next] !== undefined) {
+          setMenuHighlightId(menuKeyOptions[next]!.id)
+        }
+        return
+      }
+      if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault()
+        event.stopPropagation()
+        const pool = enabledMenuIndices(menuKeyOptions)
+        if (pool.length > 0) {
+          const index = event.key === 'Home' ? pool[0]! : pool[pool.length - 1]!
+          if (menuKeyOptions[index] !== undefined) setMenuHighlightId(menuKeyOptions[index]!.id)
+        }
+        return
+      }
+      if (event.key === 'Enter') {
+        const id = menuHighlightId ?? newTabOptions[menuAnchorIndex(menuKeyOptions)]?.id
+        if (id !== undefined && menuKeyOptions.find(option => option.id === id)?.disabled !== true) {
+          event.preventDefault()
+          event.stopPropagation()
+          pickOption(id)
+        }
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closeMenu()
+        return
+      }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => { document.removeEventListener('keydown', onKeyDown, true) }
+  }, [menuOpen, menuKeyOptions, menuHighlightId, newTabOptions, onNewTab])
+
+  // Unmount safety: no stale + menu marker if the strip disappears mid-open.
+  useEffect(() => {
+    return () => { setPlusMenuOpen(false) }
+  }, [])
 
   /** Arm the two-step close on a bound stub (first click). */
   const armClose = (tabId: string): void => {
@@ -269,34 +413,30 @@ export function TabBar(props: {
         {/*
           The + sits immediately after the rightmost tab (sticky at the
           right edge of the scrollport when the tabs overflow, so it stays
-          reachable no matter how many tabs are open).
+          reachable no matter how many tabs are open). Its menu is the
+          custom PlusMenu dropdown (right-aligned chips show the 1-9 / letter
+          shortcuts on every row).
         */}
-        <Menu
+        <button
+          ref={plusButtonRef}
+          type="button"
+          className={css.tabBarPlus}
+          aria-label={t('newTab')}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen || undefined}
+          title={t('newTab')}
+          onClick={() => { if (menuOpen) closeMenu(); else openMenu() }}
+        >
+          <IconPlusOutline16 />
+        </button>
+        <PlusMenu
           open={menuOpen}
-          onClose={() => { setMenuOpen(false) }}
-          items={newTabOptions.map(option => ({
-            id: option.id,
-            label: option.label,
-            ...(option.disabled === true ? { disabled: true } : {}),
-            ...(option.icon !== undefined ? { icon: option.icon } : {}),
-          }))}
-          onSelect={(id) => {
-            onNewTab(id)
-            setMenuOpen(false)
-          }}
-          portal
-          align="end"
-          anchor={(
-            <button
-              type="button"
-              className={css.tabBarPlus}
-              aria-label={t('newTab')}
-              title={t('newTab')}
-              onClick={() => { setMenuOpen(v => !v) }}
-            >
-              <IconPlusOutline16 />
-            </button>
-          )}
+          anchor={plusButtonRef}
+          items={newTabOptions}
+          highlightId={menuHighlightId}
+          onSelect={pickOption}
+          onHighlight={(id) => { setMenuHighlightId(id) }}
+          onClose={closeMenu}
         />
       </div>
     </div>

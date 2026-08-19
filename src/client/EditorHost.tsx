@@ -92,8 +92,18 @@ export function EditorHost(props: {
   expanded: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string) => void
+  /** Whether this tab is the active, visible one (v0.14.0+): forwarded to
+   *  the tree panel so only a visible search box claims the global
+   *  search-focus keybindings (⌘P / ⌘F). */
+  visible?: boolean
+  /** Whether the VSCode-style layout is in effect: the editor tab drops its
+   *  docked file tree (the tree lives in the independent Side Bar) and its
+   *  tree-toggle button. A path-less tab shows the empty-state hint instead
+   *  of the full explorer. Absent = the original docked behavior. */
+  vscodeLayout?: boolean
 }) {
-  const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile } = props
+  const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, visible, vscodeLayout } = props
+  const vscode = vscodeLayout === true
   const path = tab.path ?? ''
   const title = tab.title
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
@@ -106,9 +116,11 @@ export function EditorHost(props: {
     useCallback(() => store.getSnapshot().prefs.editorExplorer, [store]),
   )
   // A path-less tab shows the empty-state hint in merged mode — and in split
-  // mode it is the standalone explorer (tree-only, see the render below).
+  // mode it is the standalone explorer (tree-only, see the render below). In
+  // the VSCode layout the tree lives in the independent Side Bar, so a
+  // path-less tab is always the empty hint there (never the full explorer).
   const showEmpty = path === ''
-  const treeOnly = showEmpty && !inPlace
+  const treeOnly = showEmpty && !inPlace && !vscode
 
   /**
    * Open a file from THIS window (tree click / search row / path input):
@@ -273,6 +285,7 @@ export function EditorHost(props: {
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
           onReferenceFile={onReferenceFile}
+          visible={visible}
         />
       </div>
     )
@@ -315,16 +328,18 @@ export function EditorHost(props: {
         {saveLabel !== '' && (
           <span className={clsx(css.editorStatus, toolbar?.saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>
         )}
-        <button
-          type="button"
-          className={clsx(css.iconButton, treeOpen && css.editorTreeToggleActive)}
-          aria-label={t('editorTreeToggle')}
-          title={t('editorTreeToggle')}
-          aria-pressed={treeOpen}
-          onClick={toggleTree}
-        >
-          <IconFolderOpen16 size={14} />
-        </button>
+        {!vscode && (
+          <button
+            type="button"
+            className={clsx(css.iconButton, treeOpen && css.editorTreeToggleActive)}
+            aria-label={t('editorTreeToggle')}
+            title={t('editorTreeToggle')}
+            aria-pressed={treeOpen}
+            onClick={toggleTree}
+          >
+            <IconFolderOpen16 size={14} />
+          </button>
+        )}
       </div>
       <div className={css.editorBody}>
         <div className={css.editorMain}>
@@ -345,7 +360,7 @@ export function EditorHost(props: {
             onToolbarControls,
           })}
         </div>
-        {treeOpen && (
+        {treeOpen && !vscode && (
           <div className={css.editorTreeDock} style={{ width: treeWidth }}>
             <div
               className={css.editorTreeResize}
@@ -366,6 +381,7 @@ export function EditorHost(props: {
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
               onReferenceFile={onReferenceFile}
+              visible={visible}
             />
           </div>
         )}

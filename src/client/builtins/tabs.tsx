@@ -77,8 +77,11 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       hidden: false,
       dedupeKey: (tab) => tab.path,
       // Declarative settings: the file-open behavior picker (in-place switch
-      // vs per-path windows) renders as an iconed select row under the
-      // editor card's gear in the Side card settings page.
+      // vs per-path windows) and the workbench-layout picker (docked tree vs
+      // the VSCode-style independent side bar + activity bar) render as iconed
+      // select rows under the editor card's gear in the Side card settings
+      // page. The layout picker's `vscode` value is the mirror arrangement
+      // (editor by the chat, activity bar on the panel edge).
       settings: {
         toggles: [{
           key: 'editorExplorer',
@@ -99,9 +102,28 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
               desc: () => t('editorExplorerSplitDesc'),
             },
           ],
+        }, {
+          key: 'sidebarLayout',
+          type: 'select',
+          title: () => t('sidebarLayout'),
+          desc: () => t('sidebarLayoutDesc'),
+          options: [
+            {
+              value: 'docked',
+              icon: (size: number) => <IconFolderOpen16 size={size} />,
+              title: () => t('sidebarLayoutDocked'),
+              desc: () => t('sidebarLayoutDockedDesc'),
+            },
+            {
+              value: 'vscode',
+              icon: (size: number) => <IconPanelLeftOutline16 size={size} />,
+              title: () => t('sidebarLayoutVscode'),
+              desc: () => t('sidebarLayoutVscodeDesc'),
+            },
+          ],
         }],
       },
-      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile }) => (
+      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, visible, vscodeLayout }) => (
         <EditorHost
           ctx={ctx}
           store={store}
@@ -110,6 +132,8 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           expanded={expanded ?? []}
           onToggleDir={onToggleDir ?? (() => { /* no-op */ })}
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
+          visible={visible}
+          vscodeLayout={vscodeLayout}
         />
       ),
     },

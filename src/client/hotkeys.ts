@@ -37,7 +37,13 @@
  */
 import { isImeComposition } from './ime-guard.ts'
 import { isNarrowWidth } from './breakpoints.ts'
-import { toggleBottomMaximized, toggleBottomPanel, togglePanel, type SidebarStore } from './state.ts'
+import {
+  KeybindingRuntime,
+  type KeybindingDescriptor,
+  type SidebarKeybindingContext,
+} from './keybindings.ts'
+import { activeTabOf, toggleBottomMaximized, toggleBottomPanel, togglePanel, type SidebarStore } from './state.ts'
+import { t } from './locales.ts'
 
 /** The panel a matched shortcut toggles. */
 export type PanelHotkeyTarget = 'left' | 'right' | 'bottom' | 'maximize'
@@ -80,36 +86,76 @@ export function matchPanelHotkey(event: HotkeyEventLike): PanelHotkeyTarget | nu
   return null
 }
 
+/** The transient keybinding context the panel toggles read (per-event). */
+function panelKeybindingContext(store: SidebarStore): SidebarKeybindingContext {
+  const snapshot = store.getSnapshot()
+  const state = snapshot.state ?? null
+  return {
+    state,
+    narrow: typeof window !== 'undefined' && isNarrowWidth(window.innerWidth),
+    focusInSidebar: false,
+    textEditing: false,
+    plusMenuOpen: false,
+    searchActive: false,
+    activeTab: state === null ? null : activeTabOf(state) ?? null,
+    activeTabType: '',
+    activePaneTabs: [],
+  }
+}
+
 /**
- * Register the document-level panel-toggle shortcuts. Returns the disposer
- * (HMR-safe; call through `ctx.effect`). `toggleLeftSidebar` is the host
- * app shell's sidebar transition (ui-layout's `ctx.layout.toggleSidebar`),
- * wired by the caller so this module stays DOM-free. Without a current
- * session the store's `reduce` is a strict no-op, so the shortcuts are
- * harmless before the first conversation is selected.
+ * The four panel-toggle bindings as registry descriptors (shared by the
+ * production runtime and `registerPanelHotkeys` — one definition, no
+ * behavioral fork). The bottom toggles gate on `!narrow`: the bottom panel
+ * does not exist there (its tabs are merged into the right drawer), so the
+ * keys pass through untouched, mirroring the hidden bottom-panel toggle
+ * button. The left sidebar keeps its own semantics (the host's toggle
+ * flips the narrow re-expand override).
+ */
+export function panelToggleBindings(store: SidebarStore, toggleLeftSidebar: () => void): KeybindingDescriptor[] {
+  return [
+    {
+      id: 'builtin:toggle-left-sidebar',
+      title: () => t('hotkeyToggleLeftSidebar'),
+      key: 'Cmd+B',
+      run: () => { toggleLeftSidebar() },
+    },
+    {
+      id: 'builtin:toggle-right-panel',
+      title: () => t('hotkeyToggleRightPanel'),
+      key: 'Cmd+Alt+B',
+      run: () => { store.reduce(togglePanel) },
+    },
+    {
+      id: 'builtin:toggle-bottom-panel',
+      title: () => t('hotkeyToggleBottomPanel'),
+      key: 'Cmd+J',
+      when: context => !context.narrow,
+      run: () => { store.reduce(toggleBottomPanel) },
+    },
+    {
+      id: 'builtin:toggle-bottom-maximized',
+      title: () => t('hotkeyToggleBottomMaximized'),
+      key: 'Cmd+Shift+J',
+      when: context => !context.narrow,
+      run: () => { store.reduce(toggleBottomMaximized) },
+    },
+  ]
+}
+
+/**
+ * Register the document-level panel-toggle shortcuts through the shared
+ * keybinding runtime. Returns the disposer (HMR-safe; call through
+ * `ctx.effect`). `toggleLeftSidebar` is the host app shell's sidebar
+ * transition (ui-layout's `ctx.layout.toggleSidebar`), wired by the caller
+ * so this module stays DOM-free. Without a current session the store's
+ * `reduce` is a strict no-op, so the shortcuts are harmless before the
+ * first conversation is selected.
  */
 export function registerPanelHotkeys(store: SidebarStore, toggleLeftSidebar: () => void): () => void {
-  const onKeyDown = (event: KeyboardEvent): void => {
-    const target = matchPanelHotkey(event)
-    if (target === null) return
-    // The bottom panel does not exist on narrow viewports: leave the key to
-    // the page instead of flipping a dormant flag that would only surface
-    // (uninvited) after the window widens.
-    if ((target === 'bottom' || target === 'maximize') && isNarrowWidth(window.innerWidth)) return
-    event.preventDefault()
-    event.stopPropagation()
-    if (target === 'left') {
-      toggleLeftSidebar()
-    } else if (target === 'maximize') {
-      store.reduce(toggleBottomMaximized)
-    } else {
-      store.reduce(target === 'right' ? togglePanel : toggleBottomPanel)
-    }
-  }
-  document.addEventListener('keydown', onKeyDown, true)
-  return () => {
-    document.removeEventListener('keydown', onKeyDown, true)
-  }
+  const runtime = new KeybindingRuntime(() => panelKeybindingContext(store))
+  for (const binding of panelToggleBindings(store, toggleLeftSidebar)) runtime.register(binding)
+  return runtime.attach()
 }
 
 /**
