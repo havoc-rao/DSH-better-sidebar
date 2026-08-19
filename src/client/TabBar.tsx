@@ -14,16 +14,16 @@
  */
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { IconCloseFill14, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, IconPlusOutline16, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
 import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import {
   enabledMenuIndices, isMenuImeComposition, menuAnchorIndex, menuDigitIndex, menuLetterMatches, menuMoveIndex,
+  plusMenuDigit, plusMenuLetterOf,
   type MenuKeyOption,
 } from './menu-keys.ts'
 import { setPlusMenuOpen } from './keybindings.ts'
-import { PlusMenu } from './PlusMenu.tsx'
 import css from './sidebar.module.css'
 
 /** One + menu option. */
@@ -94,8 +94,6 @@ export function TabBar(props: {
   const [armedCloseId, setArmedCloseId] = useState<string | null>(null)
   const armedTimerRef = useRef<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
-  /** The + button (the PlusMenu dropdown's position anchor). */
-  const plusButtonRef = useRef<HTMLButtonElement | null>(null)
   /** The + menu's keyboard highlight (drives Menu's `selectedId`). */
   const [menuHighlightId, setMenuHighlightId] = useState<string | null>(null)
   /** The letter-typeahead cursor: the same letter re-pressed advances to the
@@ -105,12 +103,39 @@ export function TabBar(props: {
   /** How long the armed state survives without a confirming click. */
   const ARMED_MS = 2000
 
-  /** The + menu options as the keyboard mapper reads them (label text only). */
+  /** The + menu options as the keyboard mapper reads them: the letter key is
+   *  derived from the STABLE id (`terminal` → T), so the chip on the row and
+   *  the typeahead key agree in every locale. */
   const menuKeyOptions: MenuKeyOption[] = newTabOptions.map(option => ({
     id: option.id,
     label: option.label,
+    letter: plusMenuLetterOf(option.id),
     disabled: option.disabled,
   }))
+
+  /** The + menu item rows: the original Menu's look, with the digit + letter
+   *  chips appended to each row's label (right-aligned via the label flex
+   *  wrapper — see .menuOptionLabel). */
+  const menuItems = newTabOptions.map((option, index) => {
+    const digit = plusMenuDigit(index)
+    const letter = plusMenuLetterOf(option.id)
+    return {
+      id: option.id,
+      disabled: option.disabled,
+      icon: option.icon,
+      label: (
+        <span className={css.menuOptionLabel}>
+          <span className={css.menuOptionName}>{option.label}</span>
+          {(digit !== '' || letter !== '') && (
+            <span className={css.menuOptionKeys} aria-hidden="true">
+              {digit !== '' && <kbd className={css.menuOptionKey}>{digit}</kbd>}
+              {letter !== '' && <kbd className={css.menuOptionKey}>{letter}</kbd>}
+            </span>
+          )}
+        </span>
+      ),
+    }
+  })
 
   /** Close the + menu and publish the transient keybinding-context marker. */
   const closeMenu = (): void => {
@@ -413,30 +438,34 @@ export function TabBar(props: {
         {/*
           The + sits immediately after the rightmost tab (sticky at the
           right edge of the scrollport when the tabs overflow, so it stays
-          reachable no matter how many tabs are open). Its menu is the
-          custom PlusMenu dropdown (right-aligned chips show the 1-9 / letter
-          shortcuts on every row).
+          reachable no matter how many tabs are open). Its menu keeps the
+          app's standard Menu look; every row's label carries the digit +
+          first-letter chips on its right (the 1-9 / letter shortcuts).
         */}
-        <button
-          ref={plusButtonRef}
-          type="button"
-          className={css.tabBarPlus}
-          aria-label={t('newTab')}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen || undefined}
-          title={t('newTab')}
-          onClick={() => { if (menuOpen) closeMenu(); else openMenu() }}
-        >
-          <IconPlusOutline16 />
-        </button>
-        <PlusMenu
+        <Menu
           open={menuOpen}
-          anchor={plusButtonRef}
-          items={newTabOptions}
-          highlightId={menuHighlightId}
-          onSelect={pickOption}
-          onHighlight={(id) => { setMenuHighlightId(id) }}
           onClose={closeMenu}
+          selectedId={menuHighlightId ?? undefined}
+          items={menuItems}
+          footer={menuKeyOptions.length > 0
+            ? [{ type: 'label' as const, id: 'keyboard-hint', text: t('menuKeyboardHint') }]
+            : []}
+          onSelect={pickOption}
+          portal
+          align="end"
+          anchor={(
+            <button
+              type="button"
+              className={css.tabBarPlus}
+              aria-label={t('newTab')}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen || undefined}
+              title={t('newTab')}
+              onClick={() => { if (menuOpen) closeMenu(); else openMenu() }}
+            >
+              <IconPlusOutline16 />
+            </button>
+          )}
         />
       </div>
     </div>

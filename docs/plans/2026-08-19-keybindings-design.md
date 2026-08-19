@@ -45,7 +45,7 @@
 ### 2.5 键盘优先的界面
 
 - **文件搜索**（`search-keys.ts` 纯决策 + `TreePanel`）：↑↓ 高亮环绕、Enter 打开、Esc 清查询（空查询失焦）、IME 让位；高亮行 `css.editorSearchResultActive` + 导航提示行。`visible` 的 TreePanel 才注册为全局聚焦目标（隐藏 tab 的 dock 面板不得抢 ⌘P/⌘F）。
-- **+ 菜单**（`menu-keys.ts` 纯映射 + `PlusMenu.tsx` 自定义下拉）：1-9（0=第10项，禁用项自动顺延）、首字母选择（同字母连按循环）、↑↓ / Home / End 移动高亮、Enter 确认、Esc 关闭。**为什么不用 primitives 的 `Menu`**：其行内 CSS 是构建期哈希、不可寻址，无法可靠地在行右侧放置 chip——自绘 portal 下拉（固定定位、滚动/缩放重排、外部点击关闭），每行名称右侧渲染数字 + 首字母 chip。
+- **+ 菜单**（`menu-keys.ts` 纯映射 + `TabBar` 键盘层）：1-9（0=第10项，禁用项自动顺延）、字母键选择（字母键取自**稳定 id**：`terminal`→T、`git`→G——与标签语言无关，中文标签同样生效；同字母连按循环）、↑↓ / Home / End 移动高亮、Enter 确认、Esc 关闭。菜单本体保持 primitives `Menu` 的原始观感，每行 label 包一层 flex 注入数字 + 首字母 chip（父行拉伸时 space-between 推到行右缘），底部另有提示行。
 
 ## 3. 注入点
 
@@ -53,6 +53,7 @@
 
 ## 4. 实施偏差记录
 
-- 初版把 + 菜单键盘层放在 primitives `Menu` 上（footer 提示行方案）；用户要求「行名称右侧放数字与首字母 chip」后改为自绘 `PlusMenu` 下拉（§2.5），并同步调整 README / AGENTS.md 文案（chip 在行内而非底部提示）。
+- 初版把 + 菜单键盘层放在 primitives `Menu` 上（footer 提示行方案）；首版 chip 尝试自绘 `PlusMenu` portal 下拉（其行内 CSS 哈希不可右对齐），用户反馈「整体 UI 风格保持之前那样」后**回退为 primitives `Menu`**：chip 经 label ReactNode 注入行内（`menu-keys.ts` 的 `plusMenuDigit` / `plusMenuLetterOf` + `sidebar.module.css` 的 `.menuOptionLabel` 系列）。
+- 首字母 chip 初版取自**标签**首字母——中文标签（终端/任务管理）取不到字母，用户要求「term 就是 4/T」；改为取自**稳定 id**（`plusMenuLetterOf`），类型匹配同步改为按字母键（`menuLetterMatches` 比对 `option.letter` 而非 label 前缀）。
 - `run` 回调签名定为 `(event, context)`：运行期分支（如 ⌘F 判定活动 tab 类型）需要 context，`when` 谓词在 run 前算好一次、直接传入，避免重复推导。
 - 版本随功能 bump 至 v0.14.0（package.json / dsh.plugin.json / `SIDEBAR_SERVICE_VERSION` 三处 lockstep，测试守护）。

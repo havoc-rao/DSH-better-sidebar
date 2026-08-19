@@ -72,7 +72,7 @@
 | ⌘1…⌘9 | Jump to the nth tab of the active pane | Focus inside the sidebar |
 | ⌘W | Close the active tab | Focus inside the sidebar |
 
-**+ menu** (after opening): `1-9` pick by position · a letter picks the option whose label starts with it (repeat cycles) · `↑↓` / `Home` / `End` move the highlight · `Enter` confirms · `Esc` closes.
+**+ menu** (after opening): `1-9` pick by position · a letter picks by its option's letter KEY (from the stable id — `terminal`→T, `git`→G — so CJK labels work too; repeat cycles) · `↑↓` / `Home` / `End` move the highlight · `Enter` confirms · `Esc` closes.
 
 **Files search box**: `↑↓` move the result highlight · `Enter` open the highlighted result · `Esc` clear the query (blur on an empty query).
 

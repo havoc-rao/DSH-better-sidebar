@@ -1,21 +1,21 @@
 /**
- * + menu keyboard mapping tests (v0.14.0+): positional digits, first-letter
- * typeahead, highlight movement over the ENABLED pool, and the IME guard —
- * the pure helpers the TabBar keydown layer wires together.
+ * + menu keyboard mapping tests (v0.14.0+): positional digits, letter-key
+ * typeahead, highlight movement over the ENABLED pool, the row chips, and
+ * the IME guard — the pure helpers the TabBar keydown layer wires together.
  */
 import { describe, expect, it } from 'vitest'
 import {
   enabledMenuIndices, isMenuImeComposition, menuAnchorIndex, menuDigitIndex, menuLetterMatches, menuMoveIndex,
+  plusMenuDigit, plusMenuLetterOf,
   type MenuKeyOption,
 } from '../src/client/menu-keys.ts'
-import { plusMenuDigit, plusMenuLetter } from '../src/client/PlusMenu.tsx'
 
 const options: MenuKeyOption[] = [
-  { id: 'files', label: 'Files' },
-  { id: 'git', label: 'Source Control' },
-  { id: 'terminal', label: 'Terminal' },
-  { id: 'locked', label: 'Locked', disabled: true },
-  { id: 'browser', label: 'Browser' },
+  { id: 'editor', label: '文件', letter: plusMenuLetterOf('editor') },
+  { id: 'git', label: '源代码管理', letter: plusMenuLetterOf('git') },
+  { id: 'terminal', label: '终端', letter: plusMenuLetterOf('terminal') },
+  { id: 'locked', label: 'Locked', letter: plusMenuLetterOf('locked'), disabled: true },
+  { id: 'browser', label: '浏览器', letter: plusMenuLetterOf('browser') },
 ]
 
 describe('enabledMenuIndices', () => {
@@ -42,15 +42,25 @@ describe('menuDigitIndex — positional selection', () => {
   })
 })
 
-describe('menuLetterMatches — first-letter typeahead', () => {
-  it('matches enabled options whose label starts with the letter (case-insensitive)', () => {
-    expect(menuLetterMatches(options, 'f')).toEqual([0])
-    expect(menuLetterMatches(options, 'T')).toEqual([2])
-    expect(menuLetterMatches(options, 's')).toEqual([1])
+describe('menuLetterMatches — letter-key typeahead', () => {
+  it('matches enabled options by their letter KEY (from the id, not the label)', () => {
+    // Labels are CJK here — the letter key still resolves: editor→E, git→G…
+    expect(menuLetterMatches(options, 'e')).toEqual([0])
+    expect(menuLetterMatches(options, 'G')).toEqual([1])
+    expect(menuLetterMatches(options, 't')).toEqual([2])
   })
 
-  it('skips disabled options and ignores non-letters', () => {
-    expect(menuLetterMatches(options, 'l')).toEqual([]) // disabled
+  it('duplicate letter keys all match (the component cycles through them)', () => {
+    const dup = [
+      { id: 'my:db', label: 'DB', letter: 'M' },
+      { id: 'my:docs', label: 'Docs', letter: 'M' },
+    ]
+    expect(menuLetterMatches(dup, 'm')).toEqual([0, 1])
+  })
+
+  it('skips disabled options and ignores non-letters / unknown letters', () => {
+    expect(menuLetterMatches(options, 'l')).toEqual([]) // disabled row
+    expect(menuLetterMatches(options, 's')).toEqual([]) // no option owns S
     expect(menuLetterMatches(options, '1')).toEqual([])
     expect(menuLetterMatches(options, '/')).toEqual([])
   })
@@ -70,14 +80,14 @@ describe('menuMoveIndex — highlight movement', () => {
   })
 
   it('an all-disabled menu has no movable highlight', () => {
-    expect(menuMoveIndex(-1, 1, [{ id: 'x', label: 'X', disabled: true }])).toBe(-1)
+    expect(menuMoveIndex(-1, 1, [{ id: 'x', label: 'X', letter: 'X', disabled: true }])).toBe(-1)
   })
 })
 
 describe('menuAnchorIndex', () => {
   it('anchors on the first enabled option', () => {
     expect(menuAnchorIndex(options)).toBe(0)
-    expect(menuAnchorIndex([{ id: 'x', label: 'X', disabled: true }])).toBe(-1)
+    expect(menuAnchorIndex([{ id: 'x', label: 'X', letter: 'X', disabled: true }])).toBe(-1)
   })
 })
 
@@ -89,7 +99,7 @@ describe('isMenuImeComposition', () => {
   })
 })
 
-describe('plusMenuDigit / plusMenuLetter — the row chips', () => {
+describe('plusMenuDigit / plusMenuLetterOf — the row chips', () => {
   it('digits name positions 1…9 and 0 for the 10th; nothing beyond', () => {
     expect(plusMenuDigit(0)).toBe('1')
     expect(plusMenuDigit(8)).toBe('9')
@@ -97,13 +107,19 @@ describe('plusMenuDigit / plusMenuLetter — the row chips', () => {
     expect(plusMenuDigit(10)).toBe('')
   })
 
-  it('the letter chip is the label\'s first ASCII letter (uppercase)', () => {
-    expect(plusMenuLetter('Files')).toBe('F')
-    expect(plusMenuLetter('terminal')).toBe('T')
+  it('the letter chip is the stable id\'s first ASCII letter (uppercase)', () => {
+    expect(plusMenuLetterOf('terminal')).toBe('T')
+    expect(plusMenuLetterOf('git')).toBe('G')
+    expect(plusMenuLetterOf('my-plugin:db')).toBe('M')
   })
 
-  it('non-ASCII-leading labels (CJK) get no letter chip — the IME owns those keys', () => {
-    expect(plusMenuLetter('任务管理')).toBe('')
-    expect(plusMenuLetter('后台任务')).toBe('')
+  it('CJK labels still get a chip — the letter comes from the id, not the label', () => {
+    expect(plusMenuLetterOf('terminal')).toBe('T') // label 「终端」→ still T
+    expect(plusMenuLetterOf('subagent')).toBe('S') // label 「任务管理」→ still S
+  })
+
+  it('ids starting with a non-letter get no letter chip', () => {
+    expect(plusMenuLetterOf('1password')).toBe('')
+    expect(plusMenuLetterOf('_internal')).toBe('')
   })
 })

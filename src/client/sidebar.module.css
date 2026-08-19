@@ -632,102 +632,45 @@
   cursor: default;
 }
 
-/* ── The + menu dropdown (custom, v0.14.0+) ───────────────────────────────
-   The keyboard-first + menu: portaled to body, fixed under the + button,
-   with a digit chip (1-9 / 0) and a first-letter chip right-aligned on
-   every row so the shortcuts are visible at a glance. Token-driven surface
-   like every other panel chrome. */
+/* ── + 菜单行内快捷键 chip（v0.14.0+）───────────────────────────────────────
+   菜单本体保持 primitives Menu 的原始观感；chip 经 label 注入到每一行：
+   名称 + 右侧的数字（1-9 / 0）与首字母（取自稳定 id：terminal→T）键。
+   .menuOptionLabel 同时是 flex 容器：父行若把 label 拉伸（flex:1），
+   space-between 会把 chip 推到行右缘；父行不拉伸时则紧跟在名称后。 */
 
-.plusMenu {
-  position: fixed;
-  z-index: 900;
-  min-width: 200px;
-  max-width: 320px;
-  padding: 4px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2);
-}
-
-.plusMenuList {
-  max-height: min(60vh, 420px);
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.plusMenuItem {
+.menuOptionLabel {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
   width: 100%;
-  padding: 5px 8px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxs-12);
-  text-align: left;
-  cursor: pointer;
+  min-width: 0;
 }
 
-.plusMenuItem:hover:not(:disabled),
-.plusMenuItemActive {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.plusMenuItemActive {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-.plusMenuItemDisabled,
-.plusMenuItem:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.plusMenuItemLabel {
-  flex: 1;
+.menuOptionName {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The right-aligned shortcut chips (digit + first letter). */
-.plusMenuKeys {
+.menuOptionKeys {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-left: 12px;
+  gap: 3px;
 }
 
-.plusMenuKey {
-  min-width: 18px;
+.menuOptionKey {
+  min-width: 17px;
   padding: 0 4px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 4px;
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-xxxs-11);
-  line-height: 16px;
+  line-height: 15px;
   text-align: center;
-}
-
-.plusMenuItemActive .plusMenuKey {
-  background: var(--dsw-alias-bg-layer-1);
-  border-color: var(--dsw-alias-border-l2);
-  color: var(--dsw-alias-label-primary);
-}
-
-.plusMenuFooter {
-  margin-top: 4px;
-  padding: 6px 8px 2px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xxxs-11);
 }
 
 /* ── Tab strip ─────────────────────────────────────────────────────────── */
