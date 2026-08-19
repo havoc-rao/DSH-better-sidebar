@@ -44,9 +44,11 @@
 import type { GitGraphEntry } from './api.ts'
 
 /** Geometry (aligned with the gitgraph-lines prototype: CELL_W/ROW_H/CURVE_R).
- *  ROW_H is the DEFAULT row height; the renderer passes the actual row height
- *  (history rows grow when tag chips wrap) and the path functions derive
- *  `mid` from it. */
+ *  ROW_H is the NOMINAL row height the path geometry is authored in: the SVG
+ *  is rendered with `viewBox="0 0 W ROW_H"` + `preserveAspectRatio="none"`
+ *  and CSS `top:0;bottom:0` fills the row's ACTUAL height (which varies when
+ *  tag chips wrap), so the y axis stretches to match the row while the x
+ *  axis keeps its exact pixel positions. */
 export const CELL_W = 24
 export const ROW_H = 40
 export const CURVE_R = 12
@@ -64,9 +66,7 @@ export function colX(col: number): number {
   return col * CELL_W + CELL_W / 2
 }
 
-/** One merge arc: a lane's vertical descent + rounded corner into the dot.
- *  `mid` = the row's vertical center (height / 2), so the geometry adapts to
- *  any row height. */
+/** One merge arc: a lane's vertical descent + rounded corner into the dot. */
 export function pathMergeIn(fromX: number, dotX: number, mid: number): string {
   if (fromX === dotX) return `M ${fromX} 0 L ${fromX} ${mid}`
   const sign = dotX > fromX ? 1 : -1
@@ -75,13 +75,13 @@ export function pathMergeIn(fromX: number, dotX: number, mid: number): string {
 }
 
 /** One fork arc: from the dot horizontally out + rounded corner down to the
- *  row bottom (`height` — history rows vary in height when tag chips wrap,
- *  so the geometry must not hardcode ROW_H). */
-export function pathForkOut(dotX: number, toX: number, mid: number, height: number): string {
-  if (dotX === toX) return `M ${dotX} ${mid} L ${toX} ${height}`
+ *  nominal row bottom (ROW_H; stretched to the actual row height by the
+ *  SVG's viewBox). */
+export function pathForkOut(dotX: number, toX: number, mid: number): string {
+  if (dotX === toX) return `M ${dotX} ${mid} L ${toX} ${ROW_H}`
   const sign = toX > dotX ? 1 : -1
-  const r = Math.min(CURVE_R, Math.abs(toX - dotX), height - mid)
-  return ['M', dotX, mid, 'L', toX - sign * r, mid, 'Q', toX, mid, toX, mid + r, 'L', toX, height].join(' ')
+  const r = Math.min(CURVE_R, Math.abs(toX - dotX), ROW_H - mid)
+  return ['M', dotX, mid, 'L', toX - sign * r, mid, 'Q', toX, mid, toX, mid + r, 'L', toX, ROW_H].join(' ')
 }
 
 /** A straight vertical line segment. */

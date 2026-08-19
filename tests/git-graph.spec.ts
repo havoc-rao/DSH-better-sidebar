@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import type { GitGraphEntry } from '../src/client/api.ts'
 import {
-  CELL_W, colX, computeGraphRows, laneColor, pathForkOut, pathMergeIn, pathV,
+  CELL_W, ROW_H, colX, computeGraphRows, laneColor, pathForkOut, pathMergeIn, pathV,
 } from '../src/client/git-graph.ts'
 
 /** A minimal graph log entry; hashes double as the full hashes. */
@@ -146,21 +146,18 @@ describe('path geometry', () => {
 
   it('spans a vertical line between arbitrary y bounds', () => {
     expect(pathV(12, 0, 20)).toBe('M 12 0 L 12 20')
-    expect(pathV(12, 20, 56)).toBe('M 12 20 L 12 56')
+    expect(pathV(12, 20, ROW_H)).toBe(`M 12 20 L 12 ${ROW_H}`)
   })
 
   it('ends a merge arc at the dot mid', () => {
-    const d = pathMergeIn(12, 36, 28) // taller row: mid = 28
-    expect(d.endsWith('L 36 28')).toBe(true)
+    const d = pathMergeIn(12, 36, ROW_H / 2)
+    expect(d.endsWith(`L 36 ${ROW_H / 2}`)).toBe(true)
     expect(d).toContain('M 12 0')
   })
 
-  it('forks down to the ACTUAL row height (tag chips make rows taller)', () => {
-    // nominal 40px row
-    expect(pathForkOut(12, 36, 20, 40).endsWith('L 36 40')).toBe(true)
-    // a row that grew to 56px (wrapped chips): the fork must reach the bottom
-    expect(pathForkOut(12, 36, 28, 56).endsWith('L 36 56')).toBe(true)
+  it('forks down to the nominal row bottom (y-stretch to the real row height happens in the SVG viewBox)', () => {
+    expect(pathForkOut(12, 36, ROW_H / 2).endsWith(`L 36 ${ROW_H}`)).toBe(true)
     // same-column fork: a plain vertical to the row bottom
-    expect(pathForkOut(12, 12, 28, 56)).toBe('M 12 28 L 12 56')
+    expect(pathForkOut(12, 12, ROW_H / 2)).toBe(`M 12 ${ROW_H / 2} L 12 ${ROW_H}`)
   })
 })
