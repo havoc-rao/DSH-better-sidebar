@@ -780,12 +780,22 @@ export function togglePanel(state: SidebarState): SidebarState {
 }
 
 /** Toggle the IDE FULLSCREEN mode (⌘⌥⇧B): the right panel covers the whole
- *  viewport. Entering opens the panel; exiting restores the docked width
- *  (the panel stays open). The flag is orthogonal to `bottomMaximized` —
- *  the IDE panel covers the bottom panel behind it. */
+ *  viewport as a standalone VSCode window — the resource manager pins to the
+ *  panel's LEFT edge and the bottom workbench docks BELOW the editor tabs.
+ *  Entering opens the panel and defaults the explorer drawer EXPANDED (a
+ *  collapsed drawer would leave the left column empty); exiting restores the
+ *  docked width (the panel stays open). The flag is orthogonal to
+ *  `bottomMaximized` — the IDE panel covers the bottom panel behind it. */
 export function toggleRightMaximized(state: SidebarState): SidebarState {
   const maximized = !state.rightMaximized
-  return { ...state, panelOpen: maximized ? true : state.panelOpen, rightMaximized: maximized }
+  return {
+    ...state,
+    panelOpen: maximized ? true : state.panelOpen,
+    // Inert in the docked layout (sideBarOpen only drives the vscode Side
+    // Bar), so the default-expand never disturbs a docked user's layout.
+    sideBarOpen: maximized ? true : state.sideBarOpen,
+    rightMaximized: maximized,
+  }
 }
 
 /** Toggle the bottom panel open/closed (independent of the right panel).

@@ -63,6 +63,10 @@ import css from './sidebar.module.css'
  * (mirror of the terminal view's own cap; the loop restarts on session switch). */
 const FAILURE_LIMIT = 3
 
+/** The Activity Bar's fixed width in px (mirror of `.activityBar`'s 48px
+ *  flex basis) — the IDE-fullscreen bottom panel docks after it. */
+const IDE_ACTIVITY_BAR_WIDTH = 48
+
 /** The uSES fallback snapshot when no workspace windows store is attached. */
 const EMPTY_WS_SNAPSHOT: WorkspaceWindowsSnapshot = {
   sessionId: undefined,
@@ -341,7 +345,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   // The vscode Side Bar column sits on the panel's LEFT edge when the
   // sideBarSide pref says so (default 'right' — the editor stays by the
   // chat); the footer strip toggles it live.
-  const sideBarLeft = vscodeLayout && snapshot.prefs.sideBarSide === 'left'
+  // IDE FULLSCREEN (⌘⌥⇧B) presents the panel as a standalone VSCode window:
+  // the resource manager is PINNED to the panel's LEFT edge (regardless of
+  // the persisted sideBarSide pref — entering the mode defaults to left)
+  // and the bottom workbench docks BELOW the editor tabs. Docked-layout
+  // users get the vscode arrangement inside the fullscreen too — an IDE
+  // window always has an explorer column on the left.
+  const ideMode = !narrow && state !== undefined && state.rightMaximized
+  const ideVscode = vscodeLayout || ideMode
+  const sideBarLeft = ideVscode && (snapshot.prefs.sideBarSide === 'left' || ideMode)
 
   /**
    * Agent terminals push: subscribe to the host's live list of agent-owned
@@ -661,6 +673,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   // pointer up (clamping + persistence).
   const panelRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  // The editor slot inside .panelBody: in IDE FULLSCREEN its bottom margin
+  // reserves the docked bottom panel's height (written mid-drag so the drag
+  // tracks 1:1; React commits the margin only on release).
+  const editorSlotRef = useRef<HTMLDivElement | null>(null)
   const widthDrag = useRef({ startX: 0, startWidth: 0 })
   const [draggingWidth, setDraggingWidth] = useState(false)
   const bottomDrag = useRef({ startY: 0, startHeight: 0 })
@@ -690,13 +706,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
    *  too — React state only updates on release, so the inline right must be
    *  written directly or the bottom panel would lag the sidebar mid-drag. */
   const applyDrag = (width: number, height: number): void => {
-    panelRef.current?.style.setProperty('width', `${width}px`)
+    // IDE FULLSCREEN: the panel rides its inline 100vw — writing the docked
+    // width here would shrink the fullscreen cover mid-drag.
+    if (state?.rightMaximized !== true) {
+      panelRef.current?.style.setProperty('width', `${width}px`)
+    }
     bottomRef.current?.style.setProperty('height', `${height}px`)
     // centerRect.right is the center column's right edge at the committed
     // width (innerWidth - state.width - detailsWidth), so this equals
     // `width + detailsWidth` — derived from the measured column, keeping the
-    // drag write-only (no React re-render mid-drag).
-    bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRect.right) + (width - (state?.width ?? 0))}px`)
+    // drag write-only (no React re-render mid-drag). IDE FULLSCREEN: the
+    // bottom panel docks flush to the fullscreen panel's right edge (0).
+    bottomRef.current?.style.setProperty('right', state?.rightMaximized === true
+      ? '0px'
+      : `${(window.innerWidth - centerRect.right) + (width - (state?.width ?? 0))}px`)
+    if (state?.rightMaximized === true) {
+      // The editor slot above the docked bottom panel shrinks in lockstep —
+      // React commits the margin only on release, so write it mid-drag or
+      // the growing panel overlaps the editor's bottom lines while dragging.
+      editorSlotRef.current?.style.setProperty('margin-bottom', `${height}px`)
+    }
     document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
     document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
     // The corner handle positions itself relative to the panel (CSS
@@ -894,6 +923,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
    * the server holds).
    */
   const flipSideBarSide = useCallback((): void => {
+    // In IDE FULLSCREEN the resource manager is pinned to the left — the
+    // flip is inert there (the mode forces the arrangement; the pref governs
+    // the docked layout only). A dead-looking toggle is worse than none.
+    if (state?.rightMaximized === true) return
     const current = store.getPrefs().sideBarSide
     const next: 'left' | 'right' = current === 'left' ? 'right' : 'left'
     store.setPrefs({ ...store.getPrefs(), sideBarSide: next })
@@ -902,7 +935,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     }).catch(() => {
       // The optimistic value stays; a reload falls back to the persisted one.
     })
-  }, [store])
+  }, [store, state?.rightMaximized])
 
   if (state === undefined || sessionId === undefined) {
     return (
@@ -1097,7 +1130,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           start below it. Docked mode keeps the original layout (no header,
           per-pane strips).
         */}
-        {vscodeLayout && (
+        {ideVscode && (
           <div className={css.vscodeHeader}>
             <HeaderTabStrip
               state={state}
@@ -1146,7 +1179,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
             reloads). Narrow viewports skip both (vscodeLayout is false
             there) and keep the docked drawer.
           */}
-          {vscodeLayout && sideBarLeft && (
+          {ideVscode && sideBarLeft && (
             <ActivityBar
               flipped
               ctx={ctx}
@@ -1158,7 +1191,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               onToggleSideBarSide={flipSideBarSide}
             />
           )}
-          {vscodeLayout && sideBarLeft && (
+          {ideVscode && sideBarLeft && (
             <SideBarPane
               flipped
               ctx={ctx}
@@ -1177,20 +1210,30 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               collapsed={!state.sideBarOpen}
             />
           )}
-          <Workbench
-            state={state}
-            newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
-            actions={actions}
-            onNewTab={onNewTab}
-            renderTab={renderTab}
-            getTabIcon={tabIconOf}
-            getTabBadge={tabBadgeOf}
-            isBoundTabId={isBoundTabId}
-            resolveTab={resolveTab}
-            onTabContextMenu={openTabMenu}
-            hideTabBar={vscodeLayout}
-          />
-          {vscodeLayout && !sideBarLeft && (
+          <div
+            ref={editorSlotRef}
+            className={css.editorSlot}
+            // IDE FULLSCREEN: the slot's bottom margin reserves the docked
+            // bottom panel's height so the editor tabs sit fully above it.
+            style={ideMode && state.bottomOpen
+              ? { marginBottom: Math.min(state.bottomHeight, window.innerHeight) }
+              : undefined}
+          >
+            <Workbench
+              state={state}
+              newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
+              actions={actions}
+              onNewTab={onNewTab}
+              renderTab={renderTab}
+              getTabIcon={tabIconOf}
+              getTabBadge={tabBadgeOf}
+              isBoundTabId={isBoundTabId}
+              resolveTab={resolveTab}
+              onTabContextMenu={openTabMenu}
+              hideTabBar={ideVscode}
+            />
+          </div>
+          {ideVscode && !sideBarLeft && (
             <SideBarPane
               ctx={ctx}
               store={store}
@@ -1205,7 +1248,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               collapsed={!state.sideBarOpen}
             />
           )}
-          {vscodeLayout && !sideBarLeft && (
+          {ideVscode && !sideBarLeft && (
             <ActivityBar
               ctx={ctx}
               state={state}
@@ -1292,17 +1335,27 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           // Maximized: cover the whole center column (bottom:0 + full
           // viewport height); normal: the drag height.
           height: state.bottomMaximized ? window.innerHeight : Math.min(state.bottomHeight, window.innerHeight),
-          left: centerRect.left,
+          // IDE FULLSCREEN: the bottom workbench docks INSIDE the fullscreen
+          // panel, BELOW the editor tabs — flush to the panel's right edge,
+          // starting after the activity bar (48px) and the explorer column
+          // (side bar width), and raised above the fullscreen panel
+          // (z-index 1001) so it is never covered. Outside IDE mode it spans
+          // the center column as before.
+          left: ideMode
+            ? IDE_ACTIVITY_BAR_WIDTH + (state.sideBarOpen ? state.sideBarWidth : 0)
+            : centerRect.left,
           // Direct from the center column's measured right edge: the bottom
           // panel spans ONLY the center column, ending exactly at the
           // details column's left edge (the details column sits between the
           // center and the right panel, and the right panel's margin-right
           // push is already baked into centerRect.right).
-          right: window.innerWidth - centerRect.right,
+          right: ideMode ? 0 : window.innerWidth - centerRect.right,
+          zIndex: ideMode ? 1001 : undefined,
           // The seam against the open right panel needs its own hairline
           // (the right panel's border-left alone is covered by this panel's
-          // fill — without it the corner looks cut off).
-          borderRight: state.panelOpen ? '1px solid var(--dsw-alias-border-l2)' : undefined,
+          // fill — without it the corner looks cut off). In IDE mode the
+          // panel ends at the fullscreen panel's right edge — no seam.
+          borderRight: ideMode ? undefined : (state.panelOpen ? '1px solid var(--dsw-alias-border-l2)' : undefined),
         }}
        
         data-dragging={(draggingBottom || draggingCorner) || undefined}

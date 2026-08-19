@@ -622,7 +622,7 @@ interface SidebarKeybindingContext {
 | `Cmd+P` | 快速打开：展开面板 → 保证文件窗口 → 聚焦其搜索框 | `!textEditing && !plusMenuOpen` |
 | `Cmd+Shift+E` | 显示/收起资源管理器（vscode 布局开关 Side Bar 抽屉，面板关闭时视为隐藏、按此键先开面板；docked 布局显示文件窗口，已打开且为当前视图时关闭它——Activity Bar 图标同款开关语义） | `!plusMenuOpen` |
 | `Cmd+Shift+G` | 打开源代码管理（Git 面板，single 去重） | `!plusMenuOpen` |
-| `Cmd+Alt+Shift+B` | 进入/退出 IDE 模式（右侧面板占满全屏：宽 100vw、z-index 1000 盖住应用壳、释放布局挤压、底部面板被盖在身后——类 VSCode 独立窗口；进入自动开面板，右上角 ✕ 或同键退出恢复停靠宽度） | `!plusMenuOpen` |
+| `Cmd+Alt+Shift+B` | 进入/退出 IDE 模式（右侧面板占满全屏：宽 100vw、z-index 1000 盖住应用壳、释放布局挤压——类 VSCode 独立窗口；进入自动开面板并把**资源管理器钉在左缘**（无视 `sideBarSide` pref，顺带默认展开 explorer 抽屉）、**底部面板重新停靠到文件 tabs 区域下方**（z-index 1001，左缘对齐活动栏+文件树列），退出恢复停靠宽度；右上角 ✕ 或同键退出） | `!plusMenuOpen` |
 | `Cmd+F` | 聚焦文件搜索框 | 活动 tab 是文件窗口，且 `!textEditing && !plusMenuOpen` |
 | `Cmd+Tab` / `Cmd+Shift+Tab` | 当前窗格下/上一个 tab | `focusInSidebar && !plusMenuOpen` |
 | `Cmd+1…Cmd+9` | 跳到当前窗格第 n 个 tab | `focusInSidebar && !plusMenuOpen` |
@@ -673,7 +673,7 @@ interface SidebarKeybindingContext {
 - **终端/编辑器表面**：经 `effectiveTokenValue` 读取 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明玻璃值（dsh-web-ui 皮肤用 rgba 0.16–0.7）一律回退不透明底色，文字永不叠在皮肤背景画上滚动（issue #90）；≥ 0.9 的近不透明值（如皮肤作用域内 0.96 的瓷器玻璃）放行，皮肤仍能控制终端表面。
 - **根锚点**：宿主 div 带 `data-dsh-better-sidebar` 属性（append 到 `document.body`），面板是其 fixed 直接子级。皮肤若要做作用域覆盖（deep-whale 的做法），限定在 `[data-dsh-better-sidebar]` 内即可，避免全局改写影响宿主。
 - **布局变量**（写在 `<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`（面板几何；拖拽期间逐帧更新）。
-- **z-index**：面板 40、折叠按钮簇 45（角手柄在面板内层叠，z-index 2 仅面板内有效）——全部低于 DSH 浮层栈（100/1000+），任何浮层天然盖住侧边栏。**IDE 全屏（⌘⌥⇧B，`rightMaximized`）**：面板升到 **1000** 盖住应用壳与上述层级（布局挤压释放），但仍低于 primitives 的浮层栈（Menu/Tooltip/Modal 实际为 9999），所以菜单/弹窗/审批提示永远浮在 IDE 全屏之上。
+- **z-index**：面板 40、折叠按钮簇 45（角手柄在面板内层叠，z-index 2 仅面板内有效）——全部低于 DSH 浮层栈（100/1000+），任何浮层天然盖住侧边栏。**IDE 全屏（⌘⌥⇧B，`rightMaximized`）**：面板升到 **1000** 盖住应用壳与上述层级（布局挤压释放），底部面板在 IDE 模式下重新停靠到文件 tabs 区域下方、升到 **1001**（仍在浮层栈之下）；两者都低于 primitives 的浮层栈（Menu/Tooltip/Modal 实际为 9999），所以菜单/弹窗/审批提示永远浮在 IDE 全屏之上。
 
 ### 8.2 注意事项
 

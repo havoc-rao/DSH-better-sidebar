@@ -118,8 +118,16 @@ export function EditorHost(props: {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot().prefs.sidebarLayout, [store]),
   )
+  // IDE FULLSCREEN (⌘⌥⇧B) forces the vscode window arrangement even for
+  // docked-layout users: the editor tab drops its docked tree (the explorer
+  // lives in the fullscreen panel's left column) and path-less tabs show the
+  // empty hint instead of the standalone explorer.
+  const ideMode = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot().state?.rightMaximized === true, [store]),
+  )
   const narrow = useNarrowViewport()
-  const vscode = !narrow && layout === 'vscode'
+  const vscode = !narrow && (layout === 'vscode' || ideMode)
   // A path-less tab shows the empty-state hint in merged mode — and in split
   // mode it is the standalone explorer (tree-only, see the render below). In
   // the VSCode layout the tree lives in the independent Side Bar, so a

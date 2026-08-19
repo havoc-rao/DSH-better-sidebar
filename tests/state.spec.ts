@@ -457,6 +457,17 @@ describe('sidebar state', () => {
     expect(s.rightMaximized).toBe(false)
   })
 
+  it('entering IDE fullscreen defaults the explorer drawer expanded (the resource manager pins left)', () => {
+    let s = { ...state(), sideBarOpen: false }
+    s = toggleRightMaximized(s)
+    expect(s.rightMaximized).toBe(true)
+    expect(s.sideBarOpen).toBe(true)
+    // Exiting restores the docked layout and keeps the drawer as it is.
+    s = toggleRightMaximized(s)
+    expect(s.rightMaximized).toBe(false)
+    expect(s.sideBarOpen).toBe(true)
+  })
+
   it('setBottomHeight clamps to the contract range', () => {
     expect(setBottomHeight(state(), 50).bottomHeight).toBe(BOTTOM_MIN)
     const g = globalThis as Record<string, unknown>

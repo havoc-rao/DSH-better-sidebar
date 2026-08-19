@@ -347,4 +347,31 @@ describe('EditorHost — vscode layout', () => {
       unmount()
     }
   })
+
+  it('IDE fullscreen forces the vscode arrangement even with docked prefs (path-less tab: empty hint, no tree)', () => {
+    // The docked layout (default prefs) + rightMaximized (⌘⌥⇧B): the host
+    // must behave like the vscode layout — the explorer lives in the
+    // fullscreen panel's left column, so this tab drops its tree.
+    const { store, ctx, homeTab } = setup()
+    store.reduce(s => ({ ...s, rightMaximized: true }))
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => {
+      root.render(createElement(EditorHost, {
+        ctx, store,
+        scope: { sessionId: 'editor-home-session' },
+        tab: homeTab(), expanded: [],
+        onToggleDir: () => {}, onReferenceFile: () => {},
+      }))
+    })
+    try {
+      expect(container.innerHTML).toContain('Pick a file from the tree panel')
+      expect(container.querySelector('input[placeholder^="Search files"]')).toBeNull()
+      expect(container.querySelector('button[aria-pressed]')).toBeNull()
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
 })
