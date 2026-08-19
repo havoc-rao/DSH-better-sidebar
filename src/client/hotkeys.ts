@@ -46,7 +46,7 @@ import { activeTabOf, toggleBottomMaximized, toggleBottomPanel, togglePanel, typ
 import { t } from './locales.ts'
 
 /** The panel a matched shortcut toggles. */
-export type PanelHotkeyTarget = 'left' | 'right' | 'bottom' | 'maximize'
+export type PanelHotkeyTarget = 'left' | 'right' | 'bottom' | 'maximize' | 'ide'
 
 /** The subset of KeyboardEvent the matcher reads (pure: testable without DOM). */
 export interface HotkeyEventLike {
@@ -160,13 +160,15 @@ export function registerPanelHotkeys(store: SidebarStore, toggleLeftSidebar: () 
 
 /**
  * The display hint for one toggle shortcut (tooltip suffix). macOS spells
- * ⌘B / ⌘J / ⌘⇧J / ⌘⌥B; other platforms Ctrl+B / Ctrl+J / Ctrl+Shift+J /
- * Ctrl+Alt+B — all accepted by {@link matchPanelHotkey}.
+ * ⌘B / ⌘J / ⌘⇧J / ⌘⌥B / ⌘⌥⇧B; other platforms Ctrl+B / Ctrl+J /
+ * Ctrl+Shift+J / Ctrl+Alt+B / Ctrl+Alt+Shift+B — all accepted by
+ * {@link matchPanelHotkey} / the keybinding runtime.
  */
 export function panelHotkeyHint(target: PanelHotkeyTarget): string {
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
   if (target === 'left') return mac ? '⌘B' : 'Ctrl+B'
   if (target === 'bottom') return mac ? '⌘J' : 'Ctrl+J'
   if (target === 'maximize') return mac ? '⌘⇧J' : 'Ctrl+Shift+J'
+  if (target === 'ide') return mac ? '⌘⌥⇧B' : 'Ctrl+Alt+Shift+B'
   return mac ? '⌘⌥B' : 'Ctrl+Alt+B'
 }

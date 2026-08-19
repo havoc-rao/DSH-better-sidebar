@@ -9,20 +9,42 @@
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import type { SidebarStore } from './state.ts'
+import { setSideBarOpen } from './state.ts'
+import { api } from './api.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
 import { wrapOpenPath } from './openpath-intercept.ts'
 import css from './sidebar.module.css'
 
-/** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
+/**
+ * Open a file in the sidebar's editor (used by the intercepted row and the
+ * explorer). A DIRECTORY must not open an editor tab — the host `fs.read`
+ * rejects it (`"..." is a directory`) and the tab would only show an error.
+ * The path is probed with `fs.tree` (it lists a directory and fails on a
+ * file/absent path): on a directory the vscode explorer drawer is expanded
+ * instead (a no-op in the docked layout — the click lands on the file tree),
+ * otherwise the file opens as before.
+ */
 export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
   const absolute = resolveSidebarPath(summary?.cwd, path)
   const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
   const title = at === -1 ? absolute : absolute.slice(at + 1)
-  // Route through the sidebar service so the editor descriptor's dedupeKey
-  // (per-path) applies; the id is path-derived so multiple editors coexist.
-  ctx.betterSidebar?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
+  const open = (): void => {
+    // Route through the sidebar service so the editor descriptor's dedupeKey
+    // (per-path) applies; the id is path-derived so multiple editors coexist.
+    ctx.betterSidebar?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
+  }
+  api.fsTree({ sessionId, cwd: summary?.cwd }, absolute).then(() => {
+    // A directory: no editor tab. In the vscode layout the explorer drawer
+    // expands so the user lands on the tree; docked is a no-op.
+    if (store.getPrefs().sidebarLayout === 'vscode') {
+      store.reduce(s => setSideBarOpen(s, true))
+    }
+  }).catch(() => {
+    // A file (or absent path — the editor surfaces the read error there).
+    open()
+  })
 }
 
 /** The intercepted produced-files row (visual twin of the deliverables chips). */

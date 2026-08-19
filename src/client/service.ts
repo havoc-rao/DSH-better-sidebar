@@ -156,11 +156,6 @@ export interface TabComponentProps {
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
-  /** Whether the VSCode-style layout is in effect for this render
-   *  (`sidebarLayout === 'vscode'` AND not a narrow viewport). The editor
-   *  tab uses it to drop its docked file tree (the tree lives in the
-   *  independent Side Bar in that mode). Absent = docked behavior. */
-  vscodeLayout?: boolean
 }
 
 /** Describes one kind of sidebar tab (builtins register themselves too). */

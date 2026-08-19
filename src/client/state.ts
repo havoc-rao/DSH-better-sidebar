@@ -157,6 +157,15 @@ export interface SidebarState {
    * previous `bottomHeight` survives, so un-maximizing restores it.
    */
   bottomMaximized: boolean
+  /**
+   * Whether the RIGHT panel is in IDE FULLSCREEN (⌘⌥⇧B): the panel covers
+   * the whole viewport like a standalone VSCode window (width 100vw,
+   * z-index above the app chrome), the layout push is released, and the
+   * bottom panel is covered behind it. Entering opens the panel; closing
+   * the panel forgets the flag. The previous `width` survives, so exiting
+   * restores the docked size.
+   */
+  rightMaximized: boolean
   /** The bottom panel's own split tree (panes/tabs live only in ONE tree;
    *  tabs never cross panels — the two panels only share panel-size drags). */
   bottomSplits: SplitNode
@@ -170,6 +179,13 @@ export interface SidebarState {
   /** The vscode Side Bar's width in px (clamped to the contract range).
    *  Ignored in docked mode. */
   sideBarWidth: number
+  /**
+   * Whether the vscode EXPLORER drawer (the independent file-tree column) is
+   * expanded. Toggled by the Activity Bar's explorer icon; when collapsed the
+   * editor group takes the full panel width. Defaults to expanded (true) so
+   * an upgrade never hides the file tree silently. Ignored in docked mode.
+   */
+  sideBarOpen: boolean
 }
 
 export const PANEL_MIN = 280
@@ -269,9 +285,11 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seed: 
     bottomHeight: BOTTOM_DEFAULT,
     bottomOpenedOnce: false,
     bottomMaximized: false,
+    rightMaximized: false,
     bottomSplits: bottomLeaf,
     sideBarView: SIDEBAR_BAR_VIEW_DEFAULT,
     sideBarWidth: SIDEBAR_BAR_WIDTH_DEFAULT,
+    sideBarOpen: true,
   }
 }
 
@@ -732,9 +750,21 @@ export function openDiffTab(state: SidebarState, sourcePaneId: string, tab: Side
   return { ...state, splits: result.node, activePane: result.leafId }
 }
 
-/** Toggle the panel open/closed (opening restores the previous layout). */
+/** Toggle the panel open/closed (opening restores the previous layout).
+ *  Closing also forgets the IDE-fullscreen flag — a closed panel must never
+ *  re-open fullscreen on its own. */
 export function togglePanel(state: SidebarState): SidebarState {
-  return { ...state, panelOpen: !state.panelOpen }
+  const panelOpen = !state.panelOpen
+  return { ...state, panelOpen, rightMaximized: panelOpen ? state.rightMaximized : false }
+}
+
+/** Toggle the IDE FULLSCREEN mode (⌘⌥⇧B): the right panel covers the whole
+ *  viewport. Entering opens the panel; exiting restores the docked width
+ *  (the panel stays open). The flag is orthogonal to `bottomMaximized` —
+ *  the IDE panel covers the bottom panel behind it. */
+export function toggleRightMaximized(state: SidebarState): SidebarState {
+  const maximized = !state.rightMaximized
+  return { ...state, panelOpen: maximized ? true : state.panelOpen, rightMaximized: maximized }
 }
 
 /** Toggle the bottom panel open/closed (independent of the right panel).
@@ -782,6 +812,12 @@ export function setSideBarView(state: SidebarState, view: string): SidebarState 
 /** Set the vscode Side Bar's width (clamped to the contract range). */
 export function setSideBarWidth(state: SidebarState, width: number): SidebarState {
   return { ...state, sideBarWidth: clampSidebarBarWidth(width) }
+}
+
+/** Set whether the vscode EXPLORER drawer is expanded (a no-op for the same
+ *  value — the Activity Bar icon toggles it). */
+export function setSideBarOpen(state: SidebarState, open: boolean): SidebarState {
+  return state.sideBarOpen === open ? state : { ...state, sideBarOpen: open }
 }
 
 /** Toggle a directory in the explorer expansion set. */
@@ -1122,6 +1158,8 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     bottomOpenedOnce: record.bottomOpenedOnce === true,
     // The maximized flag arrived later still: older states restore normal.
     bottomMaximized: record.bottomMaximized === true,
+    // The IDE-fullscreen flag arrived later: older states restore normal.
+    rightMaximized: record.rightMaximized === true,
     bottomSplits,
     // The vscode Side Bar fields arrived later: older states restore the
     // explorer view at the default width (the fields are inert in docked
@@ -1132,6 +1170,9 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     sideBarWidth: typeof record.sideBarWidth === 'number' && Number.isFinite(record.sideBarWidth)
       ? clampSidebarBarWidth(record.sideBarWidth)
       : SIDEBAR_BAR_WIDTH_DEFAULT,
+    // The explorer-drawer flag arrived later: older states restore expanded
+    // (true) so the file tree never disappears on upgrade.
+    sideBarOpen: record.sideBarOpen !== false,
   }
 }
 

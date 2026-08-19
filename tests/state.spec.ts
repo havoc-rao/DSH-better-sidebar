@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore,
   insertLeafAt, makeDefaultState, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
-  openTabInActivePane, patchTab, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight,
-  splitPane, tabOpenIn, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel,
+  openTabInActivePane, PANEL_DEFAULT, patchTab, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight,
+  setSideBarView, setSideBarWidth, setSideBarOpen, splitPane, tabOpenIn, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
 
@@ -403,6 +403,34 @@ describe('sidebar state', () => {
     s = toggleBottomPanel(s)
     expect(s.bottomOpen).toBe(true)
     expect(s.bottomMaximized).toBe(false)
+  })
+
+  // ── IDE fullscreen (⌘⌥⇧B, the right panel covers the viewport) ──────────
+
+  it('toggleRightMaximized opens a closed panel FULLSCREEN and restores the docked width while staying open', () => {
+    let s = { ...state(), panelOpen: false }
+    expect(s.panelOpen).toBe(false)
+    s = toggleRightMaximized(s)
+    expect(s.panelOpen).toBe(true)
+    expect(s.rightMaximized).toBe(true)
+    // The docked width survives the round-trip untouched — restoring
+    // returns to it, never to a stale fullscreen.
+    expect(s.width).toBe(PANEL_DEFAULT)
+    s = toggleRightMaximized(s)
+    expect(s.panelOpen).toBe(true)
+    expect(s.rightMaximized).toBe(false)
+  })
+
+  it('closing the right panel forgets the IDE-fullscreen flag', () => {
+    let s = toggleRightMaximized(state())
+    expect(s.rightMaximized).toBe(true)
+    s = togglePanel(s)
+    expect(s.panelOpen).toBe(false)
+    expect(s.rightMaximized).toBe(false)
+    // The next open (⌘⌥B) is a normal open, never a stale fullscreen.
+    s = togglePanel(s)
+    expect(s.panelOpen).toBe(true)
+    expect(s.rightMaximized).toBe(false)
   })
 
   it('setBottomHeight clamps to the contract range', () => {
@@ -900,5 +928,71 @@ describe('v0.12.0 store additions', () => {
       const tabs = allLeaves(sanitized!.splits).flatMap(leaf => leaf.tabs)
       expect(tabs[0]?.meta).toEqual({ q: [1, 2], n: 0 })
     })
+  })
+})
+
+describe('sidebar state — vscode Side Bar fields', () => {
+  it('makeDefaultState seeds the explorer view at the default width', () => {
+    const s = makeDefaultState()
+    expect(s.sideBarView).toBe('explorer')
+    expect(s.sideBarWidth).toBe(240)
+    expect(s.sideBarOpen).toBe(true)
+  })
+
+  it('sanitizeState fills the defaults for older persisted states (no field)', () => {
+    // A pre-vscode persisted state lacks sideBarView/sideBarWidth entirely.
+    const base = makeDefaultState()
+    const { sideBarView: _v, sideBarWidth: _w, ...legacy } = base
+    void _v; void _w
+    const sanitized = sanitizeState(JSON.parse(JSON.stringify(legacy)))
+    expect(sanitized?.sideBarView).toBe('explorer')
+    expect(sanitized?.sideBarWidth).toBe(240)
+  })
+
+  it('sanitizeState preserves and clamps the persisted width', () => {
+    const base = makeDefaultState()
+    const tooWide = { ...base, sideBarWidth: 9999 }
+    const tooNarrow = { ...base, sideBarWidth: 10 }
+    expect(sanitizeState(JSON.parse(JSON.stringify(tooWide)))?.sideBarWidth).toBe(480)
+    expect(sanitizeState(JSON.parse(JSON.stringify(tooNarrow)))?.sideBarWidth).toBe(160)
+  })
+
+  it('sanitizeState ignores a malformed width (falls back to default)', () => {
+    const base = makeDefaultState()
+    const malformed = { ...base, sideBarWidth: 'wide' }
+    expect(sanitizeState(JSON.parse(JSON.stringify(malformed)))?.sideBarWidth).toBe(240)
+  })
+
+  it('setSideBarView updates the view and is a no-op for the same value', () => {
+    const s = makeDefaultState()
+    const next = setSideBarView(s, 'git')
+    expect(next.sideBarView).toBe('git')
+    expect(setSideBarView(next, 'git')).toBe(next)
+  })
+
+  it('setSideBarWidth clamps into the contract range', () => {
+    const s = makeDefaultState()
+    expect(setSideBarWidth(s, 9999).sideBarWidth).toBe(480)
+    expect(setSideBarWidth(s, 10).sideBarWidth).toBe(160)
+    expect(setSideBarWidth(s, 300).sideBarWidth).toBe(300)
+  })
+
+  it('sanitizeState restores the explorer drawer expanded by default, preserves an explicit collapse', () => {
+    const base = makeDefaultState()
+    // An older persisted state lacks sideBarOpen → restored expanded (true).
+    const { sideBarOpen: _o, ...legacy } = base
+    void _o
+    expect(sanitizeState(JSON.parse(JSON.stringify(legacy)))?.sideBarOpen).toBe(true)
+    // An explicit false survives.
+    const collapsed = { ...base, sideBarOpen: false }
+    expect(sanitizeState(JSON.parse(JSON.stringify(collapsed)))?.sideBarOpen).toBe(false)
+  })
+
+  it('setSideBarOpen flips the drawer flag and is a no-op for the same value', () => {
+    const s = makeDefaultState()
+    const closed = setSideBarOpen(s, false)
+    expect(closed.sideBarOpen).toBe(false)
+    expect(setSideBarOpen(closed, false)).toBe(closed)
+    expect(setSideBarOpen(closed, true).sideBarOpen).toBe(true)
   })
 })

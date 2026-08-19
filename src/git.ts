@@ -22,6 +22,10 @@ export interface GitStatusEntry {
 export interface GitStatusResult {
   isRepo: boolean
   branch?: string
+  /** The repository top level (absolute), present when `isRepo` — the
+   *  explorer overlay joins it onto the repo-relative entry paths to map
+   *  status onto tree rows (the session cwd may sit below the root). */
+  root?: string
   entries: GitStatusEntry[]
 }
 
@@ -147,11 +151,12 @@ export async function currentBranch(cwd: string): Promise<string> {
 export async function status(cwd: string): Promise<GitStatusResult> {
   const repo = await isGitRepo(cwd)
   if (!repo) return { isRepo: false, entries: [] }
-  const [branch, raw] = await Promise.all([
+  const [branch, root, raw] = await Promise.all([
     currentBranch(cwd).catch(() => 'HEAD'),
+    repoRoot(cwd),
     runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=normal']),
   ])
-  return { isRepo: true, branch, entries: parsePorcelainZ(raw) }
+  return { isRepo: true, branch, root, entries: parsePorcelainZ(raw) }
 }
 
 /** Diff text of the worktree (unstaged) or the index (staged). */

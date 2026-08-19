@@ -8,6 +8,16 @@
  * - ⌘P / Ctrl+P — QUICK OPEN: expands the panel, ensures a files window
  *   (activating an existing path-less editor tab or minting a fresh home),
  *   and focuses its search box (type-ahead file open);
+ * - ⌘⇧E / Ctrl+Shift+E — TOGGLE EXPLORER (VSCode's `workbench.view.explorer`,
+ *   with the Activity Bar explorer icon's close-on-second-press parity): in
+ *   the vscode layout this toggles the Side Bar drawer; in the docked layout
+ *   it reveals the files home window, or closes it when it is the one in
+ *   view (the same path quick-open uses, minus the search focus);
+ * - ⌘⇧G / Ctrl+Shift+G — SHOW SOURCE CONTROL (VSCode's
+ *   `workbench.view.scm`): expands the panel and opens/focuses the git tab;
+ * - ⌘⌥⇧B / Ctrl+Alt+Shift+B — TOGGLE IDE FULLSCREEN: the right panel covers
+ *   the whole viewport (a standalone VSCode-window-like state); entering
+ *   opens the panel, the exit button / same key restores the docked size;
  * - ⌘F / Ctrl+F — focuses the files search box when the active tab IS a
  *   files window (yields to the host otherwise — no blanket stealing);
  * - ⌘Tab / ⌘Shift+Tab — cycle next / previous tab of the active pane;
@@ -17,10 +27,15 @@
  * All tab-strip keys are gated on `focusInSidebar` (the user is actually
  * interacting with the panel) and free of the + menu; the fetch-style keys
  * (⌘P / ⌘F) yield while the user types outside the sidebar. `Cmd` matches
- * the platform command modifier (⌘ on macOS, Ctrl elsewhere).
+ * the platform command modifier (⌘ on macOS, Ctrl elsewhere). The show-view
+ * keys (⌘⇧E / ⌘⇧G) are global like the panel toggles — VSCode's view
+ * switching works from anywhere.
  */
 import type { Context } from '../../context-types.ts'
-import { allLeaves, firstLeaf, togglePanel, type SidebarState, type SidebarTab, type SidebarStore } from '../state.ts'
+import {
+  activeTabOf, allLeaves, firstLeaf, setSideBarOpen, togglePanel, toggleRightMaximized,
+  type SidebarState, type SidebarTab, type SidebarStore,
+} from '../state.ts'
 import { KeybindingRuntime, focusSidebarSearchInput, type KeybindingDescriptor, type SidebarKeybindingContext } from '../keybindings.ts'
 import { panelToggleBindings } from '../hotkeys.ts'
 import { t } from '../locales.ts'
@@ -101,6 +116,31 @@ export function registerBuiltinKeybindings(
     ctx.betterSidebar?.activateTab(tabId, scope)
   }
 
+  /**
+   * Reveal the files home window (the docked-mode "explorer"): expand the
+   * panel, point the active pane at the right panel's first leaf, and
+   * activate an existing path-less files window — or mint a fresh one (tree
+   * docked, the search box ready). Shared by quick-open (⌘P — which then
+   * focuses the search) and show-explorer (⌘⇧E).
+   */
+  const revealFilesHome = (ctx: Context, store: SidebarStore): void => {
+    store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
+    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
+    const state = store.getSnapshot().state
+    if (state === undefined) return
+    const home = findHomeTab(state)
+    if (home !== undefined) {
+      activateTabById(home.id)
+    } else {
+      const scope = scopeOf(ctx, store)
+      if (scope !== undefined) {
+        // A fresh files home (tree docked) — the search box is ready as
+        // soon as the tab renders.
+        ctx.betterSidebar?.openTab({ type: 'editor', title: t('files'), meta: { treeOpen: true } }, scope)
+      }
+    }
+  }
+
   const bindings: KeybindingDescriptor[] = [
     // ── Quick open / search focus ─────────────────────────────────────────
     {
@@ -109,23 +149,68 @@ export function registerBuiltinKeybindings(
       key: 'Cmd+P',
       when: context => !context.textEditing && !context.plusMenuOpen,
       run: () => {
-        store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
-        store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-        const state = store.getSnapshot().state
-        if (state !== undefined) {
-          const home = findHomeTab(state)
-          if (home !== undefined) {
-            activateTabById(home.id)
-          } else {
-            const scope = scopeOf(ctx, store)
-            if (scope !== undefined) {
-              // A fresh files home (tree docked) — the search box is ready as
-              // soon as the tab renders.
-              ctx.betterSidebar?.openTab({ type: 'editor', title: t('files'), meta: { treeOpen: true } }, scope)
-            }
-          }
-        }
+        revealFilesHome(ctx, store)
         focusSearchSoon()
+      },
+    },
+    {
+      id: 'builtin:show-explorer',
+      title: () => t('hotkeyShowExplorer'),
+      key: 'Cmd+Shift+E',
+      when: context => !context.plusMenuOpen,
+      run: (_event, context) => {
+        // ⌘⇧E TOGGLES the explorer (VSCode's "Show Explorer", but with the
+        // Activity Bar explorer icon's close-on-second-press parity — in the
+        // OPEN state the shortcut closes, so the keyboard and the icon never
+        // disagree). In the vscode layout the explorer IS the Side Bar
+        // drawer (open only while the panel is open too — a closed panel
+        // hides it); in the docked layout it is the files home window, which
+        // the shortcut closes when it is the one in view.
+        const before = store.getSnapshot().state
+        if (before !== undefined && !context.narrow && store.getPrefs().sidebarLayout === 'vscode') {
+          const visible = before.panelOpen && before.sideBarOpen
+          if (visible) {
+            store.reduce(s => setSideBarOpen(s, false))
+          } else {
+            store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
+            store.reduce(s => setSideBarOpen(s, true))
+          }
+          return
+        }
+        const active = before === undefined ? undefined : activeTabOf(before)
+        if (before?.panelOpen === true && active !== undefined && isHomeTab(active)) {
+          const scope = scopeOf(ctx, store)
+          if (scope !== undefined) ctx.betterSidebar?.closeTab(active.id, scope)
+          return
+        }
+        revealFilesHome(ctx, store)
+      },
+    },
+    {
+      id: 'builtin:show-git',
+      title: () => t('hotkeyShowGit'),
+      key: 'Cmd+Shift+G',
+      when: context => !context.plusMenuOpen,
+      run: () => {
+        // VSCode's "Show Source Control": the git tab is single (dedupe by
+        // id), so an existing one focuses; a type-only open does not
+        // auto-expand the panel, hence the explicit expand above.
+        store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
+        const scope = scopeOf(ctx, store)
+        if (scope === undefined) return
+        ctx.betterSidebar?.openTab({ type: 'git' }, scope)
+      },
+    },
+    {
+      id: 'builtin:toggle-ide',
+      title: () => t('hotkeyIdeMode'),
+      key: 'Cmd+Alt+Shift+B',
+      when: context => !context.plusMenuOpen,
+      run: () => {
+        // ⌘⌥⇧B toggles the IDE fullscreen: the right panel covers the whole
+        // viewport like a standalone VSCode window. Entering opens the panel
+        // (a closed panel would otherwise show an empty fullscreen).
+        store.reduce(toggleRightMaximized)
       },
     },
     {

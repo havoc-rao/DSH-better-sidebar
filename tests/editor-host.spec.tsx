@@ -9,7 +9,7 @@
  * only, no editor chrome); file tabs keep the full chrome in both modes.
  */
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createElement, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -155,7 +155,7 @@ describe('EditorHost (files window)', () => {
     }
   })
 
-  it('split mode: a file tab\'s path input Enter opens a NEW per-path tab; the source tab keeps its path', () => {
+  it('split mode: a file tab\'s path input Enter opens a NEW per-path tab; the source tab keeps its path', async () => {
     const { store, ctx } = setup()
     store.setPrefs({ ...store.getPrefs(), editorExplorer: false })
     ctx.betterSidebar.openTab({ type: 'editor', title: 'a.ts', path: '/tmp/a.ts', id: 'editor:/tmp/a.ts' })
@@ -165,9 +165,14 @@ describe('EditorHost (files window)', () => {
     const { container, unmount } = mountHost(ctx, store, fileTab)
     try {
       typeAndCommit(container.querySelector('input[placeholder^="File path"]')!, '/tmp/b.ts')
+      // openSidebarFile now probes the target (fs.tree, directory guard) and
+      // opens the file asynchronously — wait for the new per-path tab.
+      await vi.waitFor(() => {
+        const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        expect(tabs).toHaveLength(3)
+      })
       const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       // home + a.ts + b.ts
-      expect(tabs).toHaveLength(3)
       expect(fileTab().path).toBe('/tmp/a.ts')
       const opened = tabs.find(tab => tab.path === '/tmp/b.ts')!
       expect(opened.type).toBe('editor')
@@ -279,6 +284,65 @@ describe('EditorHost (files window)', () => {
       act(() => { buttons.find(b => b.textContent === 'Edit')!.click() })
       act(() => { header.querySelector<HTMLButtonElement>('button[aria-label="Save"]')!.click() })
       expect(calls).toEqual(['mode:edit', 'save'])
+    } finally {
+      unmount()
+    }
+  })
+})
+
+describe('EditorHost — vscode layout', () => {
+  /** Mount the host in the vscode layout: the prefs set sidebarLayout to
+   *  vscode (the host reads it itself — no prop threaded through), so the
+   *  editor tab drops its docked tree + toggle (the tree lives in the Side
+   *  Bar). */
+  function mountVscode(
+    ctx: Context, store: ReturnType<typeof createSidebarStore>, tab: () => SidebarTab,
+  ): { container: HTMLDivElement; unmount: () => void } {
+    store.setPrefs({ ...store.getPrefs(), sidebarLayout: 'vscode' })
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => {
+      root.render(createElement(EditorHost, {
+        ctx, store,
+        scope: { sessionId: 'editor-home-session' },
+        tab: tab(), expanded: [],
+        onToggleDir: () => {}, onReferenceFile: () => {},
+      }))
+    })
+    return { container, unmount: () => { act(() => { root.unmount() }); container.remove() } }
+  }
+
+  it('a path-less tab shows the empty hint, NOT the full explorer (the tree is in the Side Bar)', () => {
+    const { store, ctx, homeTab } = setup()
+    const { container, unmount } = mountVscode(ctx, store, homeTab)
+    try {
+      // The empty-state hint renders (the tree is elsewhere now), and there
+      // is no tree-panel search box docked into this tab.
+      expect(container.innerHTML).toContain('Pick a file from the tree panel')
+      expect(container.querySelector('input[placeholder^="Search files"]')).toBeNull()
+      // No tree toggle button (nothing to dock).
+      expect(container.querySelector('button[aria-pressed]')).toBeNull()
+    } finally {
+      unmount()
+    }
+  })
+
+  it('a file tab keeps the chrome but drops the docked tree + toggle', () => {
+    const { store, ctx } = setup()
+    ctx.betterSidebar.openTab({
+      type: 'editor', title: 'a.ts', path: '/tmp/a.ts', id: 'editor:/tmp/a.ts', meta: { treeOpen: true },
+    })
+    const fileTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/tmp/a.ts')!
+    const { container, unmount } = mountVscode(ctx, store, fileTab)
+    try {
+      // The path input stays (the chrome is intact)…
+      expect(container.querySelector('input[placeholder^="File path"]')).not.toBeNull()
+      // …but no tree toggle and no docked-tree separator (treeOpen is ignored).
+      expect(container.querySelector('button[aria-pressed]')).toBeNull()
+      expect(container.querySelector('[role="separator"]')).toBeNull()
     } finally {
       unmount()
     }

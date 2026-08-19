@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { registerOpenPathInterception } from '../src/client/intercept.tsx'
 import { wrapOpenPath, type OpenPathInterceptDeps, type OpenPathService } from '../src/client/openpath-intercept.ts'
+import { api } from '../src/client/api.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import type { Context } from '../src/context-types.ts'
 
@@ -97,6 +98,8 @@ describe('open-path interception', () => {
 })
 
 describe('open-path interception wiring', () => {
+  beforeEach(() => { vi.restoreAllMocks() })
+
   it('registerOpenPathInterception routes chat opens into the editor tab and restores on dispose', async () => {
     // A realistic client-context fake: the sessions list feed (current + cwd),
     // the workspaces funnel, and the sidebar service the editor goes through.
@@ -113,9 +116,14 @@ describe('open-path interception wiring', () => {
     const original = ctx.workspaces.openPath
     const restore = registerOpenPathInterception(ctx, store)
 
+    // openSidebarFile probes the target (fs.tree directory guard): a file
+    // target rejects the probe and opens asynchronously.
+    vi.spyOn(api, 'fsTree').mockRejectedValue(new Error('ENOTDIR'))
+
     // Default prefs: the takeover routes the open into the sidebar editor
     // with the session-scoped absolute path (chat already resolved it).
     await ctx.workspaces.openPath('/w/src/a.ts')
+    await vi.waitFor(() => expect(opened).toHaveLength(1))
     expect(opened).toEqual([{
       type: 'editor',
       title: 'a.ts',

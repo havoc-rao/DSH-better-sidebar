@@ -10,9 +10,10 @@
  * when the declaration commits; the returned disposer cancels a pending wait
  * and disposes any active registration; the register disposer is idempotent.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createSidebarStore } from '../src/client/state.ts'
 import { registerTurnTailInterception } from '../src/client/intercept.tsx'
+import { api } from '../src/client/api.ts'
 import type { Context } from '../src/context-types.ts'
 
 interface RegisteredSlot {
@@ -156,7 +157,7 @@ describe('turn-tail interception registration (issue #15)', () => {
     restore()
   })
 
-  it('wires the openInSidebar seat to the sidebar editor tab', () => {
+  it('wires the openInSidebar seat to the sidebar editor tab', async () => {
     const fake = fakeSlots(true)
     const ctx = clientCtx(fake.slots)
     const store = createSidebarStore()
@@ -165,16 +166,20 @@ describe('turn-tail interception registration (issue #15)', () => {
       openInSidebar: (path: string) => void
     }
 
+    // openSidebarFile probes the target (fs.tree directory guard): a file
+    // target rejects the probe and opens asynchronously.
+    vi.spyOn(api, 'fsTree').mockRejectedValue(new Error('ENOTDIR'))
+
     // The seat hands the session-scoped opener to the chips row.
     const seat = inject('s1')
     expect(seat.openInSidebar).toBeTypeOf('function')
     seat.openInSidebar('/w/src/a.ts')
-    expect(ctx.betterSidebar.openTab).toHaveBeenCalledWith({
+    await vi.waitFor(() => expect(ctx.betterSidebar.openTab).toHaveBeenCalledWith({
       type: 'editor',
       title: 'a.ts',
       path: '/w/src/a.ts',
       id: 'editor:/w/src/a.ts',
-    })
+    }))
 
     restore()
   })

@@ -277,9 +277,6 @@ interface TabComponentProps {
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
-  // v0.15.0+：VSCode 风格布局是否生效（sidebarLayout === 'vscode' 且非窄视口）。
-  // editor tab 据此去掉内嵌文件树（树在独立 Side Bar）；其他 tab 通常忽略。
-  vscodeLayout?: boolean
 }
 ```
 
@@ -353,7 +350,7 @@ ctx.effect(() => {
 
 | id | order | single | hidden | 用途 |
 |---|---|---|---|---|
-| `editor` | 10 | 否（按 path 去重） | 否 | 唯一的「文件窗口」（文件编辑/预览 + 文件资源管理）：文件 tab（有 path）在两种 `editorExplorer` 模式下 chrome 恒为合并形态——头部路径输入框 + 文本编辑器预览/编辑/保存控件 + 可开关的内嵌文件树面板（含全局文件名搜索，走 host `fs.search` 路由；左缘拖拽调宽），状态存 `tab.meta.treeOpen` / `tab.meta.treeWidth`；pref 控制**打开行为与无路径窗口形态**：开（默认，合并）= 树点击/输入框 Enter 原地切换当前 tab（`updateTab` 重写 path/title，id 与 meta 不变），无路径窗口 = 带 chrome 的空文件窗口（树默认展开）；关（独立）= 走 `openSidebarFile` 按 path 新开，**无路径窗口即独立资源管理器——只渲染文件树面板**（搜索 + FileTree 撑满全窗，无编辑器 chrome）。树右键菜单提供「在新 Tab 中打开」「在侧边打开」（后者在当前 pane 右侧 split 出新 editor tab）。新会话在两种模式下都默认 seed 空文件窗口（`title: 'Files'`，无 path，树面板展开）；持久化的旧 `explorer` tab 经 `sanitizeState` 迁移为该 home tab。**`sidebarLayout: 'vscode'`（v0.15.0+）时**：editor tab 不再内嵌树（树移到独立 Side Bar 列），无 tree toggle 按钮，无路径窗口恒为空提示；文件打开走 Side Bar 的 TreePanel → per-path tab |
+| `editor` | 10 | 否（按 path 去重） | 否 | 唯一的「文件窗口」（文件编辑/预览 + 文件资源管理）：文件 tab（有 path）在两种 `editorExplorer` 模式下 chrome 恒为合并形态——头部路径输入框 + 文本编辑器预览/编辑/保存控件 + 可开关的内嵌文件树面板（含全局文件名搜索，走 host `fs.search` 路由；左缘拖拽调宽），状态存 `tab.meta.treeOpen` / `tab.meta.treeWidth`；pref 控制**打开行为与无路径窗口形态**：开（默认，合并）= 树点击/输入框 Enter 原地切换当前 tab（`updateTab` 重写 path/title，id 与 meta 不变），无路径窗口 = 带 chrome 的空文件窗口（树默认展开）；关（独立）= 走 `openSidebarFile` 按 path 新开，**无路径窗口即独立资源管理器——只渲染文件树面板**（搜索 + FileTree 撑满全窗，无编辑器 chrome）。树右键菜单提供「在新 Tab 中打开」「在侧边打开」（后者在当前 pane 右侧 split 出新 editor tab）。**树行带 VSCode 式 git 状态装饰**（v0.15.0+）：文件/目录**名称按状态着色**（修改琥珀、增/重命名绿、删除红、未跟踪灰）+ 行尾彩色字母徽标（M/A/D/R/C/U/!/T，颜色映射 DSH 语义令牌）、目录聚合子孙最高优先级状态（删除不向父目录传播）、删除文件名称划线、面板底部变更计数条；状态随 Git 面板操作经共享变更总线实时联动（纯逻辑在 `src/client/git-status.ts`，见 `docs/plans/2026-08-19-git-status-decorations-design.md`）。新会话在两种模式下都默认 seed 空文件窗口（`title: 'Files'`，无 path，树面板展开）；持久化的旧 `explorer` tab 经 `sanitizeState` 迁移为该 home tab。**`sidebarLayout: 'vscode'`（v0.15.0+）时**：editor tab 不再内嵌树（树移到独立 Side Bar 列），无 tree toggle 按钮，无路径窗口恒为空提示；文件打开走 Side Bar 的 TreePanel → per-path tab。**`sideBarSide`（v0.15.0+，pref）**：**整体镜像** vscode 布局（默认 `'right'` = 编辑器 | 文件树列 | 活动栏；`'left'` = 活动栏 | 文件树列 | 编辑器——Activity Bar **连同文件树列一起翻到左缘**，`ActivityBar` 的 `flipped` prop 镜像边框/活动指示条/tooltip 方向，`SideBarPane` 的 `flipped` prop 镜像边框与拖拽手柄、拖拽方向反转）；**切换按钮钉在 Activity Bar 图标列底部**（`onToggleSideBarSide`，VSCode 活动栏设置齿轮的位置——乐观更新 + settings 路由持久化） |
 | `git` | 20 | 是 | 否 | Git 面板 |
 | `subagent` | 30 | 是 | 否 | 子代理拓扑 |
 | `terminal` | 40 | 否 | 否 | 终端（nextTerminal 自增） |
@@ -623,6 +620,9 @@ interface SidebarKeybindingContext {
 | `Cmd+J` | 切换底部面板 | `!narrow` |
 | `Cmd+Shift+J` | 最大化/还原底部面板 | `!narrow` |
 | `Cmd+P` | 快速打开：展开面板 → 保证文件窗口 → 聚焦其搜索框 | `!textEditing && !plusMenuOpen` |
+| `Cmd+Shift+E` | 显示/收起资源管理器（vscode 布局开关 Side Bar 抽屉，面板关闭时视为隐藏、按此键先开面板；docked 布局显示文件窗口，已打开且为当前视图时关闭它——Activity Bar 图标同款开关语义） | `!plusMenuOpen` |
+| `Cmd+Shift+G` | 打开源代码管理（Git 面板，single 去重） | `!plusMenuOpen` |
+| `Cmd+Alt+Shift+B` | 进入/退出 IDE 模式（右侧面板占满全屏：宽 100vw、z-index 1000 盖住应用壳、释放布局挤压、底部面板被盖在身后——类 VSCode 独立窗口；进入自动开面板，右上角 ✕ 或同键退出恢复停靠宽度） | `!plusMenuOpen` |
 | `Cmd+F` | 聚焦文件搜索框 | 活动 tab 是文件窗口，且 `!textEditing && !plusMenuOpen` |
 | `Cmd+Tab` / `Cmd+Shift+Tab` | 当前窗格下/上一个 tab | `focusInSidebar && !plusMenuOpen` |
 | `Cmd+1…Cmd+9` | 跳到当前窗格第 n 个 tab | `focusInSidebar && !plusMenuOpen` |
@@ -673,7 +673,7 @@ interface SidebarKeybindingContext {
 - **终端/编辑器表面**：经 `effectiveTokenValue` 读取 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明玻璃值（dsh-web-ui 皮肤用 rgba 0.16–0.7）一律回退不透明底色，文字永不叠在皮肤背景画上滚动（issue #90）；≥ 0.9 的近不透明值（如皮肤作用域内 0.96 的瓷器玻璃）放行，皮肤仍能控制终端表面。
 - **根锚点**：宿主 div 带 `data-dsh-better-sidebar` 属性（append 到 `document.body`），面板是其 fixed 直接子级。皮肤若要做作用域覆盖（deep-whale 的做法），限定在 `[data-dsh-better-sidebar]` 内即可，避免全局改写影响宿主。
 - **布局变量**（写在 `<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`（面板几何；拖拽期间逐帧更新）。
-- **z-index**：面板 40、折叠按钮簇 45（角手柄在面板内层叠，z-index 2 仅面板内有效）——全部低于 DSH 浮层栈（100/1000+），任何浮层天然盖住侧边栏。
+- **z-index**：面板 40、折叠按钮簇 45（角手柄在面板内层叠，z-index 2 仅面板内有效）——全部低于 DSH 浮层栈（100/1000+），任何浮层天然盖住侧边栏。**IDE 全屏（⌘⌥⇧B，`rightMaximized`）**：面板升到 **1000** 盖住应用壳与上述层级（布局挤压释放），但仍低于 primitives 的浮层栈（Menu/Tooltip/Modal 实际为 9999），所以菜单/弹窗/审批提示永远浮在 IDE 全屏之上。
 
 ### 8.2 注意事项
 

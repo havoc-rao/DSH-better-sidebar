@@ -41,6 +41,8 @@ export interface GitStatusEntry {
 export interface GitStatusResult {
   isRepo: boolean
   branch?: string
+  /** The repository top level (absolute), present when `isRepo`. */
+  root?: string
   entries: GitStatusEntry[]
 }
 

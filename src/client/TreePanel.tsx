@@ -14,11 +14,12 @@
  * search input (only while `visible`) so the global ⌘P / ⌘F keybindings
  * can focus it from anywhere.
  */
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import clsx from 'clsx'
-import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { api } from './api.ts'
-import { FileTree } from './FileTree.tsx'
+import { IconRefreshOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { api, type GitStatusResult } from './api.ts'
+import { FileTree, gitKindCss } from './FileTree.tsx'
+import { buildGitStatusMap, subscribeGitStatusChanged } from './git-status.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import { searchKeyAction, clampSearchIndex } from './search-keys.ts'
@@ -53,6 +54,39 @@ export function TreePanel(props: {
   const [activeIndex, setActiveIndex] = useState(0)
   const [focused, setFocused] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
+
+  // ── Git status decorations (VSCode-style) ───────────────────────────────
+  // Fetched per panel on mount / session change / the refresh button, plus
+  // every time the git panel bumps the shared change bus (stage, commit,
+  // discard…). Failures degrade silently to a clean tree — the git panel is
+  // the place that surfaces git errors.
+  const [gitStatus, setGitStatus] = useState<GitStatusResult | null>(null)
+  const gitRequest = useRef(0)
+  const loadGitStatus = useCallback(() => {
+    if (cwd === undefined || cwd === '') {
+      setGitStatus(null)
+      return
+    }
+    const request = ++gitRequest.current
+    api.gitStatus({ sessionId, cwd }).then((result) => {
+      if (gitRequest.current !== request) return
+      setGitStatus(result)
+    }).catch(() => {
+      if (gitRequest.current !== request) return
+      setGitStatus(null)
+    })
+  }, [sessionId, cwd])
+  useEffect(() => { loadGitStatus() }, [loadGitStatus, refreshTick])
+  // Re-colors the explorer when the git panel refreshes/mutates.
+  useEffect(() => {
+    const dispose = subscribeGitStatusChanged(loadGitStatus)
+    return () => {
+      dispose()
+      // Invalidate any in-flight status (unmount / session switch).
+      gitRequest.current += 1
+    }
+  }, [loadGitStatus])
+  const overlay = useMemo(() => buildGitStatusMap(gitStatus, cwd), [gitStatus, cwd])
 
   const needle = query.trim()
   useEffect(() => {
@@ -150,15 +184,16 @@ export function TreePanel(props: {
           onBlur={() => { setFocused(false) }}
           onKeyDown={onSearchKeyDown}
         />
-        <button
-          type="button"
-          className={css.iconButton}
-          aria-label={t('refresh')}
-          title={t('refresh')}
-          onClick={() => { setRefreshTick(tick => tick + 1) }}
-        >
-          <IconRefreshOutline16 size={14} />
-        </button>
+        <Tooltip label={t('refresh')} side="bottom" delayMs={500}>
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('refresh')}
+            onClick={() => { setRefreshTick(tick => tick + 1) }}
+          >
+            <IconRefreshOutline16 size={14} />
+          </button>
+        </Tooltip>
       </div>
       {needle === '' ? (
         <FileTree
@@ -171,6 +206,7 @@ export function TreePanel(props: {
           onOpenFileSide={onOpenFileSide}
           onReferenceFile={onReferenceFile}
           refreshTick={refreshTick}
+          gitStatus={overlay.map}
         />
       ) : (
         <div className={css.explorerBody}>
@@ -202,6 +238,22 @@ export function TreePanel(props: {
           {error === null && results?.truncated === true && (
             <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
           )}
+        </div>
+      )}
+      {/*
+        The VSCode-style status footer: changed-file counts under the tree
+        root, colored by status family (most severe first). Only in a repo
+        with changes; hidden rows/dirs never count twice — the counts are
+        the changed FILES, the same set the badges decorate.
+      */}
+      {overlay.counts.length > 0 && (
+        <div className={css.explorerGitFooter} title={t('explorerGitFooter')}>
+          {overlay.counts.map(count => (
+            <span key={count.letter} className={clsx(css.explorerGitFooterItem, gitKindCss[count.kind])}>
+              <span className={css.explorerGitFooterLetter}>{count.letter}</span>
+              {count.count}
+            </span>
+          ))}
         </div>
       )}
     </div>

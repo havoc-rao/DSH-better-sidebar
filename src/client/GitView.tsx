@@ -11,10 +11,11 @@
 import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
-  IconTrashOutline16, Input, Menu, Modal, writeClipboard,
+  IconTrashOutline16, Input, Menu, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { api } from './api.ts'
+import { notifyGitStatusChanged } from './git-status.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
 import type { SidebarTab } from './state.ts'
@@ -119,6 +120,10 @@ export function GitView(props: {
       setBranchNames(branchResult.names)
       setLogEntries(logResult)
       setLogEnded(logResult.length < LOG_BATCH)
+      // The explorer's tree decorations ride the same status snapshot —
+      // every successful refresh (mount, focus, stage, commit, discard…)
+      // recolors the tree rows too.
+      notifyGitStatusChanged()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -290,15 +295,16 @@ export function GitView(props: {
           {(status?.branch ?? '') !== '' && <option value={status!.branch}>{status!.branch}</option>}
           {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
         </select>
-        <button
-          type="button"
-          className={css.iconButton}
-          aria-label={t('refresh')}
-          title={t('refresh')}
-          onClick={() => { void refresh() }}
-        >
-          <IconRefreshOutline16 size={14} />
-        </button>
+        <Tooltip label={t('refresh')} side="bottom" delayMs={500}>
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('refresh')}
+            onClick={() => { void refresh() }}
+          >
+            <IconRefreshOutline16 size={14} />
+          </button>
+        </Tooltip>
       </div>
 
       {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}

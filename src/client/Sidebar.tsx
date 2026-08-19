@@ -32,9 +32,9 @@ import { IconCloseFill14, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primi
 import type { Context, SidebarLayoutService, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, isBoundTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, allLeaves, firstLeaf, isAgentTabId, isBoundTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
-  resizeSplitIn, setBottomHeight, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel,
+  resizeSplitIn, setBottomHeight, setSideBarOpen, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized, treeOf,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
 import { IconPanelBottomOutline16, IconPanelRightOutline16, IconPinOutline16 } from './icons.tsx'
@@ -43,14 +43,19 @@ import { createHostSidebarKeeper } from './host-sidebar.ts'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
 import type { NewTabOption } from './TabBar.tsx'
+import { TabBar } from './TabBar.tsx'
 import type { TabDragPayload } from './TabBar.tsx'
 import type { WorkspaceWindowsSnapshot, WorkspaceWindowsStore } from './workspace-windows.ts'
 import { relativeTo } from './paths.ts'
 import { OrphanedTab } from './OrphanedTab.tsx'
+import { ActivityBar } from './ActivityBar.tsx'
+import { SideBarPane } from './SideBarPane.tsx'
+import { openSidebarFile } from './intercept.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
+import { parsePrefs } from './prefs.ts'
 import { api, type SessionScope } from './api.ts'
 import css from './sidebar.module.css'
 
@@ -124,6 +129,56 @@ function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionSco
       disabled: !(d.available?.(ctx, scope, state) ?? true),
       icon: typeof d.icon === 'function' ? d.icon(16) : d.icon,
     }))
+}
+
+/**
+ * The VSCode layout's header tab strip: hosts the RIGHT panel's active
+ * pane's tabs in the panel title bar (the VSCode editor tab strip under the
+ * title bar), while the editor panes themselves render content only. Clicking
+ * another pane (focusPane) promotes its tabs into the header — one shared
+ * strip for the whole editor group, mirroring VSCode's single-group feel. An
+ * empty active pane renders the bare strip (+ menu stays reachable). The
+ * strip is pinned to the RIGHT panel's tree: an interaction on the bottom
+ * panel must not swap the header's tabs to the bottom pane's.
+ */
+function HeaderTabStrip(props: {
+  state: SidebarState
+  actions: WorkbenchActions
+  onNewTab: (optionId: string) => void
+  newTabOptions: NewTabOption[]
+  getTabIcon?: (tab: SidebarTab) => ReactNode
+  getTabBadge?: (tab: SidebarTab) => ReactNode
+  isBoundTabId?: (tabId: string) => boolean
+  resolveTab?: (tab: SidebarTab) => SidebarTab
+  onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
+}) {
+  const { state, actions, onNewTab, newTabOptions, getTabIcon, getTabBadge, isBoundTabId, resolveTab, onTabContextMenu } = props
+  // The active pane of the RIGHT tree only (state.activePane may point into
+  // the bottom panel's tree — the header must keep showing the editor tabs).
+  const paneId = state.activePane !== null && treeOf(state, state.activePane) === 'splits'
+    ? state.activePane
+    : firstLeaf(state.splits).id
+  const leaf = allLeaves(state.splits).find(candidate => candidate.id === paneId)
+  const tabs = (leaf?.tabs ?? []).map(tab => resolveTab?.(tab) ?? tab)
+  return (
+    <TabBar
+      paneId={paneId}
+      tabs={tabs}
+      active={leaf?.active ?? null}
+      onActivate={(tabId) => { actions.activateTab(paneId, tabId) }}
+      onClose={(tabId) => { actions.closeTab(paneId, tabId) }}
+      onNewTab={onNewTab}
+      newTabOptions={newTabOptions}
+      getTabIcon={getTabIcon}
+      getTabBadge={getTabBadge}
+      isBoundTabId={isBoundTabId}
+      onTabContextMenu={onTabContextMenu}
+      onDropTab={(payload, before) => {
+        if (before === null) actions.moveTabToEdge(payload, paneId, 'center')
+        else actions.moveTabBefore(payload, paneId, before)
+      }}
+    />
+  )
 }
 
 export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: WorkspaceWindowsStore }) {
@@ -276,6 +331,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     return () => { cancelled = true }
   }, [sessionId, summaryCwd])
   const cwd = summaryCwd ?? fetchedCwd
+
+  // The VSCode-style layout is in effect only when the pref is on AND the
+  // viewport is wide enough — narrow viewports keep the docked drawer (the
+  // side bar + activity bar are a desktop paradigm). Computed once here and
+  // threaded into TabContent (so the editor tab drops its docked tree) and
+  // into the panel body (which renders the Side Bar + Activity Bar).
+  const vscodeLayout = !narrow && snapshot.prefs.sidebarLayout === 'vscode'
+  // The vscode Side Bar column sits on the panel's LEFT edge when the
+  // sideBarSide pref says so (default 'right' — the editor stays by the
+  // chat); the footer strip toggles it live.
+  const sideBarLeft = vscodeLayout && snapshot.prefs.sideBarSide === 'left'
 
   /**
    * Agent terminals push: subscribe to the host's live list of agent-owned
@@ -692,7 +758,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     }
   }, [])
   useEffect(() => {
-    const width = !narrow && snapshot.state?.panelOpen === true
+    // The width push is released while the right panel is in IDE FULLSCREEN
+    // (⌘⌥⇧B): the panel COVERS the whole viewport, so the app shell must not
+    // be squeezed (mirror of the maximized bottom panel's released push).
+    const width = !narrow && snapshot.state?.panelOpen === true && snapshot.state?.rightMaximized !== true
       ? Math.min(snapshot.state.width, window.innerWidth)
       : 0
     // The MAXIMIZED bottom panel (⌘⇧J) COVERS the whole center column — the
@@ -703,7 +772,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       : 0
     document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
     document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
-  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight, snapshot.state?.bottomMaximized])
+  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.rightMaximized, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight, snapshot.state?.bottomMaximized])
   useEffect(() => {
     if (anyDragging) document.body.setAttribute('data-dsh-sidebar-dragging', '')
     else document.body.removeAttribute('data-dsh-sidebar-dragging')
@@ -796,6 +865,24 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     if (sessionId === undefined) return
     appendToDraft(ctx, sessionId, `@${relativeTo(cwd ?? '', path)}`)
   }, [ctx, sessionId, cwd])
+
+  /**
+   * Flip the vscode Side Bar to the other side of the panel (the bottom
+   * strip's toggle). OPTIMISTIC: the store updates first so the layout
+   * re-renders immediately, then the settings route persists (best-effort —
+   * a failed write keeps the in-memory value; a reload reverts to whatever
+   * the server holds).
+   */
+  const flipSideBarSide = useCallback((): void => {
+    const current = store.getPrefs().sideBarSide
+    const next: 'left' | 'right' = current === 'left' ? 'right' : 'left'
+    store.setPrefs({ ...store.getPrefs(), sideBarSide: next })
+    void api.settingsUpdate({ sideBarSide: next }).then((view) => {
+      store.setPrefs(parsePrefs(view.value))
+    }).catch(() => {
+      // The optimistic value stays; a reload falls back to the persisted one.
+    })
+  }, [store])
 
   if (state === undefined || sessionId === undefined) {
     return (
@@ -931,12 +1018,12 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       */}
       <div
         ref={panelRef}
-        className={clsx(css.panel, !state.panelOpen && css.panelHidden)}
-        style={{ width: narrow ? '100vw' : Math.min(state.width, window.innerWidth) }}
+        className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaximized && css.panelMaximized)}
+        style={{ width: state.rightMaximized ? '100vw' : narrow ? '100vw' : Math.min(state.width, window.innerWidth) }}
        
         data-dragging={anyDragging || undefined}
       >
-          {!narrow && (
+          {!narrow && !state.rightMaximized && (
             <div
               className={clsx(css.panelResize, draggingWidth && css.panelResizeActive)}
              
@@ -976,7 +1063,93 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               }}
             />
           )}
+        {/*
+          The VSCode layout's title bar: a single tab-strip header across the
+          top of the panel that the corner toggle cluster floats on (instead
+          of hovering over bare content), hosting the ACTIVE pane's tabs —
+          the VSCode editor tab strip under the title bar. The editor panes
+          themselves render content only; clicking another pane promotes its
+          tabs into the header. The Activity Bar / Side Bar / editor group
+          start below it. Docked mode keeps the original layout (no header,
+          per-pane strips).
+        */}
+        {vscodeLayout && (
+          <div className={css.vscodeHeader}>
+            <HeaderTabStrip
+              state={state}
+              actions={actions}
+              onNewTab={onNewTab}
+              newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
+              getTabIcon={tabIconOf}
+              getTabBadge={tabBadgeOf}
+              isBoundTabId={isBoundTabId}
+              resolveTab={resolveTab}
+              onTabContextMenu={openTabMenu}
+            />
+          </div>
+        )}
+        {/*
+          The IDE-fullscreen (⌘⌥⇧B) exit control: pinned to the panel's
+          top-right like the bottom panel's close — the corner toggle
+          cluster sits UNDER the fullscreen panel (z-index 1000), so this
+          button is the mouse way back to the docked layout (the key toggles
+          too).
+        */}
+        {state.rightMaximized && (
+          <Tooltip label={`${t('ideModeExit')} (${panelHotkeyHint('ide')})`} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.ideExit}
+              aria-label={t('ideModeExit')}
+              onClick={() => { store.reduce(toggleRightMaximized) }}
+            >
+              <IconCloseFill14 />
+            </button>
+          </Tooltip>
+        )}
         <div className={css.panelBody}>
+          {/*
+            The VSCode-style layout (sidebarLayout: 'vscode' on a wide
+            viewport): the file tree lives in an independent EXPLORER drawer
+            (Side Bar column) that the Activity Bar's explorer icon expands
+            and collapses — the "explorer is a drawer, files are tabs"
+            separation. The mirror order — editor | side bar | activity bar —
+            keeps the editor by the chat; `sideBarSide: 'left'` mirrors the
+            WHOLE arrangement to activity bar | side bar | editor (the icon
+            bar moves to the panel's left edge together with the tree). The
+            drawer stays MOUNTED at width 0 while collapsed (the CSS width
+            transition animates the collapse/expand and the tree never
+            reloads). Narrow viewports skip both (vscodeLayout is false
+            there) and keep the docked drawer.
+          */}
+          {vscodeLayout && sideBarLeft && (
+            <ActivityBar
+              flipped
+              ctx={ctx}
+              state={state}
+              scope={{ sessionId, cwd }}
+              onOpen={onNewTab}
+              sideBarOpen={state.sideBarOpen}
+              onToggleSideBar={() => { store.reduce(s => setSideBarOpen(s, !s.sideBarOpen)) }}
+              onToggleSideBarSide={flipSideBarSide}
+            />
+          )}
+          {vscodeLayout && sideBarLeft && (
+            <SideBarPane
+              flipped
+              ctx={ctx}
+              store={store}
+              state={state}
+              scope={{ sessionId, cwd }}
+              expanded={state.expanded}
+              onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
+              onOpenFile={(path) => { openSidebarFile(ctx, store, sessionId, path) }}
+              onOpenFileNewTab={(path) => { openSidebarFile(ctx, store, sessionId, path) }}
+              onReferenceFile={referenceInChat}
+              visible={state.panelOpen}
+              collapsed={!state.sideBarOpen}
+            />
+          )}
           <Workbench
             state={state}
             newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
@@ -988,7 +1161,34 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
             isBoundTabId={isBoundTabId}
             resolveTab={resolveTab}
             onTabContextMenu={openTabMenu}
+            hideTabBar={vscodeLayout}
           />
+          {vscodeLayout && !sideBarLeft && (
+            <SideBarPane
+              ctx={ctx}
+              store={store}
+              state={state}
+              scope={{ sessionId, cwd }}
+              expanded={state.expanded}
+              onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
+              onOpenFile={(path) => { openSidebarFile(ctx, store, sessionId, path) }}
+              onOpenFileNewTab={(path) => { openSidebarFile(ctx, store, sessionId, path) }}
+              onReferenceFile={referenceInChat}
+              visible={state.panelOpen}
+              collapsed={!state.sideBarOpen}
+            />
+          )}
+          {vscodeLayout && !sideBarLeft && (
+            <ActivityBar
+              ctx={ctx}
+              state={state}
+              scope={{ sessionId, cwd }}
+              onOpen={onNewTab}
+              sideBarOpen={state.sideBarOpen}
+              onToggleSideBar={() => { store.reduce(s => setSideBarOpen(s, !s.sideBarOpen)) }}
+              onToggleSideBarSide={flipSideBarSide}
+            />
+          )}
         </div>
         {/*
           The shared corner (only while BOTH panels are open and the bottom
@@ -1001,7 +1201,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           JS-written viewport coordinates to keep in sync. (Never on narrow
           viewports: the bottom panel does not exist there.)
         */}
-        {!narrow && state.panelOpen && state.bottomOpen && !state.bottomMaximized && (
+        {!narrow && state.panelOpen && state.bottomOpen && !state.bottomMaximized && !state.rightMaximized && (
           <div
             className={css.cornerHandle}
             data-dragging={draggingCorner || undefined}

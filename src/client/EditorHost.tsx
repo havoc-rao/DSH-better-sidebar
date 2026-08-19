@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutline16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline16, IconFolderOpen16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
@@ -33,6 +33,7 @@ import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './edit
 import { baseName } from './FileTree.tsx'
 import { openSidebarFile } from './intercept.tsx'
 import { TreePanel } from './TreePanel.tsx'
+import { useNarrowViewport } from './breakpoints.ts'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
@@ -96,14 +97,8 @@ export function EditorHost(props: {
    *  the tree panel so only a visible search box claims the global
    *  search-focus keybindings (⌘P / ⌘F). */
   visible?: boolean
-  /** Whether the VSCode-style layout is in effect: the editor tab drops its
-   *  docked file tree (the tree lives in the independent Side Bar) and its
-   *  tree-toggle button. A path-less tab shows the empty-state hint instead
-   *  of the full explorer. Absent = the original docked behavior. */
-  vscodeLayout?: boolean
 }) {
-  const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, visible, vscodeLayout } = props
-  const vscode = vscodeLayout === true
+  const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, visible } = props
   const path = tab.path ?? ''
   const title = tab.title
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
@@ -115,6 +110,16 @@ export function EditorHost(props: {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot().prefs.editorExplorer, [store]),
   )
+  // The VSCode layout is read directly from the prefs (like editorExplorer
+  // above) — the shell does not thread a flag through the tab props. Narrow
+  // viewports fall back to the docked drawer, so the effective flag is
+  // `sidebarLayout === 'vscode' && !narrow`.
+  const layout = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot().prefs.sidebarLayout, [store]),
+  )
+  const narrow = useNarrowViewport()
+  const vscode = !narrow && layout === 'vscode'
   // A path-less tab shows the empty-state hint in merged mode — and in split
   // mode it is the standalone explorer (tree-only, see the render below). In
   // the VSCode layout the tree lives in the independent Side Bar, so a
@@ -315,30 +320,32 @@ export function EditorHost(props: {
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
         {toolbar?.editable === true && (
-          <button
-            type="button"
-            className={css.iconButton}
-            aria-label={t('save')}
-            title={`${t('save')} (Ctrl/Cmd+S)`}
-            onClick={() => { controlsRef.current?.save() }}
-          >
-            <IconCheckOutline16 size={14} />
-          </button>
+          <Tooltip label={`${t('save')} (Ctrl/Cmd+S)`} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('save')}
+              onClick={() => { controlsRef.current?.save() }}
+            >
+              <IconCheckOutline16 size={14} />
+            </button>
+          </Tooltip>
         )}
         {saveLabel !== '' && (
           <span className={clsx(css.editorStatus, toolbar?.saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>
         )}
         {!vscode && (
-          <button
-            type="button"
-            className={clsx(css.iconButton, treeOpen && css.editorTreeToggleActive)}
-            aria-label={t('editorTreeToggle')}
-            title={t('editorTreeToggle')}
-            aria-pressed={treeOpen}
-            onClick={toggleTree}
-          >
-            <IconFolderOpen16 size={14} />
-          </button>
+          <Tooltip label={t('editorTreeToggle')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={clsx(css.iconButton, treeOpen && css.editorTreeToggleActive)}
+              aria-label={t('editorTreeToggle')}
+              aria-pressed={treeOpen}
+              onClick={toggleTree}
+            >
+              <IconFolderOpen16 size={14} />
+            </button>
+          </Tooltip>
         )}
       </div>
       <div className={css.editorBody}>

@@ -1,11 +1,27 @@
 /**
  * Icons the sidebar needs beyond the primitives set: a terminal glyph (the
  * icon library has none), a diff glyph, the two panel-toggle glyphs for
- * the top-right cluster, and a pushpin for workspace-bound windows. Per-tab
- * icons live on the tab descriptors (`descriptor.icon`), not in a type-keyed
- * switch — the icon mapping was registry-ized with the tab types.
+ * the top-right cluster, a pushpin for workspace-bound windows, and a
+ * swap-sides glyph for the Side Bar position toggle. Per-tab icons live on
+ * the tab descriptors (`descriptor.icon`), not in a type-keyed switch — the
+ * icon mapping was registry-ized with the tab types.
  */
 import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
+
+/**
+ * Swap-sides glyph for the vscode Side Bar position toggle (the Activity
+ * Bar's bottom button): two horizontal arrows pointing LEFT (top) and RIGHT
+ * (bottom) — "move the whole arrangement to the other side", in the app's
+ * outline style (1.5px stroke, currentColor).
+ */
+export const IconSwapSides16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3.75 5.75h8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M6.25 3.25 3.75 5.75l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.75 10.25h8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M9.75 7.75l2.5 2.5-2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
 
 /**
  * Pushpin glyph for workspace-bound window stubs (the "绑定到工作区" pin),

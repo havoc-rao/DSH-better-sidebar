@@ -70,6 +70,25 @@ export interface SidebarPrefs {
    */
   editorExplorer: boolean
   /**
+   * The workbench layout paradigm: `'docked'` (the default, the original
+   * behavior — the file tree docks inside each editor tab) or `'vscode'`
+   * (the VSCode-style paradigm: the file tree moves into an independent
+   * Side Bar column between the editor group and a new Activity Bar on the
+   * panel's right edge). The editor group keeps its tab strip and renders
+   * file content only in vscode mode (no docked tree); `editorExplorer` is
+   * ignored while vscode is active. Narrow viewports always render the
+   * docked drawer regardless of this value.
+   */
+  sidebarLayout: 'docked' | 'vscode'
+  /**
+   * Which side of the panel the vscode layout's Side Bar (the independent
+   * file-tree column) sits on: `'right'` (the default — editor | side bar |
+   * activity bar, the editor stays by the chat) or `'left'` (side bar |
+   * editor | activity bar, the file tree hugs the panel's left edge).
+   * Ignored outside `sidebarLayout: 'vscode'`.
+   */
+  sideBarSide: 'left' | 'right'
+  /**
    * Position compatibility mode: reserves space at the top for the native
    * Windows title bar (drawn at the window's top-right corner over the web
    * content in frameless/hidden-title-bar windows). When on, the toggle
@@ -177,6 +196,13 @@ export const TITLE_BAR_STRIP_MIN = 0
 export const TITLE_BAR_STRIP_MAX = 120
 export const TITLE_BAR_STRIP_DEFAULT = 40
 
+/** Range contract of the vscode Side Bar width (the independent file-tree
+ *  column shown in `sidebarLayout: 'vscode'`). Mirrors the docked tree's
+ *  bounds so a user's привычный width carries over. */
+export const SIDEBAR_BAR_WIDTH_MIN = 160
+export const SIDEBAR_BAR_WIDTH_MAX = 480
+export const SIDEBAR_BAR_WIDTH_DEFAULT = 240
+
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: false,
@@ -189,6 +215,8 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
   editorExplorer: true,
+  sidebarLayout: 'docked',
+  sideBarSide: 'right',
   titleBarCompat: false,
   titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,
   htmlViewerNoSandbox: false,
@@ -215,4 +243,10 @@ export function clampTerminalFontSize(value: number): number {
 /** Clamp one title-bar strip height into the contract range (shared by schema and client reads). */
 export function clampTitleBarStrip(value: number): number {
   return Math.min(TITLE_BAR_STRIP_MAX, Math.max(TITLE_BAR_STRIP_MIN, Math.round(value)))
+}
+
+/** Clamp one vscode Side Bar width into the contract range (shared by state
+ *  and the drag-resize handle). */
+export function clampSidebarBarWidth(value: number): number {
+  return Math.min(SIDEBAR_BAR_WIDTH_MAX, Math.max(SIDEBAR_BAR_WIDTH_MIN, Math.round(value)))
 }

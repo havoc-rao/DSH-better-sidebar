@@ -22,8 +22,9 @@ import {
   IconLinkOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
+import { gitStatusAt, type GitRowStatus, type GitStatusKind } from './git-status.ts'
 import { relativeTo } from './paths.ts'
-import { t } from './locales.ts'
+import { t, type CopyKey } from './locales.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -41,6 +42,44 @@ export function baseName(path: string): string {
 /** How long the row's "copied" label stays after a successful write. */
 const COPIED_MS = 1200
 
+/** The status-kind → color-family CSS class (VSCode palette mapped onto DSH
+ *  tokens; the values are `string | undefined` under noUncheckedIndexedAccess
+ *  and only ever feed clsx). */
+export const gitKindCss = {
+  modified: css.explorerGitWarn,
+  type: css.explorerGitWarn,
+  added: css.explorerGitSuccess,
+  renamed: css.explorerGitSuccess,
+  copied: css.explorerGitSuccess,
+  deleted: css.explorerGitError,
+  conflict: css.explorerGitError,
+  untracked: css.explorerGitMuted,
+  ignored: css.explorerGitMuted,
+} satisfies Record<GitStatusKind, string | undefined>
+
+/** The status-kind → copy key for the badge tooltip (VSCode-style "Modified"). */
+const KIND_TITLE: Record<GitStatusKind, CopyKey> = {
+  modified: 'gitStatusModified',
+  type: 'gitStatusTypeChanged',
+  added: 'gitStatusAdded',
+  renamed: 'gitStatusRenamed',
+  copied: 'gitStatusCopied',
+  deleted: 'gitStatusDeleted',
+  conflict: 'gitStatusConflict',
+  untracked: 'gitStatusUntracked',
+  ignored: 'gitStatusIgnored',
+}
+
+/** The row's git badge (a colored letter), or nothing when the row is clean. */
+function gitBadge(status: GitRowStatus | undefined): ReactNode {
+  if (status === undefined) return null
+  return (
+    <span className={clsx(css.explorerGitBadge, gitKindCss[status.kind])} title={t(KIND_TITLE[status.kind])}>
+      {status.letter}
+    </span>
+  )
+}
+
 export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
@@ -55,8 +94,12 @@ export function FileTree(props: {
   onReferenceFile: (path: string) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
+  /** VSCode-style git decorations: normalized absolute path → row status
+   *  (files carry their own status, folders the descendant aggregate).
+   *  Absent → the tree renders clean (no badges, no fetch). */
+  gitStatus?: ReadonlyMap<string, GitRowStatus>
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, gitStatus } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -163,6 +206,7 @@ export function FileTree(props: {
     }
     const entries = level.entries ?? []
     return entries.map(entry => {
+      const status = gitStatusAt(gitStatus, entry.path)
       if (entry.isDir) {
         const isOpen = expanded.includes(entry.path)
         return (
@@ -182,8 +226,9 @@ export function FileTree(props: {
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
               {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
-              <span className={css.explorerName}>{entry.name}</span>
+              <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
+              {gitBadge(status)}
               {rowActions(entry)}
             </div>
             {isOpen && renderLevel(entry.path, depth + 1)}
@@ -195,7 +240,12 @@ export function FileTree(props: {
           key={entry.path}
           role="button"
           tabIndex={0}
-          className={clsx(css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken)}
+          className={clsx(
+            css.explorerRow,
+            entry.hidden && css.explorerHidden,
+            entry.broken && css.explorerBroken,
+            status?.deleted === true && css.explorerDeleted,
+          )}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
           onClick={() => { onOpenFile(entry.path) }}
@@ -208,8 +258,9 @@ export function FileTree(props: {
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
           <IconCodeOutline16 size={14} />
-          <span className={css.explorerName}>{entry.name}</span>
+          <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
+          {gitBadge(status)}
           {rowActions(entry)}
         </div>
       )

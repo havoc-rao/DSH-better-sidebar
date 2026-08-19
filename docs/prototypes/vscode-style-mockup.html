@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>better-sidebar · VSCode IDE 风格原型（Activity Bar + Side Bar）</title>
+<style>
+  /* ============================================================
+     令牌层 —— 镜像 AGENTS.md §8 的 --dsw-alias-* 令牌驱动皮肤。
+     真实实现里这些值由 DSH 皮肤系统覆盖；这里用浅/深两套静态值
+     演示「换肤后面板自动跟随」。绝不硬编码颜色到组件。
+     ============================================================ */
+  :root {
+    /* 浅色（默认） */
+    --dsw-alias-bg-base: #ffffff;
+    --dsw-alias-bg-layer-1: #f8f9fb;   /* 面板/活动栏/侧栏表面 */
+    --dsw-alias-bg-layer-2: #eef0f4;   /* tab 条 / 略低层 */
+    --dsw-alias-bg-layer-3: #e3e6ec;   /* 悬停 */
+    --dsw-alias-fg-base: #1f2329;
+    --dsw-alias-fg-muted: #6b7280;
+    --dsw-alias-fg-faint: #9aa1ac;
+    --dsw-alias-fg-accent: #2e7df6;
+    --dsw-alias-border-subtle: #e0e3e9;
+    --dsw-alias-border-active: #2e7df6;
+    --dsw-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --dsw-font-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --dsw-radius: 6px;
+  }
+  :root[data-theme="dark"] {
+    --dsw-alias-bg-base: #1e2128;
+    --dsw-alias-bg-layer-1: #252933;
+    --dsw-alias-bg-layer-2: #2c313c;
+    --dsw-alias-bg-layer-3: #353b48;
+    --dsw-alias-fg-base: #e6e9ef;
+    --dsw-alias-fg-muted: #9aa3b2;
+    --dsw-alias-fg-faint: #6b7383;
+    --dsw-alias-fg-accent: #4b9dff;
+    --dsw-alias-border-subtle: #333844;
+    --dsw-alias-border-active: #4b9dff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--dsw-font-ui);
+    background: #d7dae0;
+    color: var(--dsw-alias-fg-base);
+    overflow: hidden;
+  }
+  :root[data-theme="dark"] body { background: #0d0f14; }
+
+  /* 顶部说明条 */
+  .banner {
+    position: fixed; top: 0; left: 0; right: 0; height: 44px; z-index: 50;
+    display: flex; align-items: center; gap: 12px; padding: 0 16px;
+    background: var(--dsw-alias-bg-layer-2);
+    border-bottom: 1px solid var(--dsw-alias-border-subtle);
+    font-size: 13px;
+  }
+  .banner b { color: var(--dsw-alias-fg-accent); }
+  .banner .spacer { flex: 1; }
+  .banner .seg {
+    display: inline-flex; border: 1px solid var(--dsw-alias-border-subtle);
+    border-radius: 6px; overflow: hidden;
+  }
+  .banner .seg button {
+    border: 0; background: transparent; color: var(--dsw-alias-fg-muted);
+    padding: 5px 12px; font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .banner .seg button.on {
+    background: var(--dsw-alias-fg-accent); color: #fff;
+  }
+  .banner .note { color: var(--dsw-alias-fg-faint); font-size: 11px; }
+
+  /* 仿 DSH 窗口：左导航 + 中间会话区 + 右侧 better-sidebar 面板 */
+  .dsh-window {
+    position: fixed; top: 44px; left: 0; right: 0; bottom: 0;
+    display: flex;
+  }
+  /* 宿主左导航列（简化） */
+  .host-nav {
+    width: 56px; flex: 0 0 56px;
+    background: var(--dsw-alias-bg-layer-2);
+    border-right: 1px solid var(--dsw-alias-border-subtle);
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    padding-top: 14px;
+  }
+  .host-nav .dot {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: var(--dsw-alias-bg-layer-3);
+  }
+  .host-nav .dot.active { background: var(--dsw-alias-fg-accent); }
+
+  /* 中间会话区（简化占位） */
+  .chat-area {
+    flex: 1; min-width: 0; padding: 24px; overflow: auto;
+    background: var(--dsw-alias-bg-base);
+    color: var(--dsw-alias-fg-muted); font-size: 13px; line-height: 1.7;
+  }
+  .chat-area .msg { max-width: 640px; margin-bottom: 18px; }
+  .chat-area .msg .who { font-weight: 600; color: var(--dsw-alias-fg-base); margin-bottom: 4px; }
+  .chat-area .composer {
+    position: sticky; bottom: 0; margin-top: 24px;
+    background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-subtle);
+    border-radius: 10px; padding: 14px; color: var(--dsw-alias-fg-faint);
+    max-width: 640px;
+  }
+
+  /* ============= better-sidebar 面板（portal） ============= */
+  .sidebar-panel {
+    width: 640px; flex: 0 0 640px; height: 100%;
+    background: var(--dsw-alias-bg-layer-1);
+    border-left: 1px solid var(--dsw-alias-border-subtle);
+    display: flex; flex-direction: column;
+    position: relative;
+  }
+  .sidebar-panel.dragging { user-select: none; cursor: col-resize; }
+
+  /* —— 面板内工作台：vscode 模式 = ActivityBar | SideBar | Workbench —— */
+  .workbench {
+    flex: 1; display: flex; min-height: 0;
+  }
+
+  /* 活动栏 48px（路径 A） */
+  .activity-bar {
+    width: 48px; flex: 0 0 48px;
+    background: var(--dsw-alias-bg-layer-2);
+    border-right: 1px solid var(--dsw-alias-border-subtle);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 8px 0;
+  }
+  .activity-bar .icon {
+    width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;
+    color: var(--dsw-alias-fg-muted); cursor: pointer; position: relative;
+    transition: color .12s;
+  }
+  .activity-bar .icon:hover { color: var(--dsw-alias-fg-base); }
+  .activity-bar .icon.active { color: var(--dsw-alias-fg-base); }
+  .activity-bar .icon.active::before {
+    content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+    background: var(--dsw-alias-border-active); border-radius: 2px;
+  }
+  .activity-bar .icon.has-tab::after {
+    content: ""; position: absolute; top: 10px; right: 10px; width: 6px; height: 6px;
+    border-radius: 50%; background: var(--dsw-alias-fg-accent);
+  }
+  .activity-bar .spacer { flex: 1; }
+  .activity-bar svg { width: 24px; height: 24px; display: block; }
+
+  /* 侧栏容器（路径 B，仅 vscode 模式） */
+  .side-bar {
+    width: 240px; flex: 0 0 auto; min-width: 160px; max-width: 480px;
+    background: var(--dsw-alias-bg-layer-1);
+    border-right: 1px solid var(--dsw-alias-border-subtle);
+    display: flex; flex-direction: column; position: relative;
+  }
+  .side-bar .sb-resize {
+    position: absolute; right: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 5;
+  }
+  .side-bar .sb-header {
+    height: 35px; display: flex; align-items: center; padding: 0 12px;
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--dsw-alias-fg-muted); font-weight: 600;
+  }
+  .side-bar .sb-actions { margin-left: auto; display: flex; gap: 6px; }
+  .side-bar .sb-actions .mini {
+    width: 20px; height: 20px; border: 0; background: transparent; cursor: pointer;
+    color: var(--dsw-alias-fg-faint); display: flex; align-items: center; justify-content: center;
+  }
+  .side-bar .sb-actions .mini:hover { color: var(--dsw-alias-fg-base); }
+  .side-bar .sb-body { flex: 1; overflow: auto; min-height: 0; }
+
+  /* —— 镜像排列（编辑器左 · 活动栏右）：右面板的自然适配 ——
+     面板整体在 DSH 窗口右侧，把活动栏放到面板最右边缘、编辑器留在左
+     侧贴近聊天区，侧栏居中。用 row-reverse 翻转 DOM 顺序，并修正分隔
+     边、拖拽手柄、激活指示条与折叠簇的左右朝向。 */
+  .workbench[data-arrange="right"] { flex-direction: row-reverse; }
+  .workbench[data-arrange="right"] .activity-bar {
+    border-right: 0; border-left: 1px solid var(--dsw-alias-border-subtle);
+  }
+  .workbench[data-arrange="right"] .activity-bar .icon.active::before {
+    left: auto; right: 0;
+  }
+  .workbench[data-arrange="right"] .side-bar {
+    border-right: 0; border-left: 1px solid var(--dsw-alias-border-subtle);
+  }
+  .workbench[data-arrange="right"] .side-bar .sb-resize {
+    right: auto; left: -3px;
+  }
+  /* 折叠簇在镜像下移到左上，避免压住右侧活动栏的齿轮 */
+  .sidebar-panel[data-arrange="right"] .collapse-cluster { right: auto; left: 8px; }
+
+  /* 搜索框（Explorer 顶部） */
+  .search-box {
+    margin: 4px 10px 8px; height: 28px;
+    background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-subtle);
+    border-radius: var(--dsw-radius); padding: 0 10px; font-size: 12px;
+    color: var(--dsw-alias-fg-base); display: flex; align-items: center; gap: 6px;
+  }
+  .search-box input {
+    border: 0; outline: 0; background: transparent; flex: 1; font-family: inherit;
+    color: var(--dsw-alias-fg-base); font-size: 12px;
+  }
+  .search-box .kbd {
+    font-size: 10px; color: var(--dsw-alias-fg-faint);
+    border: 1px solid var(--dsw-alias-border-subtle); border-radius: 3px; padding: 0 4px;
+  }
+
+  /* 文件树 */
+  .tree { font-size: 13px; user-select: none; }
+  .tree .row {
+    display: flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px;
+    cursor: pointer; color: var(--dsw-alias-fg-base); white-space: nowrap;
+  }
+  .tree .row:hover { background: var(--dsw-alias-bg-layer-3); }
+  .tree .row.active { background: var(--dsw-alias-bg-layer-3); }
+  .tree .row .chev {
+    width: 12px; color: var(--dsw-alias-fg-faint); flex: 0 0 12px; text-align: center;
+  }
+  .tree .row .fi { width: 16px; flex: 0 0 16px; color: var(--dsw-alias-fg-accent); }
+  .tree .row .fi.folder { color: var(--dsw-alias-fg-muted); }
+  .tree .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .tree .row .badge {
+    font-size: 10px; padding: 0 5px; border-radius: 8px; color: #fff;
+    background: var(--dsw-alias-fg-accent);
+  }
+  .tree .row .badge.m { background: #d68a3c; }
+  .tree .row .badge.d { background: #d65a5a; }
+  .tree .row.indent { padding-left: calc(8px + var(--lv, 0) * 14px); }
+  .tree .row.dim { color: var(--dsw-alias-fg-faint); }
+
+  /* Git 视图 */
+  .git-section { padding: 8px 10px; font-size: 13px; }
+  .git-section h4 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--dsw-alias-fg-muted); margin: 12px 0 6px; font-weight: 600;
+  }
+  .git-section h4:first-child { margin-top: 0; }
+  .git-row {
+    display: flex; align-items: center; gap: 8px; height: 26px; cursor: pointer;
+    color: var(--dsw-alias-fg-base);
+  }
+  .git-row:hover { background: var(--dsw-alias-bg-layer-3); border-radius: 4px; }
+  .git-row .st {
+    font-size: 11px; width: 16px; text-align: center; font-weight: 700;
+  }
+  .git-row .st.m { color: #d68a3c; } .git-row .st.a { color: #3caa5a; }
+  .git-row .st.d { color: #d65a5a; } .git-row .st.u { color: #8a6ad6; }
+
+  /* Subagent 视图 */
+  .sub-list { padding: 8px 10px; }
+  .sub-node {
+    display: flex; align-items: center; gap: 8px; padding: 8px 6px; font-size: 13px;
+    border-radius: 6px; cursor: pointer;
+  }
+  .sub-node:hover { background: var(--dsw-alias-bg-layer-3); }
+  .sub-node .av {
+    width: 26px; height: 26px; border-radius: 50%; flex: 0 0 26px;
+    background: var(--dsw-alias-fg-accent); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;
+  }
+  .sub-node .av.idle { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-fg-muted); }
+  .sub-node .meta { flex: 1; min-width: 0; }
+  .sub-node .meta .t { color: var(--dsw-alias-fg-base); }
+  .sub-node .meta .s { font-size: 11px; color: var(--dsw-alias-fg-muted); }
+  .sub-node .dot-st {
+    width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;
+  }
+  .sub-node .dot-st.running { background: #3caa5a; }
+  .sub-node .dot-st.idle { background: var(--dsw-alias-fg-faint); }
+
+  /* 编辑器区（Editor Group） */
+  .editor-group { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .tab-strip {
+    height: 35px; flex: 0 0 35px; display: flex; align-items: stretch;
+    background: var(--dsw-alias-bg-layer-2);
+    border-bottom: 1px solid var(--dsw-alias-border-subtle);
+  }
+  .tab {
+    display: flex; align-items: center; gap: 6px; padding: 0 10px 0 12px;
+    cursor: pointer; color: var(--dsw-alias-fg-muted); font-size: 13px;
+    border-right: 1px solid var(--dsw-alias-border-subtle);
+    position: relative; max-width: 180px; min-width: 90px;
+  }
+  .tab:hover { color: var(--dsw-alias-fg-base); background: var(--dsw-alias-bg-layer-3); }
+  .tab.active {
+    color: var(--dsw-alias-fg-base); background: var(--dsw-alias-bg-layer-1);
+  }
+  .tab.active::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: var(--dsw-alias-border-active);
+  }
+  .tab .fi { width: 14px; flex: 0 0 14px; color: var(--dsw-alias-fg-accent); font-size: 12px; }
+  .tab .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab .x {
+    width: 16px; height: 16px; border-radius: 4px; display: flex; align-items: center;
+    justify-content: center; color: var(--dsw-alias-fg-faint); font-size: 14px;
+  }
+  .tab .x:hover { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-fg-base); }
+  .tab .x.dirty::after { content: "●"; font-size: 10px; }
+  .tab .x.dirty:hover { background: transparent; }
+  .plus-btn {
+    width: 35px; display: flex; align-items: center; justify-content: center;
+    color: var(--dsw-alias-fg-muted); cursor: pointer; font-size: 18px;
+  }
+  .plus-btn:hover { color: var(--dsw-alias-fg-base); }
+
+  /* 编辑器 chrome（路径输入框 + 工具栏） */
+  .editor-chrome {
+    height: 34px; flex: 0 0 34px; display: flex; align-items: center; gap: 8px;
+    padding: 0 10px; border-bottom: 1px solid var(--dsw-alias-border-subtle);
+    background: var(--dsw-alias-bg-layer-1);
+  }
+  .path-input {
+    flex: 1; height: 24px; background: var(--dsw-alias-bg-base);
+    border: 1px solid var(--dsw-alias-border-subtle); border-radius: 4px;
+    padding: 0 8px; font-family: var(--dsw-font-mono); font-size: 12px;
+    color: var(--dsw-alias-fg-base); display: flex; align-items: center;
+  }
+  .editor-chrome .tool {
+    width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+    color: var(--dsw-alias-fg-muted); cursor: pointer; border-radius: 4px;
+  }
+  .editor-chrome .tool:hover { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-fg-base); }
+  .editor-chrome .save {
+    background: var(--dsw-alias-fg-accent); color: #fff; padding: 0 12px; width: auto;
+    height: 24px; border-radius: 4px; font-size: 12px; gap: 4px;
+  }
+  .editor-chrome .save:hover { filter: brightness(1.08); background: var(--dsw-alias-fg-accent); }
+
+  /* 编辑器主体 */
+  .editor-body {
+    flex: 1; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base);
+    font-family: var(--dsw-font-mono); font-size: 13px; line-height: 1.6;
+    display: flex;
+  }
+  .gutter {
+    flex: 0 0 auto; padding: 8px 10px 8px 12px; text-align: right; color: var(--dsw-alias-fg-faint);
+    user-select: none; border-right: 1px solid var(--dsw-alias-border-subtle);
+  }
+  .code { padding: 8px 14px; flex: 1; white-space: pre; color: var(--dsw-alias-fg-base); }
+  .code .kw { color: #c678dd; }       /* keyword */
+  .code .ty { color: #56b6c2; }       /* type */
+  .code .str { color: #98c379; }      /* string */
+  .code .fn { color: #61afef; }       /* function */
+  .code .com { color: var(--dsw-alias-fg-faint); font-style: italic; }
+  .code .num { color: #d19a66; }
+  :root[data-theme="light"] .code .kw { color: #a626a4; }
+  :root[data-theme="light"] .code .ty { color: #0184bc; }
+  :root[data-theme="light"] .code .str { color: #50a14f; }
+  :root[data-theme="light"] .code .fn { color: #4078f2; }
+  :root[data-theme="light"] .code .num { color: #986801; }
+
+  /* docked 模式：editor tab 内嵌树 dock（现状） */
+  .docked-tree {
+    width: 220px; flex: 0 0 220px; border-right: 1px solid var(--dsw-alias-border-subtle);
+    background: var(--dsw-alias-bg-layer-1); display: flex; flex-direction: column;
+  }
+
+  /* 底部 Panel */
+  .panel {
+    height: 180px; flex: 0 0 180px; border-top: 1px solid var(--dsw-alias-border-subtle);
+    background: var(--dsw-alias-bg-layer-1); display: flex; flex-direction: column;
+  }
+  .panel.collapsed { height: 28px; flex: 0 0 28px; }
+  .panel-tabs {
+    height: 28px; flex: 0 0 28px; display: flex; align-items: stretch;
+    background: var(--dsw-alias-bg-layer-2); border-bottom: 1px solid var(--dsw-alias-border-subtle);
+  }
+  .panel-tab {
+    padding: 0 14px; display: flex; align-items: center; cursor: pointer; font-size: 12px;
+    color: var(--dsw-alias-fg-muted); border-right: 1px solid var(--dsw-alias-border-subtle);
+  }
+  .panel-tab.active { color: var(--dsw-alias-fg-base); border-bottom: 2px solid var(--dsw-alias-border-active); }
+  .panel-body { flex: 1; overflow: auto; padding: 8px 12px; font-family: var(--dsw-font-mono); font-size: 12px; line-height: 1.6; color: var(--dsw-alias-fg-base); }
+  .term .p { color: #3caa5a; }
+  .term .o { color: var(--dsw-alias-fg-muted); }
+  .term .e { color: #d65a5a; }
+
+  /* 折叠按钮簇 */
+  .collapse-cluster {
+    position: absolute; top: 8px; right: 8px; z-index: 20;
+    display: flex; gap: 4px;
+  }
+  .collapse-cluster .cb {
+    width: 24px; height: 24px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2);
+    border: 1px solid var(--dsw-alias-border-subtle); display: flex; align-items: center;
+    justify-content: center; color: var(--dsw-alias-fg-muted); cursor: pointer;
+  }
+  .collapse-cluster .cb:hover { color: var(--dsw-alias-fg-base); background: var(--dsw-alias-bg-layer-3); }
+
+  /* 注释标签 */
+  .anno {
+    position: absolute; z-index: 30; pointer-events: none;
+    background: rgba(46,125,246,.92); color: #fff; font-size: 10px; font-weight: 600;
+    padding: 2px 7px; border-radius: 10px; white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,.2);
+  }
+  .anno.left::after {
+    content: ""; position: absolute; border: 5px solid transparent;
+  }
+  .anno.left::after { left: 100%; top: 50%; transform: translateY(-50%); border-left-color: rgba(46,125,246,.92); }
+  .anno.right::after { right: 100%; top: 50%; transform: translateY(-50%); border-right-color: rgba(46,125,246,.92); }
+  .anno.hidden { display: none; }
+
+  .empty-state {
+    display: flex; align-items: center; justify-content: center; flex: 1;
+    color: var(--dsw-alias-fg-faint); font-size: 13px; padding: 24px; text-align: center;
+  }
+</style>
+</head>
+<body data-theme="light">
+
+<!-- 顶部说明 + 切换 -->
+<div class="banner">
+  <span>better-sidebar · <b>VSCode IDE 风格原型</b></span>
+  <span class="note">A = Activity Bar　B = 独立 Side Bar（与 editor 解耦）　·　「编辑器左」= 镜像适配右面板</span>
+  <span class="spacer"></span>
+  <span class="note">布局：</span>
+  <span class="seg" id="layoutSeg">
+    <button data-layout="docked" class="on">docked（现状）</button>
+    <button data-layout="vscode-left">vscode · 树左</button>
+    <button data-layout="vscode-right">vscode · 编辑器左</button>
+  </span>
+  <span class="note">主题：</span>
+  <span class="seg" id="themeSeg">
+    <button data-theme="light" class="on">浅色</button>
+    <button data-theme="dark">深色</button>
+  </span>
+  <span class="note" id="annoToggle" style="cursor:pointer;border:1px solid var(--dsw-alias-border-subtle);padding:3px 8px;border-radius:6px">标注：开</span>
+</div>
+
+<!-- 仿 DSH 窗口 -->
+<div class="dsh-window">
+  <!-- 宿主左导航 -->
+  <div class="host-nav">
+    <div class="dot active"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  </div>
+
+  <!-- 中间会话区（简化） -->
+  <div class="chat-area">
+    <div class="msg"><div class="who">You</div>帮我把 sidebar 改成 VSCode 风格，文件夹和文件内容分开看更方便。</div>
+    <div class="msg"><div class="who">Assistant</div>好的，先做了一个原型：加 Activity Bar 活动栏，文件树作为独立 Side Bar 与编辑器解耦，呈现 VSCode 工作台范式。右上角可切换三种布局：docked（现状）/ vscode·树左（VSCode 原版）/ vscode·编辑器左（镜像——编辑器贴近聊天区，活动栏放面板最右）。</div>
+    <div class="msg"><div class="who">Assistant</div>当前是 <b>原型 HTML</b>，仅用于确认目标视觉效果；确认后会按设计文档在插件内实现（令牌驱动皮肤、懒加载 chunk、CI 挂载门禁）。</div>
+    <div class="composer">给 Assistant 发消息…　（⌘B 切换右侧栏 · ⌘P 快速打开）</div>
+  </div>
+
+  <!-- ============ better-sidebar 面板 ============ -->
+  <div class="sidebar-panel" id="panel">
+
+    <!-- 折叠按钮簇 -->
+    <div class="collapse-cluster">
+      <div class="cb" id="toggleBottom" title="切换底部面板 (⌘J)">
+        <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><path d="M2 12h12v1H2zM3 3h10v7H3z" opacity=".9"/></svg>
+      </div>
+      <div class="cb" title="切换右侧栏 (⌘⌥B)">
+        <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><path d="M9 3h4v10H9zM3 3h5v10H3z" opacity=".4"/><path d="M9 3h4v10H9z"/></svg>
+      </div>
+    </div>
+
+    <div class="workbench" id="workbench">
+      <!-- vscode 模式才有的 Activity Bar（路径 A） -->
+      <div class="activity-bar" id="activityBar"></div>
+      <!-- vscode 模式才有的 Side Bar（路径 B） -->
+      <div class="side-bar" id="sideBar">
+        <div class="sb-resize" id="sbResize"></div>
+        <div class="sb-header" id="sbHeader"></div>
+        <div class="sb-body" id="sbBody"></div>
+      </div>
+
+      <!-- 编辑器组（docked 与 vscode 共用，结构随模式变） -->
+      <div class="editor-group" id="editorGroup"></div>
+    </div>
+
+    <!-- 底部 Panel -->
+    <div class="panel" id="panel-bottom">
+      <div class="panel-tabs">
+        <div class="panel-tab active">终端</div>
+        <div class="panel-tab">问题</div>
+        <div class="panel-tab">输出</div>
+      </div>
+      <div class="panel-body term">
+<span class="p">~/project</span> <span class="o">$</span> pnpm test:mount
+<span class="o">› building client bundle…</span>
+<span class="o">› packing tarball…</span>
+<span class="o">› mounting into scratch profile…</span>
+<span class="o">› launching dsh web (keyless, port 0)…</span>
+✓ shell mounted, no pageerror
+✓ [data-dsh-better-sidebar] present
+✓ activity bar: 5 icons rendered
+✓ side bar explorer → seed file → editor chunk loaded
+✓ all built-in tabs opened via activity bar
+<span class="p">PASS</span> <span class="o">(12.4s)</span>
+<span class="o">~/project</span> <span class="o">$</span> █
+      </div>
+    </div>
+
+    <!-- 标注（可关） -->
+    <div class="anno left" id="anno-actbar" style="left:54px;top:40px">① Activity Bar 48px</div>
+    <div class="anno left" id="anno-sidebar" style="left:200px;top:40px">② Side Bar（独立视图）</div>
+    <div class="anno left" id="anno-editor" style="left:430px;top:40px">③ Editor Group</div>
+    <div class="anno left" id="anno-panel" style="left:300px;bottom:60px">④ Panel（终端）</div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   原型交互逻辑 —— 仅用于演示目标效果，非插件实现。
+   真实实现：ActivityBar/SideBarPane 组件 + sidebarLayout pref
+   + 令牌驱动 + 复用现有 TreePanel/GitView/SubagentView。
+   ============================================================ */
+
+const ICONS = {
+  files: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.5" cy="10.5" r="6"/><path d="m20 20-4.8-4.8"/></svg>',
+  git: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.4 6.4H15a3 3 0 0 1 3 3v0"/></svg>',
+  sub: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="M8 11v3a3 3 0 0 0 3 3h2"/></svg>',
+  terminal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>',
+  browser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M9.5 6.5h.01"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M22 12h-3M5 12H2M19 19l-2-2M7 7 5 5M19 5l-2 2M7 17l-2 2"/></svg>',
+  folder: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h3l1.5 1.5H13A1.5 1.5 0 0 1 14.5 5v7A1.5 1.5 0 0 1 13 13.5H3A1.5 1.5 0 0 1 1.5 12z"/></svg>',
+  folderOpen: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.5A1.5 1.5 0 0 1 3 2h3l1.5 1.5H13A1.5 1.5 0 0 1 14.5 5H3z"/><path d="M1.5 6h13l-1.5 6a1.5 1.5 0 0 1-1.5 1.2H4A1.5 1.5 0 0 1 2.5 12z" opacity=".7"/></svg>',
+  file: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 1.5A1.5 1.5 0 0 1 4.5 0H10l3 3v11.5A1.5 1.5 0 0 1 11.5 16h-7A1.5 1.5 0 0 1 3 14.5z" opacity=".25"/><path d="M10 0v3h3z"/></svg>',
+  refresh: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 4v3h-3M3 12V9h3"/><path d="M12.5 7A5 5 0 1 0 13 11M3.5 9A5 5 0 1 1 3 5"/></svg>',
+  save: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h8l2 2v8H3z"/><path d="M5 3v4h6V3M5 14v-4h6v4"/></svg>',
+};
+
+/* 活动栏定义：vscode 模式下的视图/动作。
+   files/git/sub 作为 Side Bar 竖向视图；search 也是视图（演示）；
+   terminal/browser 是「打开即 tab」型，不切视图。 */
+const ACT = [
+  { id: 'files', icon: ICONS.files, view: 'explorer', title: '资源管理器', label: 'EXPLORER' },
+  { id: 'search', icon: ICONS.search, view: 'search', title: '搜索', label: 'SEARCH' },
+  { id: 'git', icon: ICONS.git, view: 'git', title: '源代码管理', label: 'SOURCE CONTROL' },
+  { id: 'sub', icon: ICONS.sub, view: 'subagent', title: '子代理', label: 'SUBAGENTS' },
+  { id: 'terminal', icon: ICONS.terminal, view: null, title: '终端', open: 'terminal' },
+  { id: 'browser', icon: ICONS.browser, view: null, title: '浏览器', open: 'browser' },
+];
+
+/* 文件树数据 */
+const TREE = [
+  { name: 'src', dir: true, children: [
+    { name: 'client', dir: true, children: [
+      { name: 'ActivityBar.tsx', file: 'ActivityBar.tsx' },
+      { name: 'SideBarPane.tsx', file: 'SideBarPane.tsx' },
+      { name: 'Sidebar.tsx', file: 'Sidebar.tsx' },
+      { name: 'EditorHost.tsx', file: 'EditorHost.tsx' },
+      { name: 'FileTree.tsx', file: 'FileTree.tsx' },
+    ]},
+    { name: 'prefs-shared.ts', file: 'prefs-shared.ts', m: 'M' },
+    { name: 'config.ts', file: 'config.ts' },
+  ]},
+  { name: 'tests', dir: true, children: [
+    { name: 'e2e', dir: true, children: [
+      { name: 'mount.e2e.ts', file: 'mount.e2e.ts' },
+    ]},
+    { name: 'activity-bar.spec.tsx', file: 'activity-bar.spec.tsx', a: 'A' },
+  ]},
+  { name: 'docs', dir: true, children: [
+    { name: 'plans', dir: true, children: [
+      { name: 'vscode-ide-style-design.md', file: 'vscode-ide-style-design.md' },
+    ]},
+  ]},
+  { name: 'AGENTS.md', file: 'AGENTS.md' },
+  { name: 'package.json', file: 'package.json' },
+  { name: 'tsdown.config.ts', file: 'tsdown.config.ts' },
+];
+
+/* 编辑器内容（按文件） */
+const CODES = {
+  'ActivityBar.tsx': [
+    ['com', '// 路径 A：活动栏竖条，图标化已注册 tab 类型'],
+    ['kw', 'export function', 'fn', ' ActivityBar', '(', 'props', ': ', 'ty', 'ActivityBarProps', ') {'],
+    ['  ', 'kw', 'const', ' options = ', 'fn', 'buildNewTabOptions', '(', 'state, ctx, scope', ')'],
+    ['  ', 'kw', 'return', ' ('],
+    ['    <', 'ty', 'div', ' ', 'kw', 'className', '=', 'str', '"activity-bar"', '>'],
+    ['      {options.', 'fn', 'map', '(', 'd => <', 'ty', 'Icon', ' ', 'kw', 'key', '=', 'str', '{d.id}', ' ...', '/', '>', ')}'],
+    ['    </', 'ty', 'div', '>'],
+    ['  )'],
+    ['}'],
+  ],
+  'SideBarPane.tsx': [
+    ['com', '// 路径 B：独立 Side Bar 容器，vscode 模式有效'],
+    ['kw', 'export function', 'fn', ' SideBarPane', '(', '{ view, width, onResize }', ': ', 'ty', 'Props', ') {'],
+    ['  ', 'kw', 'const', ' body = view === ', 'str', "'explorer'", ' ? <', 'ty', 'TreePanel', ' ', 'kw', 'full', ' ', '/', '>'],
+    ['    : view === ', 'str', "'git'", ' ? <', 'ty', 'GitView', ' ', '/', '>'],
+    ['    : <', 'ty', 'SubagentView', ' ', '/', '>;'],
+    ['  ', 'kw', 'return', ' <', 'ty', 'aside', ' ', 'kw', 'style', '=', 'str', '"{{ width }}"', '>{body}</', 'ty', 'aside', '>'],
+    ['}'],
+  ],
+  'Sidebar.tsx': [
+    ['com', '// 布局分支：docked（现状）| vscode（活动栏 + 独立侧栏）'],
+    ['kw', 'const', ' vscode = prefs.sidebarLayout === ', 'str', "'vscode'", ' && !narrow'],
+    ['  ', 'kw', 'return', ' ('],
+    ['    <', 'ty', 'Workbench', '>'],
+    ['      {vscode && <', 'ty', 'ActivityBar', ' ...', '/', '>}'],
+    ['      {vscode && <', 'ty', 'SideBarPane', ' view=', 'str', '{state.sideBarView}', ' ...', '/', '>}'],
+    ['      <', 'ty', 'EditorGroup', ' docked=', 'str', '{!vscode}', ' ...', '/', '>'],
+    ['    </', 'ty', 'Workbench', '>'],
+    ['  )'],
+  ],
+  '_default': [
+    ['com', '// 文件内容预览（CodeMirror 文本编辑器）'],
+    ['kw', 'import', ' { ', 'fn', 'useEffect', ' } ', 'kw', 'from', ' ', 'str', "'react'"],
+    [''],
+    ['kw', 'export function', 'fn', ' View', '(', 'props', ') {'],
+    ['  ', 'kw', 'const', ' { path, content } = props'],
+    ['  ', 'kw', 'return', ' <', 'ty', 'CodeMirror', ' value=', 'str', '{content}', ' path=', 'str', '{path}', ' ', '/', '>'],
+    ['}'],
+  ],
+};
+
+const state = {
+  layout: 'docked',      // 'docked' | 'vscode-left' | 'vscode-right'
+  theme: 'light',
+  view: 'explorer',
+  activeAct: 'files',
+  expanded: new Set(['src', 'src/client', 'tests', 'docs', 'docs/plans']),
+  tabs: [{ id: 't1', name: 'ActivityBar.tsx', file: 'ActivityBar.tsx', dirty: false }],
+  activeTab: 't1',
+  panelOpen: true,
+  showAnno: true,
+  sbWidth: 240,
+  hasTerminal: false,
+  hasBrowser: false,
+};
+
+/** 当前列表是否为 vscode 范式（树与编辑器解耦）。 */
+const isVscode = () => state.layout === 'vscode-left' || state.layout === 'vscode-right';
+/** 活动栏朝向：'left'（树左，VSCode 原版）| 'right'（编辑器左，镜像）。 */
+const arrange = () => state.layout === 'vscode-right' ? 'right' : 'left';
+
+/* ---------- 渲染：活动栏 ---------- */
+function renderActivityBar() {
+  const el = document.getElementById('activityBar');
+  if (!isVscode()) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  const openTypes = new Set(state.tabs.map(t => inferType(t)));
+  el.innerHTML = ACT.map(a => {
+    const active = a.id === state.activeAct ? 'active' : '';
+    const hasTab = (a.open && (a.open === 'terminal' ? state.hasTerminal : state.hasBrowser)) || openTypes.has(a.id);
+    const hasCls = hasTab ? 'has-tab' : '';
+    return `<div class="icon ${active} ${hasCls}" data-act="${a.id}" title="${a.title}">${a.icon}</div>`;
+  }).join('') + '<div class="spacer"></div>' +
+    `<div class="icon" id="actGear" title="设置">${ICONS.gear}</div>`;
+  el.querySelectorAll('.icon[data-act]').forEach(n => {
+    n.onclick = () => onActivityClick(n.dataset.act);
+  });
+}
+function inferType(tab) {
+  if (tab.terminal) return 'terminal';
+  if (tab.browser) return 'browser';
+  return 'files';
+}
+
+/* ---------- 渲染：侧栏 ---------- */
+function renderSideBar() {
+  const sb = document.getElementById('sideBar');
+  if (!isVscode()) { sb.style.display = 'none'; return; }
+  sb.style.display = 'flex';
+  sb.style.width = state.sbWidth + 'px';
+  const hdr = document.getElementById('sbHeader');
+  const a = ACT.find(x => x.id === state.activeAct);
+  hdr.innerHTML = (a && a.view ? a.label : '') +
+    '<div class="sb-actions"><div class="mini" title="刷新">' + ICONS.refresh + '</div></div>';
+  const body = document.getElementById('sbBody');
+  if (state.view === 'explorer') body.innerHTML = renderSearch() + '<div class="tree">' + renderTree(TREE, 0) + '</div>';
+  else if (state.view === 'search') body.innerHTML = renderSearchView();
+  else if (state.view === 'git') body.innerHTML = renderGit();
+  else if (state.view === 'subagent') body.innerHTML = renderSubagent();
+  else body.innerHTML = '<div class="empty-state">无视图</div>';
+  bindTree();
+  bindSearch();
+}
+
+function renderSearch() {
+  return `<div class="search-box">${ICONS.search}<input placeholder="按名称搜索…" /><span class="kbd">⌘P</span></div>`;
+}
+
+function renderTree(nodes, lv) {
+  let h = '';
+  for (const n of nodes) {
+    if (n.dir) {
+      const open = state.expanded.has(pathOf(n));
+      const ch = open ? renderTree(n.children, lv + 1) : '';
+      h += `<div class="row indent" style="--lv:${lv}" data-dir="${pathOf(n)}">` +
+        `<span class="chev">${open ? '▾' : '▸'}</span>` +
+        `<span class="fi folder">${open ? ICONS.folderOpen : ICONS.folder}</span>` +
+        `<span class="name">${n.name}</span>${ch ? '' : ''}</div>` + ch;
+    } else {
+      const active = state.tabs.find(t => t.file === n.file && state.activeTab === t.id) ? 'active' : '';
+      let badge = '';
+      if (n.m) badge = `<span class="badge m">${n.m}</span>`;
+      else if (n.a) badge = `<span class="badge">${n.a}</span>`;
+      h += `<div class="row indent ${active}" style="--lv:${lv}" data-file="${n.file}">` +
+        `<span class="chev"></span><span class="fi">${ICONS.file}</span>` +
+        `<span class="name">${n.name}</span>${badge}</div>`;
+    }
+  }
+  return h;
+}
+let _curPath = [];
+function pathOf(n) {
+  // 简化：用 name 作唯一键（原型足够）
+  return n.name;
+}
+
+function bindTree() {
+  // 绑定面板内所有树行（侧栏 #sbBody 与 docked 模式内嵌树都在 #panel 内；
+  // 每次 renderAll 重建 DOM，无重复绑定）
+  document.querySelectorAll('#panel .row[data-dir]').forEach(r => {
+    r.onclick = (e) => {
+      e.stopPropagation();
+      const p = r.dataset.dir;
+      if (state.expanded.has(p)) state.expanded.delete(p); else state.expanded.add(p);
+      renderSideBar();
+      renderEditorGroup();
+    };
+  });
+  document.querySelectorAll('#panel .row[data-file]').forEach(r => {
+    r.onclick = (e) => {
+      e.stopPropagation();
+      openFile(r.dataset.file);
+    };
+  });
+}
+function bindSearch() {
+  document.querySelectorAll('#panel .search-box input').forEach(inp => {
+    inp.onclick = e => e.stopPropagation();
+  });
+}
+
+function renderSearchView() {
+  return `<div class="search-box">${ICONS.search}<input value="ActivityBar" /><span class="kbd">⌘⇧F</span></div>
+  <div style="padding:8px 10px;font-size:12px;color:var(--dsw-alias-fg-muted)">4 个结果 · 3 个文件</div>
+  <div class="tree">
+    <div class="row indent" style="--lv:0"><span class="fi folder">${ICONS.file}</span><span class="name">ActivityBar.tsx</span></div>
+    <div class="row indent dim" style="--lv:1"><span class="chev"></span><span class="name">export function ActivityBar(…)</span></div>
+    <div class="row indent" style="--lv:0"><span class="fi folder">${ICONS.file}</span><span class="name">Sidebar.tsx</span></div>
+    <div class="row indent dim" style="--lv:1"><span class="chev"></span><span class="name">{vscode && &lt;ActivityBar …/&gt;}</span></div>
+  </div>`;
+}
+
+function renderGit() {
+  return `<div class="git-section">
+    <h4>已暂存的更改 (1)</h4>
+    <div class="git-row"><span class="st a">A</span><span>tests/activity-bar.spec.tsx</span></div>
+    <h4>更改 (3)</h4>
+    <div class="git-row"><span class="st m">M</span><span>src/prefs-shared.ts</span></div>
+    <div class="git-row"><span class="st m">M</span><span>src/client/Sidebar.tsx</span></div>
+    <div class="git-row"><span class="st m">M</span><span>src/client/EditorHost.tsx</span></div>
+    <h4>未跟踪 (1)</h4>
+    <div class="git-row"><span class="st u">U</span><span>docs/prototypes/mockup.html</span></div>
+  </div>`;
+}
+
+function renderSubagent() {
+  return `<div class="sub-list">
+    <div class="sub-node"><div class="av">M</div><div class="meta"><div class="t">main</div><div class="s">VSCode 风格改造 · 运行中</div></div><span class="dot-st running"></span></div>
+    <div class="sub-node"><div class="av idle">1</div><div class="meta"><div class="t">调研 Monaco 嵌入</div><div class="s">已完成 · 3 轮</div></div><span class="dot-st idle"></span></div>
+    <div class="sub-node"><div class="av idle">2</div><div class="meta"><div class="t">写设计文档</div><div class="s">已完成 · 2 轮</div></div><span class="dot-st idle"></span></div>
+  </div>`;
+}
+
+/* ---------- 渲染：编辑器组 ---------- */
+function renderEditorGroup() {
+  const eg = document.getElementById('editorGroup');
+  const vscode = isVscode();
+
+  // docked 模式：文件窗口内嵌树 dock + 编辑器并列（现状 editorExplorer 合并/独立）
+  // renderDockedChrome 已含 tab strip/chrome/body（内嵌树在编辑器右侧，现状朝向）
+  if (!vscode) {
+    eg.innerHTML = renderDockedChrome();
+  } else {
+    // vscode 模式：editor 区只放 tab strip + 编辑器 chrome + body（树在 Side Bar）
+    eg.innerHTML = renderTabStrip() + renderEditorChrome() + renderEditorBody();
+  }
+  bindTabs();
+  bindEditorChrome();
+}
+
+function renderDockedChrome() {
+  // docked 模式：文件窗口内嵌树 dock + 编辑器列并列（现状 editorExplorer 合并/独立）
+  // 结构：<row> <docked-tree> header + (search + tree) </docked-tree> <editor-col> tabs + chrome + body </editor-col> </row>
+  return `<div style="display:flex;flex:1;min-height:0">
+    <div class="docked-tree">
+      <div class="sb-header">资源管理器</div>
+      <div class="sb-body">${renderSearch()}<div class="tree">${renderTree(TREE, 0)}</div></div>
+    </div>
+    <div style="display:flex;flex-direction:column;flex:1;min-width:0">
+      ${renderTabStrip()}
+      ${renderEditorChrome()}
+      ${renderEditorBody()}
+    </div>
+  </div>`;
+}
+
+function renderTabStrip() {
+  const tabs = state.tabs.map(t => {
+    const active = t.id === state.activeTab ? 'active' : '';
+    const dirty = t.dirty ? 'dirty' : '';
+    const icon = t.terminal ? ICONS.terminal : t.browser ? ICONS.browser : ICONS.file;
+    return `<div class="tab ${active}" data-tab="${t.id}"><span class="fi">${icon}</span><span class="name">${t.name}</span><span class="x ${dirty}" data-close="${t.id}">${t.dirty ? '' : '×'}</span></div>`;
+  }).join('');
+  return `<div class="tab-strip">${tabs}<div class="plus-btn" id="plusBtn" title="打开新 tab">+</div></div>`;
+}
+
+function renderEditorChrome() {
+  const t = state.tabs.find(x => x.id === state.activeTab);
+  if (!t) return '';
+  if (t.terminal) {
+    return `<div class="editor-chrome"><div class="path-input" style="font-family:var(--dsw-font-mono)">terminal — bash</div></div>`;
+  }
+  if (t.browser) {
+    return `<div class="editor-chrome"><div class="path-input">https://code.visualstudio.com</div><div class="tool" title="后退">←</div><div class="tool" title="前进">→</div><div class="tool" title="刷新">${ICONS.refresh}</div></div>`;
+  }
+  return `<div class="editor-chrome">
+    <div class="path-input">~/project/src/client/${t.file}</div>
+    <div class="tool" title="格式化">⌥F</div>
+    <div class="save">${ICONS.save} 保存</div>
+  </div>`;
+}
+
+function renderEditorBody() {
+  const t = state.tabs.find(x => x.id === state.activeTab);
+  if (!t) return '<div class="empty-state">没有打开的文件 — 在活动栏或文件树选择一个文件</div>';
+  if (t.terminal) return renderTerminalBody();
+  if (t.browser) return renderBrowserBody();
+  const lines = CODES[t.file] || CODES._default;
+  const maxLine = lines.length;
+  let gutter = '';
+  for (let i = 1; i <= maxLine; i++) gutter += i + '\n';
+  let code = '';
+  for (const toks of lines) {
+    for (let i = 0; i < toks.length; i++) {
+      if (i % 2 === 0) code += toks[i];
+      else code += `<span class="${toks[i]}">${toks[++i]}</span>`;
+    }
+    code += '\n';
+  }
+  return `<div class="editor-body"><div class="gutter">${gutter}</div><div class="code">${code}</div></div>`;
+}
+function renderTerminalBody() {
+  return `<div class="panel-body term" style="flex:1">
+<span class="p">~/project</span> <span class="o">$</span> pnpm dev
+<span class="o">› watching src/client/**/*.{ts,tsx}…</span>
+<span class="o">› client bundle rebuilt (42ms)</span>
+<span class="p">ready</span> <span class="o">on http://127.0.0.1:3080</span>
+<span class="o">~/project</span> <span class="o">$</span> █
+  </div>`;
+}
+function renderBrowserBody() {
+  return `<div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-fg-faint)">
+    <div style="font-size:40px">🌐</div>
+    <div>内嵌网页浏览器（沙箱 iframe）</div>
+    <div style="font-size:12px">可在设置中关闭沙箱</div>
+  </div>`;
+}
+
+function bindTabs() {
+  document.querySelectorAll('.tab[data-tab]').forEach(el => {
+    el.onclick = () => { state.activeTab = el.dataset.tab; renderAll(); };
+  });
+  document.querySelectorAll('.x[data-close]').forEach(el => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      const id = el.dataset.close;
+      state.tabs = state.tabs.filter(t => t.id !== id);
+      if (state.activeTab === id) state.activeTab = state.tabs[0]?.id;
+      renderAll();
+    };
+  });
+  const plus = document.getElementById('plusBtn');
+  if (plus) plus.onclick = () => openFile('SideBarPane.tsx');
+}
+function bindEditorChrome() {}
+
+/* ---------- 打开文件 / 活动 ---------- */
+function openFile(file) {
+  const existing = state.tabs.find(t => t.file === file);
+  if (existing) { state.activeTab = existing.id; renderAll(); return; }
+  const id = 't' + (Date.now() % 100000);
+  state.tabs.push({ id, name: file, file, dirty: false });
+  state.activeTab = id;
+  renderAll();
+}
+
+function onActivityClick(actId) {
+  const a = ACT.find(x => x.id === actId);
+  if (!a) return;
+  if (a.open) {
+    // 打开即 tab 型
+    if (a.open === 'terminal') {
+      if (!state.hasTerminal) {
+        state.tabs.push({ id: 'term', name: '终端', terminal: true, dirty: false });
+        state.hasTerminal = true;
+      }
+      state.activeTab = 'term';
+    } else if (a.open === 'browser') {
+      if (!state.hasBrowser) {
+        state.tabs.push({ id: 'browser', name: 'code.visualstudio.com', browser: true, dirty: false });
+        state.hasBrowser = true;
+      }
+      state.activeTab = 'browser';
+    }
+    state.activeAct = actId;
+    renderAll();
+    return;
+  }
+  // 视图型
+  state.activeAct = actId;
+  state.view = a.view;
+  renderAll();
+}
+
+/* ---------- 整体渲染 ---------- */
+function renderAll() {
+  const vscode = isVscode();
+  const dir = arrange();
+  // 活动栏朝向落到 workbench / panel 上，CSS 翻转顺序与边/手柄朝向
+  const wb = document.getElementById('workbench');
+  const panel = document.getElementById('panel');
+  wb.setAttribute('data-arrange', dir);
+  panel.setAttribute('data-arrange', dir);
+  renderActivityBar();
+  renderSideBar();
+  renderEditorGroup();
+  // 标注可见性与位置
+  const show = state.showAnno;
+  const actbar = document.getElementById('anno-actbar');
+  const sidebar = document.getElementById('anno-sidebar');
+  const editor = document.getElementById('anno-editor');
+  const panelAnno = document.getElementById('anno-panel');
+  actbar.classList.toggle('hidden', !show || !vscode);
+  sidebar.classList.toggle('hidden', !show || !vscode);
+  editor.classList.toggle('hidden', !show);
+  panelAnno.classList.toggle('hidden', !show);
+  if (vscode) {
+    if (dir === 'left') {
+      // VSCode 原版：活动栏左 | 侧栏 | 编辑器右
+      setAnno(actbar, { left: '54px', right: null, cls: 'left' });
+      setAnno(sidebar, { left: '210px', right: null, cls: 'left' });
+      setAnno(editor, { left: '470px', right: null, cls: 'left' });
+    } else {
+      // 镜像：编辑器左 | 侧栏 | 活动栏右
+      setAnno(editor, { left: '54px', right: null, cls: 'left' });
+      setAnno(sidebar, { right: '210px', left: null, cls: 'right' });
+      setAnno(actbar, { right: '54px', left: null, cls: 'right' });
+    }
+  } else {
+    // docked：编辑器 + 内嵌树 dock，重置标注到默认位置
+    setAnno(editor, { left: '430px', right: null, cls: 'left' });
+    setAnno(panelAnno, { left: '300px', right: null, cls: 'left' });
+  }
+}
+function setAnno(el, opts) {
+  el.style.left = opts.left ?? '';
+  el.style.right = opts.right ?? '';
+  el.classList.remove('left', 'right');
+  el.classList.add(opts.cls);
+}
+
+/* ---------- 顶栏切换 ---------- */
+document.querySelectorAll('#layoutSeg button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#layoutSeg button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    state.layout = b.dataset.layout;
+    if (isVscode()) { state.activeAct = 'files'; state.view = 'explorer'; }
+    renderAll();
+  };
+});
+document.querySelectorAll('#themeSeg button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#themeSeg button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    state.theme = b.dataset.theme;
+    document.body.setAttribute('data-theme', state.theme);
+  };
+});
+document.getElementById('annoToggle').onclick = () => {
+  state.showAnno = !state.showAnno;
+  document.getElementById('annoToggle').textContent = '标注：' + (state.showAnno ? '开' : '关');
+  renderAll();
+};
+document.getElementById('toggleBottom').onclick = () => {
+  state.panelOpen = !state.panelOpen;
+  document.getElementById('panel-bottom').classList.toggle('collapsed', !state.panelOpen);
+};
+
+/* ---------- Side Bar 拖拽调宽 ---------- */
+(function () {
+  const handle = document.getElementById('sbResize');
+  let dragging = false, startX = 0, startW = 0;
+  handle.addEventListener('mousedown', (e) => {
+    dragging = true; startX = e.clientX; startW = state.sbWidth;
+    document.getElementById('panel').classList.add('dragging');
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    // 镜像下手柄在侧栏左缘：向左拖变宽（符号翻转）；默认（树左）手柄在
+    // 侧栏右缘：向右拖变宽。
+    const delta = arrange() === 'right' ? (startX - e.clientX) : (e.clientX - startX);
+    const w = Math.max(160, Math.min(480, startW + delta));
+    state.sbWidth = w;
+    document.getElementById('sideBar').style.width = w + 'px';
+  });
+  window.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; document.getElementById('panel').classList.remove('dragging'); }
+  });
+})();
+
+/* 初始 */
+renderAll();
+</script>
+</body>
+</html>

@@ -18,7 +18,7 @@ import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
-import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
+import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16, IconPanelRightOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
@@ -121,9 +121,28 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
               desc: () => t('sidebarLayoutVscodeDesc'),
             },
           ],
+        }, {
+          key: 'sideBarSide',
+          type: 'select',
+          title: () => t('sideBarSide'),
+          desc: () => t('sideBarSideDesc'),
+          options: [
+            {
+              value: 'left',
+              icon: (size: number) => <IconPanelLeftOutline16 size={size} />,
+              title: () => t('sideBarSideLeft'),
+              desc: () => t('sideBarSideLeftDesc'),
+            },
+            {
+              value: 'right',
+              icon: (size: number) => <IconPanelRightOutline16 size={size} />,
+              title: () => t('sideBarSideRight'),
+              desc: () => t('sideBarSideRightDesc'),
+            },
+          ],
         }],
       },
-      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, visible, vscodeLayout }) => (
+      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, visible }) => (
         <EditorHost
           ctx={ctx}
           store={store}
@@ -133,7 +152,6 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           onToggleDir={onToggleDir ?? (() => { /* no-op */ })}
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
           visible={visible}
-          vscodeLayout={vscodeLayout}
         />
       ),
     },

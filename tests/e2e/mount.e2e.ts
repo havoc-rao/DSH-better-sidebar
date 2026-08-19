@@ -29,12 +29,14 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, request, type APIRequestContext } from '@playwright/test'
+import { test, expect, request, type APIRequestContext, type Page } from '@playwright/test'
 
-const BASE_URL = process.env.DSH_E2E_URL
-if (!BASE_URL) {
+const rawBaseUrl = process.env.DSH_E2E_URL
+if (!rawBaseUrl) {
   throw new Error('DSH_E2E_URL is not set — boot a DSH web instance with the plugin mounted and point this lane at it (see scripts/e2e-mount.sh)')
 }
+/** The booted DSH web base URL (guarded non-null above). */
+const BASE_URL: string = rawBaseUrl
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -109,6 +111,52 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await api?.dispose()
 })
+
+/** Dismiss the keyless-boot onboarding takeovers (Continue / Configure
+ *  later), in any stacking order, until none remain. A masked click is
+ *  retried next round instead of failing. */
+async function dismissOnboarding(page: Page): Promise<void> {
+  try {
+    await expect
+      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
+      .toBeGreaterThan(0)
+  } catch {
+    console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
+  }
+  for (let round = 0; round < 8; round++) {
+    let dismissed = false
+    for (const name of ['Continue', 'Configure later']) {
+      const button = page.getByRole('button', { name, exact: true }).first()
+      if ((await button.count()) === 0) continue
+      try {
+        await button.click({ timeout: 4_000 })
+        dismissed = true
+        await page.waitForTimeout(1_000)
+      } catch {
+        // Masked by the takeover stacked above it; the next round tries the
+        // other button first.
+      }
+    }
+    if (!dismissed) break
+  }
+}
+
+/** Load the shell, wait for the sidebar host, dismiss onboarding and expand
+ *  the collapsed panel. Returns the sidebar locator. */
+async function loadAndExpand(page: Page): Promise<ReturnType<Page['locator']>> {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  // A session must be active for the tab bar / panel to exist.
+  const tabBar = sidebar.locator('[title]')
+  await expect(tabBar.first()).toBeAttached({ timeout: 90_000 })
+  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
+  await expect(expandButton).toHaveCount(1)
+  await expandButton.click()
+  return sidebar
+}
 
 test('plugin mounts into the DSH shell and survives a built-in tab sweep', async ({ page }) => {
   const pageErrors: string[] = []
@@ -312,4 +360,95 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
 
   // Final screenshot: the rendered panel with a session is the lane's proof.
   await page.screenshot({ path: 'test-results/mount-final.png' })
+})
+
+test('vscode layout: the independent side bar + activity bar render and open files', async ({ page }) => {
+  const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(String(error)))
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+
+  // Switch the workbench layout to the VSCode style BEFORE the page loads, so
+  // the fresh session renders the side bar + activity bar from the start.
+  const pref = await api.post(`${BASE_URL}/sidebar/api/settings.update`, {
+    data: { patch: { sidebarLayout: 'vscode' } },
+  })
+  expect(pref.ok(), `settings.update: ${pref.status()} ${await pref.text()}`).toBe(true)
+
+  const sidebar = await loadAndExpand(page)
+
+  const assertNoCrash = async (): Promise<void> => {
+    await expect.poll(async () => pageErrors, { timeout: 5_000 }).toEqual([])
+    const strips = await sidebar.locator('div').evaluateAll(
+      (nodes, patterns) => nodes.filter((node) => {
+        const text = (node.textContent ?? '').trim()
+        return patterns.some((pattern) => pattern.test(text))
+      }).length,
+      CRASH_STRIP_PATTERNS,
+    )
+    expect(strips, 'a dsh-better-sidebar error strip is present in the sidebar').toBe(0)
+  }
+
+  // The Activity Bar: a vertical toolbar iconizing the built-in tabs (the
+  // mirror arrangement puts it on the panel's right edge). At least the five
+  // built-in launchers must render.
+  const activityBar = sidebar.locator('[role="toolbar"][aria-orientation="vertical"]')
+  await expect(activityBar, 'the vscode layout must render the Activity Bar toolbar').toHaveCount(1)
+  const iconLabels = await activityBar.locator('button[aria-label]').evaluateAll(
+    (buttons) => buttons.map(b => b.getAttribute('aria-label')),
+  )
+  // In the vscode layout the files-window icon is the EXPLORER drawer toggle
+  // (label "Explorer", highlight follows the drawer); the rest stay launchers.
+  for (const label of ['Explorer', 'Source Control', 'Tasks', 'Terminal', 'Browser']) {
+    expect(iconLabels, `the Activity Bar must offer the "${label}" launcher`).toContain(label)
+  }
+  // The explorer icon toggles the drawer: collapsed now, expanded again. The
+  // drawer stays MOUNTED at width 0 (animated), so visibility is the signal.
+  const explorerIcon = activityBar.locator('button[aria-label="Explorer"]')
+  await explorerIcon.click()
+  await expect(sidebar.locator('input[placeholder^="Search files"]:visible'), 'collapsing the explorer drawer must hide the Side Bar tree').toHaveCount(0)
+  await explorerIcon.click()
+  await expect(sidebar.locator('input[placeholder^="Search files"]:visible'), 're-expanding the explorer drawer must restore the Side Bar tree').toHaveCount(1)
+
+  // The independent Side Bar: the file tree column OUTSIDE the editor tab. It
+  // must show its search box (the TreePanel's full form) and the seeded file.
+  const sideBarSearch = sidebar.locator('input[placeholder^="Search files"]')
+  await expect(sideBarSearch, 'the vscode layout must render the Side Bar tree with its search box').toHaveCount(1)
+  const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
+  await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the Side Bar tree`).toHaveCount(1, { timeout: 30_000 })
+
+  // Open the seeded file through the SIDE BAR tree (not a docked tree): a
+  // per-path editor tab opens and the path input shows the file. The editor
+  // chunk must load (armed before the click like the main lane).
+  const editorChunk = page.waitForResponse(
+    (response) => response.url().includes('/sidebar/bundle/editor.js'),
+    { timeout: 120_000 },
+  )
+  await fileRow.click({ position: { x: 8, y: 8 } })
+  await editorChunk
+  const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
+  await expect(pathInput, 'the editor tab must open the file with a path input').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
+
+  // The editor tab must NOT carry a docked tree in vscode mode: exactly ONE
+  // file-search input exists (the Side Bar's), not one per editor tab.
+  expect(
+    await sidebar.locator('input[placeholder^="Search files"]').count(),
+    'the editor tab must drop its docked tree — only the Side Bar search box remains',
+  ).toBe(1)
+
+  // Clicking the Terminal launcher opens a terminal tab (the + menu path).
+  await activityBar.locator('button[aria-label="Terminal"]').click()
+  await expect(
+    sidebar.locator('[title^="Terminal"][draggable="true"]:visible'),
+    'the Terminal launcher must open a terminal tab',
+  ).toHaveCount(1, { timeout: 30_000 })
+  await page.waitForTimeout(1_500)
+  await assertNoCrash()
+
+  const pluginErrors = consoleErrors.filter((text) => /dsh-better-sidebar|Unhandled/.test(text))
+  expect(pluginErrors, 'plugin-prefixed or unhandled console errors in vscode mode').toEqual([])
+  expect(pageErrors, 'pageerrors in vscode mode').toEqual([])
+  await page.screenshot({ path: 'test-results/mount-vscode.png' })
 })

@@ -594,6 +594,8 @@ describe('side card settings routes', () => {
         terminalFontSize: 13,
         interceptOpenPath: true,
         editorExplorer: true,
+        sidebarLayout: 'docked',
+        sideBarSide: 'right',
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,

@@ -109,6 +109,8 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   interceptOpenPath: z.boolean().default(true),
   editorExplorer: z.boolean().default(true),
+  sidebarLayout: z.union([z.const('docked'), z.const('vscode')]).default('docked'),
+  sideBarSide: z.union([z.const('left'), z.const('right')]).default('right'),
   titleBarCompat: z.boolean().default(false),
   titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),
   htmlViewerNoSandbox: z.boolean().default(false),

@@ -131,10 +131,13 @@ function LeafView(props: {
   resolveTab?: (tab: SidebarTab) => SidebarTab
   /** Right-click on a tab (the shell positions its workspace menu). */
   onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
+  /** Suppress this pane's own tab strip (the VSCode layout hosts the active
+   *  pane's tabs in the panel header instead — see Sidebar's vscodeHeader). */
+  hideTabBar?: boolean
 }) {
   const {
     leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu,
+    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar,
   } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const resolve = (tab: SidebarTab): SidebarTab => resolveTab?.(tab) ?? tab
@@ -180,25 +183,29 @@ function LeafView(props: {
       {/*
         The tab strip renders even for an empty pane: the + menu must stay
         reachable when the pane has no tabs (fresh split, or the last tab was
-        dragged out), so a new tab can always be created or dragged in.
+        dragged out), so a new tab can always be created or dragged in. The
+        VSCode layout suppresses this per-pane strip — the active pane's tabs
+        live in the panel header instead (hideTabBar).
       */}
-      <TabBar
-        paneId={leaf.id}
-        tabs={tabs}
-        active={leaf.active}
-        onActivate={(tabId) => { actions.activateTab(leaf.id, tabId) }}
-        onClose={(tabId) => { actions.closeTab(leaf.id, tabId) }}
-        onNewTab={onNewTab}
-        newTabOptions={newTabOptions}
-        getTabIcon={getTabIcon}
-        getTabBadge={getTabBadge}
-        isBoundTabId={isBoundTabId}
-        onTabContextMenu={onTabContextMenu}
-        onDropTab={(payload, before) => {
-          if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
-          else actions.moveTabBefore(payload, leaf.id, before)
-        }}
-      />
+      {!hideTabBar && (
+        <TabBar
+          paneId={leaf.id}
+          tabs={tabs}
+          active={leaf.active}
+          onActivate={(tabId) => { actions.activateTab(leaf.id, tabId) }}
+          onClose={(tabId) => { actions.closeTab(leaf.id, tabId) }}
+          onNewTab={onNewTab}
+          newTabOptions={newTabOptions}
+          getTabIcon={getTabIcon}
+          getTabBadge={getTabBadge}
+          isBoundTabId={isBoundTabId}
+          onTabContextMenu={onTabContextMenu}
+          onDropTab={(payload, before) => {
+            if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
+            else actions.moveTabBefore(payload, leaf.id, before)
+          }}
+        />
+      )}
       {tabs.length > 0 ? (
         /*
           Every tab stays MOUNTED (inactive ones hidden), so switching tabs
@@ -237,10 +244,11 @@ function NodeView(props: {
   isBoundTabId?: (tabId: string) => boolean
   resolveTab?: (tab: SidebarTab) => SidebarTab
   onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
+  hideTabBar?: boolean
 }) {
   const {
     node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu,
+    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar,
   } = props
   if (node.kind === 'leaf') {
     return (
@@ -255,6 +263,7 @@ function NodeView(props: {
         isBoundTabId={isBoundTabId}
         resolveTab={resolveTab}
         onTabContextMenu={onTabContextMenu}
+        hideTabBar={hideTabBar}
       />
     )
   }
@@ -285,6 +294,7 @@ function NodeView(props: {
               isBoundTabId={isBoundTabId}
               resolveTab={resolveTab}
               onTabContextMenu={onTabContextMenu}
+              hideTabBar={hideTabBar}
             />
           </div>
         </Fragment>
@@ -309,10 +319,13 @@ export function Workbench(props: {
   isBoundTabId?: (tabId: string) => boolean
   resolveTab?: (tab: SidebarTab) => SidebarTab
   onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
+  /** Suppress per-pane tab strips (the VSCode layout hosts the active pane's
+   *  tabs in the panel header — see Sidebar's vscodeHeader). */
+  hideTabBar?: boolean
 }) {
   const {
     state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu,
+    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar,
   } = props
   return (
     <div className={css.workbench}>
@@ -328,6 +341,7 @@ export function Workbench(props: {
         isBoundTabId={isBoundTabId}
         resolveTab={resolveTab}
         onTabContextMenu={onTabContextMenu}
+        hideTabBar={hideTabBar}
       />
     </div>
   )

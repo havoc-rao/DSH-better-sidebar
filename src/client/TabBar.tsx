@@ -14,7 +14,7 @@
  */
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { IconCloseFill14, IconPlusOutline16, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, IconPlusOutline16, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
 import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
@@ -386,30 +386,35 @@ export function TabBar(props: {
       {bound && <IconPinOutline16 size={12} className={css.tabPin} />}
       {getTabBadge?.(tab) ?? null}
       <span className={css.tabTitle}>{tab.title}</span>
-      <button
-        type="button"
-        className={clsx(css.tabClose, bound && armedCloseId === tab.id && css.tabCloseArmed)}
-        aria-label={bound && armedCloseId === tab.id ? t('closeBoundConfirm') : t('close')}
-        title={bound && armedCloseId === tab.id ? t('closeBoundConfirm') : undefined}
-        onClick={(event) => {
-          event.stopPropagation()
-          // Bound stubs close EVERYWHERE (shared windows): the first click
-          // arms a red confirm state, the second click really closes — an
-          // accidental ✕ must never wipe the window from every session.
-          if (!bound) {
-            onClose(tab.id)
-            return
-          }
-          if (armedCloseId === tab.id) {
-            disarmClose()
-            onClose(tab.id)
-          } else {
-            armClose(tab.id)
-          }
-        }}
+      <Tooltip
+        label={bound && armedCloseId === tab.id ? t('closeBoundConfirm') : t('close')}
+        side="bottom"
+        delayMs={500}
       >
-        <IconCloseFill14 />
-      </button>
+        <button
+          type="button"
+          className={clsx(css.tabClose, bound && armedCloseId === tab.id && css.tabCloseArmed)}
+          aria-label={bound && armedCloseId === tab.id ? t('closeBoundConfirm') : t('close')}
+          onClick={(event) => {
+            event.stopPropagation()
+            // Bound stubs close EVERYWHERE (shared windows): the first click
+            // arms a red confirm state, the second click really closes — an
+            // accidental ✕ must never wipe the window from every session.
+            if (!bound) {
+              onClose(tab.id)
+              return
+            }
+            if (armedCloseId === tab.id) {
+              disarmClose()
+              onClose(tab.id)
+            } else {
+              armClose(tab.id)
+            }
+          }}
+        >
+          <IconCloseFill14 />
+        </button>
+      </Tooltip>
     </div>
   )
 
@@ -458,17 +463,18 @@ export function TabBar(props: {
           portal
           align="end"
           anchor={(
-            <button
-              type="button"
-              className={css.tabBarPlus}
-              aria-label={t('newTab')}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen || undefined}
-              title={t('newTab')}
-              onClick={() => { if (menuOpen) closeMenu(); else openMenu() }}
-            >
-              <IconPlusOutline16 />
-            </button>
+            <Tooltip label={t('newTab')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.tabBarPlus}
+                aria-label={t('newTab')}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen || undefined}
+                onClick={() => { if (menuOpen) closeMenu(); else openMenu() }}
+              >
+                <IconPlusOutline16 />
+              </button>
+            </Tooltip>
           )}
         />
       </div>

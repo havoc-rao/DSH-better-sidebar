@@ -63,6 +63,8 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
+    sidebarLayout: normalizeSidebarLayout(record.sidebarLayout),
+    sideBarSide: normalizeSideBarSide(record.sideBarSide),
     titleBarCompat: typeof record.titleBarCompat === 'boolean'
       ? record.titleBarCompat
       : SIDEBAR_PREFS_DEFAULTS.titleBarCompat,
@@ -91,6 +93,29 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),
   }
+}
+
+/**
+ * Validate the sidebar-layout preference. The two current values are
+ * `'docked'` (the default original behavior) and `'vscode'` (the VSCode-style
+ * paradigm). Legacy prototype values `'vscode-left'` / `'vscode-right'` (which
+ * a few early builds persisted) migrate to `'vscode'` so an old document keeps
+ * loading instead of falling back to the default. Any other value falls back
+ * to the default.
+ */
+function normalizeSidebarLayout(value: unknown): 'docked' | 'vscode' {
+  if (value === 'docked' || value === 'vscode' || value === 'vscode-left' || value === 'vscode-right') {
+    return value === 'docked' ? 'docked' : 'vscode'
+  }
+  return SIDEBAR_PREFS_DEFAULTS.sidebarLayout
+}
+
+/** Validate the vscode Side Bar position: only `'left'` / `'right'` are
+ *  accepted (anything else — including a missing field on older documents —
+ *  falls back to the default `'right'`). */
+function normalizeSideBarSide(value: unknown): 'left' | 'right' {
+  if (value === 'left' || value === 'right') return value
+  return SIDEBAR_PREFS_DEFAULTS.sideBarSide
 }
 
 /**
