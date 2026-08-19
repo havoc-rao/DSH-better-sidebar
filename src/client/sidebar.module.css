@@ -658,12 +658,11 @@
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
 }
 
 .menuOptionKey {
-  min-width: 17px;
-  padding: 0 4px;
+  min-width: 26px;
+  padding: 0 5px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 4px;
   background: var(--dsw-alias-interactive-bg-hover);
@@ -671,6 +670,7 @@
   font: var(--dsw-font-xxxs-11);
   line-height: 15px;
   text-align: center;
+  white-space: nowrap;
 }
 
 /* ── Tab strip ─────────────────────────────────────────────────────────── */

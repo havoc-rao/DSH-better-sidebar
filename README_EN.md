@@ -54,7 +54,7 @@
 
 - ⌨️ **Keyboard-first interactions + a shortcut system**: one unified keybinding registry (`ctx.betterSidebar.registerKeybinding`, capability `keybindings`) — physical-key matching (layout-independent), IME / AltGr / auto-repeat guards, `when` context predicates, `priority` arbitration; built-in shortcuts and plugin registrations share the same dispatcher. New shortcuts: `Cmd/Ctrl+P` quick open (expands the panel and focuses the file search), `Cmd/Ctrl+F` focus the file search, `Cmd/Ctrl+Tab` / `Cmd/Ctrl+Shift+Tab` switch the active pane's tabs, `Cmd/Ctrl+1…9` jump to the nth tab, `Cmd/Ctrl+W` close the active tab (the last four only while focus is inside the sidebar); the panel toggles (⌘B / ⌘J / ⌘⇧J / ⌘⌥B) migrated onto the same system
 - 🔍 **Keyboard-navigable file search**: ↑/↓ move the highlighted result (wrap-around), Enter opens it, Esc clears the query (blurs on an empty query); the highlighted row has a distinct pressed style plus a navigation hint line
-- ➕ **Keyboard-operable + menu**: once open, press `1-9` (position) or the option's first letter to pick, ↑↓ / Home / End to move the highlight, Enter to confirm, Esc to close — each row shows digit + first-letter chips on its right, plus a hint row at the bottom
+- ➕ **Keyboard-operable + menu**: once open, press `1-9` (position) or the option's first letter to pick, ↑↓ / Home / End to move the highlight, Enter to confirm, Esc to close — each row shows a single "digit/letter" chip on its right (e.g. `4/T`), plus a hint row at the bottom
 
 ## ⌨️ Keyboard shortcuts
 

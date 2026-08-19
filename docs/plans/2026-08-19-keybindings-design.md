@@ -10,7 +10,7 @@
 - 一套**统一的快捷键处理**（类似 VSCode 命令/键位系统，但刻意更简单）；
 - 给插件一个**注入点**：`ctx.betterSidebar.registerKeybinding(...)`；
 - **键盘优先的用户可见内容**：文件搜索（↑↓ 高亮 / Enter 打开 / Esc 清除）与 + 菜单（1-9 与首字母选择）；
-- 在 + 菜单每行名称右侧渲染 **数字 + 首字母 chip**，让快捷键肉眼可见。
+- 在 + 菜单每行名称右侧渲染一个 **「数字/字母」合并 chip**（如 `4/T`），让快捷键肉眼可见。
 
 ## 2. 设计
 
@@ -45,7 +45,7 @@
 ### 2.5 键盘优先的界面
 
 - **文件搜索**（`search-keys.ts` 纯决策 + `TreePanel`）：↑↓ 高亮环绕、Enter 打开、Esc 清查询（空查询失焦）、IME 让位；高亮行 `css.editorSearchResultActive` + 导航提示行。`visible` 的 TreePanel 才注册为全局聚焦目标（隐藏 tab 的 dock 面板不得抢 ⌘P/⌘F）。
-- **+ 菜单**（`menu-keys.ts` 纯映射 + `TabBar` 键盘层）：1-9（0=第10项，禁用项自动顺延）、字母键选择（字母键取自**稳定 id**：`terminal`→T、`git`→G——与标签语言无关，中文标签同样生效；同字母连按循环）、↑↓ / Home / End 移动高亮、Enter 确认、Esc 关闭。菜单本体保持 primitives `Menu` 的原始观感，每行 label 包一层 flex 注入数字 + 首字母 chip（父行拉伸时 space-between 推到行右缘），底部另有提示行。
+- **+ 菜单**（`menu-keys.ts` 纯映射 + `TabBar` 键盘层）：1-9（0=第10项，禁用项自动顺延）、字母键选择（字母键取自**稳定 id**：`terminal`→T、`git`→G——与标签语言无关，中文标签同样生效；同字母连按循环）、↑↓ / Home / End 移动高亮、Enter 确认、Esc 关闭。菜单本体保持 primitives `Menu` 的原始观感，每行 label 包一层 flex 注入单个「数字/字母」合并 chip（如 `4/T`；父行拉伸时 space-between 推到行右缘），底部另有提示行。
 
 ## 3. 注入点
 

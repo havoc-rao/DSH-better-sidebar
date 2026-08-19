@@ -633,7 +633,7 @@ interface SidebarKeybindingContext {
 **键盘优先的界面**（同版随附，插件可直接复用这套心智模型）：
 
 - **文件搜索框**：↑↓ 移动高亮（环绕）、Enter 打开、Esc 清除查询（空查询失焦）；高亮行 `css.editorSearchResultActive` 按压样式 + 底部导航提示行。
-- **+ 菜单**：打开后 `1-9` 按位置选择（禁用项自动顺延）、字母键按选项选择（字母键取自**稳定 id**——`terminal`→T、`git`→G——与标签语言无关，中文标签同样生效；同字母连按循环到下一个匹配）、↑↓ / Home / End 移动高亮、Enter 确认、Esc 关闭。菜单本体保持 primitives `Menu` 的原始观感，**每行名称右侧注入数字 + 首字母 chip**（label 包一层 flex：父行拉伸时 space-between 推到行右缘），底部另有提示行（`t('menuKeyboardHint')`）。
+- **+ 菜单**：打开后 `1-9` 按位置选择（禁用项自动顺延）、字母键按选项选择（字母键取自**稳定 id**——`terminal`→T、`git`→G——与标签语言无关，中文标签同样生效；同字母连按循环到下一个匹配）、↑↓ / Home / End 移动高亮、Enter 确认、Esc 关闭。菜单本体保持 primitives `Menu` 的原始观感，**每行名称右侧注入一个「数字/字母」合并 chip**（如 `4/T`；label 包一层 flex：父行拉伸时 space-between 推到行右缘），底部另有提示行（`t('menuKeyboardHint')`）。
 - 组件用 `keybindings.ts` 导出的模块级标记发布瞬态状态（`setPlusMenuOpen` / `setSearchActive` / `setSearchInputElement`），分发器的 context 构建器读取——**插件组件不要**直接读写这些标记，那是内置组件与运行时之间的通道。
 
 ---

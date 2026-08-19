@@ -119,6 +119,11 @@ export function TabBar(props: {
   const menuItems = newTabOptions.map((option, index) => {
     const digit = plusMenuDigit(index)
     const letter = plusMenuLetterOf(option.id)
+    // ONE chip per row in the form 4/T: position digit + letter key merged.
+    const chip = digit !== '' && letter !== ''
+      ? `${digit}/${letter}`
+      : digit !== '' ? digit
+        : letter !== '' ? letter : ''
     return {
       id: option.id,
       disabled: option.disabled,
@@ -126,10 +131,9 @@ export function TabBar(props: {
       label: (
         <span className={css.menuOptionLabel}>
           <span className={css.menuOptionName}>{option.label}</span>
-          {(digit !== '' || letter !== '') && (
+          {chip !== '' && (
             <span className={css.menuOptionKeys} aria-hidden="true">
-              {digit !== '' && <kbd className={css.menuOptionKey}>{digit}</kbd>}
-              {letter !== '' && <kbd className={css.menuOptionKey}>{letter}</kbd>}
+              <kbd className={css.menuOptionKey}>{chip}</kbd>
             </span>
           )}
         </span>
