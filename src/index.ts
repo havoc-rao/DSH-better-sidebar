@@ -36,7 +36,7 @@ import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { defaultShell, digestCommandInput, ensureSpawnHelper, isSharedTabId, PtyManager, ptyKeyOf } from './pty-manager.ts'
+import { defaultShell, digestCommandInput, ensureSpawnHelper, isSharedTabId, PtyManager, ptyKeyOf, shellDisplayName } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
@@ -191,12 +191,13 @@ export interface SidebarSettingsFace {
   update(patch: Record<string, unknown>, expectedRevision?: number): Promise<{ value?: unknown; revision?: number }>
 }
 
-/** Build the API method table bound to the plugin context, pty manager, agent pty registry, and resolved config. */
+/** Build the API method table bound to the plugin context, pty manager, agent pty registry, resolved config, and effective terminal shell. */
 function buildApi(
   ctx: Context,
   ptyManager: PtyManager | null,
   agentPtyRegistry: AgentPtyRegistry | null,
   resolved: ResolvedSidebarConfig,
+  terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
@@ -304,6 +305,17 @@ function buildApi(
         : undefined
       return git.log(cwd, count, skip)
     },
+    'git.log-graph': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const record = payload as { count?: unknown; skip?: unknown }
+      const count = typeof record.count === 'number' && Number.isInteger(record.count) && record.count > 0
+        ? record.count
+        : undefined
+      const skip = typeof record.skip === 'number' && Number.isInteger(record.skip) && record.skip >= 0
+        ? record.skip
+        : undefined
+      return git.graphLog(cwd, count, skip)
+    },
     'git.commit-diff': async (payload) => {
       const { cwd } = cwdOf(payload)
       return { diff: await git.commitDiff(cwd, requireString(payload, 'hash')) }
@@ -384,6 +396,11 @@ function buildApi(
     // exists. Kill is fenced to the owning session by the jobs registry.
     'jobs.output': (payload) => jobsApi.output(payload),
     'jobs.kill': (payload) => jobsApi.kill(payload),
+    // The effective terminal shell and its display name. The client uses
+    // this to title terminal tabs with the shell name instead of a numbered
+    // "Terminal N" label; the shell itself is configured through
+    // `cordis.patch.yml` (`config.shell`) or resolved by the host default.
+    'shell.get': () => ({ shell: terminalShell, name: shellDisplayName(terminalShell) }),
     // The side card preferences. The settings service is optional in the
     // composition; while absent the routes report undefined and the client
     // keeps the schema defaults. Writes are revision-guarded: a stale editor
@@ -501,13 +518,17 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       : `${status.cause}. Repair: ${status.command}`
     ctx.logger?.warn(`[dsh-better-sidebar] node-pty (${DSH_NODE_PTY_RANGE}) failed to load: ${detail}`)
   }
-  const ptyManager = nodePty !== null ? new PtyManager(terminalShell, resolved.terminalsPerSession, nodePty) : null
+  const ptyManager = nodePty !== null
+    ? new PtyManager(terminalShell, resolved.terminalsPerSession, resolved.shellArgs, nodePty)
+    : null
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
   // uncapped, and torn down with the plugin. The model creates terminals here
   // through the terminal_create tool; the sidebar view attaches through the
   // same /sidebar/ws/terminal upgrade with ?uuid=... instead of ?tab=...
-  const agentPtyRegistry = nodePty !== null ? new AgentPtyRegistry(terminalShell, nodePty) : null
+  const agentPtyRegistry = nodePty !== null
+    ? new AgentPtyRegistry(terminalShell, resolved.shellArgs, nodePty)
+    : null
 
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
@@ -581,7 +602,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',

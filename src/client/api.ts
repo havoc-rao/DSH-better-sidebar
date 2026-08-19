@@ -60,6 +60,12 @@ export interface GitLogEntry {
   refs: string
 }
 
+/** One git log row with parent hashes (graph view). `parents` are FULL
+ *  40-char hashes, first-parent first; a root commit has `parents: []`. */
+export interface GitGraphEntry extends GitLogEntry {
+  parents: string[]
+}
+
 /** Text read result. */
 export interface FsTextResult { kind: 'text'; content: string; truncated: boolean }
 /** Binary read result (no content; images load through the media route).
@@ -165,6 +171,13 @@ export const api = {
       ...(count !== undefined ? { count } : {}),
       ...(skip !== undefined ? { skip } : {}),
     }), signal),
+  /** Recent commit history WITH parent hashes (topo-ordered, for the graph
+   *  view's lane layout); pageable like {@link gitLog}. */
+  gitLogGraph: (scope: SessionScope, count?: number, skip?: number, signal?: AbortSignal) =>
+    call<GitGraphEntry[]>('git.log-graph', scopePayload(scope, {
+      ...(count !== undefined ? { count } : {}),
+      ...(skip !== undefined ? { skip } : {}),
+    }), signal),
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.commit-diff', scopePayload(scope, { hash }), signal),
@@ -211,6 +224,9 @@ export const api = {
       id,
       ...(reason !== undefined ? { reason } : {}),
     })),
+  /** The effective terminal shell and its display name (plugin-global). */
+  shellGet: () =>
+    call<{ shell: string; name: string }>('shell.get', {}),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
     call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),

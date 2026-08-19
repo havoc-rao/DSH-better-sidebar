@@ -21,7 +21,7 @@ better-sidebar 从 v0.4.0 起暴露 `ctx.betterSidebar` 服务（Cordis context 
 2. `scripts/e2e-mount.sh` 用官方 CLI 把它装进一个**全新 scratch profile**（`dsh plugin --profile web add file:<tarball>`，触发 `dsh.profile.bundles` 协调），然后启动真实 `dsh web`（keyless，`--port 0`）。
 3. `tests/e2e/mount.e2e.ts`（Playwright Chromium）加载页面，断言外壳与 `[data-dsh-better-sidebar]` 挂载、无 `dsh-better-sidebar:` 错误条、无 pageerror/插件 console 错误，显式展开面板（`openByDefault` 默认关）后通过「+ 菜单」逐个打开内置 tab（含终端懒加载 chunk）深扫，再经 Files 文件窗口的内嵌树打开 seed 文件强制加载 editor 懒加载 chunk（`client-editor.js`，原地模式：seed 的 home tab 原地切换到文件）——缺失的内置 tab 或 chunk 都会使门禁变红。
 
-本地跑：`pnpm build && pnpm pack && pnpm exec playwright install chromium && pnpm test:mount`（需 PATH 上有 `dsh` 或可经 npx 拉取）。DSH CLI 版本在 CI 钉住 `@deepseek-ai/dsh@0.1.0-rc.6`（与插件 peer 范围同步）。`tests/e2e` 的 spec 命名 `*.e2e.ts` + vitest `exclude` 双保险与 vitest 隔离；**改动 vitest `exclude` 时必须保留默认排除项**（`exclude` 会整体替换默认值）。
+本地跑：`pnpm build && pnpm pack && pnpm exec playwright install chromium && pnpm test:mount`（需 PATH 上有 `dsh` 或可经 npx 拉取）。DSH CLI 版本在 CI 钉住 `@deepseek-ai/dsh@0.1.0-rc.7`（与插件 peer 范围同步）。`tests/e2e` 的 spec 命名 `*.e2e.ts` + vitest `exclude` 双保险与 vitest 隔离；**改动 vitest `exclude` 时必须保留默认排除项**（`exclude` 会整体替换默认值）。
 
 ### npm 发版（GitHub Release → npm publish）
 
@@ -771,5 +771,7 @@ better-sidebar 自己的内置 tab 和 viewer 就是参考实现（"吃狗粮"�
 - **`src/client/FileTree.tsx`** / **`src/client/TreePanel.tsx`** / **`src/fs-search.ts`**：受控文件树组件（纯树体，文件行右键菜单含「在新 Tab 中打开」「在侧边打开」，仅宿主编排提供回调时渲染）/ 树面板（搜索框 + 刷新 + FileTree，文件窗口的内嵌 dock 使用）与 host 侧递归文件名搜索（`fs.search` 路由，预算兜底 + 跳过 `.git`/symlink 目录；测试 `tests/fs-search.spec.ts`、组件测试 `tests/editor-host.spec.tsx`）
 - **`src/client/keybindings.ts`** / **`src/client/builtins/keybindings.ts`** / **`src/client/search-keys.ts`** / **`src/client/menu-keys.ts`**：快捷键系统的运行时（spec 解析 / 纯匹配 / 优先级仲裁 / 全局守卫 / 瞬态 UI 标记）与内置绑定（面板开关 / 快速打开 / 搜索聚焦 / 标签切换）和键盘优先的搜索 / + 菜单决策（测试 `tests/keybindings.spec.ts` / `tests/search-keys.spec.ts` / `tests/menu-keys.spec.ts`；`src/client/hotkeys.ts` 保留纯 matcher 并把注册迁到运行时）
 - **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`** / **`docs/plans/2026-08-14-add-plugins-modal-design.md`** / **`docs/plans/2026-08-19-keybindings-design.md`**：设计文档（含实施偏差记录）
+- **`src/client/git-graph.ts`** / **`src/client/GitGraph.tsx`**：Git 面板历史提交图（lane 图）的纯布局算法（`computeGraphRows`：lane 分配 / 菱形汇入弧 / 分叉弧 / 列回收，输入 host 的 `git.log-graph` 拓扑序数据）与逐行 SVG 渲染（视觉移植自仓库本地参考目录 `docs/prototypes/gitgraph-lines` 的原型 demo，未纳入版本库；lane 色走 `--gg-lane-N` 自定义属性，默认映射 DSH 语义令牌）；host 数据链在 `src/git.ts`（`graphLog`/`parseGraphLines`）、`src/index.ts`（`git.log-graph` 路由）、`src/client/api.ts`（`gitLogGraph`/`GitGraphEntry`）；测试 `tests/git-graph.spec.ts`、`tests/git.spec.ts`
+- **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`** / **`docs/plans/2026-08-14-add-plugins-modal-design.md`** / **`docs/plans/2026-08-19-git-graph-lanes-design.md`**：设计文档（含实施偏差记录）
 
 调试时直接读这些文件即可看到所有 API 的真实用法。

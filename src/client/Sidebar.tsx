@@ -734,6 +734,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     pendingDrag.current = null
   }
 
+  /** Set once a drag's pointerup handler commits — premature capture loss
+   *  (pointercancel / lostpointercapture without pointerup) must then be told
+   *  apart from a normal release. */
+  const dragCommitted = useRef(false)
+  /** Abort a drag whose pointer stream was interrupted (pointercancel, or
+   *  capture lost before pointerup): no pointerup will arrive, so without
+   *  this the dragging state would stick true and center-column measurement
+   *  would stay paused forever — the bottom panel freezes at stale edges and
+   *  stops tracking sidebar/app-rail layout changes. Reverts the DOM and the
+   *  layout variables to the store's committed sizes. */
+  const abortDrag = (reset: () => void): void => {
+    if (dragCommitted.current) return
+    stopDragScheduling()
+    applyDrag(
+      !narrow && state?.panelOpen === true ? Math.min(state?.width ?? 0, window.innerWidth) : 0,
+      !narrow && state?.bottomOpen === true ? Math.min(state.bottomHeight, window.innerHeight) : 0,
+    )
+    reset()
+  }
+
   // Layout push: the app shell gives up the panel's width/height while the
   // panels are open (0 while collapsed), so the conversation and input bar
   // are squeezed instead of covered. The margins are capped at the viewport
@@ -1030,6 +1050,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               onPointerDown={(event) => {
                 event.preventDefault()
                 event.currentTarget.setPointerCapture(event.pointerId)
+                dragCommitted.current = false
                 widthDrag.current = { startX: event.clientX, startWidth: state.width }
                 setDraggingWidth(true)
               }}
@@ -1042,6 +1063,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               }}
               onPointerUp={(event) => {
                 if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+                dragCommitted.current = true
                 event.currentTarget.releasePointerCapture(event.pointerId)
                 const { startX, startWidth } = widthDrag.current
                 // Write the FINAL size to the DOM synchronously, BEFORE the
@@ -1061,6 +1083,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
                 store.reduce(s => setWidth(s, width))
                 setDraggingWidth(false)
               }}
+              onPointerCancel={() => { abortDrag(() => setDraggingWidth(false)) }}
+              onLostPointerCapture={() => { abortDrag(() => setDraggingWidth(false)) }}
             />
           )}
         {/*
@@ -1208,6 +1232,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
             onPointerDown={(event) => {
               event.preventDefault()
               event.currentTarget.setPointerCapture(event.pointerId)
+              dragCommitted.current = false
               cornerDrag.current = {
                 startX: event.clientX,
                 startY: event.clientY,
@@ -1225,6 +1250,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
             }}
             onPointerUp={(event) => {
               if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+              dragCommitted.current = true
               event.currentTarget.releasePointerCapture(event.pointerId)
               const { startX, startY, startWidth, startHeight } = cornerDrag.current
               // Same release contract as the width drag: apply the final size
@@ -1238,6 +1264,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               store.reduce(s => setBottomHeight(setWidth(s, width), height))
               setDraggingCorner(false)
             }}
+            onPointerCancel={() => { abortDrag(() => setDraggingCorner(false)) }}
+            onLostPointerCapture={() => { abortDrag(() => setDraggingCorner(false)) }}
           />
         )}
       </div>
@@ -1283,6 +1311,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           onPointerDown={(event) => {
             event.preventDefault()
             event.currentTarget.setPointerCapture(event.pointerId)
+            dragCommitted.current = false
             bottomDrag.current = { startY: event.clientY, startHeight: state.bottomHeight }
             setDraggingBottom(true)
           }}
@@ -1294,6 +1323,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           }}
           onPointerUp={(event) => {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+            dragCommitted.current = true
             event.currentTarget.releasePointerCapture(event.pointerId)
             const { startY, startHeight } = bottomDrag.current
             // Same release contract as the width drag: apply the final size
@@ -1306,6 +1336,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
             store.reduce(s => setBottomHeight(s, height))
             setDraggingBottom(false)
           }}
+          onPointerCancel={() => { abortDrag(() => setDraggingBottom(false)) }}
+          onLostPointerCapture={() => { abortDrag(() => setDraggingBottom(false)) }}
         />
         )}
         {/*
