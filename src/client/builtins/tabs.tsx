@@ -9,7 +9,7 @@
  */
 import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconPanelLeftOutline16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
-import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
+import { allLeaves, areaOfTab, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
@@ -175,13 +175,21 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       icon: (size: number) => <IconBranchOutline16 size={size} />,
       order: 20,
       single: true,
-      component: ({ ctx, store, scope, onOpenDiff }) => (
-        <GitView
-          scope={scope}
-          onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
-          onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
-        />
-      ),
+      component: ({ ctx, store, scope, tab, onOpenDiff }) => {
+        // The panel the git tab lives in: a context-menu "open file" must
+        // land in the SAME panel — the menu is portaled outside the pane, so
+        // no pane pointerdown focuses it and the global activePane would
+        // otherwise swallow the open into the other box.
+        const state = store.getSnapshot().state
+        const gitArea = state === undefined ? 'right' : areaOfTab(state, tab.id)
+        return (
+          <GitView
+            scope={scope}
+            onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path, gitArea) }}
+            onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
+          />
+        )
+      },
     },
     {
       id: 'subagent',

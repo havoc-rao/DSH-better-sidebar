@@ -38,7 +38,7 @@ import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
-import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
+import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, areaOfTab, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -127,22 +127,31 @@ export function EditorHost(props: {
   const showEmpty = path === ''
   const treeOnly = showEmpty && !inPlace && !vscode
 
+  // The panel this files window lives in: tree-originated opens must land in
+  // the SAME panel ("click in the right → open in the right"), not wherever
+  // the global activePane last pointed. Computed once per render; a stale
+  // value degrades to the right panel (the pre-bottom fallback).
+  const hostState = store.getSnapshot().state
+  const hostArea = hostState === undefined ? 'right' : areaOfTab(hostState, tab.id)
+
   /**
    * Open a file from THIS window (tree click / search row / path input):
    * merged mode switches this tab in place (stable id, meta survives);
-   * split mode opens a per-path dedupe tab through openSidebarFile.
+   * split mode opens a per-path dedupe tab through openSidebarFile, pinned
+   * to this window's panel (a keyboard activation never fires the pane's
+   * pointerdown-focus, so the pin is what keeps the open in sight).
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
       ctx.betterSidebar?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
     } else {
-      openSidebarFile(ctx, store, scope.sessionId, absolute)
+      openSidebarFile(ctx, store, scope.sessionId, absolute, hostArea)
     }
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
-    openSidebarFile(ctx, store, scope.sessionId, absolute)
+    openSidebarFile(ctx, store, scope.sessionId, absolute, hostArea)
   }
 
   /**

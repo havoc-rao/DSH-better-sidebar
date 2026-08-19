@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore,
+  activateTab, allLeaves, areaOfTab, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore,
   insertLeafAt, makeDefaultState, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
-  openTabInActivePane, PANEL_DEFAULT, patchTab, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight,
+  openTabInActivePane, paneInArea, PANEL_DEFAULT, patchTab, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight,
   setSideBarView, setSideBarWidth, setSideBarOpen, splitPane, tabOpenIn, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
@@ -31,6 +31,30 @@ describe('sidebar state', () => {
     const bareLeaf = bare.splits as { tabs: SidebarTab[]; active: string | null }
     expect(bareLeaf.tabs).toHaveLength(0)
     expect(bareLeaf.active).toBeNull()
+  })
+
+  it('paneInArea / areaOfTab resolve the landing pane of a tree-originated open', () => {
+    let s = state()
+    const rightPane = (s.splits as { id: string }).id
+    const bottomPane = (s.bottomSplits as { id: string }).id
+    // The global activePane lives in the right tree → the right area reuses
+    // it, and the bottom area falls back to its first leaf.
+    expect(paneInArea(s, 'right')).toBe(rightPane)
+    expect(paneInArea(s, 'bottom')).toBe(bottomPane)
+    expect(areaOfTab(s, rightPane)).toBe('right')
+    expect(areaOfTab(s, bottomPane)).toBe('bottom')
+    // activePane pointing into the bottom tree: each area still resolves its
+    // own pane — a right-tree open must never land in the bottom box.
+    s = { ...s, activePane: bottomPane }
+    expect(paneInArea(s, 'right')).toBe(rightPane)
+    expect(paneInArea(s, 'bottom')).toBe(bottomPane)
+    // A stale activePane (its pane closed) falls back to the area's first leaf.
+    s = { ...s, activePane: 'pane:gone' }
+    expect(paneInArea(s, 'right')).toBe(rightPane)
+    expect(paneInArea(s, 'bottom')).toBe(bottomPane)
+    // Unknown tab ids default to the right workbench (the pre-bottom fallback).
+    expect(areaOfTab(s, 'pane:gone')).toBe('right')
+    expect(areaOfTab(s, 'tab:ghost')).toBe('right')
   })
 
   it('sanitizeState migrates persisted explorer tabs to editor home tabs (both trees)', () => {

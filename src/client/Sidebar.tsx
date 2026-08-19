@@ -1167,8 +1167,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               scope={{ sessionId, cwd }}
               expanded={state.expanded}
               onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
-              onOpenFile={(path) => { openSidebarFile(ctx, store, sessionId, path) }}
-              onOpenFileNewTab={(path) => { openSidebarFile(ctx, store, sessionId, path) }}
+              // The Side Bar's tree lives outside any workbench pane: pin the
+              // landing to the right panel so a file clicked here never opens
+              // in the bottom box (the last pane the user touched).
+              onOpenFile={(path) => { openSidebarFile(ctx, store, sessionId, path, 'right') }}
+              onOpenFileNewTab={(path) => { openSidebarFile(ctx, store, sessionId, path, 'right') }}
               onReferenceFile={referenceInChat}
               visible={state.panelOpen}
               collapsed={!state.sideBarOpen}
@@ -1195,8 +1198,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               scope={{ sessionId, cwd }}
               expanded={state.expanded}
               onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
-              onOpenFile={(path) => { openSidebarFile(ctx, store, sessionId, path) }}
-              onOpenFileNewTab={(path) => { openSidebarFile(ctx, store, sessionId, path) }}
+              onOpenFile={(path) => { openSidebarFile(ctx, store, sessionId, path, 'right') }}
+              onOpenFileNewTab={(path) => { openSidebarFile(ctx, store, sessionId, path, 'right') }}
               onReferenceFile={referenceInChat}
               visible={state.panelOpen}
               collapsed={!state.sideBarOpen}

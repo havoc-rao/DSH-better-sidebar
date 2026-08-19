@@ -8,8 +8,7 @@
  */
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import type { SidebarStore } from './state.ts'
-import { setSideBarOpen } from './state.ts'
+import { paneInArea, setSideBarOpen, type SidebarStore, type WorkspaceArea } from './state.ts'
 import { api } from './api.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
@@ -24,13 +23,29 @@ import css from './sidebar.module.css'
  * file/absent path): on a directory the vscode explorer drawer is expanded
  * instead (a no-op in the docked layout — the click lands on the file tree),
  * otherwise the file opens as before.
+ *
+ * `area` pins the landing panel for TREE-originated opens: the
+ * open must land in the panel the tree lives in ("click in the right → open
+ * in the right"), never wherever the global `activePane` last pointed — a
+ * prior interaction on the bottom panel would otherwise swallow the open
+ * (the vscode Side Bar's tree lives outside any workbench pane, so no pane
+ * pointerdown focuses it). Dispatching `activePane` to the area's pane is
+ * the same focus the docked tree's own pointerdown applies; the openTab
+ * auto-expand then opens the hosting panel. Chat-side opens (produced-files
+ * row, open-path interception) pass no area and keep the activePane landing.
  */
-export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
+export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string, area?: WorkspaceArea): void {
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
   const absolute = resolveSidebarPath(summary?.cwd, path)
   const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
   const title = at === -1 ? absolute : absolute.slice(at + 1)
   const open = (): void => {
+    if (area !== undefined) {
+      store.reduce(state => {
+        const target = paneInArea(state, area)
+        return state.activePane === target ? state : { ...state, activePane: target }
+      })
+    }
     // Route through the sidebar service so the editor descriptor's dedupeKey
     // (per-path) applies; the id is path-derived so multiple editors coexist.
     ctx.betterSidebar?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })

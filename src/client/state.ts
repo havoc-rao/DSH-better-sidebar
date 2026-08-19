@@ -309,6 +309,27 @@ export function treeOf(state: SidebarState, id: string): 'splits' | 'bottomSplit
   return treeHasId(state.bottomSplits, id) ? 'bottomSplits' : 'splits'
 }
 
+/** The panel area a tab id lives in ('right' | 'bottom'); defaults to the
+ *  right workbench when the id is in neither tree (the pre-bottom fallback).
+ *  Tree-originated file opens use it to pin their landing: "click in the
+ *  right → open in the right". */
+export function areaOfTab(state: SidebarState, tabId: string): WorkspaceArea {
+  return treeOf(state, tabId) === 'bottomSplits' ? 'bottom' : 'right'
+}
+
+/** The pane of an area that receives newly opened tabs: the global
+ *  `activePane` when it lives in that area's tree (the last pane the user
+ *  touched there), otherwise the area's first leaf. A tree-originated open
+ *  pins its landing by dispatching `activePane` to this pane before the
+ *  open — the same focus the docked tree's own pointerdown applies — so a
+ *  prior interaction on the other panel can never swallow the open. */
+export function paneInArea(state: SidebarState, area: WorkspaceArea): string {
+  const key = area === 'bottom' ? 'bottomSplits' : 'splits'
+  const active = state.activePane
+  if (active !== null && allLeaves(state[key]).some(leaf => leaf.id === active)) return active
+  return firstLeaf(state[key]).id
+}
+
 /** Walk the tree and apply `visit` to the leaf with the given id. */
 export function mapLeaf(node: SplitNode, paneId: string, visit: (leaf: SidebarLeaf) => void): SplitNode {
   if (node.kind === 'leaf') {
