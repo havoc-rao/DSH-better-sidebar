@@ -2034,19 +2034,43 @@
   cursor: default;
 }
 
-/* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
-   (badges live on the second line so they never crowd the subject). */
+/* A history row: the commit-graph lane SVG on the left, body on the right
+   (line 1 = hash + subject, line 2 = ref badges + author/date). The lane
+   colors come from the `--gg-lane-N` custom properties below — defaults are
+   DSH semantic tokens, so every skin controls the palette (skin-compat rule:
+   no hardcoded colors). */
 .gitLogRow {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 5px 12px;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 2px 12px 2px 6px;
   cursor: pointer;
   border-radius: 8px;
 }
 
 .gitLogRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The lane SVG (see src/client/git-graph.ts for the geometry). */
+.gitLogGraph {
+  flex: none;
+  display: block;
+  --gg-lane-0: var(--dsw-alias-brand-primary);
+  --gg-lane-1: var(--dsw-alias-state-success-primary);
+  --gg-lane-2: var(--dsw-alias-state-warn-primary);
+  --gg-lane-3: var(--dsw-alias-state-error-primary);
+  --gg-lane-4: var(--dsw-alias-state-business-primary);
+  --gg-lane-5: var(--dsw-alias-label-secondary);
+}
+
+.gitLogBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .gitLogLine1 {
