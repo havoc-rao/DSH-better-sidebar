@@ -43,7 +43,10 @@
  */
 import type { GitGraphEntry } from './api.ts'
 
-/** Geometry (aligned with the gitgraph-lines prototype: CELL_W/ROW_H/CURVE_R). */
+/** Geometry (aligned with the gitgraph-lines prototype: CELL_W/ROW_H/CURVE_R).
+ *  ROW_H is the DEFAULT row height; the renderer passes the actual row height
+ *  (history rows grow when tag chips wrap) and the path functions derive
+ *  `mid` from it. */
 export const CELL_W = 24
 export const ROW_H = 40
 export const CURVE_R = 12
@@ -61,7 +64,9 @@ export function colX(col: number): number {
   return col * CELL_W + CELL_W / 2
 }
 
-/** One merge arc: a lane's vertical descent + rounded corner into the dot. */
+/** One merge arc: a lane's vertical descent + rounded corner into the dot.
+ *  `mid` = the row's vertical center (height / 2), so the geometry adapts to
+ *  any row height. */
 export function pathMergeIn(fromX: number, dotX: number, mid: number): string {
   if (fromX === dotX) return `M ${fromX} 0 L ${fromX} ${mid}`
   const sign = dotX > fromX ? 1 : -1
@@ -69,12 +74,14 @@ export function pathMergeIn(fromX: number, dotX: number, mid: number): string {
   return ['M', fromX, 0, 'L', fromX, mid - r, 'Q', fromX, mid, fromX + sign * r, mid, 'L', dotX, mid].join(' ')
 }
 
-/** One fork arc: from the dot horizontally out + rounded corner down. */
-export function pathForkOut(dotX: number, toX: number, mid: number): string {
-  if (dotX === toX) return `M ${dotX} ${mid} L ${toX} ${ROW_H}`
+/** One fork arc: from the dot horizontally out + rounded corner down to the
+ *  row bottom (`height` — history rows vary in height when tag chips wrap,
+ *  so the geometry must not hardcode ROW_H). */
+export function pathForkOut(dotX: number, toX: number, mid: number, height: number): string {
+  if (dotX === toX) return `M ${dotX} ${mid} L ${toX} ${height}`
   const sign = toX > dotX ? 1 : -1
-  const r = Math.min(CURVE_R, Math.abs(toX - dotX), ROW_H - mid)
-  return ['M', dotX, mid, 'L', toX - sign * r, mid, 'Q', toX, mid, toX, mid + r, 'L', toX, ROW_H].join(' ')
+  const r = Math.min(CURVE_R, Math.abs(toX - dotX), height - mid)
+  return ['M', dotX, mid, 'L', toX - sign * r, mid, 'Q', toX, mid, toX, mid + r, 'L', toX, height].join(' ')
 }
 
 /** A straight vertical line segment. */

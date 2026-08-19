@@ -8,7 +8,9 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { GitGraphEntry } from '../src/client/api.ts'
-import { CELL_W, computeGraphRows, laneColor } from '../src/client/git-graph.ts'
+import {
+  CELL_W, colX, computeGraphRows, laneColor, pathForkOut, pathMergeIn, pathV,
+} from '../src/client/git-graph.ts'
 
 /** A minimal graph log entry; hashes double as the full hashes. */
 function commit(hash: string, parents: string[], refs = ''): GitGraphEntry {
@@ -133,5 +135,32 @@ describe('computeGraphRows', () => {
     expect(laneColor(0)).toBe('var(--gg-lane-0)')
     expect(laneColor(5)).toBe('var(--gg-lane-5)')
     expect(laneColor(6)).toBe('var(--gg-lane-0)') // wraps
+  })
+})
+
+describe('path geometry', () => {
+  it('places the dot x at the column center', () => {
+    expect(colX(0)).toBe(CELL_W / 2)
+    expect(colX(2)).toBe(2 * CELL_W + CELL_W / 2)
+  })
+
+  it('spans a vertical line between arbitrary y bounds', () => {
+    expect(pathV(12, 0, 20)).toBe('M 12 0 L 12 20')
+    expect(pathV(12, 20, 56)).toBe('M 12 20 L 12 56')
+  })
+
+  it('ends a merge arc at the dot mid', () => {
+    const d = pathMergeIn(12, 36, 28) // taller row: mid = 28
+    expect(d.endsWith('L 36 28')).toBe(true)
+    expect(d).toContain('M 12 0')
+  })
+
+  it('forks down to the ACTUAL row height (tag chips make rows taller)', () => {
+    // nominal 40px row
+    expect(pathForkOut(12, 36, 20, 40).endsWith('L 36 40')).toBe(true)
+    // a row that grew to 56px (wrapped chips): the fork must reach the bottom
+    expect(pathForkOut(12, 36, 28, 56).endsWith('L 36 56')).toBe(true)
+    // same-column fork: a plain vertical to the row bottom
+    expect(pathForkOut(12, 12, 28, 56)).toBe('M 12 28 L 12 56')
   })
 })

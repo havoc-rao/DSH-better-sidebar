@@ -8,7 +8,7 @@
  * revert, cherry-pick, copy paths/hashes). Refresh is manual + on mount/
  * focus (no file watcher — KISS).
  */
-import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
@@ -16,7 +16,7 @@ import {
 import type { GitGraphEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { api } from './api.ts'
 import { GitGraphSvg } from './GitGraph.tsx'
-import { computeGraphRows } from './git-graph.ts'
+import { computeGraphRows, ROW_H, type GitGraphRow } from './git-graph.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
 import type { SidebarTab } from './state.ts'
@@ -80,6 +80,67 @@ interface ConfirmState {
 /** History batch size: the log loads lazily in pages so a long history never
  *  floods the panel at once (the end of the log is reached by paging). */
 const LOG_BATCH = 20
+
+/**
+ * One history row: the commit-graph lane SVG on the left, the commit body on
+ * the right. The SVG must span the row's ACTUAL height — rows grow when tag
+ * chips wrap to a second line, and a fixed-height graph would leave a blank
+ * gap below the lanes — so the row measures itself (ResizeObserver) and
+ * passes the height to {@link GitGraphSvg}, keeping the lane lines
+ * continuous across variable-height rows.
+ */
+function HistoryRow(props: {
+  row: GitGraphRow
+  prev?: GitGraphRow
+  graphWidth: number
+  onOpen: (entry: GitGraphEntry) => void
+  onMenu: (event: MouseEvent, entry: GitGraphEntry) => void
+}) {
+  const { row, prev, graphWidth, onOpen, onMenu } = props
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [height, setHeight] = useState(ROW_H)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (el === null) return
+    const update = (): void => { setHeight(Math.max(ROW_H, el.getBoundingClientRect().height)) }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => { observer.disconnect() }
+  }, [])
+  const entry = row.entry
+  return (
+    <div
+      ref={ref}
+      role="button"
+      tabIndex={0}
+      className={css.gitLogRow}
+      title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
+      onClick={() => { onOpen(entry) }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onOpen(entry)
+        }
+      }}
+      onContextMenu={(event) => { onMenu(event, entry) }}
+    >
+      <GitGraphSvg row={row} prev={prev} graphWidth={graphWidth} height={height} />
+      <div className={css.gitLogBody}>
+        <span className={css.gitLogLine1}>
+          <span className={css.gitLogHash}>{entry.hash}</span>
+          <span className={css.gitLogSubject}>{entry.subject}</span>
+        </span>
+        <span className={css.gitLogLine2}>
+          {refNames(entry.refs).map(name => (
+            <span key={name} className={css.gitLogRef}>{name}</span>
+          ))}
+          <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
+        </span>
+      </div>
+    </div>
+  )
+}
 
 export function GitView(props: {
   scope: SessionScope
@@ -365,39 +426,14 @@ export function GitView(props: {
           <div className={css.gitSection}>
             <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
             {graph.rows.map((row, index) => (
-              <div
+              <HistoryRow
                 key={row.rowKey}
-                role="button"
-                tabIndex={0}
-                className={css.gitLogRow}
-                title={`${row.entry.author} · ${row.entry.date}\n${row.entry.hashFull}`}
-                onClick={() => { openCommitDiff(row.entry) }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    openCommitDiff(row.entry)
-                  }
-                }}
-                onContextMenu={(event) => { openHistoryMenu(event, row.entry) }}
-              >
-                <GitGraphSvg
-                  row={row}
-                  prev={index > 0 ? graph.rows[index - 1] : undefined}
-                  graphWidth={graph.graphWidth}
-                />
-                <div className={css.gitLogBody}>
-                  <span className={css.gitLogLine1}>
-                    <span className={css.gitLogHash}>{row.entry.hash}</span>
-                    <span className={css.gitLogSubject}>{row.entry.subject}</span>
-                  </span>
-                  <span className={css.gitLogLine2}>
-                    {refNames(row.entry.refs).map(ref => (
-                      <span key={ref} className={css.gitLogRef}>{ref}</span>
-                    ))}
-                    <span className={css.gitLogMeta}>{row.entry.author} · {relativeTime(row.entry.date)}</span>
-                  </span>
-                </div>
-              </div>
+                row={row}
+                prev={index > 0 ? graph.rows[index - 1] : undefined}
+                graphWidth={graph.graphWidth}
+                onOpen={(entry) => { openCommitDiff(entry) }}
+                onMenu={(event, entry) => { openHistoryMenu(event, entry) }}
+              />
             ))}
             {!logEnded && (
               <button

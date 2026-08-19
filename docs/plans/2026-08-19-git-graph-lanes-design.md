@@ -58,6 +58,7 @@ Git 面板的历史列表目前是纯文本行（hash + subject + refs + author/
 - **merge 规则修正**：初版把「携带本提交父哈希的 lane」也当汇入弧，导致父提交 lane 在其子提交行错误结束；按 topo 序语义改为仅菱形（同哈希）汇入（见 2.1 表）。
 - **fork 目标优先级**：初版允许复用「本行 merge 释放列」，会画成同列先汇入再分叉的 V 形；改为本行排除、下一行起可复用。
 - **host/API 半**为工作区既有 WIP（`graphLog` / `git.log-graph` / `gitLogGraph`），review 后随本 PR 一并提交（同一特性、互相依赖），并补上缺失的解析器测试。
+- **变高历史行（评审反馈）**：带 tag chips 的行（`gitLogLine2` 换行）比 40px 的 lane SVG 高，行内出现空白间距。修复：`GitGraphSvg` 增加 `height` prop，路径几何全部按实际行高参数化（`pathForkOut` 增加 `height` 参数、`mid = height / 2`）；`GitView` 的 `HistoryRow` 组件用 ResizeObserver 自测行高并传给 SVG，lane 线始终贯穿整行（相邻行高度不同也能平滑衔接）。
 
 ## 4. 参考实现
 

@@ -8,6 +8,11 @@
  * itself. Colors are `var(--gg-lane-N)` custom properties — defined in
  * sidebar.module.css, defaulting to DSH semantic tokens — so every skin
  * controls the palette without any hardcoded color in the markup.
+ *
+ * The row height is a prop (defaults to `ROW_H`): history rows grow when
+ * tag chips wrap, and the SVG must span the ACTUAL row height so the lane
+ * lines stay continuous and no blank gap appears below the graph. The
+ * caller measures the row (ResizeObserver) and passes the height here.
  */
 import type { ReactNode } from 'react'
 import { colX, laneColor, pathForkOut, pathMergeIn, pathV, ROW_H, type GitGraphRow } from './git-graph.ts'
@@ -24,9 +29,11 @@ export function GitGraphSvg(props: {
   prev?: GitGraphRow
   /** Total graph width in px (shared across rows of one page). */
   graphWidth: number
+  /** The row's ACTUAL height in px (defaults to the nominal ROW_H). */
+  height?: number
 }): ReactNode {
-  const { row, prev, graphWidth } = props
-  const mid = ROW_H / 2
+  const { row, prev, graphWidth, height = ROW_H } = props
+  const mid = height / 2
   const dotX = colX(row.dotCol)
   const mergeCols = new Set(row.merges.map(m => m.col))
   const forkCols = new Set(row.forks.map(f => f.col))
@@ -40,7 +47,7 @@ export function GitGraphSvg(props: {
     const isFork = forkCols.has(col)
     if (col === row.dotCol) {
       if (above) paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, mid)} color={color} />)
-      if (below) paths.push(<LanePath key={`v:${col}:b`} d={pathV(x, mid, ROW_H)} color={color} />)
+      if (below) paths.push(<LanePath key={`v:${col}:b`} d={pathV(x, mid, height)} color={color} />)
     } else if (isMerge) {
       // The merge path already covers the vertical descent + the corner into
       // the dot (identical to the prototype's pathMergeIn).
@@ -48,13 +55,13 @@ export function GitGraphSvg(props: {
     } else if (isFork) {
       // An existing lane the fork joins also had a vertical above the dot row.
       if (above) paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, mid)} color={color} />)
-      paths.push(<LanePath key={`f:${col}`} d={pathForkOut(dotX, x, mid)} color={color} />)
+      paths.push(<LanePath key={`f:${col}`} d={pathForkOut(dotX, x, mid, height)} color={color} />)
     } else if (above && below) {
-      paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, ROW_H)} color={color} />)
+      paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, height)} color={color} />)
     } else if (above) {
       paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, mid)} color={color} />)
     } else if (below) {
-      paths.push(<LanePath key={`v:${col}`} d={pathV(x, mid, ROW_H)} color={color} />)
+      paths.push(<LanePath key={`v:${col}`} d={pathV(x, mid, height)} color={color} />)
     }
   })
 
@@ -62,7 +69,7 @@ export function GitGraphSvg(props: {
     <svg
       className={css.gitLogGraph}
       width={graphWidth}
-      height={ROW_H}
+      height={height}
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden="true"
     >
