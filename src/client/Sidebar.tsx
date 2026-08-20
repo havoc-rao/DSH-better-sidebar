@@ -32,13 +32,13 @@ import { IconCloseFill14, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primi
 import type { Context, SidebarLayoutService, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, allLeaves, firstLeaf, isAgentTabId, isBoundTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, allLeaves, firstLeaf, isAgentTabId, isBoundTabId, isGlobalTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   patchTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setSideBarOpen, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized, treeOf,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
-import { IconPanelBottomOutline16, IconPanelRightOutline16, IconPinOutline16 } from './icons.tsx'
+import { IconGlobeOffOutline16, IconGlobeOutline16, IconPanelBottomOutline16, IconPanelRightOutline16, IconPinOffOutline16, IconPinOutline16 } from './icons.tsx'
 import { panelHotkeyHint } from './hotkeys.ts'
 import { createHostSidebarKeeper } from './host-sidebar.ts'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
@@ -74,6 +74,7 @@ const EMPTY_WS_SNAPSHOT: WorkspaceWindowsSnapshot = {
   workspaceId: undefined,
   workspaceTitle: undefined,
   windows: [],
+  global: [],
 }
 
 /**
@@ -164,8 +165,10 @@ function HeaderTabStrip(props: {
   isBoundTabId?: (tabId: string) => boolean
   resolveTab?: (tab: SidebarTab) => SidebarTab
   onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
+  /** Which tabs may be renamed inline (double-click their label). */
+  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
-  const { state, actions, onNewTab, newTabOptions, getTabIcon, getTabBadge, isBoundTabId, resolveTab, onTabContextMenu } = props
+  const { state, actions, onNewTab, newTabOptions, getTabIcon, getTabBadge, isBoundTabId, resolveTab, onTabContextMenu, canRenameTab } = props
   // The active pane of the RIGHT tree only (state.activePane may point into
   // the bottom panel's tree — the header must keep showing the editor tabs).
   const paneId = state.activePane !== null && treeOf(state, state.activePane) === 'splits'
@@ -180,6 +183,8 @@ function HeaderTabStrip(props: {
       active={leaf?.active ?? null}
       onActivate={(tabId) => { actions.activateTab(paneId, tabId) }}
       onClose={(tabId) => { actions.closeTab(paneId, tabId) }}
+      onRename={(tabId, title) => { actions.renameTab(paneId, tabId, title) }}
+      canRenameTab={canRenameTab}
       onNewTab={onNewTab}
       newTabOptions={newTabOptions}
       getTabIcon={getTabIcon}
@@ -258,6 +263,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     if (current === null) return
     if (id === 'bind') void windows?.bind(current.tab)
     else if (id === 'unbind') void windows?.unbind(current.tab.id, true)
+    else if (id === 'bindGlobal') void windows?.bindGlobal(current.tab)
+    else if (id === 'unbindGlobal') void windows?.unbindGlobal(current.tab.id, true)
   }, [tabMenu, windows])
 
   /**
@@ -270,9 +277,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
    */
   const resolveTab = useCallback((tab: SidebarTab): SidebarTab => {
     if (windows === undefined || !isBoundTabId(tab.id)) return tab
-    const live = wsSnapshot.windows.find(window => window.id === tab.id)
-    return live === undefined ? tab : { ...tab, ...live }
-  }, [windows, wsSnapshot.windows])
+    // A `gb:` stub resolves from the GLOBAL windows (which merge into every
+    // session); a `ws:` stub from the workspace windows. Global first so
+    // the two id spaces never cross-resolve.
+    const known = wsSnapshot.global.find(window => window.id === tab.id)
+      ?? wsSnapshot.windows.find(window => window.id === tab.id)
+    return known === undefined ? tab : { ...tab, ...known }
+  }, [windows, wsSnapshot.global, wsSnapshot.windows])
 
   const state = snapshot.state
   const sessionId = snapshot.sessionId
@@ -851,7 +862,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           ? undefined
           : leafWithTab(current.splits, tabId) ?? leafWithTab(current.bottomSplits, tabId)
         const tab = leaf?.tabs.find(candidate => candidate.id === tabId)
-        void windows.unbind(tabId, false)
+        // A GLOBAL stub closes every session of the instance; a workspace
+        // stub closes every session of its workspace. Either way: close
+        // everywhere (not kept in this session — the ✕ is a full close).
+        if (isGlobalTabId(tabId)) void windows.unbindGlobal(tabId, false)
+        else void windows.unbind(tabId, false)
         if (tab?.type === 'terminal' && sessionId !== undefined) {
           void api.ptyClose({ sessionId, cwd }, tabId).catch(() => { /* the host may already have released it */ })
         }
@@ -1158,6 +1173,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               isBoundTabId={isBoundTabId}
               resolveTab={resolveTab}
               onTabContextMenu={openTabMenu}
+              canRenameTab={canRenameTab}
             />
           </div>
         )}
@@ -1452,28 +1468,39 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       </div>
       )}
       {/*
-        The tab right-click menu (workspace bind/unbind), positioned at the
-        cursor like the file tree's row menu (portal so nothing crops it).
-        Bound stubs offer "unbind" (the window stays HERE as a local tab and
-        leaves the other sessions); bindable content tabs offer "bind to
-        workspace", disabled with a hint when the session belongs to no
-        workspace.
+        The tab right-click menu, positioned at the cursor like the file
+        tree's row menu (portal so nothing crops it). It is a small
+        multi-tier workspace/GLOBAL-share menu, each action with its own
+        glyph:
+        - a GLOBAL stub (`gb:`) offers "取消全局共享" (globe-off);
+        - a workspace stub (`ws:`) offers "从工作区解绑" (pin-off);
+        - a local content tab offers "绑定到工作区" (pin-in; disabled with a
+          hint when the session belongs to no workspace), plus — for UI
+          terminals only — "全局共享" (globe) to share one shell across
+          ALL projects/sessions.
       */}
       <Menu
         open={tabMenu !== null}
         onClose={closeTabMenu}
-        items={tabMenu === null ? [] : isBoundTabId(tabMenu.tab.id)
-          ? [{ id: 'unbind', label: t('unbindFromWorkspace'), icon: <IconPinOutline16 size={14} /> }]
-          : [{
-            id: 'bind',
-            label: wsSnapshot.workspaceId === undefined
-              ? t('bindToWorkspaceNoWorkspace')
-              : wsSnapshot.workspaceTitle !== undefined
-                ? t('bindToWorkspaceWithName', { title: wsSnapshot.workspaceTitle })
-                : t('bindToWorkspace'),
-            icon: <IconPinOutline16 size={14} />,
-            disabled: wsSnapshot.workspaceId === undefined,
-          }]}
+        items={tabMenu === null ? [] : isGlobalTabId(tabMenu.tab.id)
+          ? [{ id: 'unbindGlobal', label: t('unbindGlobal'), icon: <IconGlobeOffOutline16 size={14} /> }]
+          : isBoundTabId(tabMenu.tab.id)
+            ? [{ id: 'unbind', label: t('unbindFromWorkspace'), icon: <IconPinOffOutline16 size={14} /> }]
+            : [
+              {
+                id: 'bind',
+                label: wsSnapshot.workspaceId === undefined
+                  ? t('bindToWorkspaceNoWorkspace')
+                  : wsSnapshot.workspaceTitle !== undefined
+                    ? t('bindToWorkspaceWithName', { title: wsSnapshot.workspaceTitle })
+                    : t('bindToWorkspace'),
+                icon: <IconPinOutline16 size={14} />,
+                disabled: wsSnapshot.workspaceId === undefined,
+              },
+              ...(tabMenu.tab.type === 'terminal'
+                ? [{ id: 'bindGlobal', label: t('bindGlobal'), icon: <IconGlobeOutline16 size={14} /> }]
+                : []),
+            ]}
         onSelect={selectTabMenu}
         portal
         align="start"

@@ -41,6 +41,26 @@ export const IconPinOutline16 = ({ size = 16, className }: IconProps) => (
 )
 
 /**
+ * Unpin / "remove from workspace" glyph for the tab right-click menu's
+ * unbind item: the pushpin with a diagonal slash — a single glyph that
+ * reads as "this window is no longer shared". Drawn in the app's outline
+ * style (1.5px stroke, currentColor), mirroring IconPinOutline16 so the
+ * two actions in the workspace menu stay visually paired.
+ */
+export const IconPinOffOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      d="M9.9 2.2 13.8 6.1a.6.6 0 0 1-.5 1l-1.3.2-2.5 2.6.4 2.5a.6.6 0 0 1-1 .5L6.2 10.3 2.9 13.6a.6.6 0 0 1-.9-.9l3.3-3.3L2.9 7a.6.6 0 0 1 .5-1l2.5.4 2.6-2.5.2-1.3a.6.6 0 0 1 1.2-.4Z"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinejoin="round"
+    />
+    <path d="m8.9 3.2 3.9 3.9M2.3 13.7l11.4-11.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+)
+
+/**
  * Right-panel toggle glyph (the "侧拉" button): a frame with a filled strip
  * along its RIGHT edge, in the app's outline style (1.5px stroke,
  * currentColor).
@@ -139,5 +159,20 @@ export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
     <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
     <ellipse cx="8" cy="8" rx="2.8" ry="6.5" stroke="currentColor" strokeWidth="1.5" />
     <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+)
+
+/**
+ * "Global-share off" glyph for the tab right-click menu's unbind-global
+ * item: the globe with a diagonal slash — reads as "this terminal is no
+ * longer shared across all projects". Paired with IconGlobeOutline16 the
+ * same way IconPinOffOutline16 pairs with IconPinOutline16.
+ */
+export const IconGlobeOffOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
+    <ellipse cx="8" cy="8" rx="2.8" ry="6.5" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M2.3 13.7l11.4-11.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
   </svg>
 )

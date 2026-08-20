@@ -1,0 +1,16 @@
+{
+  "name": "@trace/gitgraph-lines",
+  "version": "0.1.0",
+  "description": "Git Graph 风格 node line 渲染器：把嵌套调用链摊平为 git graph 行序列，并为每行生成 lane SVG（竖线/汇入弧/分叉弧/圆点形态）。从 scripts/request-trace/render/renderHtml.ts 独立封装，纯字符串输出、无 DOM 依赖。",
+  "main": "src/index.ts",
+  "scripts": {
+    "demo": "npx ts-node demo/case1.ts"
+  },
+  "keywords": [
+    "git-graph",
+    "trace",
+    "renderer",
+    "svg"
+  ],
+  "license": "ISC"
+}

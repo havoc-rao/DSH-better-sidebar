@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Git Graph 视图 · 目标样例 · dsh-better-sidebar</title>
+<style>
+  /* ── Token-driven palette (mirrors --dsw-alias-* / --ds-* the real panel uses).
+   *     Lane hues are LOCAL custom props (--bsg-lane-N) seeded from semantic
+   *     tokens so a skin can override just the lane ring without touching the
+   *     surface. In production these live in sidebar.module.css; here they're
+   *     inlined so the mockup is self-contained. ─────────────────────────── */
+  :root {
+    --dsw-alias-bg-layer-1: #1b1d23;
+    --dsw-alias-bg-layer-2: #23262e;
+    --dsw-alias-bg-base: #16181d;
+    --dsw-alias-border-l1: #2c3038;
+    --dsw-alias-border-l2: #3a3f49;
+    --dsw-alias-label-primary: #e6e8ee;
+    --dsw-alias-label-secondary: #aeb3bd;
+    --dsw-alias-label-tertiary: #737a86;
+    --dsw-alias-brand-primary: #4a9eff;
+    --dsw-alias-interactive-bg-hover: rgba(255,255,255,0.05);
+    --dsw-alias-interactive-bg-active: rgba(255,255,255,0.10);
+    --dsw-font-s-14: 500 13.5px/1.4 system-ui, sans-serif;
+    --dsw-font-xxs-12: 400 12px/1.4 system-ui, sans-serif;
+    --dsw-font-xxxs-11: 400 11px/1.4 system-ui, sans-serif;
+    --dsw-font-xxxs-strong-11: 600 11px/1.4 system-ui, sans-serif;
+    --dsw-font-markdown-code-block-small: 400 11.5px/1 ui-monospace, monospace;
+
+    /* Lane ring hues (graph-only, not surface tokens). A skin overrides these
+     * to re-tint the graph without touching panel fills. Softened hues with
+     * lower saturation — the graph should feel integrated, not striped. */
+    --bsg-lane-0: #5fa8ff; /* brand blue  — main / current branch (softened) */
+    --bsg-lane-1: #f5a55a; /* amber       — feature branch (softened) */
+    --bsg-lane-2: #7bc950; /* green       — (cycle slot) */
+    --bsg-lane-3: #e4687a; /* red/pink    — (cycle slot) */
+    --bsg-lane-4: #b685e6; /* purple      — (cycle slot, used for HEAD/root accents) */
+    --bsg-lane-5: #38c0d4; /* cyan        — (cycle slot) */
+    --bsg-node-stroke: var(--dsw-alias-bg-layer-1); /* ring gap against surface */
+    --bsg-edge-opacity: 0.85;
+    --bsg-row-h: 28px;        /* compact row height — matches reference */
+    --bsg-lane-x0: 20px;       /* x position of lane 0 */
+    --bsg-lane-x1: 38px;       /* x position of lane 1 */
+    --bsg-gutter: 50px;        /* left gutter that holds the canvas */
+  }
+
+  html, body { margin: 0; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }
+  body { font: var(--dsw-font-s-14); padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+
+  .stage-caption { width: 380px; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxs-12); }
+  .stage-caption b { color: var(--dsw-alias-label-secondary); }
+
+  /* The panel: same surface token the real Git panel uses (§8.1 skin rule). */
+  .panel {
+    width: 380px;
+    background: var(--dsw-alias-bg-layer-1);
+    border: 1px solid var(--dsw-alias-border-l1);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+  }
+
+  /* ── Header: branch select + refresh + the NEW view toggle ──────────────── */
+  .gitHeader {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    height: 36px; padding: 0 8px 0 12px;
+    border-bottom: 1px solid var(--dsw-alias-border-l1);
+  }
+  .gitBranchSelect {
+    flex: 1; min-width: 0; height: 26px; padding: 0 6px;
+    border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px;
+    background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+    font: var(--dsw-font-xxs-12);
+  }
+  .iconButton {
+    flex: none; width: 26px; height: 26px; display: inline-flex; align-items: center;
+    justify-content: center; border: 1px solid transparent; border-radius: 6px;
+    background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
+  }
+  .iconButton:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+  .iconButton.active { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-border-l2); }
+
+  /* ── History section: graph + rows in a scrollable column ───────────────── */
+  .gitSection { border-top: 1px solid var(--dsw-alias-border-l1); }
+  .gitSection:first-of-type { border-top: none; }
+  .gitSectionHeader {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 12px 4px; font: var(--dsw-font-xxxs-strong-11);
+    color: var(--dsw-alias-label-tertiary); text-transform: uppercase;
+  }
+
+  .graphScroll { max-height: 520px; overflow-y: auto; overflow-x: hidden; }
+
+  /* Compact row — 28px tall, content centered vertically */
+  .graphRow {
+    position: relative; display: flex; align-items: center; gap: 8px;
+    height: var(--bsg-row-h); padding: 0 12px 0 0; cursor: pointer;
+  }
+  .graphRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+  .graphRow.selected { background: var(--dsw-alias-interactive-bg-active); }
+
+  /* SVG lane canvas: absolutely-positioned, lives in the left gutter.
+   * Row's vertical center aligns with node cy via grid alignment. */
+  .graphCanvas {
+    position: absolute; left: 0; top: 0; pointer-events: none;
+  }
+
+  /* Refs slot (left of subject, right of gutter). Compact pill layout. */
+  .graphRefs { display: flex; align-items: center; gap: 4px; flex: none; flex-wrap: nowrap; overflow: hidden; }
+  .graphRefs:empty { display: none; }
+
+  .graphSubject {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font: 400 13px/1.4 system-ui, sans-serif; color: var(--dsw-alias-label-primary);
+  }
+
+  /* ── Ref pills (Git Graph semantics) ─────────────────────────────────────
+   * local branch  → small filled circle in lane hue (icon-only, no text)
+   * remote branch → outlined circle in lane hue
+   * HEAD/root     → small accent ring (purple/lane-4) — purple = "here you are"
+   * tag           → rectangular (non-pill) green/grey chip with label
+   * Subject rows in the reference image carry NO inline branch pills; the
+   * graph itself carries the lane hue. We keep tag chips because they carry
+   * data the graph can't show. ──────────────────────────────────────────── */
+  .ref-tag {
+    flex: none; display: inline-flex; align-items: center; gap: 4px;
+    padding: 0 6px; height: 18px; border-radius: 3px; white-space: nowrap;
+    background: rgba(123,201,80,0.16); border: 1px solid rgba(123,201,80,0.5);
+    color: #7bc950; font: var(--dsw-font-xxxs-strong-11);
+  }
+
+  /* ── Load more button ───────────────────────────────────────────────────── */
+  .gitLogMore {
+    display: block; width: calc(100% - 24px); margin: 6px 12px 10px;
+    padding: 6px 0; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px;
+    background: transparent; font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-secondary);
+    cursor: pointer;
+  }
+  .gitLogMore:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+
+  /* ── Annotations (design notes, not part of the real panel) ─────────────── */
+  .notes {
+    width: 380px; background: var(--dsw-alias-bg-layer-2);
+    border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px;
+    padding: 12px 14px; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxs-12);
+  }
+  .notes h3 { margin: 0 0 6px; font: var(--dsw-font-xxxs-strong-11); color: var(--dsw-alias-label-tertiary); text-transform: uppercase; }
+  .notes ul { margin: 6px 0 0; padding-left: 18px; }
+  .notes li { margin: 3px 0; }
+  .notes code { color: var(--dsw-alias-brand-primary); font-family: ui-monospace, monospace; font-size: 11px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
+
+  .legendRow { display: flex; align-items: center; gap: 10px; margin: 4px 0; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<div class="stage-caption">
+  <b>目标样例 · Git Graph 视图</b><br>
+  侧边栏「源代码管理」面板，历史区新增 <b>列表 / 图表</b> 切换。下方为图表态。
+</div>
+
+<!-- ════════════════════ THE PANEL ════════════════════ -->
+<div class="panel">
+
+  <!-- Header: branch select · refresh · LIST/GRAPH toggle (GRAPH active) -->
+  <div class="gitHeader">
+    <select class="gitBranchSelect" aria-label="branch">
+      <option>main</option>
+      <option>feat/keybindings</option>
+      <option>release/v0.10.3</option>
+    </select>
+    <button class="iconButton" title="列表视图" aria-label="列表视图">
+      <!-- list icon -->
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="M5 4h9M5 8h9M5 12h9" stroke-linecap="round"/>
+        <circle cx="2.5" cy="4" r="0.9" fill="currentColor" stroke="none"/>
+        <circle cx="2.5" cy="8" r="0.9" fill="currentColor" stroke="none"/>
+        <circle cx="2.5" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+      </svg>
+    </button>
+    <button class="iconButton active" title="图表视图" aria-label="图表视图">
+      <!-- graph icon -->
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+        <circle cx="4" cy="3" r="1.5" fill="currentColor" stroke="none"/>
+        <circle cx="4" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+        <circle cx="4" cy="13" r="1.5" fill="currentColor" stroke="none"/>
+        <circle cx="11" cy="6" r="1.5" fill="currentColor" stroke="none"/>
+        <path d="M4 4.5v7M4 8c0-2 7-2 7-4.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <button class="iconButton" title="刷新" aria-label="刷新">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="M13 3v3.5h-3.5M13 6.5A5 5 0 1 0 13 11" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- History section in GRAPH mode -->
+  <div class="gitSection">
+    <div class="gitSectionHeader"><span>历史</span></div>
+    <div class="graphScroll">
+
+      <!-- The shared SVG lane canvas. 13 rows × 28px = 364px tall.
+           Lane 0 @ x=20, Lane 1 @ x=38. Edges drawn first (behind nodes). -->
+      <svg class="graphCanvas" width="50" height="364" viewBox="0 0 50 364" aria-hidden="true">
+        <defs>
+          <!-- subtle drop for nodes -->
+        </defs>
+        <!-- ── EDGES (child→parent, newest at top, cy=row_y + row_h/2) ──
+             Row cy = 14 + n * 28. So:
+               c1 cy=14, c2 cy=42, c3 cy=70, c4 cy=98, c5 cy=126, c6 cy=154
+               f2 cy=182, f1 cy=210, c7 cy=238, c8 cy=266, c9 cy=294
+               c10 cy=322, c11 cy=350
+             Edge connectors anchor midway between adjacent row centers
+             (e.g. c1→c2: 14→42, midpoint 28), giving a smooth spine. -->
+        <g fill="none" stroke-width="1.7" stroke-linecap="round" opacity="var(--bsg-edge-opacity)">
+          <!-- lane-0 spine, main (NEW passes through lane-1 rows) -->
+          <path d="M20 14 V42"   stroke="var(--bsg-lane-0)"/> <!-- c1→c2 (merge, ring) -->
+          <path d="M20 42 V70"   stroke="var(--bsg-lane-0)"/> <!-- c2→c3 -->
+          <path d="M20 70 V98"   stroke="var(--bsg-lane-0)"/> <!-- c3→c4 -->
+          <path d="M20 98 V126"  stroke="var(--bsg-lane-0)"/> <!-- c4→c5 (tag) -->
+          <path d="M20 126 V154" stroke="var(--bsg-lane-0)"/> <!-- c5→c6 -->
+          <!-- c6→c7 traverses lane-1 rows (f2/f1) at cy=182,210 — draw straight under them -->
+          <path d="M20 154 V238" stroke="var(--bsg-lane-0)"/>
+          <path d="M20 238 V266" stroke="var(--bsg-lane-0)"/> <!-- c7→c8 -->
+          <path d="M20 266 V294" stroke="var(--bsg-lane-0)"/> <!-- c8→c9 -->
+          <path d="M20 294 V322" stroke="var(--bsg-lane-0)"/> <!-- c9→c10 -->
+          <path d="M20 322 V350" stroke="var(--bsg-lane-0)"/> <!-- c10→c11 -->
+
+          <!-- lane-1 spine, feature (NEW f2→f1) -->
+          <path d="M38 182 V210" stroke="var(--bsg-lane-1)"/>
+
+          <!-- c2(20,42) — 2nd parent is on lane-1 at f2 (38,182).
+               Bezier curves from lane-0 (c2) out to lane-1 (f2), passing
+               through lane-1's range without crossing the lane-1 spine. -->
+          <path d="M20 42 C20 112 38 112 38 182" stroke="var(--bsg-lane-1)"/>
+          <!-- f1(38,210) merges back into lane-0 at c7(20,238) -->
+          <path d="M38 210 C38 224 20 224 20 238" stroke="var(--bsg-lane-1)"/>
+        </g>
+
+        <!-- ── NODES (radius tuned to row height 28: main=4, merge ring=5.5) ── -->
+        <g stroke="var(--bsg-node-stroke)" stroke-width="1.5">
+          <!-- c1 HEAD/root — purple accent ring (lane-4) marks the user's "here" -->
+          <circle cx="20" cy="14"  r="4.5" fill="var(--bsg-lane-4)"/>
+
+          <!-- c2 MERGE (ringed) — lane-0 hue, hollow center -->
+          <circle cx="20" cy="42"  r="5.5" fill="var(--bsg-lane-0)"/>
+          <circle cx="20" cy="42"  r="2.4" fill="var(--bsw-alias-bg-layer-1, var(--bsg-node-stroke))" stroke="none"/>
+          <circle cx="20" cy="42"  r="2.4" fill="var(--bsg-node-stroke)" stroke="none"/>
+
+          <!-- c3 -->
+          <circle cx="20" cy="70"  r="4.5" fill="var(--bsg-lane-0)"/>
+          <!-- c4 -->
+          <circle cx="20" cy="98"  r="4.5" fill="var(--bsg-lane-0)"/>
+          <!-- c5 (tag here) -->
+          <circle cx="20" cy="126" r="4.5" fill="var(--bsg-lane-0)"/>
+          <!-- c6 -->
+          <circle cx="20" cy="154" r="4.5" fill="var(--bsg-lane-0)"/>
+          <!-- f2 feature tip (lane-1 hue) -->
+          <circle cx="38" cy="182" r="4.5" fill="var(--bsg-lane-1)"/>
+          <!-- f1 -->
+          <circle cx="38" cy="210" r="4.5" fill="var(--bsg-lane-1)"/>
+          <!-- c7 fork point — merge-style ring (it's a 2-parent merge from feature→main) -->
+          <circle cx="20" cy="238" r="5.5" fill="var(--bsg-lane-0)"/>
+          <circle cx="20" cy="238" r="2.4" fill="var(--bsg-node-stroke)" stroke="none"/>
+          <!-- c8 -->
+          <circle cx="20" cy="266" r="4.5" fill="var(--bsg-lane-0)"/>
+          <!-- c9 -->
+          <circle cx="20" cy="294" r="4.5" fill="var(--bsg-lane-0)"/>
+          <!-- c10 MERGE -->
+          <circle cx="20" cy="322" r="5.5" fill="var(--bsg-lane-0)"/>
+          <circle cx="20" cy="322" r="2.4" fill="var(--bsg-node-stroke)" stroke="none"/>
+          <!-- c11 root -->
+          <circle cx="20" cy="350" r="4.5" fill="var(--bsg-lane-0)"/>
+        </g>
+      </svg>
+
+      <!-- ── ROWS (each aligns to its node row) ──
+           No left-side hash. Subject scrolls directly off the gutter; refs (tag chips) sit inline.
+           Aligned with reference image: tight, single-line, lane-hue is told by the graph alone. -->
+      <div class="graphRow selected">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">docs: README 标题下新增特性速览</div>
+      </div>
+
+      <div class="graphRow">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">docs: README 标题下新增块</div>
+      </div>
+
+      <div class="graphRow">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">Merge pull request #88 from ds/main</div>
+      </div>
+
+      <div class="graphRow">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">feat: 位置兼容模式支持自动折叠</div>
+      </div>
+
+      <div class="graphRow">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">chore: 版本号升至 v0.12.0</div>
+      </div>
+
+      <div class="graphRow">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">feat: 侧边栏新增位置兼容</div>
+      </div>
+
+      <div class="graphRow selected">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">Merge pull request #76 from ds/feat-pos</div>
+      </div>
+
+      <div class="graphRow" style="background: rgba(255, 90, 130, 0.08);">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">fix: resolve the accounting state mismatch</div>
+      </div>
+
+      <div class="graphRow">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">docs: 仓库硬约束新增章节</div>
+      </div>
+
+      <div class="graphRow">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">Revert "feat: 侧边栏新增位置兼容"</div>
+      </div>
+
+      <div class="graphRow">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">feat: 侧边栏新增位置兼容</div>
+      </div>
+
+      <div class="graphRow">
+        <div class="graphRefs"></div>
+        <div class="graphSubject" style="margin-left: var(--bsg-gutter);">Merge pull request #72 from ds/feat</div>
+      </div>
+
+      <button class="gitLogMore" type="button">加载更多</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════════════════ DESIGN NOTES ════════════════════ -->
+<div class="notes">
+  <h3>设计要点 / 与实现对齐</h3>
+  <ul>
+    <li><b>数据</b>：复用现有 <code>git log</code>，图表态额外请求 <code>git.log-graph</code>（带 <code>%P</code> 父提交哈希、<code>--topo-order</code>），客户端按父指针跑泳道布局。</li>
+    <li><b>泳道布局</b>：纯函数 <code>layoutGraph(entries)</code> —— 子在前父在后遍历，当前提交复用其首个父的泳道，新增父占最低空泳道；合并提交（2+ 父）在其节点行把第二父的泳道并回主干。</li>
+    <li><b>渲染</b>：一张 SVG 画布覆盖在提交行左侧，边先于节点绘制；不同泳道 <code>stroke</code> 取 <code>var(--bsg-lane-N)</code>；节点为圆点，合并提交为空心环。行高 <b>28px</b>、泳道间距 <b>18px</b>、首泳道 x≈<b>20</b>——密度对齐参考图，行更紧凑。</li>
+    <li><b>颜色（令牌驱动）</b>：泳道色相走局部自定义属性 <code>--bsg-lane-0..5</code>，6 色循环；皮肤覆写这些即可换色调，不碰面板表面令牌。色相略降饱和（与参考图色调一致：偏柔），蓝色为 <code>#5fa8ff</code>、琥珀为 <code>#f5a55a</code>、紫色 <code>#b685e6</code> 用于 HEAD/root 节点装饰。节点描边用 <code>--dsw-alias-bg-layer-1</code> 形成「环切」。</li>
+    <li><b>Ref 装饰精简</b>：本图把分支胶囊移除——泳道本身即表达所在分支，颜色靠节点+连线；HEAD 改为 <b>紫色 ring 节点</b>。tag 仍保留绿色方角 chip（数据无可替代）。</li>
+    <li><b>高亮衰减</b>：当前选中行用 <code>interactive-bg-active</code>；涉及到严重告警的提交（如 fix 关键故障）允许补充半透明红色背景，参考图中红框行示意。</li>
+    <li><b>交互</b>：行点击/右键菜单与现有列表态完全一致（查看差异、复制哈希、revert、cherry-pick）——只是左侧多了泳道画布。<b>列表 / 图表</b> 切换持久化在 <code>SidebarPrefs</code>（新增 <code>gitHistoryView: 'list' | 'graph'</code>，缺省 list）。</li>
+    <li><b>懒加载</b>：沿用 <code>LOG_BATCH</code> 分页；图表态 <code>loadMore</code> 请求 <code>git.log-graph</code> 并把新页并入 SVG（边随节点一起增量绘制）。</li>
+  </ul>
+
+  <h3 style="margin-top:14px">泳道色板（6 色循环，可被皮肤覆写）</h3>
+  <div class="legendRow">
+    <span><span class="swatch" style="background:var(--bsg-lane-0)"></span>lane 0 · main</span>
+    <span><span class="swatch" style="background:var(--bsg-lane-1)"></span>lane 1 · feature</span>
+    <span><span class="swatch" style="background:var(--bsg-lane-2)"></span>lane 2</span>
+    <span><span class="swatch" style="background:var(--bsg-lane-3)"></span>lane 3</span>
+    <span><span class="swatch" style="background:var(--bsg-lane-4)"></span>lane 4 · HEAD/root</span>
+    <span><span class="swatch" style="background:var(--bsg-lane-5)"></span>lane 5</span>
+  </div>
+
+  <h3 style="margin-top:14px">节点图例</h3>
+  <div class="legendRow">
+    <svg width="36" height="20" viewBox="0 0 36 20" style="flex:none">
+      <circle cx="18" cy="10" r="4.5" fill="var(--bsg-lane-0)" stroke="var(--bsg-node-stroke)" stroke-width="1.5"/>
+    </svg>
+    <span>普通提交</span>
+    <svg width="36" height="20" viewBox="0 0 36 20" style="flex:none">
+      <circle cx="18" cy="10" r="5.5" fill="var(--bsg-lane-0)" stroke="var(--bsg-node-stroke)" stroke-width="1.5"/>
+      <circle cx="18" cy="10" r="2.4" fill="var(--bsg-node-stroke)"/>
+    </svg>
+    <span>合并提交（空心环）</span>
+    <svg width="36" height="20" viewBox="0 0 36 20" style="flex:none">
+      <circle cx="18" cy="10" r="4.5" fill="var(--bsg-lane-4)" stroke="var(--bsg-node-stroke)" stroke-width="1.5"/>
+    </svg>
+    <span>HEAD/root（紫色）</span>
+  </div>
+
+  <h3 style="margin-top:14px">行示例</h3>
+  <div class="legendRow" style="display:block">
+    <p style="margin:4px 0; font:var(--dsw-font-xxs-12); color:var(--dsw-alias-label-tertiary)">
+      每行：左 50px 留白让给泳道画布，节点垂直居中于行（cy = 行索引×28 + 14）。文字仅保留 <b>commit 标题</b>，省略 hash / refs / meta —— 让阅读密度贴近 GitLens / Sublime Merge。
+    </p>
+  </div>
+</div>
+
+</body>
+</html>

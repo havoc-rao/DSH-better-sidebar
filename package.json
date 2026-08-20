@@ -78,6 +78,7 @@
     "watch": "tsdown --watch",
     "prepare": "tsdown",
     "test": "vitest run",
+    "test:local": "DSH_SKIP_ENV_TESTS=1 vitest run",
     "test:mount": "bash scripts/e2e-mount.sh",
     "check:consumer-types": "bash scripts/check-consumer-types.sh"
   },

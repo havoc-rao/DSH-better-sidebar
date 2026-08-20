@@ -26,13 +26,18 @@ import { SidebarError } from './wire.ts'
 const TRANSCRIPT_LIMIT = 1 << 20
 
 /**
- * Reserved tab-id prefix of workspace-bound window stubs (mirror of the
- * client's `WS_TAB_PREFIX` in state.ts — the host must know the contract to
- * key the pty without the session). A `ws:` tab opens a workspace-SHARED
- * pty: every session's stub attaches to the same process.
+ * Reserved tab-id prefixes of shared window stubs (mirror of the client's
+ * `WS_TAB_PREFIX` / `GB_TAB_PREFIX` in state.ts — the host must know the
+ * contract to key the pty without the session):
+ * - `ws:` opens a workspace-SHARED pty: every session of the workspace's
+ *   stub attaches to the same process.
+ * - `gb:` opens a GLOBAL-SHARED pty: every session of the whole instance
+ *   (across all workspaces / ungrouped sessions) attaches to the same
+ *   process — "one terminal, all projects".
+ * Both are keyed without the session and never count toward a session quota.
  */
 export function isSharedTabId(tabId: string): boolean {
-  return tabId.startsWith('ws:')
+  return tabId.startsWith('ws:') || tabId.startsWith('gb:')
 }
 
 /** The registry key for one tab id: shared stubs key WITHOUT the session. */

@@ -12,6 +12,16 @@
  */
 import { defineConfig } from 'vitest/config'
 
+// Opt-in local-environment exemption. These spec files exercise things the
+// local sandbox / OS-locale cannot provide — spawning a real PTY
+// (agent-pty, smoke), MutationObserver flush timing in jsdom
+// (host-sidebar-keeper), and English-copy assertions under a zh_CN locale
+// (side-card-section). They pass on CI (which runs the FULL suite) but fail
+// deterministically on a zh_CN + no-PTY machine. Set DSH_SKIP_ENV_TESTS=1
+// (or use `pnpm test:local`) to exclude them for a green local run.
+// Default (absent): nothing is skipped — CI keeps running everything.
+const skipEnvTests = process.env.DSH_SKIP_ENV_TESTS === '1'
+
 export default defineConfig({
   test: {
     server: {
@@ -31,6 +41,14 @@ export default defineConfig({
       '**/cypress/**',
       '**/.{idea,git,cache,output,temp}/**',
       '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*',
+      // Only these 4 environment-limited files are dropped under the flag;
+      // every other spec keeps running, so regressions elsewhere still gate.
+      ...(skipEnvTests ? [
+        'tests/agent-pty.spec.ts',          // node-pty can't allocate a PTY here
+        'tests/smoke.spec.ts',              // 同上 (pty-manager spawns)
+        'tests/host-sidebar-keeper.spec.tsx', // jsdom MutationObserver timing
+        'tests/side-card-section.spec.tsx',   // asserts EN copy; local is zh_CN
+      ] : []),
     ],
   },
 })

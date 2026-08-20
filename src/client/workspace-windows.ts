@@ -1,38 +1,44 @@
 /**
  * The workspace windows store: workspace-bound windows ("pinned" tabs
- * shared by every session of a workspace). One blob per workspace,
- * persisted in localStorage — the single source of truth for the bound
- * window definitions (type/title/path/diff/meta). Sessions never persist
- * bound windows: they hold only `ws:`-prefixed STUBS in their first leaf
- * (see state.ts `reconcileWorkspaceWindows` / `stripWorkspaceWindows`), and
- * the render layer resolves stub ids against this store's live definitions
- * — so a bind/unbind/update in one session re-renders in every session of
- * the workspace for free (no per-session copies, no back-propagation).
+ * shared by every session of a workspace) PLUS instance-level GLOBAL
+ * windows ("all projects" tabs shared by every session, workspace or not).
+ * One blob per workspace, plus one instance-level blob, persisted in
+ * localStorage — the single source of truth for the bound window
+ * definitions (type/title/path/diff/meta). Sessions never persist bound
+ * windows: they hold only `ws:`-prefixed (workspace) or `gb:`-prefixed
+ * (global) STUBS in their first leaf (see state.ts
+ * `reconcileWorkspaceWindows` / `stripWorkspaceWindows`), and the render
+ * layer resolves stub ids against this store's live definitions — so a
+ * bind/unbind/update in one session re-renders every session of the
+ * covering scope (a workspace for `ws:` stubs, the whole instance for
+ * `gb:` stubs) for free (no per-session copies, no back-propagation).
  *
  * The store resolves session → workspace through the client runtime's
  * workspaces list feed (`ctx.workspaces.list`, mirror of
  * `WorkspaceRuntime.list`): a session belongs to the workspace whose
- * `sessionIds` contains it; sessions outside any workspace have no bound
- * windows (the bind menu is disabled for them).
+ * `sessionIds` contains it; sessions outside any workspace have no
+ * workspace-bound windows (the bind menu is disabled for them) but still
+ * see the GLOBAL windows — that is the "all projects" semantic.
  *
- * Scope: ANY tab can be bound except agent-owned terminals (`agent:` ids —
- * the model creates/closes them, and the reconcile would fight the pin).
- * Content windows (editor file tabs / browser / diff) share their full
- * definition (path / diff) — the same content everywhere. Session-scoped
- * views (terminal / git / subagent / the path-less Files home) share the
- * WINDOW only: a bound TERMINAL is one workspace-shared PTY (host keys
- * `ws:` stubs by `shared:<tabId>`, so every session attaches to the same
- * process; bind/unbind re-parent the live handle instead of respawning),
- * git/subagent render per session from their own scope. Live editor
- * buffers (cursor/scroll/unsaved drafts) are NOT synced — only the window
- * definitions. Bound windows render in the first leaf of the panel they
- * were bound from — a pin from the right panel stays in the right panel's
- * first leaf, a pin from the bottom box stays in the bottom box's.
+ * Scope: ANY tab can be workspace-bound except agent-owned terminals
+ * (`agent:` ids — the model creates/closes them, and the reconcile would
+ * fight the pin). GLOBAL binding is TERMINAL-only (a shared shell across
+ * every project); content windows (editor file tabs / browser / diff)
+ * share their full definition (path / diff) — the same content everywhere.
+ * Session-scoped views (terminal / git / subagent / the path-less Files
+ * home) share the WINDOW only: a bound terminal is ONE shared PTY (host
+ * keys `ws:`/`gb:` stubs by `shared:<tabId>`, so every session attaches to
+ * the same process; bind/unbind re-parent the live handle instead of
+ * respawning), git/subagent render per session from their own scope. Live
+ * editor buffers (cursor/scroll/unsaved drafts) are NOT synced — only the
+ * window definitions. Bound windows render in the first leaf of the panel
+ * they were bound from — a pin from the right panel stays in the right
+ * panel's first leaf, a pin from the bottom box stays in the bottom box's.
  */
 import type { Context, SidebarWorkspaceListState, SidebarWorkspaceView } from '../context-types.ts'
 import { api } from './api.ts'
 import {
-  WS_TAB_PREFIX, activateTab, firstLeaf, isAgentTabId, isBoundTabId, leafWithTab, mapLeaf, mintTabId,
+  GB_TAB_PREFIX, WS_TAB_PREFIX, activateTab, firstLeaf, isAgentTabId, isBoundTabId, isGlobalTabId, leafWithTab, mapLeaf, mintTabId,
   type SidebarDiffRef, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceArea,
   type WorkspaceWindow, type WorkspaceWindowsSource,
 } from './state.ts'
@@ -58,6 +64,10 @@ export interface WorkspaceWindowsSnapshot {
   workspaceTitle: string | undefined
   /** The workspace's bound windows ([] without a workspace). */
   windows: readonly WorkspaceWindow[]
+  /** The instance-level GLOBAL windows (the "all projects" shared stubs,
+   *  merged into EVERY session; [] when none). Kept so stub resolution
+   *  (`resolveTab`) can find a `gb:` stub's live definition. */
+  global: readonly WorkspaceWindow[]
 }
 
 /** The client runtime's workspaces list feed (structural subset; the full
@@ -69,6 +79,12 @@ type WorkspaceListFeed = {
 
 export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
   private readonly blobs = new Map<string, WorkspaceWindowsBlob>()
+  /** The instance-level GLOBAL windows blob (the "all projects" shared
+   *  windows, merged into EVERY session regardless of workspace). Kept on
+   *  the same store so one source feeds both the workspace and the global
+   *  stubs through the shared reconcile/persist/render machinery. Loaded
+   *  from its own storage key on first access. */
+  private globalBlob: WorkspaceWindowsBlob | null = null
   private readonly listeners = new Set<() => void>()
   /** Per-workspace persist debounce timers (one per workspace, mirroring
    *  SidebarStore's per-session pattern). */
@@ -80,6 +96,7 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     workspaceId: undefined,
     workspaceTitle: undefined,
     windows: [],
+    global: [],
   }
   private readonly dispose: Array<() => void> = []
 
@@ -123,10 +140,12 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
   }
 
   /** WorkspaceWindowsSource: the bound windows of the workspace owning a
-   *  session ([] for ungrouped sessions or an unavailable feed). */
+   *  session PLUS the instance-level global windows (the "all projects"
+   *  stubs merge into EVERY session, workspace or not). Global windows come
+   *  first so they land in the same first leaf in the same order everywhere. */
   windowsOfSession(sessionId: string): readonly WorkspaceWindow[] {
     const workspace = this.workspaceOfSession(sessionId)
-    return workspace === undefined ? [] : this.blobOf(workspace.workspaceId).tabs
+    return [...this.globalBlobOf().tabs, ...(workspace === undefined ? [] : this.blobOf(workspace.workspaceId).tabs)]
   }
 
   // ── Mutations (act on the ACTIVE session's workspace) ────────────────────
@@ -316,10 +335,163 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     this.refreshSnapshot()
   }
 
-  /** Update a bound window's definition (the `updateTab` route for stubs:
+  /**
+   * Bind a UI terminal to the WHOLE instance as a GLOBAL-shared window:
+   * one PTY process, visible in EVERY session/project (workspace or not) —
+   * the "所有项目同步" terminal. Reuses the shared-pty machinery (the `gb:`
+   * stub keys as `shared:gb:<n>`, host side) so every session's stub
+   * attaches to the same shell; the first connection's cwd wins and the
+   * process is never respawned for a cwd difference.
+   *
+   * Global binding is TERMINAL-only and never touches agent-owned
+   * (`agent:`) terminals (the model creates/closes them and the reconcile
+   * would fight the pin) or already-bound stubs. Identity: path-less
+   * windows never dedupe — binding two local terminals creates two global
+   * windows (mirror of workspace bind). The binding session loses the local
+   * tab from BOTH trees; the stub re-merges into every session via the
+   * shared reconcile on the next snapshot refresh. The live PTY is
+   * re-parented to the stub's shared key BEFORE the tree swap so the
+   * running process survives (best-effort, mirror of bind).
+   */
+  async bindGlobal(tab: SidebarTab): Promise<void> {
+    const sessionId = this.sidebarStore?.getSnapshot().sessionId
+    if (sessionId === undefined) return
+    if (tab.type !== 'terminal' || isAgentTabId(tab.id) || isBoundTabId(tab.id)) return
+    const blob = this.globalBlobOf()
+    const id = `${GB_TAB_PREFIX}${blob.nextId}`
+    blob.nextId += 1
+    try {
+      await api.ptyReparent({ sessionId }, tab.id, id)
+    } catch {
+      // Best-effort: a failed reparent leaves the local pty to be released
+      // by the unmount close frame — the stub spawns fresh, status quo.
+    }
+    const state = this.sidebarStore?.getSnapshot().state
+    const area: WorkspaceArea = state !== undefined && leafWithTab(state.splits, tab.id) !== undefined ? 'right' : 'bottom'
+    blob.tabs = [...blob.tabs, { id, type: tab.type, title: tab.title, area }]
+    this.persistGlobal(blob)
+    this.sidebarStore?.reduce(s => {
+      // Remove the local tab from BOTH trees in the binding session only;
+      // the per-session reconcile (fired by refreshSnapshot's notify) adds
+      // the `gb:` stub to EVERY session's first leaf of its area.
+      let wasActive = false
+      const strip = (node: SplitNode): SplitNode => {
+        if (node.kind === 'leaf') {
+          const tabs = node.tabs.filter(candidate => candidate.id !== tab.id)
+          if (tabs === node.tabs) return node
+          if (node.active === tab.id) wasActive = true
+          const active = node.active !== null && !tabs.some(candidate => candidate.id === node.active) ? null : node.active
+          return { ...node, tabs, active }
+        }
+        return { ...node, children: node.children.map(strip) }
+      }
+      const splits = strip(s.splits)
+      const bottomSplits = strip(s.bottomSplits)
+      let next = { ...s, splits, bottomSplits }
+      // Keep the binding session's active handoff: when the bound tab WAS
+      // the active one, the area's first leaf's active moves to the stub
+      // (mirror of bind), so the just-pinned terminal stays in view.
+      if (wasActive) {
+        const targetTree = area === 'bottom' ? next.bottomSplits : next.splits
+        const target = firstLeaf(targetTree)
+        next = {
+          ...next,
+          [area === 'bottom' ? 'bottomSplits' : 'splits']: mapLeaf(targetTree, target.id, leaf => { leaf.active = id }),
+        }
+      }
+      return next
+    })
+    // The snapshot only tracks WORKSPACE windows, so a global-only change
+    // would otherwise skip refreshSnapshot's notify — fire the reconcile
+    // feed explicitly so the `gb:` stub merges into every session now.
+    this.notify()
+    this.refreshSnapshot()
+  }
+
+  /**
+   * Unbind a GLOBAL-shared window (`gb:` stub id) from the whole instance.
+   * `keepInSession` materializes the window as a plain local tab in the
+   * binding session's first leaf ("stop sharing everywhere, keep one here");
+   * otherwise the window closes everywhere (the stub's ✕ close path). An
+   * unbound TERMINAL keeps its process: the live handle is re-parented to
+   * a freshly minted local id BEFORE the tree swap (mirror of `unbind`).
+   */
+  async unbindGlobal(tabId: string, keepInSession: boolean): Promise<void> {
+    const sessionId = this.sidebarStore?.getSnapshot().sessionId
+    if (sessionId === undefined) return
+    const blob = this.globalBlobOf()
+    const boundWindow = blob.tabs.find(candidate => candidate.id === tabId)
+    if (boundWindow === undefined) return
+    const localId = keepInSession ? mintTabId() : undefined
+    if (keepInSession && boundWindow.type === 'terminal' && localId !== undefined) {
+      try {
+        await api.ptyReparent({ sessionId }, tabId, localId)
+      } catch {
+        // Best-effort: a failed reparent leaves the shared pty to be
+        // released by the stub's unmount close frame — the local tab
+        // spawns fresh, status quo.
+      }
+    }
+    blob.tabs = blob.tabs.filter(candidate => candidate.id !== tabId)
+    this.persistGlobal(blob)
+    if (keepInSession && localId !== undefined) {
+      this.sidebarStore?.reduce(s => {
+        const rightLeaf = leafWithTab(s.splits, tabId)
+        const bottomLeaf = rightLeaf === undefined ? leafWithTab(s.bottomSplits, tabId) : undefined
+        if (rightLeaf === undefined && bottomLeaf === undefined) return s
+        const key = rightLeaf !== undefined ? 'splits' : 'bottomSplits'
+        const leafId = (rightLeaf ?? bottomLeaf)!.id
+        return {
+          ...s,
+          [key]: mapLeaf(s[key], leafId, leaf => {
+            leaf.tabs = leaf.tabs.map(candidate => candidate.id === tabId
+              ? {
+                id: localId,
+                type: boundWindow.type,
+                title: boundWindow.title,
+                ...(boundWindow.path !== undefined ? { path: boundWindow.path } : {}),
+                ...(boundWindow.diff !== undefined ? { diff: boundWindow.diff } : {}),
+                ...(boundWindow.meta !== undefined ? { meta: boundWindow.meta } : {}),
+              }
+              : candidate)
+            if (leaf.active === tabId) leaf.active = localId
+          }),
+        }
+      })
+    }
+    // The snapshot only tracks WORKSPACE windows — see bindGlobal: fire the
+    // reconcile feed explicitly so every session drops the `gb:` stub.
+    this.notify()
+    this.refreshSnapshot()
+  }
+
+  /**
+   * Update a bound window's definition (the `updateTab` route for stubs:
    *  e.g. the editorExplorer in-place switch rewrites path/title here, and
-   *  every session's render of the stub follows). */
+   *  every session's render of the stub follows). Resolves the stub in the
+   *  GLOBAL blob first (a `gb:` stub is instance-level, no workspace), then
+   *  the active session's workspace blob.
+   */
   update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void {
+    if (isGlobalTabId(tabId)) {
+      const blob = this.globalBlobOf()
+      let changed = false
+      blob.tabs = blob.tabs.map(window => {
+        if (window.id !== tabId) return window
+        changed = true
+        return {
+          ...window,
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.path !== undefined ? { path: patch.path } : {}),
+          ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
+        }
+      })
+      if (!changed) return
+      this.persistGlobal(blob)
+      this.notify()
+      this.refreshSnapshot()
+      return
+    }
     const sessionId = this.sidebarStore?.getSnapshot().sessionId
     const workspace = sessionId === undefined ? undefined : this.workspaceOfSession(sessionId)
     if (workspace === undefined) return
@@ -401,18 +573,57 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     this.persistTimers.set(workspaceId, timer)
   }
 
+  /** The instance-level GLOBAL windows blob (lazily loaded once from its
+   *  own storage key, sanitized like the workspace blobs). */
+  private globalBlobOf(): WorkspaceWindowsBlob {
+    if (this.globalBlob === null) {
+      let blob: WorkspaceWindowsBlob | undefined
+      try {
+        blob = sanitizeBlob(localStorage.getItem(`${STORAGE_PREFIX}:global-windows`))
+      } catch {
+        blob = undefined
+      }
+      this.globalBlob = blob ?? { version: 1, nextId: 1, tabs: [] }
+    }
+    return this.globalBlob
+  }
+
+  /** Debounced persistence of the global windows blob. */
+  private persistGlobal(blob: WorkspaceWindowsBlob): void {
+    const key = 'global'
+    const existing = this.persistTimers.get(key)
+    if (existing !== undefined) window.clearTimeout(existing)
+    const timer = window.setTimeout(() => {
+      this.persistTimers.delete(key)
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}:global-windows`, JSON.stringify(blob))
+      } catch {
+        // Storage full or unavailable: bound-window memory is best-effort.
+      }
+    }, 200)
+    this.persistTimers.set(key, timer)
+  }
+
   /** Recompute the snapshot from the active session + workspace list.
    *  The windows array is the blob's live array (stable between changes),
-   *  so the snapshot reference only changes on real change. */
+   *  so the snapshot reference only changes on real change.
+   *  NOTE: the GLOBAL windows ride the same reference-stability, but the
+   *  snapshot change-check below intentionally does NOT compare them — a
+   *  global-only change must still fire the reconcile feed (the global
+   *  mutation methods call notify() explicitly for that reason, so this
+   *  early-return is safe). `global` is still carried in the snapshot so
+   *  stub resolution (resolveTab) can read a `gb:` stub's live definition. */
   private refreshSnapshot(): void {
     const sessionId = this.sidebarStore?.getSnapshot().sessionId
     const workspace = sessionId === undefined ? undefined : this.workspaceOfSession(sessionId)
     const windows = workspace === undefined ? [] : this.blobOf(workspace.workspaceId).tabs
+    const global = this.globalBlobOf().tabs
     if (
       this.snapshot.sessionId === sessionId
       && this.snapshot.workspaceId === workspace?.workspaceId
       && this.snapshot.workspaceTitle === workspace?.title
       && this.snapshot.windows === windows
+      && this.snapshot.global === global
     ) {
       return
     }
@@ -421,6 +632,7 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
       workspaceId: workspace?.workspaceId,
       workspaceTitle: workspace?.title,
       windows,
+      global,
     }
     this.notify()
   }

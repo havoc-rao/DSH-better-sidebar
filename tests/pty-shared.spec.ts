@@ -49,6 +49,7 @@ class FakePty {
 
 const STUB_ID = 'ws:11111111:1'
 const OTHER_STUB_ID = 'ws:11111111:2'
+const GLOBAL_STUB_ID = 'gb:3'
 
 describe('shared pty key mapping', () => {
   it('ws: stub ids map to a session-less shared key', () => {
@@ -58,6 +59,65 @@ describe('shared pty key mapping', () => {
     expect(ptyKeyOf('session-a', 'terminal:3')).toBe('session-a:terminal:3')
     // Two sessions share ONE key for the same stub.
     expect(ptyKeyOf('session-b', STUB_ID)).toBe(ptyKeyOf('session-a', STUB_ID))
+  })
+
+  it('gb: (global, all-projects) stub ids map to a session-less shared key too', () => {
+    expect(isSharedTabId(GLOBAL_STUB_ID)).toBe(true)
+    expect(ptyKeyOf('session-a', GLOBAL_STUB_ID)).toBe(`shared:${GLOBAL_STUB_ID}`)
+    // Every session — across workspaces or ungrouped — resolves to ONE key.
+    expect(ptyKeyOf('session-b', GLOBAL_STUB_ID)).toBe(`shared:${GLOBAL_STUB_ID}`)
+    expect(ptyKeyOf('session-b', GLOBAL_STUB_ID)).toBe(ptyKeyOf('session-a', GLOBAL_STUB_ID))
+  })
+})
+
+describe('global-shared pty (all-projects bound terminals)', () => {
+  it('two sessions across workspaces attach to the SAME gb: process (first cwd wins)', () => {
+    const { module, spawns } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const first = manager.open('session-a', GLOBAL_STUB_ID, '/proj-a', 80, 24)
+    const second = manager.open('session-b', GLOBAL_STUB_ID, '/proj-b', 100, 40)
+
+    expect(spawns).toHaveLength(1) // one process for the whole instance
+    expect(second).toBe(first)
+    expect(second.key).toBe(`shared:${GLOBAL_STUB_ID}`)
+    expect(second.shared).toBe(true)
+    expect(second.cwd).toBe('/proj-a') // first session's project wins
+    spawns[0]!.pty.emit('shared across every project')
+    expect(first.transcript).toContain('shared across every project')
+    manager.close(first.key)
+  })
+
+  it('a gb: shared pty never counts toward any session quota', () => {
+    const { module } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 1, [], module)
+    manager.open('session-a', GLOBAL_STUB_ID, '/proj-a', 80, 24)
+    manager.open('session-a', 'terminal:1', '/proj-a', 80, 24)
+    // The per-session cap (1) is exhausted by the local terminal, but the
+    // global shared pty is instance-level and opens freely.
+    manager.open('session-a', 'gb:9', '/other', 80, 24)
+    manager.close(`shared:${GLOBAL_STUB_ID}`)
+    manager.close('session-a:terminal:1')
+    manager.close('shared:gb:9')
+  })
+
+  it('a gb: stub re-parents a live session pty to the shared global key, same process', () => {
+    const { module, spawns } = fakeNodePty()
+    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const local = manager.open('session-a', 'terminal:1', '/proj-a', 80, 24)
+    spawns[0]!.pty.emit('server watching…')
+
+    expect(manager.reparent('session-a:terminal:1', `shared:${GLOBAL_STUB_ID}`, 'session-a', true)).toBe(true)
+
+    const shared = manager.get(`shared:${GLOBAL_STUB_ID}`)!
+    expect(shared).toBe(local)
+    expect(shared.shared).toBe(true)
+    expect(shared.migrated).toBe(true)
+    expect(shared.transcript).toContain('server watching…')
+    expect(spawns[0]!.pty.kill).not.toHaveBeenCalled()
+    // Any session attaches to that process.
+    expect(manager.open('session-b', GLOBAL_STUB_ID, '/elsewhere', 80, 24)).toBe(local)
+    expect(spawns).toHaveLength(1)
+    manager.close(`shared:${GLOBAL_STUB_ID}`)
   })
 })
 

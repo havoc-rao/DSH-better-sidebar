@@ -47,9 +47,26 @@ export interface SidebarTab {
  */
 export const WS_TAB_PREFIX = 'ws:'
 
-/** Whether a tab id refers to a workspace-bound window stub. */
+/**
+ * Reserved tab-id prefix for GLOBAL-bound window stubs (the instance-level
+ * "all projects" shared tabs). Minted by the workspace windows store as
+ * `gb:<uuid>` and never by tab descriptors. A `gb:` stub hosts a
+ * GLOBAL-SHARED pty: every session of the instance (workspace or not)
+ * attaches to the same process.
+ */
+export const GB_TAB_PREFIX = 'gb:'
+
+/** Whether a tab id refers to a global-bound window stub (`gb:`). */
+export function isGlobalTabId(tabId: string): boolean {
+  return tabId.startsWith(GB_TAB_PREFIX)
+}
+
+/** Whether a tab id refers to a shared window stub (workspace `ws:` OR
+ *  global `gb:`). Global stubs ride the same reconcile/persist/render
+ *  machinery as workspace stubs, differing only in that they merge into
+ *  EVERY session rather than one workspace. */
 export function isBoundTabId(tabId: string): boolean {
-  return tabId.startsWith(WS_TAB_PREFIX)
+  return tabId.startsWith(WS_TAB_PREFIX) || isGlobalTabId(tabId)
 }
 
 /**
