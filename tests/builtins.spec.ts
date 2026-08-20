@@ -26,10 +26,10 @@ function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof cr
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 6 built-in tabs', () => {
+  it('registers the 7 built-in tabs', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'git', 'subagent', 'terminal'],
+      ['browser', 'diff', 'editor', 'git', 'global', 'subagent', 'terminal'],
     )
   })
 
@@ -43,9 +43,18 @@ describe('built-in tab registrations', () => {
 
   it('single-instance tabs use the single sugar', () => {
     const { service } = setup()
-    for (const id of ['git', 'subagent']) {
+    for (const id of ['git', 'subagent', 'global']) {
       expect(service.getTab(id)?.single).toBe(true)
     }
+  })
+
+  it('the global tab records the instance-level global info page (single, + menu visible, order 60)', () => {
+    const { service } = setup()
+    const tab = service.getTab('global')
+    expect(tab?.hidden).toBeFalsy() // reachable from the + menu
+    expect(tab?.order).toBe(60)
+    expect(tab?.single).toBe(true)
+    expect(tab?.title).toBeDefined()
   })
 
   it('the subagent tab declares its auto-open related settings', () => {

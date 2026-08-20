@@ -24,6 +24,7 @@ import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { KeybindingRuntime, isPlusMenuOpen, isSearchActive, type SidebarKeybindingContext } from './keybindings.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
+import { registerOfficialSidebarEntry } from './official-sidebar.tsx'
 import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
@@ -303,6 +304,39 @@ export function apply(ctx: Context): void {
       'dsh-better-sidebar: IME composition guard',
     )
 
+    // ── react-code-finder 对照试验（RCF_TRIAL=1 时启用）────────────────────
+    // 直接试用 @react-code-finder/core 的 Inspector（不依赖 dsh-code-finder）：
+    // 对比「现成工具 vs 自研」在 DSH 生产宿主（react-dom.production.min.js，
+    // 无 _debugSource）下的实际效果。预期：fiber 遍历可用 → 能显示组件名；
+    // 但 _debugSource 缺失 → 无 file:line（这正是 dsh-code-finder 构建期注入
+    // 要补的差距）。仅 dev 构建 + 环境开关，生产/默认构建 dead-code 消除。
+    ctx.effect(
+      () => {
+        if (process.env.NODE_ENV !== 'development') return undefined
+        if (process.env.RCF_TRIAL !== '1') return undefined
+        let handle: { destroy(): void } | null = null
+        let disposed = false
+        void import('@react-code-finder/core')
+          .then(({ Inspector }) => {
+            if (disposed) return
+            const inspector = new Inspector({
+              enabled: true,
+              showNoSource: true,
+              debug: true,
+              buttonPosition: 'bottom-right',
+            })
+            inspector.init()
+            handle = { destroy: () => inspector.destroy() }
+          })
+          .catch((error) => fail('react-code-finder trial', error))
+        return () => {
+          disposed = true
+          handle?.destroy()
+        }
+      },
+      'dsh-better-sidebar: react-code-finder trial',
+    )
+
     // The keybinding runtime (⌘B / ⌘J / ⌘⌥B panel toggles, ⌘P quick open,
     // ⌘F search focus, ⌘Tab / ⌘1…9 tab keys — and every plugin
     // registration): one document-capture dispatcher with the shared
@@ -349,6 +383,14 @@ export function apply(ctx: Context): void {
       label: () => t('settingsNav'),
       inject: () => ({ store: sidebarStore, service }),
     }, SideCardSection))
+
+    // The official LEFT sidebar footer action: inject the "Global info"
+    // entry into DSH's own ui-sidebar foot (the additive sidebar.footer.action
+    // seat). The button opens the `global` tab — the page recording all
+    // instance-level global info (incl. the global-shared terminals). The
+    // inject waits for the official declaration and the disposer rides the
+    // fiber (HMR-safe); a host without the slots service degrades to no-op.
+    registerOfficialSidebarEntry(ctx)
   } catch (error) {
     fail('load', error)
   }

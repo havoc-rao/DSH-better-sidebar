@@ -2719,3 +2719,316 @@
     max-width: 128px;
   }
 }
+
+/* ── Official left sidebar footer action (the "Global info" entry injected
+   into `sidebar.footer.action`) ─────────────────────────────────────────────
+   Rendered inside the OFFICIAL ui-sidebar foot (outside [data-dsh-better-sidebar]),
+   so these classes must be self-contained and token-driven (skin-compatible):
+   wide = a full-width row (icon + label) stacked above Settings; rail = a
+   centered circle icon like the official icon buttons. */
+
+.officialFooterAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+  text-align: left;
+}
+
+.officialFooterAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.officialFooterActionLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.officialFooterRail {
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+/* ── Full-page "Global info" surface (GlobalPage) ────────────────────────────
+   Rendered IN PLACE as the official `conversation` column (the chat box's
+   page area) via a dynamic priority -1 slot takeover — NOT a fixed overlay.
+   Fills the column box the layout gives it. Styled with the DSH framework
+   recipes so the page reads native:
+   - app-style page header: large title (--dsw-font-l-20) + one-line desc
+     (the section heading+intro recipe), close icon-button on the right;
+   - body = a PluginCard GROUP container (l2 hairline, r16, layer-3 fill)
+     with the catalogHeading recipe (13/600 title + tabular-nums count);
+   - the inventory = the settings icon-card grid (SideCardSection sync). */
+
+.globalPage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalPageHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.globalPageHeaderText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.globalPageTitle {
+  font: var(--dsw-font-l-20);
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalPageDesc {
+  font: 13px/20px var(--dsw-font-family);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.globalPageClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.globalPageClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalPageBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 20px 24px;
+}
+
+/* Group container: the DSH PluginCard recipe — l2 hairline, r16, layer-3
+   fill; holds its own heading + the inventory. */
+.globalGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 16px;
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+/* Group heading: 13/600 + the inventory count badge (the settings
+   catalogHeading recipe: count in tabular-nums, tertiary). */
+.globalGroupHeading {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 2px 2px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalGroupCount {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Global info content: the settings "icon card" recipe (SideCardSection
+   sync) ─────────────────────────────────────────────────────────────────────
+   Mirrors the DSH settings inventory cards so the global page/tab reads
+   consistently with the app's settings UI: responsive auto-fill grid, small
+   cards (icon chip + title + badge), lit "on" state like an enabled
+   settings card. */
+
+.globalGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+}
+
+.globalCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+/* A shared window is LIVE — lit like an enabled settings card. */
+.globalCardOn {
+  border-color: var(--dsw-alias-button-primary-fill);
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.globalCardMain {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.globalCardMain:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+}
+
+.globalCardTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.globalCardIconChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-button-primary-fill);
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-brand-primary);
+}
+
+.globalCardTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xs-strong-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalCardCheck {
+  flex: none;
+  color: var(--dsw-alias-button-primary-fill);
+}
+
+.globalCardBadge {
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* Empty state: centered column — icon in a soft chip, title, hint. */
+.globalEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px 12px;
+  text-align: center;
+}
+
+.globalEmptyIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.globalEmptyTitle {
+  font: var(--dsw-font-s-strong-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalEmptyHint {
+  max-width: 360px;
+  font: 13px/20px var(--dsw-font-family);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The global info TAB body: the card grid plus an "expand to full page"
+   link (the tab is narrower, so the grid stays but the page holds more). */
+.globalTab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.globalTab .globalGrid {
+  flex: 1;
+  align-content: start;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 10px 0;
+}
+
+.globalTab .globalEmpty {
+  padding: 20px 10px;
+}
+
+.globalTab > .gitLink {
+  flex: none;
+  align-self: flex-start;
+  margin: 4px 12px 10px;
+}

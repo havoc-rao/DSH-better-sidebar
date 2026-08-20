@@ -64,7 +64,7 @@ export interface SidebarConfig {
    * the existing default behavior is kept.
    */
   shellArgs?: string[]
-}
+  }
 
 /** Schemastery schema for the plugin configuration. */
 export const Config: z<SidebarConfig> = z.object({

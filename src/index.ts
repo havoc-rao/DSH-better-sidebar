@@ -17,6 +17,7 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
+import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { Context, SidebarHttpRequest } from './context-types.ts'
 import {
@@ -66,6 +67,14 @@ export type {
 
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
+
+/**
+ * 本插件仓库根（源码搜索路由的默认 roots 之一）。
+ * 注意必须用 `new URL('..')` 回退一级：本文件被打包进 lib/index.js 后，
+ * `import.meta.url` 指向 lib/ 目录，`.` 会解析成 <pkg>/lib/ 导致
+ * join(root, 'src') = <pkg>/lib/src（不存在，搜索永远为空——真实试用踩过）。
+ */
+const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 /** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
 export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']

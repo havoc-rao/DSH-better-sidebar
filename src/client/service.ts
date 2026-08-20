@@ -25,6 +25,7 @@ import {
   activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, isBoundTabId, leafWithTab,
   openTabInActivePane, patchTab, tabOpenIn, togglePanel, treeOf,
   type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
+  type WorkspaceWindow,
 } from './state.ts'
 import type { WorkspaceWindowsStore } from './workspace-windows.ts'
 import { isNarrowWidth } from './breakpoints.ts'
@@ -151,6 +152,11 @@ export interface TabComponentProps {
   visible: boolean
   /** The explorer's expanded directory set (ExplorerView). */
   expanded?: string[]
+  /** The instance-level GLOBAL-shared windows (the "all projects" stubs,
+   *  host-side extra: the renderer feeds them from the workspace windows
+   *  store). Absent for external hosts that do not pass it — the global
+   *  info tab falls back to an empty list. */
+  globalWindows?: readonly WorkspaceWindow[]
   onToggleDir?: (path: string) => void
   onReferenceFile?: (path: string) => void
   onOpenFile?: (path: string) => void

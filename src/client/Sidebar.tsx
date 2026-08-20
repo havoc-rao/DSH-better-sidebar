@@ -36,11 +36,13 @@ import {
   patchTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setSideBarOpen, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized, treeOf,
-  type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
+  type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceWindow,
 } from './state.ts'
 import { IconGlobeOffOutline16, IconGlobeOutline16, IconPanelBottomOutline16, IconPanelRightOutline16, IconPinOffOutline16, IconPinOutline16 } from './icons.tsx'
 import { panelHotkeyHint } from './hotkeys.ts'
 import { createHostSidebarKeeper } from './host-sidebar.ts'
+import { registerGlobalPageSurface } from './GlobalPage.tsx'
+import { isGlobalPageOpen, setGlobalPageOpen, subscribeGlobalPage } from './global-page.ts'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
 import type { NewTabOption } from './TabBar.tsx'
@@ -101,8 +103,10 @@ function TabContent(props: {
   onSubagentJump: (childSessionId: string) => void
   /** Open a diff tab from the git panel (placement handled by the store). */
   onOpenDiff: (tab: SidebarTab) => void
+  /** The instance-level global-shared windows (the global info tab reads them). */
+  globalWindows?: readonly WorkspaceWindow[]
 }) {
-  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
+  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, globalWindows } = props
   const scope = { sessionId, cwd }
   const descriptor = ctx.betterSidebar?.getTab(tab.type)
   if (descriptor === undefined) {
@@ -122,6 +126,7 @@ function TabContent(props: {
     createElement(descriptor.component, {
       ctx, store, scope, tab, visible, expanded,
       onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
+      globalWindows,
     }),
   )
 }
@@ -241,6 +246,33 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     useCallback((callback: () => void) => windows?.subscribe(callback) ?? (() => {}), [windows]),
     useCallback(() => windows?.getSnapshot() ?? EMPTY_WS_SNAPSHOT, [windows]),
   )
+
+  // The full-page "Global info" state: open by the official left sidebar's
+  // footer button (outside this tree) through the module-level controller.
+  const globalPageOpen = useSyncExternalStore(
+    useCallback((callback: () => void) => subscribeGlobalPage(callback), []),
+    useCallback(() => isGlobalPageOpen(), []),
+  )
+
+  // While the page is open, take over the official `conversation` slot (the
+  // chat box's page area) with the global info surface — the center column
+  // LITERALLY becomes the page (no overlay, no full-screen). Closing (or the
+  // effect cleanup on unmount/HMR) disposes the registration and the chat
+  // returns; session state lives in stores, untouched. A failed takeover
+  // (slots absent / conflicting occupant) closes the page instead of
+  // breaking the chat.
+  useEffect(() => {
+    if (!globalPageOpen) return
+    let dispose: (() => void) | undefined
+    try {
+      dispose = registerGlobalPageSurface(ctx, windows)
+    } catch (error) {
+      console.error('[dsh-better-sidebar] global page takeover failed:', error)
+      setGlobalPageOpen(false)
+      return
+    }
+    return () => { dispose?.() }
+  }, [globalPageOpen, ctx, windows])
 
   /**
    * The tab right-click menu (workspace bind/unbind). ANY tab can be bound
@@ -1050,6 +1082,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       visible={bottom ? state.bottomOpen && active : state.panelOpen && active}
       onSubagentJump={(childSessionId) => { subagentJumpRef.current = childSessionId }}
       onOpenDiff={(diffTab) => { store.reduce(s => openDiffTab(s, paneId, diffTab)) }}
+      globalWindows={wsSnapshot.global}
     />
   )
 

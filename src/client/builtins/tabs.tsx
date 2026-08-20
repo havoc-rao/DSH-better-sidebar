@@ -13,6 +13,7 @@ import { allLeaves, areaOfTab, isAgentTabId, type SidebarState } from '../state.
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
+import { GlobalView } from '../GlobalView.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
@@ -315,6 +316,18 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
         patch: { nextBrowser: state.nextBrowser + 1 },
       }),
       component: (props) => <BrowserView {...props} />,
+    },
+    {
+      id: 'global',
+      // The "Global info" page: records every instance-level global window
+      // (the `gb:` all-projects shared terminals and friends). Reachable from
+      // the + menu and from the official left sidebar's footer action (the
+      // plugin injects it into `sidebar.footer.action`).
+      title: () => t('globalInfo'),
+      icon: (size: number) => <IconGlobeOutline16 size={size} />,
+      order: 60,
+      single: true,
+      component: (props) => <GlobalView {...props} />,
     },
     {
       id: 'diff',
