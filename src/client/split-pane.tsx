@@ -21,6 +21,8 @@ import css from './sidebar.module.css'
 export interface WorkbenchActions {
   closeTab: (paneId: string, tabId: string) => void
   activateTab: (paneId: string, tabId: string) => void
+  /** Commit a tab's renamed label (persisted with the layout). */
+  renameTab: (paneId: string, tabId: string, title: string) => void
   /** Make a pane the target of newly opened tabs (click focus). */
   focusPane: (paneId: string) => void
   /** VSCode drag gesture: edge → split the target pane, center → merge. */
@@ -134,10 +136,12 @@ function LeafView(props: {
   /** Suppress this pane's own tab strip (the VSCode layout hosts the active
    *  pane's tabs in the panel header instead — see Sidebar's vscodeHeader). */
   hideTabBar?: boolean
+  /** Which tabs may be renamed inline (double-click their label). */
+  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
   const {
     leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar,
+    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab,
   } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const resolve = (tab: SidebarTab): SidebarTab => resolveTab?.(tab) ?? tab
@@ -194,6 +198,8 @@ function LeafView(props: {
           active={leaf.active}
           onActivate={(tabId) => { actions.activateTab(leaf.id, tabId) }}
           onClose={(tabId) => { actions.closeTab(leaf.id, tabId) }}
+          onRename={(tabId, title) => { actions.renameTab(leaf.id, tabId, title) }}
+          canRenameTab={canRenameTab}
           onNewTab={onNewTab}
           newTabOptions={newTabOptions}
           getTabIcon={getTabIcon}
@@ -245,10 +251,11 @@ function NodeView(props: {
   resolveTab?: (tab: SidebarTab) => SidebarTab
   onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
   hideTabBar?: boolean
+  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
   const {
     node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar,
+    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab,
   } = props
   if (node.kind === 'leaf') {
     return (
@@ -264,6 +271,7 @@ function NodeView(props: {
         resolveTab={resolveTab}
         onTabContextMenu={onTabContextMenu}
         hideTabBar={hideTabBar}
+        canRenameTab={canRenameTab}
       />
     )
   }
@@ -295,6 +303,7 @@ function NodeView(props: {
               resolveTab={resolveTab}
               onTabContextMenu={onTabContextMenu}
               hideTabBar={hideTabBar}
+              canRenameTab={canRenameTab}
             />
           </div>
         </Fragment>
@@ -322,10 +331,11 @@ export function Workbench(props: {
   /** Suppress per-pane tab strips (the VSCode layout hosts the active pane's
    *  tabs in the panel header — see Sidebar's vscodeHeader). */
   hideTabBar?: boolean
+  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
   const {
     state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar,
+    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab,
   } = props
   return (
     <div className={css.workbench}>
@@ -342,6 +352,7 @@ export function Workbench(props: {
         resolveTab={resolveTab}
         onTabContextMenu={onTabContextMenu}
         hideTabBar={hideTabBar}
+        canRenameTab={canRenameTab}
       />
     </div>
   )

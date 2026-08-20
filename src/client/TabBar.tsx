@@ -12,7 +12,7 @@
  * window as workspace-shared, not as immovable — and their close button
  * routes to the shell's unbind path like any other close.
  */
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, IconPlusOutline16, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
@@ -82,10 +82,15 @@ export function TabBar(props: {
   isBoundTabId?: (tabId: string) => boolean
   /** Right-click on a tab: the shell positions its workspace menu here. */
   onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
+  /** Whether a tab may be renamed by double-clicking its label (only
+   *  renamable tabs get the inline editor; others keep the plain label). */
+  canRenameTab?: (tab: SidebarTab) => boolean
+  /** Commit a tab's renamed label (the store persists it with the layout). */
+  onRename?: (tabId: string, title: string) => void
 }) {
   const {
     paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
-    isBoundTabId, onTabContextMenu,
+    isBoundTabId, onTabContextMenu, canRenameTab, onRename,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -99,6 +104,44 @@ export function TabBar(props: {
   /** The letter-typeahead cursor: the same letter re-pressed advances to the
    *  NEXT matching option (standard menu typeahead). */
   const letterCursorRef = useRef<{ letter: string; index: number } | null>(null)
+
+  // Inline rename: the tab id being edited + the draft text. A ref mirrors
+  // the state so Enter (commit → unmount → blur) and IME composition never
+  // double-commit.
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const renamingRef = useRef<string | null>(null)
+  useEffect(() => { renamingRef.current = renaming }, [renaming])
+
+  /** Enter rename mode for one tab (double-click on its label). */
+  const startRename = (tab: SidebarTab): void => {
+    setDraft(tab.title)
+    setRenaming(tab.id)
+  }
+
+  /**
+   * Focus + select the whole draft when the rename editor mounts. MUST be a
+   * stable callback: an inline arrow would be re-invoked on every keystroke
+   * re-render (React re-runs ref callbacks whose identity changed), re-selecting
+   * the value and making each new character replace the previous one.
+   */
+  const focusDraft = useCallback((el: HTMLInputElement | null): void => {
+    if (el !== null) {
+      el.focus()
+      el.select()
+    }
+  }, [])
+
+  /** Leave rename mode; `cancel` restores the old label, otherwise the
+   *  trimmed draft is committed when non-empty and changed. */
+  const commitRename = (tab: SidebarTab, cancel: boolean): void => {
+    if (renamingRef.current !== tab.id) return
+    setRenaming(null)
+    if (cancel) return
+    const next = draft.trim()
+    if (next.length === 0 || next === tab.title) return
+    onRename?.(tab.id, next)
+  }
 
   /** How long the armed state survives without a confirming click. */
   const ARMED_MS = 2000
@@ -340,8 +383,8 @@ export function TabBar(props: {
     <div
       key={tab.id}
       className={clsx(css.tab, active === tab.id && css.tabActive, bound && css.tabBound)}
-      title={tab.title}
-      draggable
+      title={renaming === tab.id ? undefined : tab.title}
+      draggable={renaming !== tab.id}
       onDragStart={(event) => {
         setTabDragging(true)
         event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
@@ -385,7 +428,43 @@ export function TabBar(props: {
       {getTabIcon?.(tab) ?? null}
       {bound && <IconPinOutline16 size={12} className={css.tabPin} />}
       {getTabBadge?.(tab) ?? null}
-      <span className={css.tabTitle}>{tab.title}</span>
+      {renaming === tab.id ? (
+        <input
+          ref={focusDraft}
+          className={css.tabRename}
+          value={draft}
+          onChange={(event) => { setDraft(event.target.value) }}
+          onKeyDown={(event) => {
+            // IME composition: let Enter confirm the candidate text
+            // instead of committing the draft mid-composition.
+            if (event.nativeEvent.isComposing) return
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              commitRename(tab, false)
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              commitRename(tab, true)
+            }
+          }}
+          onBlur={() => { commitRename(tab, false) }}
+          onClick={(event) => { event.stopPropagation() }}
+          onDoubleClick={(event) => { event.stopPropagation() }}
+          onPointerDown={(event) => { event.stopPropagation() }}
+          aria-label={t('renameTab')}
+        />
+      ) : (
+        <span
+          className={css.tabTitle}
+          title={canRenameTab?.(tab) === true ? `${tab.title} · ${t('renameTabHint')}` : undefined}
+          onDoubleClick={(event) => {
+            if (canRenameTab?.(tab) !== true) return
+            event.stopPropagation()
+            startRename(tab)
+          }}
+        >
+          {tab.title}
+        </span>
+      )}
       <Tooltip
         label={bound && armedCloseId === tab.id ? t('closeBoundConfirm') : t('close')}
         side="bottom"

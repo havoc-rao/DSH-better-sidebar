@@ -33,6 +33,7 @@ import type { Context, SidebarLayoutService, SidebarSessionList } from '../conte
 import { appendToDraft } from './conversation-draft.ts'
 import {
   BOTTOM_MIN, PANEL_MIN, agentUuidOf, allLeaves, firstLeaf, isAgentTabId, isBoundTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  patchTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setSideBarOpen, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized, treeOf,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
@@ -74,6 +75,14 @@ const EMPTY_WS_SNAPSHOT: WorkspaceWindowsSnapshot = {
   workspaceTitle: undefined,
   windows: [],
 }
+
+/**
+ * Which tabs accept an inline rename (double-click their label in the tab
+ * strip). Scoped to terminal tabs: editor tabs derive their label from the
+ * file path, browser tabs from the visited page — only terminals own a
+ * stable, user-meaningful name (终端 1 / 终端 2 …).
+ */
+const canRenameTab = (tab: SidebarTab): boolean => tab.type === 'terminal'
 
 /** Render the content of one tab (dispatched by type). */
 function TabContent(props: {
@@ -882,6 +891,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       // session scope (with its cwd) rides to the callback.
       ctx.betterSidebar?.activateTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
     },
+    // Rename the label of one open tab (patchTab persists it with the
+    // layout, so a reload keeps the custom name). Pane id is not needed by
+    // the reducer (it locates the tab across both trees) but kept in the
+    // action signature for symmetry with the other tab actions.
+    renameTab: (_paneId, tabId, title) => {
+      store.reduce(s => patchTab(s, tabId, { title }))
+    },
     focusPane: (paneId) => { store.reduce(s => ({ ...s, activePane: paneId })) },
     moveTabToEdge: (payload: TabDragPayload, toPane: string, zone: DropZone) => {
       store.reduce(s => moveTabToEdge(s, payload.paneId, payload.tabId, toPane, zone))
@@ -1227,6 +1243,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               renderTab={renderTab}
               getTabIcon={tabIconOf}
               getTabBadge={tabBadgeOf}
+              canRenameTab={canRenameTab}
               isBoundTabId={isBoundTabId}
               resolveTab={resolveTab}
               onTabContextMenu={openTabMenu}
@@ -1429,6 +1446,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
             isBoundTabId={isBoundTabId}
             resolveTab={resolveTab}
             onTabContextMenu={openTabMenu}
+            canRenameTab={canRenameTab}
           />
         </div>
       </div>
