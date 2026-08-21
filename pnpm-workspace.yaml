@@ -1,8 +1,5 @@
 packages:
   - .
-  # dev 期通过 workspace 链接接入 dsh-code-finder（组件定位构建期注入；
-  # 发布 / CI 时换成 registry 版本）
-  - ../../DSH-code-finder
 
 # node-pty's install script copies its shipped prebuilt binaries into place
 # (no source compilation on supported platforms); pnpm 10+ blocks dependency

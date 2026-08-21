@@ -46,7 +46,6 @@ import { builtinModules, createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import type { UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
-import { codeFinderTsdown } from '@omdsh-dev/dsh-code-finder/tsdown'
 
 const require = createRequire(import.meta.url)
 
@@ -148,7 +147,7 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
     },
     // External wins for module-table entries; every other dependency inlines.
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
-    plugins: [purityGatePlugin(), makeCssPlugin(pluginId), codeFinderTsdown()],
+    plugins: [purityGatePlugin(), makeCssPlugin(pluginId)],
     outputOptions: {
       entryFileNames: entryFile,
       sourcemapPathTransform: browserSourcePath,
@@ -209,7 +208,6 @@ function chunkBundle(name: string): UserConfig {
     plugins: [
       purityGatePlugin(),
       makeCssPlugin('dsh-better-sidebar'),
-      codeFinderTsdown(),
       ...(name === 'mermaid' ? [mermaidChunkAliases()] : []),
     ],
     outputOptions: {
