@@ -2723,44 +2723,48 @@
 /* ── Official left sidebar footer action (the "Global info" entry injected
    into `sidebar.footer.action`) ─────────────────────────────────────────────
    Rendered inside the OFFICIAL ui-sidebar foot (outside [data-dsh-better-sidebar]),
-   so these classes must be self-contained and token-driven (skin-compatible):
-   wide = a full-width row (icon + label) stacked above Settings; rail = a
-   centered circle icon like the official icon buttons. */
+   so these classes must be self-contained and token-driven (skin-compatible).
+   Mirrors the official ui-settings-general settings trigger recipe so the
+   entry stacks seamlessly above Settings: wide = the 42px foot-row box
+   (r12, pad 0 10px 0 8px, label-primary, 14/22 type, hover = bg only);
+   rail = the same 36x36 circle box as the other rail controls. */
 
 .officialFooterAction {
-  display: inline-flex;
+  flex: none;
+  display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  min-height: 34px;
-  padding: 0 12px;
+  width: calc(100% + 4px);
+  height: 42px;
+  margin: 4px -2px;
+  padding: 0 10px 0 8px;
+  box-sizing: border-box;
   border: none;
-  border-radius: 8px;
+  border-radius: 12px;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xxs-12);
   cursor: pointer;
-  text-align: left;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .officialFooterAction:hover {
   background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
 }
 
 .officialFooterActionLabel {
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .officialFooterRail {
-  justify-content: center;
   width: 36px;
   height: 36px;
-  min-height: 36px;
+  margin: 8px 0 10px;
+  justify-content: center;
+  gap: 0;
   padding: 0;
   border-radius: 50%;
 }

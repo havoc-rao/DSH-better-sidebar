@@ -57,7 +57,7 @@ export function GlobalInfoFooterButton(props: OfficialFooterActionProps) {
       aria-label={t('globalInfoFooter')}
       onClick={open}
     >
-      <IconGlobeOutline16 size={wide ? 14 : 18} />
+      <IconGlobeOutline16 size={wide ? 16 : 18} />
       {wide && <span className={css.officialFooterActionLabel}>{t('globalInfoFooter')}</span>}
     </button>
   )
