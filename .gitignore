@@ -155,3 +155,6 @@ playwright-report/
 test-results/
 
 .gh-bin/
+
+# local mise plugin glue (dsh dev 版接入，本机专用，不入库；对标 shr 的 scripts/mise 惯例)
+/scripts/mise/
