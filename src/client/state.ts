@@ -116,6 +116,11 @@ export interface WorkspaceWindowsSource {
   /** The bound windows of the workspace owning `sessionId` ([] when the
    *  session belongs to no workspace, or the feed is unavailable). */
   windowsOfSession(sessionId: string): readonly WorkspaceWindow[]
+  /** The instance-level GLOBAL windows (the "all projects" shared stubs).
+   *  Sessions never AUTO-merge them (they park in the Global Workspace and
+   *  attach to a session on demand); the list only VALIDATES a session's
+   *  attached `gb:` stubs (a stub whose window is gone is stale). */
+  globalWindows(): readonly WorkspaceWindow[]
   /** Fires on ANY workspace-windows change (bind/unbind/update, workspace
    *  membership changes). Returns the disposer. */
   subscribe(listener: () => void): () => void
@@ -968,20 +973,24 @@ export function reconcileAgentTerminals(
 // ── Workspace-bound windows ────────────────────────────────────────────────
 
 /**
- * Reconcile a session state against its workspace's bound windows: stale
- * stubs (unbound meanwhile, or a foreign id under the reserved prefix) are
- * dropped from BOTH trees — a dangling `active` pointing at one is nulled
- * (a dangling active corrupts the next sanitize pass) — and a window whose
+ * Reconcile a session state against its bound windows: stale stubs (unbound
+ * meanwhile, or a foreign id under the reserved prefix) are dropped from
+ * BOTH trees — a dangling `active` pointing at one is nulled (a dangling
+ * active corrupts the next sanitize pass) — and a WORKSPACE window whose
  * stub is missing EVERYWHERE re-merges into the FIRST leaf of the panel it
  * was bound from (`area: 'right'` → `splits`, `area: 'bottom'` →
- * `bottomSplits`). Pinned stubs are DRAGGABLE like any tab: a stub the
+ * `bottomSplits`). GLOBAL windows (`gb:`) NEVER auto-merge here: they park
+ * in the Global Workspace and a session attaches one on demand
+ * (`attachGlobal`); `globalWindows` only validates the `gb:` stubs a
+ * session already holds (an attached stub whose window was unbound is
+ * stale and stripped). Pinned stubs are DRAGGABLE like any tab: a stub the
  * user moved to another leaf or panel is left exactly where it is (the
  * per-session placement wins; only reloads fall back to the area's first
  * leaf, because stub positions never persist). Idempotent: an
  * already-synced state returns the same reference.
  */
-export function reconcileWorkspaceWindows(state: SidebarState, windows: readonly WorkspaceWindow[]): SidebarState {
-  const boundIds = new Set(windows.map(w => w.id))
+export function reconcileWorkspaceWindows(state: SidebarState, windows: readonly WorkspaceWindow[], globalWindows: readonly WorkspaceWindow[]): SidebarState {
+  const validIds = new Set([...windows, ...globalWindows].map(w => w.id))
   const stripStale = (node: SplitNode): SplitNode => {
     if (node.kind === 'leaf') {
       // filter() always allocates: track real change with a flag, or the
@@ -989,13 +998,13 @@ export function reconcileWorkspaceWindows(state: SidebarState, windows: readonly
       // converges (store ↔ windows notify cycle → stack overflow).
       let changed = false
       const tabs = node.tabs.filter(tab => {
-        if (isBoundTabId(tab.id) && !boundIds.has(tab.id)) {
+        if (isBoundTabId(tab.id) && !validIds.has(tab.id)) {
           changed = true
           return false
         }
         return true
       })
-      const active = node.active !== null && isBoundTabId(node.active) && !boundIds.has(node.active) ? null : node.active
+      const active = node.active !== null && isBoundTabId(node.active) && !validIds.has(node.active) ? null : node.active
       if (!changed && active === node.active) return node
       return { ...node, tabs, active }
     }
@@ -1039,21 +1048,25 @@ function appendStubs(tree: SplitNode, windows: readonly WorkspaceWindow[]): Spli
 }
 
 /**
- * Strip every workspace stub from a state (the persistence filter): bound
+ * Strip every WORKSPACE stub from a state (the persistence filter): `ws:`
  * windows never persist inside session layouts — the workspace windows
- * store is the single source of truth and reload re-merges. An `active`
- * pointer into a stripped stub is nulled for the same reason.
+ * store is the single source of truth and reload re-merges them. A
+ * session-ATTACHED GLOBAL stub (`gb:`) is a deliberate per-session view of
+ * a window parked in the Global Workspace and PERSISTS; reload validates
+ * it against the global blob (reconcileWorkspaceWindows strips one whose
+ * window was unbound meanwhile). An `active` pointer into a stripped stub
+ * is nulled for the same reason.
  */
 export function stripWorkspaceWindows(state: SidebarState): SidebarState {
   let changed = false
   const walk = (node: SplitNode): SplitNode => {
     if (node.kind === 'leaf') {
       const tabs = node.tabs.filter(tab => {
-        if (!isBoundTabId(tab.id)) return true
+        if (!tab.id.startsWith(WS_TAB_PREFIX)) return true
         changed = true
         return false
       })
-      const active = node.active !== null && isBoundTabId(node.active) ? null : node.active
+      const active = node.active !== null && !tabs.some(candidate => candidate.id === node.active) ? null : node.active
       if (active !== node.active) changed = true
       return tabs === node.tabs && active === node.active ? node : { ...node, tabs, active }
     }
@@ -1106,12 +1119,17 @@ function loadState(sessionId: string, prefs: SidebarPrefs, source?: WorkspaceWin
     state = defaultState(prefs)
   }
   // Workspace-bound windows merge into the first leaf at load: the store is
-  // the single source of truth (session layouts never persist stubs), so
-  // every load re-materializes them. A failing resolution degrades to the
-  // unmerged state rather than blocking the session.
+  // the single source of truth (session layouts never persist ws: stubs), so
+  // every load re-materializes them. GLOBAL windows never merge — a
+  // persisted `gb:` stub (a session-attached view) is only validated against
+  // the global blob. A failing resolution degrades to the unmerged state
+  // rather than blocking the session.
   try {
-    const windows = source?.windowsOfSession(sessionId) ?? []
-    if (windows.length > 0) state = reconcileWorkspaceWindows(state, windows)
+    if (source !== undefined) {
+      const windows = source.windowsOfSession(sessionId)
+      const globals = source.globalWindows()
+      if (windows.length > 0 || globals.length > 0) state = reconcileWorkspaceWindows(state, windows, globals)
+    }
   } catch (error) {
     console.error('[dsh-better-sidebar] workspace windows merge failed:', error)
   }
@@ -1344,19 +1362,20 @@ export class SidebarStore {
    * feed). Every workspace-windows change re-reconciles ALL cached session
    * states (and the active snapshot): a bind/unbind/update must appear,
    * update, or disappear in every session of the workspace — including the
-   * ones the user is not looking at right now. Attach exactly once, before
-   * any session loads.
+   * ones the user is not looking at right now — and a global window's
+   * unbind must strip the `gb:` stubs attached in every session. Attach
+   * exactly once, before any session loads.
    */
   attachWorkspaceWindows(source: WorkspaceWindowsSource): void {
     this.workspaceWindows = source
     source.subscribe(() => {
       for (const [sessionId, state] of this.bySession) {
-        const next = reconcileWorkspaceWindows(state, source.windowsOfSession(sessionId))
+        const next = reconcileWorkspaceWindows(state, source.windowsOfSession(sessionId), source.globalWindows())
         if (next !== state) this.bySession.set(sessionId, next)
       }
       const activeSessionId = this.snapshot.sessionId
       if (activeSessionId !== undefined && this.snapshot.state !== undefined) {
-        const next = reconcileWorkspaceWindows(this.snapshot.state, source.windowsOfSession(activeSessionId))
+        const next = reconcileWorkspaceWindows(this.snapshot.state, source.windowsOfSession(activeSessionId), source.globalWindows())
         if (next !== this.snapshot.state) {
           this.snapshot = { ...this.snapshot, state: next }
           this.notify()
@@ -1454,11 +1473,27 @@ export class SidebarStore {
    * Checks the session's own map entry (the current snapshot may already
    * point at another session when a conversation switch unmounts the old
    * one's tabs).
+   *
+   * A shared-window stub (`ws:` / `gb:`) whose window is STILL DEFINED in
+   * the windows store counts as open even when the session no longer holds
+   * it: the ✕ on an attached `gb:` stub DETACHES the local view only (the
+   * window parks on in the Global Workspace), and the unmount must not send
+   * the close frame that would kill the shared pty — only unbinding the
+   * window EVERYWHERE (which removes it from the store before the reconcile
+   * strips the stubs) lets the close frame through. Workspace stubs resolve
+   * through windowsOfSession the same way.
    */
   tabOpen(sessionId: string, tabId: string): boolean {
     const state = this.bySession.get(sessionId)
       ?? (this.snapshot.sessionId === sessionId ? this.snapshot.state : undefined)
-    return state !== undefined && tabOpenIn(state, tabId)
+    if (state !== undefined && tabOpenIn(state, tabId)) return true
+    if (isBoundTabId(tabId) && this.workspaceWindows !== null) {
+      const source = this.workspaceWindows
+      const live = source.windowsOfSession(sessionId).some(window => window.id === tabId)
+        || source.globalWindows().some(window => window.id === tabId)
+      if (live) return true
+    }
+    return false
   }
 
   /** Apply a pure reducer (returns the next state). */

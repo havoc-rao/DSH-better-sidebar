@@ -13,11 +13,22 @@
 import type { Context } from '../context-types.ts'
 
 let open = false
+/** The session that was CURRENT when the page opened (undefined: opened from
+ *  the no-session hero). The page is a no-session surface, so its card
+ *  clicks have no session to attach a global window to — they restore THIS
+ *  session with the window attached instead. */
+let sessionBeforeOpen: string | undefined
 const listeners = new Set<() => void>()
 
 /** Whether the full-page global info view is currently open. */
 export function isGlobalPageOpen(): boolean {
   return open
+}
+
+/** The session that was current when the page opened (restore target for
+ *  the page's attach actions), or undefined. */
+export function getGlobalPageSessionBeforeOpen(): string | undefined {
+  return sessionBeforeOpen
 }
 
 /** Open (true) or close (false) the full-page global info view. */
@@ -39,8 +50,17 @@ export function setGlobalPageOpen(value: boolean): void {
  * nothing was active while the page was up). A failed or absent clear
  * (sessions face missing) degrades to opening without clearing; the page
  * still opens, and the narrow guard keeps protecting same-session clicks.
+ * The pre-clear session is remembered (sessionBeforeOpen) so a card click
+ * on the page can restore it with the clicked global window attached.
  */
 export function openGlobalPage(ctx: Context): void {
+  let before: string | undefined
+  try {
+    before = ctx.sessions?.list?.getSnapshot().current
+  } catch {
+    before = undefined
+  }
+  sessionBeforeOpen = before
   try {
     ctx.sessions.clear?.()
   } catch {
@@ -58,5 +78,6 @@ export function subscribeGlobalPage(listener: () => void): () => void {
 /** Reset for tests (and HMR re-evaluation leaves the page closed). */
 export function resetGlobalPageForTests(): void {
   setGlobalPageOpen(false)
+  sessionBeforeOpen = undefined
   listeners.clear()
 }

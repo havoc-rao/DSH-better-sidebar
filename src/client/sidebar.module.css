@@ -2970,6 +2970,49 @@
   color: var(--dsw-alias-button-primary-fill);
 }
 
+/* The card's ✕ (unbind the window from the whole instance): a small
+   ghost button pinned to the card's top-right corner, revealed on hover
+   (always visible on coarse pointers) so the card face stays clean. */
+.globalCardClose {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.globalCard:hover .globalCardClose,
+.globalCardClose:focus-visible {
+  opacity: 1;
+}
+
+.globalCardClose:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalCardClose:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+}
+
+@media (hover: none) {
+  .globalCardClose {
+    opacity: 1;
+  }
+}
+
 .globalCardBadge {
   align-self: flex-start;
   max-width: 100%;

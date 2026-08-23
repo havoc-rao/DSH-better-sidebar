@@ -6,11 +6,14 @@
  * - `GlobalInfoFooterButton` renders wide/rail variants and opens the
  *   FULL-PAGE global info view (the module-level page controller) on click.
  * - `GlobalView` (the panel tab) lists the instance-level global windows
- *   from the host-side `globalWindows` prop, activates them, and offers the
- *   "expand to full page" affordance.
- * - `GlobalPage` (the complete-page overlay) renders the same list and
- *   closes via Escape (or by opening a session — the page opens from the
- *   no-session hero; no header close button).
+ *   from the host-side `globalWindows` prop; a card click ATTACHES the
+ *   window to the current session (onAttachGlobal) and the card ✕ unbinds
+ *   it from the whole instance (onUnbindGlobal), plus the "expand to full
+ *   page" affordance.
+ * - `GlobalPage` (the complete-page surface) renders the same list; a card
+ *   click closes the page and restores the pre-page session with the window
+ *   attached (the page is a no-session surface), the card ✕ unbinds, and
+ *   Escape (or opening a session) dismisses the page.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -23,7 +26,7 @@ import {
 } from '../src/client/official-sidebar.tsx'
 import { GlobalView } from '../src/client/GlobalView.tsx'
 import { GlobalPage, registerGlobalPageSurface } from '../src/client/GlobalPage.tsx'
-import { isGlobalPageOpen, resetGlobalPageForTests, setGlobalPageOpen } from '../src/client/global-page.ts'
+import { isGlobalPageOpen, openGlobalPage, resetGlobalPageForTests, setGlobalPageOpen } from '../src/client/global-page.ts'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -126,22 +129,39 @@ describe('GlobalInfoFooterButton', () => {
 describe('GlobalView (the panel tab face)', () => {
   const windowOf = (id: string, title: string) => ({ id, type: 'terminal', title, area: 'right' as const })
 
-  it('lists the global-shared windows and activates one on click', () => {
-    const activateTab = vi.fn()
-    const ctx = { betterSidebar: { activateTab } } as unknown as Context
+  it('lists the global-shared windows and ATTACHES one on click', () => {
+    const onAttachGlobal = vi.fn()
+    const onUnbindGlobal = vi.fn()
+    const ctx = {} as unknown as Context
     const globalWindows = [windowOf('gb:1', 'zsh'), windowOf('gb:2', 'npm run dev')]
-    const container = mount(createElement(GlobalView, { ctx, globalWindows } as never))
+    const container = mount(createElement(GlobalView, { ctx, globalWindows, onAttachGlobal, onUnbindGlobal } as never))
     expect(container.textContent).toContain('zsh')
     expect(container.textContent).toContain('npm run dev')
+    // The card's main button is the first button in the card; clicking
+    // attaches the window to the current session (not a plain activate —
+    // the window is parked in the Global Workspace until then).
     const rows = container.querySelectorAll('button')
-    // Each row has an activate link; clicking focuses the stub.
     act(() => { (rows[0] as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-    expect(activateTab).toHaveBeenCalledWith('gb:1')
+    expect(onAttachGlobal).toHaveBeenCalledWith('gb:1')
+    expect(onUnbindGlobal).not.toHaveBeenCalled()
+    container.remove()
+  })
+
+  it('renders a card ✕ that unbinds the window from the whole instance', () => {
+    const onAttachGlobal = vi.fn()
+    const onUnbindGlobal = vi.fn()
+    const ctx = {} as unknown as Context
+    const container = mount(createElement(GlobalView, { ctx, globalWindows: [windowOf('gb:1', 'zsh')], onAttachGlobal, onUnbindGlobal } as never))
+    const close = container.querySelector('button[aria-label="Stop global sharing"]')!
+    expect(close).toBeDefined()
+    act(() => { close.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(onUnbindGlobal).toHaveBeenCalledWith('gb:1')
+    expect(onAttachGlobal).not.toHaveBeenCalled()
     container.remove()
   })
 
   it('shows the empty-state hint when no global windows exist', () => {
-    const ctx = { betterSidebar: { activateTab: vi.fn() } } as unknown as Context
+    const ctx = {} as unknown as Context
     const container = mount(createElement(GlobalView, { ctx, globalWindows: [] } as never))
     expect(container.textContent).toContain('No globally shared windows')
     container.remove()
@@ -149,7 +169,7 @@ describe('GlobalView (the panel tab face)', () => {
 
   it('the expand affordance opens the FULL-PAGE global info', () => {
     const clear = vi.fn()
-    const ctx = { betterSidebar: { activateTab: vi.fn() }, sessions: { clear } } as unknown as Context
+    const ctx = { sessions: { clear } } as unknown as Context
     const container = mount(createElement(GlobalView, { ctx, globalWindows: [] } as never))
     const expand = [...container.querySelectorAll('button')].find(b => b.textContent?.includes('Expand to full page'))!
     expect(expand).toBeDefined()
@@ -164,14 +184,20 @@ describe('GlobalView (the panel tab face)', () => {
 describe('GlobalPage (the in-place conversation surface)', () => {
   const windowOf = (id: string, title: string) => ({ id, type: 'terminal', title, area: 'right' as const })
 
-  /** A fake workspace windows store exposing a live global list. */
-  const fakeWindows = (global: Array<{ id: string; type: string; title: string; area: string }>) => ({
+  /** A fake workspace windows store exposing a live global list plus the
+   *  attach/unbind actions the page's cards drive. */
+  const fakeWindows = (
+    global: Array<{ id: string; type: string; title: string; area: string }>,
+    hooks: { attach?: (id: string, sessionId?: string) => void; unbind?: (id: string, keep: boolean) => void } = {},
+  ) => ({
     subscribe: () => () => {},
     getSnapshot: () => ({ global }),
+    attachGlobal: hooks.attach ?? vi.fn(),
+    unbindGlobal: hooks.unbind ?? vi.fn(),
   }) as unknown as Parameters<typeof GlobalPage>[0]['windows']
 
   it('renders the global windows list under a page header', () => {
-    const ctx = { betterSidebar: { activateTab: vi.fn() } } as unknown as Context
+    const ctx = {} as unknown as Context
     const container = mount(createElement(GlobalPage, { ctx, windows: fakeWindows([windowOf('gb:1', 'zsh')]) } as never))
     expect(container.textContent).toContain('Global Workspace')
     expect(container.textContent).toContain('zsh')
@@ -179,18 +205,69 @@ describe('GlobalPage (the in-place conversation surface)', () => {
   })
 
   it('renders no header close button (Esc / opening a session dismiss the page)', () => {
-    const ctx = { betterSidebar: { activateTab: vi.fn() } } as unknown as Context
+    const ctx = {} as unknown as Context
     const container = mount(createElement(GlobalPage, { ctx, windows: undefined } as never))
     expect(container.querySelector('button[aria-label="Close"]')).toBeNull()
     container.remove()
   })
 
   it('Escape closes the page', () => {
-    const ctx = { betterSidebar: { activateTab: vi.fn() } } as unknown as Context
+    const ctx = {} as unknown as Context
     const container = mount(createElement(GlobalPage, { ctx, windows: undefined } as never))
     act(() => { setGlobalPageOpen(true) })
     act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
     expect(isGlobalPageOpen()).toBe(false)
+    container.remove()
+  })
+
+  it('a card click closes the page and restores the pre-page session with the window attached', () => {
+    const attach = vi.fn()
+    const open = vi.fn()
+    // Open the page the real way: openGlobalPage captures the current
+    // session (s1) before clearing it — the restore target for card clicks.
+    const sessions = {
+      list: { getSnapshot: () => ({ current: 's1', byId: {} }), subscribe: () => () => {} },
+      open,
+    }
+    const ctx = { sessions } as unknown as Context
+    openGlobalPage(ctx)
+    expect(isGlobalPageOpen()).toBe(true)
+    const windows = fakeWindows([windowOf('gb:1', 'zsh')], { attach })
+    const container = mount(createElement(GlobalPage, { ctx, windows } as never))
+    const card = container.querySelector('button')!
+    act(() => { card.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    // The page closed and the window attached to the session it was opened
+    // from, which is re-activated ("take me back with this terminal").
+    expect(isGlobalPageOpen()).toBe(false)
+    expect(attach).toHaveBeenCalledWith('gb:1', 's1')
+    expect(open).toHaveBeenCalledWith('s1')
+    container.remove()
+  })
+
+  it('a card click with NO session to restore leaves the page open (no-op overview)', () => {
+    const attach = vi.fn()
+    const ctx = {} as unknown as Context
+    act(() => { setGlobalPageOpen(true) }) // page opened from the hero: no captured session
+    const windows = fakeWindows([windowOf('gb:1', 'zsh')], { attach })
+    const container = mount(createElement(GlobalPage, { ctx, windows } as never))
+    const card = container.querySelector('button')!
+    act(() => { card.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(isGlobalPageOpen()).toBe(true)
+    expect(attach).not.toHaveBeenCalled()
+    container.remove()
+  })
+
+  it('a card ✕ unbinds the window from the whole instance without leaving the page', () => {
+    const unbind = vi.fn()
+    const ctx = {} as unknown as Context
+    act(() => { setGlobalPageOpen(true) })
+    const windows = fakeWindows([windowOf('gb:1', 'zsh')], { unbind })
+    const container = mount(createElement(GlobalPage, { ctx, windows } as never))
+    const close = container.querySelector('button[aria-label="Stop global sharing"]')!
+    expect(close).toBeDefined()
+    act(() => { close.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(unbind).toHaveBeenCalledWith('gb:1', false)
+    expect(isGlobalPageOpen()).toBe(true)
     container.remove()
   })
 })

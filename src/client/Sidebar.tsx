@@ -105,8 +105,12 @@ function TabContent(props: {
   onOpenDiff: (tab: SidebarTab) => void
   /** The instance-level global-shared windows (the global info tab reads them). */
   globalWindows?: readonly WorkspaceWindow[]
+  /** Attach a global-shared window to this session (the global tab's card click). */
+  onAttachGlobal?: (tabId: string) => void
+  /** Unbind a global-shared window from the whole instance (the global tab's card ✕). */
+  onUnbindGlobal?: (tabId: string) => void
 }) {
-  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, globalWindows } = props
+  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, globalWindows, onAttachGlobal, onUnbindGlobal } = props
   const scope = { sessionId, cwd }
   const descriptor = ctx.betterSidebar?.getTab(tab.type)
   if (descriptor === undefined) {
@@ -126,7 +130,7 @@ function TabContent(props: {
     createElement(descriptor.component, {
       ctx, store, scope, tab, visible, expanded,
       onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
-      globalWindows,
+      globalWindows, onAttachGlobal, onUnbindGlobal,
     }),
   )
 }
@@ -919,20 +923,27 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       // stub's shared pty dies with the window — the unmount close frame
       // covers the socket-up case, and the HTTP fallback covers the
       // socket-down one (a shared pty must never linger after its window
-      // closed everywhere).
+      // closed everywhere). A GLOBAL stub (`gb:`) in a session is different:
+      // it is a LOCAL ATTACHMENT of the window parked in the Global
+      // Workspace — the ✕ DETACHES it from this session only (the window
+      // and its shared pty live on; other sessions' attachments survive;
+      // no ptyClose — the window is still defined, so the unmount close
+      // frame is skipped via tabOpen's live-stub check).
       if (windows !== undefined && isBoundTabId(tabId)) {
         const current = store.getSnapshot().state
         const leaf = current === undefined
           ? undefined
           : leafWithTab(current.splits, tabId) ?? leafWithTab(current.bottomSplits, tabId)
         const tab = leaf?.tabs.find(candidate => candidate.id === tabId)
-        // A GLOBAL stub closes every session of the instance; a workspace
-        // stub closes every session of its workspace. Either way: close
-        // everywhere (not kept in this session — the ✕ is a full close).
-        if (isGlobalTabId(tabId)) void windows.unbindGlobal(tabId, false)
-        else void windows.unbind(tabId, false)
-        if (tab?.type === 'terminal' && sessionId !== undefined) {
-          void api.ptyClose({ sessionId, cwd }, tabId).catch(() => { /* the host may already have released it */ })
+        if (isGlobalTabId(tabId)) {
+          windows.detachGlobal(tabId)
+        } else {
+          // A workspace stub closes every session of its workspace. (The
+          // ✕ is a full close — not kept in this session.)
+          void windows.unbind(tabId, false)
+          if (tab?.type === 'terminal' && sessionId !== undefined) {
+            void api.ptyClose({ sessionId, cwd }, tabId).catch(() => { /* the host may already have released it */ })
+          }
         }
         return
       }
@@ -1115,6 +1126,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       onSubagentJump={(childSessionId) => { subagentJumpRef.current = childSessionId }}
       onOpenDiff={(diffTab) => { store.reduce(s => openDiffTab(s, paneId, diffTab)) }}
       globalWindows={wsSnapshot.global}
+      onAttachGlobal={windows === undefined ? undefined : (tabId) => { void windows.attachGlobal(tabId) }}
+      onUnbindGlobal={windows === undefined ? undefined : (tabId) => { void windows.unbindGlobal(tabId, false) }}
     />
   )
 

@@ -95,3 +95,17 @@ interface GlobalWindowsBlob {
 ## 5. 与「右键菜单加图标」的关系
 
 本次同时把 tab 右键菜单**从纯文本/单 pin 图标**升级为**逐项对应图标**的分档菜单（binding v.s. global-share v.s. unbind 各有专属 glyph），见同批 UI 改动：`Sidebar.tsx` 菜单 `items` 的 `icon` 字段。
+
+---
+
+## 6. 语义升级（2026-08-24）：生命周期驻留全局工作区
+
+本文档的「所有项目同步」（`gb:` stub 自动合并进每个 session 的 tab 栏）已被**按需 attach** 模型取代，见
+`docs/plans/2026-08-24-global-workspace-window-parking-design.md`：
+
+- `bindGlobal` 后窗口**驻留全局工作区**（全局 blob 是唯一事实源），不再合并 stub 到任何 session；
+- 会话经 `attachGlobal` 把窗口带到自己（`gb:` stub 落进该会话首个叶子，attach 同一个 `shared:gb:<n>` PTY）；attached stub 持久化在会话布局，reload 对照全局 blob 校验；
+- attached stub 的 ✕ 只 detach 本会话（窗口与 PTY 存活）；「取消全局共享」才是全实例关闭（`unbindGlobal(false)` 附带显式释放从未 attach 的无头 PTY）；
+- `pty-manager.ts` 的 `isSharedTabId` / `shared:gb:<n>` 键与「首连 cwd 生效 / 配额豁免」机制不变——共享-PTY 层完全复用。
+
+右侧菜单项文案同步为「全局共享（转移到全局工作区）」。测试覆盖见 `tests/workspace-windows.spec.ts` 的 global describe（驻留 / attach / detach / 持久化校验 / 共存）。

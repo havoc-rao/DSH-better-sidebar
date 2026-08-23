@@ -157,6 +157,17 @@ export interface TabComponentProps {
    *  store). Absent for external hosts that do not pass it — the global
    *  info tab falls back to an empty list. */
   globalWindows?: readonly WorkspaceWindow[]
+  /** Attach a GLOBAL-shared window (`gb:` id) to the CURRENT session (the
+   *  global workspace faces' one-click "bring this window here": the
+   *  window's stub lands in this session's first leaf and is focused,
+   *  attaching to the shared pty). Built-in global-tab usage; absent when
+   *  the host does not expose the workspace windows store. */
+  onAttachGlobal?: (tabId: string) => void
+  /** Unbind a GLOBAL-shared window (`gb:` id) from the whole instance
+   *  (closes it everywhere, releasing its shared pty). Built-in global-tab
+   *  usage; absent when the host does not expose the workspace windows
+   *  store. */
+  onUnbindGlobal?: (tabId: string) => void
   onToggleDir?: (path: string) => void
   onReferenceFile?: (path: string) => void
   onOpenFile?: (path: string) => void
