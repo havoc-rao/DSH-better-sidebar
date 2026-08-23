@@ -1276,6 +1276,31 @@
   min-height: 0;
   display: flex;
   border-left: 1px solid var(--dsw-alias-border-l1);
+  overflow: hidden;
+  /* The docked tree's collapse/expand animates the width (the tree stays
+     mounted at width 0 once opened — overflow clips it, so re-expanding
+     never reloads it). Same easing as the Side Bar drawer / panels;
+     visibility flips immediately on expand but only AFTER the slide on
+     collapse (the content stays visible while the drawer shuts). */
+  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    visibility 0s;
+}
+
+/* While the user drags the resize handle the width must track the pointer
+   1:1 — no transition tail on the intermediate frames. */
+.editorTreeDockDragging {
+  transition: none;
+}
+
+/* Collapsed (treeOpen false): width 0, no left border (a 1px hairline would
+   linger mid-panel), and the content is visibility-hidden once the slide
+   completes so clipped descendants (the tree search box) are truly
+   unreachable/invisible — not merely clipped by overflow. */
+.editorTreeDockCollapsed {
+  border-left: 0;
+  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    visibility 0s linear var(--ds-transition-duration-slow);
+  visibility: hidden;
 }
 
 .editorTreeResize {

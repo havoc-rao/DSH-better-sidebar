@@ -134,6 +134,44 @@ describe('EditorHost (files window)', () => {
     }
   })
 
+  it('the docked tree stays MOUNTED after its first open — collapse animates the width, expand restores it', () => {
+    const { store, ctx, homeTab } = setup()
+    const { container, rerender, unmount } = mountHost(ctx, store, homeTab)
+    const dock = (): HTMLElement => container.querySelector('[class*="editorTreeDock"]') as HTMLElement
+    const search = (): HTMLElement | null => container.querySelector('input[data-dsh-sidebar-search]')
+    try {
+      // The home tab opens with the tree EXPANDED: no collapsed class, the
+      // tree panel (search box) mounted.
+      expect(dock()).not.toBeNull()
+      expect(dock().className).not.toContain('editorTreeDockCollapsed')
+      expect(search()).not.toBeNull()
+
+      // Collapse via the header toggle: the dock STAYS in the DOM at width 0
+      // with the collapsed class (the CSS transition animates the slide);
+      // the tree panel stays mounted — re-expanding never reloads it.
+      act(() => {
+        container.querySelector('button[aria-pressed]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      rerender()
+      expect(dock()).not.toBeNull()
+      expect(dock().className).toContain('editorTreeDockCollapsed')
+      expect(dock().style.width).toBe('0px')
+      expect(search()).not.toBeNull()
+
+      // Re-expand: the collapsed class drops and the persisted width
+      // returns (240 = the default tree width).
+      act(() => {
+        container.querySelector('button[aria-pressed]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      rerender()
+      expect(dock().className).not.toContain('editorTreeDockCollapsed')
+      expect(dock().style.width).toBe('240px')
+      expect(search()).not.toBeNull()
+    } finally {
+      unmount()
+    }
+  })
+
   it('in-place mode: the path input Enter switches the CURRENT tab (stable id, meta kept)', () => {
     const { store, ctx, homeTab } = setup()
     const { container, unmount } = mountHost(ctx, store, homeTab)

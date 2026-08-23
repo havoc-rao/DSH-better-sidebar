@@ -10,11 +10,12 @@
  *   and focuses its search box (type-ahead file open);
  * - ⌘⇧E / Ctrl+Shift+E — TOGGLE EXPLORER (VSCode's `workbench.view.explorer`,
  *   with the Activity Bar explorer icon's close-on-second-press parity): in
- *   the vscode layout this toggles the Side Bar drawer; in the docked layout
- *   a FILE tab (with a path) toggles its own docked tree (the keyboard
- *   equivalent of the editor header's folder-icon button), and the files
- *   home window reveals — or closes on a second press when it is the one in
- *   view (the same path quick-open uses, minus the search focus);
+ *   the vscode layout this toggles the Side Bar drawer (the tree column —
+ *   IDE fullscreen pins it to the left edge and uses the same toggle); in
+ *   the docked layout a FILE tab (with a path) toggles its own docked tree
+ *   (the keyboard equivalent of the editor header's folder-icon button), and
+ *   the files home window reveals — or closes on a second press when it is
+ *   the one in view (the same path quick-open uses, minus the search focus);
  * - ⌘⇧G / Ctrl+Shift+G — SHOW SOURCE CONTROL (VSCode's
  *   `workbench.view.scm`): expands the panel and opens/focuses the git tab;
  * - ⌘⌥⇧B / Ctrl+Alt+Shift+B — TOGGLE IDE FULLSCREEN: the right panel covers
@@ -182,10 +183,12 @@ export function registerBuiltinKeybindings(
         // OPEN state the shortcut closes, so the keyboard and the icon never
         // disagree). In the vscode layout the explorer IS the Side Bar
         // drawer (open only while the panel is open too — a closed panel
-        // hides it); in the docked layout it is the files home window, which
-        // the shortcut closes when it is the one in view.
+        // hides it); IDE FULLSCREEN pins that drawer to the left edge and
+        // uses the same toggle. In the docked layout it is the files home
+        // window, which the shortcut closes when it is the one in view.
         const before = store.getSnapshot().state
-        if (before !== undefined && !context.narrow && store.getPrefs().sidebarLayout === 'vscode') {
+        if (before !== undefined && !context.narrow
+            && (store.getPrefs().sidebarLayout === 'vscode' || before.rightMaximized === true)) {
           const visible = before.panelOpen && before.sideBarOpen
           if (visible) {
             store.reduce(s => setSideBarOpen(s, false))

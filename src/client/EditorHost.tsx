@@ -286,6 +286,13 @@ export function EditorHost(props: {
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
   const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
+  // The docked tree mounts LAZILY on its first open, then stays mounted
+  // while collapsed (width 0, clipped) — the CSS width transition animates
+  // the collapse/expand and the tree keeps its state (scroll / expanded
+  // dirs / search query) across toggles. Before the first open nothing is
+  // mounted, so a tree that is never opened costs no fetch.
+  const [everOpened, setEverOpened] = useState(treeOpen)
+  useEffect(() => { if (treeOpen) setEverOpened(true) }, [treeOpen])
   const saveLabel = toolbar === null ? ''
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')
@@ -384,8 +391,15 @@ export function EditorHost(props: {
             onToolbarControls,
           })}
         </div>
-        {treeOpen && !vscode && (
-          <div className={css.editorTreeDock} style={{ width: treeWidth }}>
+        {!vscode && (
+          <div
+            className={clsx(
+              css.editorTreeDock,
+              !treeOpen && css.editorTreeDockCollapsed,
+              dragWidth !== null && css.editorTreeDockDragging,
+            )}
+            style={{ width: treeOpen ? treeWidth : 0 }}
+          >
             <div
               className={css.editorTreeResize}
               role="separator"
@@ -396,17 +410,19 @@ export function EditorHost(props: {
               onPointerUp={onResizeEnd}
               onPointerCancel={onResizeEnd}
             />
-            <TreePanel
-              sessionId={scope.sessionId}
-              cwd={scope.cwd}
-              expanded={expanded}
-              onToggle={onToggleDir}
-              onOpenFile={openFile}
-              onOpenFileNewTab={openFileNewTab}
-              onOpenFileSide={openFileSide}
-              onReferenceFile={onReferenceFile}
-              visible={visible}
-            />
+            {(treeOpen || everOpened) && (
+              <TreePanel
+                sessionId={scope.sessionId}
+                cwd={scope.cwd}
+                expanded={expanded}
+                onToggle={onToggleDir}
+                onOpenFile={openFile}
+                onOpenFileNewTab={openFileNewTab}
+                onOpenFileSide={openFileSide}
+                onReferenceFile={onReferenceFile}
+                visible={visible}
+              />
+            )}
           </div>
         )}
       </div>

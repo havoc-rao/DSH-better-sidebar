@@ -23,7 +23,7 @@ import {
 } from '../src/client/keybindings.ts'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import {
-  activeTabOf, allLeaves, createSidebarStore,
+  activeTabOf, allLeaves, createSidebarStore, toggleRightMaximized,
   type SidebarStore,
 } from '../src/client/state.ts'
 import type { Context } from '../src/context-types.ts'
@@ -136,6 +136,32 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
         .flatMap(leaf => leaf.tabs)
         .filter(tab => tab.type === 'editor' && tab.path !== undefined && tab.path !== '')
       expect(fileTabs.map(t => t.path)).toContain('/repo/main.ts')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘⇧E in IDE FULLSCREEN (docked layout) TOGGLES the Side Bar drawer — the tree column in IDE mode', () => {
+    const { store, runtime, dispose } = setup('docked')
+    try {
+      // Enter IDE fullscreen: the drawer defaults EXPANDED (the left-edge
+      // tree column is part of the IDE window).
+      store.reduce(toggleRightMaximized)
+      expect(store.getSnapshot().state?.rightMaximized).toBe(true)
+      expect(store.getSnapshot().state?.sideBarOpen).toBe(true)
+
+      // Open → closed (the Activity Bar explorer icon's toggle parity).
+      expect(runtime.dispatch(like({ code: 'KeyE', metaKey: true, shiftKey: true }))).toBe(true)
+      expect(store.getSnapshot().state?.sideBarOpen).toBe(false)
+
+      // Closed → open.
+      expect(runtime.dispatch(like({ code: 'KeyE', metaKey: true, shiftKey: true }))).toBe(true)
+      expect(store.getSnapshot().state?.sideBarOpen).toBe(true)
+
+      // Exiting the IDE restores the drawer to its pre-IDE value (open).
+      store.reduce(toggleRightMaximized)
+      expect(store.getSnapshot().state?.rightMaximized).toBe(false)
+      expect(store.getSnapshot().state?.sideBarOpen).toBe(true)
     } finally {
       dispose()
     }
