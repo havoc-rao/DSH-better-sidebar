@@ -2850,6 +2850,74 @@
   padding: 16px 20px 24px;
 }
 
+/* The page's own bottom workbench ("下方的 box"): the Global Workspace is a
+   SPECIAL SESSION — it owns a bottom panel of its own (virtual
+   `global-workspace` session's bottomSplits), where attached global
+   terminals render live. A fixed-height box pinned to the page's bottom
+   edge, above the body scroll area. */
+.globalPageBottom {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  height: 280px;
+  min-height: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.globalPageBottomHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.globalPageBottomTitle {
+  font: var(--dsw-font-xs-strong-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalPageBottomToggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.globalPageBottomToggle:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalPageBottomToggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+}
+
+.globalPageBottomBody {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Non-terminal tabs in the page's bottom workbench (should not occur —
+   only terminal windows attach globally) fall back to a plain label. */
+.globalPageTabFallback {
+  padding: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  font: 13px/20px var(--dsw-font-family);
+}
+
 /* Group container: the DSH PluginCard recipe — l2 hairline, r16, layer-3
    fill; holds its own heading + the inventory. */
 .globalGroup {

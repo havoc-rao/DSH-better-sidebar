@@ -37,14 +37,13 @@ import type { TabDescriptor } from '../service.ts'
  * descriptor maps it explicitly; a bare pass-through would leave tabId
  * undefined and TerminalView's isAgentTabId(tabId) would crash on
  * `undefined.startsWith` (regression-pinned in tests/lazy-chunk.spec.tsx).
+ * Exported for the full-page Global Workspace too: its bottom workbench
+ * renders attached `gb:` terminal stubs through the same chunk-loaded
+ * TerminalView the built-in terminal tab uses.
  */
-const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
-  'terminal',
-  (mod) => mod.TerminalView as ComponentType<TerminalViewProps> | undefined,
-)
 
 /** The terminal view's props (mirror of TerminalView's own signature). */
-interface TerminalViewProps {
+export interface TerminalViewProps {
   scope: SessionScope
   tabId: string
   store: SidebarStore
@@ -53,6 +52,12 @@ interface TerminalViewProps {
    *  stubs retitle in EVERY session via the windows store). */
   onTitleChange?: (title: string) => void
 }
+
+/** The chunk-loaded terminal view component (see the doc comment above). */
+export const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
+  'terminal',
+  (mod) => mod.TerminalView as ComponentType<TerminalViewProps> | undefined,
+)
 
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
 export const TERMINAL_LIMIT = 3

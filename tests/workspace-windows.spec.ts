@@ -9,7 +9,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  allLeaves, createSidebarStore, firstLeaf, isBoundTabId, isGlobalTabId, moveTab, openTabInActivePane, splitPane,
+  GLOBAL_WORKSPACE_SESSION_ID, allLeaves, createSidebarStore, firstLeaf, isBoundTabId, isGlobalTabId, moveTab, openTabInActivePane, splitPane,
   type SidebarStore, type SidebarTab,
 } from '../src/client/state.ts'
 import { createWorkspaceWindowsStore, type WorkspaceWindowsStore } from '../src/client/workspace-windows.ts'
@@ -51,6 +51,15 @@ function rightLeafTabs(store: SidebarStore, sessionId: string): SidebarTab[] {
 function bottomLeafTabs(store: SidebarStore, sessionId: string): SidebarTab[] {
   store.setSession(sessionId)
   const state = store.getSnapshot().state
+  return state === undefined ? [] : allLeaves(state.bottomSplits)[0]!.tabs
+}
+
+/** The GLOBAL WORKSPACE's virtual session bottom tree tabs — the full-page
+ *  view's own "下方工作区" (attachGlobal lands attached global stubs here).
+ *  Reads the virtual session's state directly (getStateOf), never switching
+ *  the active session. */
+function globalBottomTabs(store: SidebarStore): SidebarTab[] {
+  const state = store.getStateOf(GLOBAL_WORKSPACE_SESSION_ID)
   return state === undefined ? [] : allLeaves(state.bottomSplits)[0]!.tabs
 }
 
@@ -596,29 +605,28 @@ describe('global-shared windows (the Global Workspace)', () => {
     // And the workspace bind itself stays disabled/no-op for this session.
     expect(windows.getSnapshot().workspaceId).toBeUndefined()
   })
-
-  it('attachGlobal brings the window into the ACTIVE session only (and focuses an existing attachment)', () => {
+  it('attachGlobal brings the window into the GLOBAL WORKSPACE\u2019s bottom workbench (no real session is touched)', () => {
     const { sidebar, windows } = makePair()
     const t1 = terminalTab('terminal:1')
     sidebar.setSession('a')
     sidebar.reduce(s => openTabInActivePane(s, t1))
     return windows.bindGlobal(t1).then(() => {
       const stubId = windows.globalWindows()[0]!.id
-      // Attach from session 'a': the stub lands in 'a's first leaf, focused,
-      // and the covering panel opens so the window is in sight.
-      sidebar.setSession('a')
+      // Attach: the stub lands in the VIRTUAL global-workspace session's
+      // bottom tree, focused, and its box opens — the full-page Global
+      // Workspace's own "下方工作区".
       windows.attachGlobal(stubId)
-      expect(rightLeafTabs(sidebar, 'a').filter(t => t.id === stubId)).toHaveLength(1)
-      expect(firstLeaf(sidebar.getSnapshot().state!.splits).active).toBe(stubId)
-      expect(sidebar.getSnapshot().state!.panelOpen).toBe(true)
+      expect(globalBottomTabs(sidebar).filter(t => t.id === stubId)).toHaveLength(1)
+      const virtual = sidebar.getStateOf(GLOBAL_WORKSPACE_SESSION_ID)!
+      expect(firstLeaf(virtual.bottomSplits).active).toBe(stubId)
+      expect(virtual.bottomOpen).toBe(true)
       // Attaching again focuses the existing stub — no duplicate.
       windows.attachGlobal(stubId)
-      expect(rightLeafTabs(sidebar, 'a').filter(t => t.id === stubId)).toHaveLength(1)
-      // Other sessions are untouched — attachment is per-session.
-      sidebar.setSession('b')
-      sidebar.setSession('c')
-      expect(rightLeafTabs(sidebar, 'b').filter(t => isGlobalTabId(t.id))).toHaveLength(0)
-      expect(rightLeafTabs(sidebar, 'c').filter(t => isGlobalTabId(t.id))).toHaveLength(0)
+      expect(globalBottomTabs(sidebar).filter(t => t.id === stubId)).toHaveLength(1)
+      // REAL sessions are untouched — attachment is virtual-session-only.
+      for (const session of ['a', 'b', 'c', 'orphan']) {
+        expect(rightLeafTabs(sidebar, session).filter(t => isGlobalTabId(t.id))).toHaveLength(0)
+      }
     })
   })
 
@@ -629,77 +637,41 @@ describe('global-shared windows (the Global Workspace)', () => {
     sidebar.reduce(s => openTabInActivePane(s, t1))
     return windows.bindGlobal(t1).then(() => {
       const stubId = windows.globalWindows()[0]!.id
-      sidebar.setSession('a')
       windows.attachGlobal(stubId)
-      // Drag the attached stub into a second leaf (stubs are draggable).
-      sidebar.reduce(s => splitPane(s, 'row'))
-      const leaves = allLeaves(sidebar.getSnapshot().state!.splits)
-      sidebar.reduce(s => moveTab(s, leaves[0]!.id, stubId, leaves[1]!.id))
-      expect(allLeaves(sidebar.getSnapshot().state!.splits)[1]!.tabs.some(t => t.id === stubId)).toBe(true)
-      // A re-click attaches in place — one stub, focused in the moved leaf.
+      // Split the VIRTUAL session's BOTTOM tree (point the active pane at its
+      // first leaf first — splitPane splits the active pane) and drag the
+      // stub into the new leaf (stubs are draggable; an emptied source leaf
+      // is pruned by moveTab, so the tree may collapse back to one leaf).
+      sidebar.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => ({ ...s, activePane: firstLeaf(s.bottomSplits).id }))
+      sidebar.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => splitPane(s, 'row'))
+      const leaves = allLeaves(sidebar.getStateOf(GLOBAL_WORKSPACE_SESSION_ID)!.bottomSplits)
+      expect(leaves).toHaveLength(2)
+      sidebar.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => moveTab(s, leaves[0]!.id, stubId, leaves[1]!.id))
+      // A re-click attaches in place — still exactly one stub, focused.
       windows.attachGlobal(stubId)
-      const after = allLeaves(sidebar.getSnapshot().state!.splits)
+      const after = allLeaves(sidebar.getStateOf(GLOBAL_WORKSPACE_SESSION_ID)!.bottomSplits)
       expect(after.flatMap(l => l.tabs).filter(t => t.id === stubId)).toHaveLength(1)
-      expect(after[1]!.active).toBe(stubId)
+      expect(after.some(l => l.active === stubId)).toBe(true)
     })
   })
 
-  it('attachGlobal targets an explicit session through reduceFor (no UI switch)', () => {
+  it('detachGlobal removes the stub from the GLOBAL WORKSPACE only (the window lives on)', () => {
     const { sidebar, windows } = makePair()
     const t1 = terminalTab('terminal:1')
     sidebar.setSession('a')
     sidebar.reduce(s => openTabInActivePane(s, t1))
     return windows.bindGlobal(t1).then(() => {
       const stubId = windows.globalWindows()[0]!.id
-      // Attach to session 'b' WHILE 'a' is the active session: the open
-      // lands in 'b's layout without switching the UI.
-      windows.attachGlobal(stubId, 'b')
-      expect(sidebar.getSnapshot().sessionId).toBe('a')
-      expect(rightLeafTabs(sidebar, 'a').filter(t => isGlobalTabId(t.id))).toHaveLength(0)
-      expect(rightLeafTabs(sidebar, 'b').filter(t => t.id === stubId)).toHaveLength(1)
-    })
-  })
-
-  it('a bottom-area global window attaches into the bottom box (the area follows the original)', () => {
-    const { sidebar, windows } = makePair()
-    const t1 = terminalTab('terminal:1')
-    sidebar.setSession('a')
-    // Land the terminal in the BOTTOM tree before binding.
-    sidebar.reduce(s => ({ ...s, activePane: firstLeaf(s.bottomSplits).id }))
-    sidebar.reduce(s => openTabInActivePane(s, t1))
-    return windows.bindGlobal(t1).then(() => {
-      const stubId = windows.globalWindows()[0]!.id
-      expect(windows.globalWindows()[0]!.area).toBe('bottom')
-      sidebar.setSession('a')
       windows.attachGlobal(stubId)
-      expect(bottomLeafTabs(sidebar, 'a').filter(t => t.id === stubId)).toHaveLength(1)
-      expect(sidebar.getSnapshot().state!.bottomOpen).toBe(true)
-      expect(rightLeafTabs(sidebar, 'a').filter(t => isGlobalTabId(t.id))).toHaveLength(0)
-    })
-  })
-
-  it('detachGlobal removes the stub from the ACTIVE session only (the window lives on)', () => {
-    const { sidebar, windows } = makePair()
-    const t1 = terminalTab('terminal:1')
-    sidebar.setSession('a')
-    sidebar.reduce(s => openTabInActivePane(s, t1))
-    return windows.bindGlobal(t1).then(() => {
-      const stubId = windows.globalWindows()[0]!.id
-      sidebar.setSession('a')
-      windows.attachGlobal(stubId)
-      sidebar.setSession('b')
-      windows.attachGlobal(stubId)
-      // Detach from 'a': the local attachment is removed; 'b's survives and
-      // the window itself stays in the Global Workspace.
-      sidebar.setSession('a')
-      windows.detachGlobal(stubId)
-      expect(rightLeafTabs(sidebar, 'a').filter(t => t.id === stubId)).toHaveLength(0)
-      expect(rightLeafTabs(sidebar, 'b').filter(t => t.id === stubId)).toHaveLength(1)
+      // Detach from the virtual session: the attachment is removed; the
+      // window itself stays parked in the Global Workspace.
+      windows.detachGlobal(stubId, GLOBAL_WORKSPACE_SESSION_ID)
+      expect(globalBottomTabs(sidebar).filter(t => t.id === stubId)).toHaveLength(0)
       expect(windows.globalWindows().map(w => w.id)).toEqual([stubId])
     })
   })
 
-  it('unbindGlobal(false) removes the window from the Global Workspace and strips attached stubs from EVERY session', async () => {
+  it('unbindGlobal(false) removes the window from the Global Workspace and strips attached stubs everywhere', async () => {
     const { sidebar, windows } = makePair()
     const calls = stubSidebarApi()
     const t1 = terminalTab('terminal:1')
@@ -707,19 +679,13 @@ describe('global-shared windows (the Global Workspace)', () => {
     sidebar.reduce(s => openTabInActivePane(s, t1))
     await windows.bindGlobal(t1)
     const stubId = windows.globalWindows()[0]!.id
-    sidebar.setSession('a')
     windows.attachGlobal(stubId)
-    sidebar.setSession('b')
-    windows.attachGlobal(stubId)
-    sidebar.setSession('a')
     calls.length = 0
 
     await windows.unbindGlobal(stubId, false)
 
     expect(windows.globalWindows()).toHaveLength(0)
-    for (const session of ['a', 'b']) {
-      expect(rightLeafTabs(sidebar, session).filter(t => isGlobalTabId(t.id))).toHaveLength(0)
-    }
+    expect(globalBottomTabs(sidebar).filter(t => isGlobalTabId(t.id))).toHaveLength(0)
     // The shared pty is released explicitly (the never-attached headless
     // case; attached stubs' unmount close frames cover the attached case).
     expect(calls).toEqual([
@@ -727,7 +693,7 @@ describe('global-shared windows (the Global Workspace)', () => {
     ])
   })
 
-  it('unbindGlobal(keep) materializes the terminal as a local tab in the active session', async () => {
+  it('unbindGlobal(keep) materializes a legacy session stub as a local terminal in the active session', async () => {
     const { sidebar, windows } = makePair()
     const calls = stubSidebarApi()
     const t1 = terminalTab('terminal:1')
@@ -735,33 +701,33 @@ describe('global-shared windows (the Global Workspace)', () => {
     sidebar.reduce(s => openTabInActivePane(s, t1))
     await windows.bindGlobal(t1)
     const stubId = windows.globalWindows()[0]!.id
+    // A LEGACY attachment: a gb: stub persisted in a real session (from
+    // before the Global Workspace became a special session) sitting in 'a'.
     sidebar.setSession('a')
-    windows.attachGlobal(stubId)
+    sidebar.reduce(s => openTabInActivePane(s, { id: stubId, type: 'terminal', title: 'Terminal' }))
     calls.length = 0
 
     await windows.unbindGlobal(stubId, true)
 
-    // The window left the Global Workspace; the attached stub in the active
+    // The window left the Global Workspace; the legacy stub in the active
     // session (a) became a fresh local terminal, its pty re-parented back.
     expect(windows.globalWindows()).toHaveLength(0)
-    const local = rightLeafTabs(sidebar, 'a').find(t => t.type === 'terminal')
+    const local = rightLeafTabs(sidebar, 'a').find(t => t.type === 'terminal' && !isBoundTabId(t.id))
     expect(local).toBeDefined()
-    expect(isBoundTabId(local!.id)).toBe(false)
     expect(calls).toEqual([
       { method: 'pty.reparent', payload: { sessionId: 'a', from: stubId, to: local!.id } },
     ])
-    // A sibling session that never attached sees nothing (no auto-merge).
+    // A sibling session sees nothing (no auto-merge).
     expect(rightLeafTabs(sidebar, 'b').filter(t => t.type === 'terminal')).toHaveLength(0)
   })
 
-  it('the global blob persists; a session\u2019s ATTACHED stub persists and re-validates on reload', async () => {
+  it('the global blob persists; the GLOBAL WORKSPACE\u2019s attached stub persists and re-validates on reload', async () => {
     const { sidebar, windows } = makePair()
     const t1 = terminalTab('terminal:1')
     sidebar.setSession('a')
     sidebar.reduce(s => openTabInActivePane(s, t1))
     await windows.bindGlobal(t1)
     const stubId = windows.globalWindows()[0]!.id
-    sidebar.setSession('a')
     windows.attachGlobal(stubId)
     await flushPersist()
 
@@ -769,64 +735,62 @@ describe('global-shared windows (the Global Workspace)', () => {
       tabs: Array<{ id: string }>
     }
     expect(persisted.tabs.map(t => t.id)).toEqual([stubId])
-    // A session-ATTACHED gb: stub now PERSISTS in the session layout (it is
-    // a deliberate per-session view — unlike ws: stubs, which never persist).
-    expect(localStorage.getItem('dsh-sidebar:v1:a')).toContain(stubId)
+    // The attached stub persists in the VIRTUAL session's own layout (its
+    // own localStorage key) — unlike ws: stubs, which never persist.
+    expect(localStorage.getItem('dsh-sidebar:v1:global-workspace')).toContain(stubId)
 
-    // Reload: the attached stub is re-validated against the global blob (the
-    // window is still defined → it survives); a session that never attached
-    // sees nothing (no auto-merge on load).
+    // Reload: the virtual session's attachment is re-validated against the
+    // global blob (the window is still defined → it survives); real sessions
+    // never see it (no auto-merge on load).
     const { sidebar: reloaded, windows: reloadedWindows } = makePair()
-    expect(rightLeafTabs(reloaded, 'a').filter(t => t.id === stubId)).toHaveLength(1)
+    expect(globalBottomTabs(reloaded).filter(t => t.id === stubId)).toHaveLength(1)
+    expect(rightLeafTabs(reloaded, 'a').filter(t => isGlobalTabId(t.id))).toHaveLength(0)
     expect(rightLeafTabs(reloaded, 'c').filter(t => isGlobalTabId(t.id))).toHaveLength(0)
     expect(reloadedWindows.windowsOfSession('a').filter(w => isGlobalTabId(w.id))).toHaveLength(0)
   })
 
-  it('a persisted attached stub is stripped when its window was unbound meanwhile', async () => {
+  it('a persisted global-workspace attachment is stripped when its window was unbound meanwhile', async () => {
     const { sidebar, windows } = makePair()
     const t1 = terminalTab('terminal:1')
     sidebar.setSession('a')
     sidebar.reduce(s => openTabInActivePane(s, t1))
     await windows.bindGlobal(t1)
     const stubId = windows.globalWindows()[0]!.id
-    sidebar.setSession('a')
     windows.attachGlobal(stubId)
     await flushPersist()
-    expect(localStorage.getItem('dsh-sidebar:v1:a')).toContain(stubId)
+    expect(localStorage.getItem('dsh-sidebar:v1:global-workspace')).toContain(stubId)
 
     await windows.unbindGlobal(stubId, false)
     await flushPersist()
 
     // Reload: the unbound window's stale attachment does not resurface.
     const { sidebar: reloaded } = makePair()
-    expect(rightLeafTabs(reloaded, 'a').filter(t => isGlobalTabId(t.id))).toHaveLength(0)
+    expect(globalBottomTabs(reloaded).filter(t => isGlobalTabId(t.id))).toHaveLength(0)
   })
 
-  it('global and workspace stubs coexist without cross-interference', async () => {
+  it('workspace and global stubs coexist without cross-interference', async () => {
     const { sidebar, windows } = makePair()
     // Bind a file to workspace A (sessions a/b).
     const tab = openFileTab(sidebar, 'a', '/ws-a/src/a.ts')
     await windows.bind(tab)
     const wsStub = windows.getSnapshot().windows[0]!.id
-    // Then globally share a terminal and attach it in session 'a' only.
+    // Then globally share a terminal and attach it into the Global Workspace.
     const t1 = terminalTab('terminal:1')
     sidebar.setSession('a')
     sidebar.reduce(s => openTabInActivePane(s, t1))
     await windows.bindGlobal(t1)
     const gbStub = windows.globalWindows()[0]!.id
-    sidebar.setSession('a')
     windows.attachGlobal(gbStub)
 
-    // Session 'a' (workspace A) sees BOTH stubs; session 'b' (workspace A)
-    // sees ONLY the workspace one (it never attached the global window);
-    // session 'c' (workspace B) sees NEITHER.
+    // Workspace sessions see ONLY the workspace stub; the Global Workspace's
+    // bottom workbench sees the global one.
     const aStubs = rightLeafTabs(sidebar, 'a').filter(t => isBoundTabId(t.id)).map(t => t.id)
     expect(aStubs).toContain(wsStub)
-    expect(aStubs).toContain(gbStub)
-    expect(rightLeafTabs(sidebar, 'b').some(t => t.id === gbStub)).toBe(false)
+    expect(aStubs).not.toContain(gbStub)
     expect(rightLeafTabs(sidebar, 'b').some(t => t.id === wsStub)).toBe(true)
-    expect(rightLeafTabs(sidebar, 'c').some(t => t.id === gbStub)).toBe(false)
+    expect(rightLeafTabs(sidebar, 'b').some(t => t.id === gbStub)).toBe(false)
     expect(rightLeafTabs(sidebar, 'c').some(t => t.id === wsStub)).toBe(false)
+    expect(globalBottomTabs(sidebar).filter(t => t.id === gbStub)).toHaveLength(1)
     expect(windows.windowsOfSession('c').some(w => w.id === wsStub)).toBe(false)
   })
 })

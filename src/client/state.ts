@@ -56,6 +56,19 @@ export const WS_TAB_PREFIX = 'ws:'
  */
 export const GB_TAB_PREFIX = 'gb:'
 
+/**
+ * The reserved session id of the GLOBAL WORKSPACE — a special, virtual
+ * session that owns its own sidebar state (incl. a bottom workbench) even
+ * though it is not a real DSH conversation. The full-page Global Workspace
+ * (GlobalPage) renders it in the conversation slot; a globally shared
+ * window attaches into ITS bottom workbench (attachGlobal) instead of any
+ * real session's tab bar. Its state persists under its own localStorage key
+ * (`dsh-sidebar:v1:global-workspace`), so attached terminals survive
+ * reloads. Real session ids are uuids, so the reserved string never
+ * collides.
+ */
+export const GLOBAL_WORKSPACE_SESSION_ID = 'global-workspace'
+
 /** Whether a tab id refers to a global-bound window stub (`gb:`). */
 export function isGlobalTabId(tabId: string): boolean {
   return tabId.startsWith(GB_TAB_PREFIX)
@@ -63,8 +76,8 @@ export function isGlobalTabId(tabId: string): boolean {
 
 /** Whether a tab id refers to a shared window stub (workspace `ws:` OR
  *  global `gb:`). Global stubs ride the same reconcile/persist/render
- *  machinery as workspace stubs, differing only in that they merge into
- *  EVERY session rather than one workspace. */
+ *  machinery as workspace stubs, differing in that a session ATTACHES one
+ *  on demand (they never auto-merge into every session). */
 export function isBoundTabId(tabId: string): boolean {
   return tabId.startsWith(WS_TAB_PREFIX) || isGlobalTabId(tabId)
 }
@@ -1348,6 +1361,11 @@ export class SidebarStore {
     prefs: { ...SIDEBAR_PREFS_DEFAULTS },
   }
   private readonly listeners = new Set<() => void>()
+  /** Per-session listeners (the Global Workspace page subscribes to the
+   *  virtual `global-workspace` session's state this way). Fired on
+   *  reduce/reduceFor/update of THAT session — a targeted change (reduceFor)
+   *  must re-render its viewers without notifying the global UI. */
+  private readonly sessionListeners = new Map<string, Set<() => void>>()
   /** Per-session persist debounce timers (v0.12.0+: one per session, so a
    *  targeted open never cancels another session's pending write). */
   private readonly persistTimers = new Map<string, number>()
@@ -1371,7 +1389,14 @@ export class SidebarStore {
     source.subscribe(() => {
       for (const [sessionId, state] of this.bySession) {
         const next = reconcileWorkspaceWindows(state, source.windowsOfSession(sessionId), source.globalWindows())
-        if (next !== state) this.bySession.set(sessionId, next)
+        if (next !== state) {
+          this.bySession.set(sessionId, next)
+          // Persist the cleaned layout: a session-ATTACHED `gb:` stub strips
+          // durably here (the virtual global-workspace session's layout must
+          // not resurface a window that was unbound meanwhile on reload).
+          this.schedulePersist(sessionId, next)
+          this.notifySession(sessionId)
+        }
       }
       const activeSessionId = this.snapshot.sessionId
       if (activeSessionId !== undefined && this.snapshot.state !== undefined) {
@@ -1448,6 +1473,39 @@ export class SidebarStore {
     return () => { this.listeners.delete(listener) }
   }
 
+  /**
+   * Read ONE session's state (loading + reconciling it on demand like
+   * setSession, WITHOUT switching the active snapshot). Used by the full-page
+   * Global Workspace to render the virtual `global-workspace` session. The
+   * returned reference is stable until that session next changes.
+   */
+  getStateOf(sessionId: string): SidebarState | undefined {
+    let state = this.bySession.get(sessionId)
+    if (state === undefined) {
+      state = loadState(sessionId, this.prefs, this.workspaceWindows ?? undefined)
+      this.bySession.set(sessionId, state)
+    } else {
+      // Cache hit: another session's load/ops may have left the uid counter
+      // below THIS session's persisted ids — re-seed so fresh pane/split ids
+      // can never collide with its tree (mirror of setSession).
+      nextIdCounter = maxCounterId(state)
+    }
+    return state
+  }
+
+  /** Subscribe to changes of ONE session's state (fires on that session's
+   *  reduce/reduceFor/update/reconcile, including targeted changes that do
+   *  NOT notify the global UI). Returns the disposer. */
+  subscribeOf(sessionId: string, listener: () => void): () => void {
+    let set = this.sessionListeners.get(sessionId)
+    if (set === undefined) {
+      set = new Set()
+      this.sessionListeners.set(sessionId, set)
+    }
+    set.add(listener)
+    return () => { set.delete(listener) }
+  }
+
   getSnapshot(): SidebarSnapshot {
     return this.snapshot
   }
@@ -1463,6 +1521,7 @@ export class SidebarStore {
     this.snapshot = { sessionId, state: draft, prefs: this.prefs }
     this.schedulePersist(sessionId, draft)
     this.notify()
+    this.notifySession(sessionId)
   }
 
   /**
@@ -1511,14 +1570,18 @@ export class SidebarStore {
     this.snapshot = { sessionId, state: next, prefs: this.prefs }
     this.schedulePersist(sessionId, next)
     this.notify()
+    this.notifySession(sessionId)
   }
 
   /**
    * Apply a pure reducer to a TARGET session's state (not the active one),
    * loading it on demand and persisting the result — WITHOUT switching the
-   * active snapshot or notifying (the UI must not follow along). Used by the
-   * service's targeted `openTab(seed, scope)`: the open lands in the target
-   * session's layout and is visible whenever the user switches to it.
+   * active snapshot or notifying the global UI (the UI must not follow
+   * along). Used by the service's targeted `openTab(seed, scope)` (the open
+   * lands in the target session's layout and is visible whenever the user
+   * switches to it) and by `attachGlobal` (the Global Workspace's virtual
+   * session receives the attached stub here). The target session's OWN
+   * subscribers (the Global Workspace page) ARE notified.
    */
   reduceFor(sessionId: string, reducer: (state: SidebarState) => SidebarState): void {
     // The uid counter is SHARED across sessions, and the ACTIVE session's
@@ -1544,6 +1607,7 @@ export class SidebarStore {
     if (next === state) return
     this.bySession.set(sessionId, next)
     this.schedulePersist(sessionId, next)
+    this.notifySession(sessionId)
   }
 
   private schedulePersist(sessionId: string, state: SidebarState): void {
@@ -1572,6 +1636,14 @@ export class SidebarStore {
 
   private notify(): void {
     for (const listener of [...this.listeners]) listener()
+  }
+
+  /** Fire one session's own subscribers (targeted changes, the Global
+   *  Workspace page's virtual-session subscription). */
+  private notifySession(sessionId: string): void {
+    const set = this.sessionListeners.get(sessionId)
+    if (set === undefined) return
+    for (const listener of [...set]) listener()
   }
 }
 

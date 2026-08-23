@@ -7,31 +7,47 @@
  * literally becomes the global info page; closing disposes the registration
  * and the chat comes back (session state lives in stores, untouched).
  *
- * The page is a plain column surface (no fixed overlay, no measurement): the
- * official layout gives it the conversation column's box. It reads the
- * global windows LIVE through the workspace windows store's subscription, so
- * bind/unbind while the page is open re-renders it in place.
+ * THE GLOBAL WORKSPACE IS A SPECIAL SESSION. It occupies the chat box's
+ * layout position (the conversation slot) but owns its OWN sidebar state —
+ * the virtual `global-workspace` session (GLOBAL_WORKSPACE_SESSION_ID) in
+ * the sidebar store — including a BOTTOM WORKBENCH ("下方的 box") that no
+ * real session touches. A globally shared window is NOT opened in the
+ * current session: clicking its card ATTACHES it into this page's bottom
+ * workbench (attachGlobal → the stub lands in the virtual session's
+ * `bottomSplits` and attaches to the same `shared:gb:<n>` pty), and the
+ * terminal renders live right here. Attachments persist in the virtual
+ * session's layout and survive reloads.
+ *
+ * Card actions:
+ * - card click → attach the window into the page's own bottom workbench
+ *   (the page stays open; real sessions are never touched);
+ * - card ✕ → unbind the window from the whole instance (closes it
+ *   everywhere, releasing its shared pty).
+ *
+ * The bottom workbench renders the virtual session's bottom tree through
+ * the same Workbench the sidebar uses; a terminal stub's ✕ DETACHES it from
+ * the global workspace only (the window and its pty stay alive in the
+ * card list).
  *
  * Content uses the same `GlobalInfoList` the panel tab uses, styled with the
  * DSH settings "icon card" recipe (SideCardSection) so the page reads
  * consistently with the app's settings UI. Closed by Escape (or by opening a
  * session — the page opens from the no-session hero).
- *
- * Card actions on the page: the page is a NO-SESSION surface (opening it
- * cleared the active session), so a card click has no session to attach the
- * window to — it closes the page, attaches the window to the session that
- * was current when the page opened (captured by openGlobalPage), and
- * re-activates that session ("take me back with this terminal"). The card ✕
- * unbinds the window from the whole instance (closes it everywhere) without
- * leaving the page — the list re-renders live.
  */
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { IconCloseFill14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { t } from './locales.ts'
 import type { Context } from '../context-types.ts'
-import type { WorkspaceWindow } from './state.ts'
+import {
+  GLOBAL_WORKSPACE_SESSION_ID, activateTab, isBoundTabId, isGlobalTabId, leafWithTab, resizeSplitIn,
+  type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceWindow,
+} from './state.ts'
 import type { WorkspaceWindowsStore } from './workspace-windows.ts'
 import { GlobalInfoList } from './GlobalView.tsx'
-import { getGlobalPageSessionBeforeOpen, setGlobalPageOpen } from './global-page.ts'
+import { LazyTerminal } from './builtins/tabs.tsx'
+import { setGlobalPageOpen } from './global-page.ts'
+import { IconTerminalOutline16, IconPanelBottomOutline16 } from './icons.tsx'
+import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import css from './sidebar.module.css'
 
 /** The conversation-slot entry id (also the diagnostics label). */
@@ -50,6 +66,7 @@ const NO_WINDOWS: readonly WorkspaceWindow[] = []
  */
 export function registerGlobalPageSurface(
   ctx: Context,
+  store: SidebarStore,
   windows: WorkspaceWindowsStore | undefined,
 ): (() => void) | undefined {
   if (ctx.slots === undefined) return undefined
@@ -57,12 +74,12 @@ export function registerGlobalPageSurface(
     name: 'conversation',
     id: GLOBAL_CONVERSATION_ENTRY,
     priority: -1,
-  }, (_props: unknown) => <GlobalPage ctx={ctx} windows={windows} />)
+  }, (_props: unknown) => <GlobalPage ctx={ctx} store={store} windows={windows} />)
 }
 
 /** The full-page global info surface (rendered as the center column). */
-export function GlobalPage(props: { ctx: Context; windows?: WorkspaceWindowsStore }) {
-  const { ctx, windows } = props
+export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?: WorkspaceWindowsStore }) {
+  const { ctx, store, windows } = props
   const close = (): void => { setGlobalPageOpen(false) }
 
   // Live global windows: subscribe to the windows store so a bind/unbind
@@ -71,6 +88,59 @@ export function GlobalPage(props: { ctx: Context; windows?: WorkspaceWindowsStor
     (callback: () => void) => windows?.subscribe(callback) ?? (() => {}),
     () => windows?.getSnapshot().global ?? NO_WINDOWS,
   )
+
+  // The virtual `global-workspace` session's state: the page IS this
+  // session's view, so it subscribes to THAT session (per-session
+  // subscription — targeted attach/detach changes re-render the page
+  // without disturbing the sidebar's active session).
+  const globalState = useSyncExternalStore(
+    (callback: () => void) => store.subscribeOf(GLOBAL_WORKSPACE_SESSION_ID, callback),
+    () => store.getStateOf(GLOBAL_WORKSPACE_SESSION_ID),
+  )
+
+  // The attached terminal stubs in the page's bottom workbench (the virtual
+  // session's bottom tree — only terminal windows ever attach here).
+  const bottomTabs = useMemo(() => {
+    if (globalState === undefined) return []
+    return allTabsOf(globalState.bottomSplits).filter(tab => isGlobalTabId(tab.id))
+  }, [globalState])
+  const bottomOpen = globalState?.bottomOpen === true
+
+  // Resolve a stub to its LIVE definition (title/… from the global blob), so
+  // a retitle in any attached view re-renders the page's tab strip.
+  const resolveTab = (tab: SidebarTab): SidebarTab => {
+    if (!isBoundTabId(tab.id)) return tab
+    const known = globalWindows.find(window => window.id === tab.id)
+    return known === undefined ? tab : { ...tab, ...known }
+  }
+
+  // The bottom workbench's actions: every mutation targets the virtual
+  // global-workspace session via reduceFor (no UI switch, page re-renders
+  // through its per-session subscription). Closing a stub DETACHES it from
+  // the global workspace (the window and its shared pty live on).
+  const actions: WorkbenchActions = useMemo(() => ({
+    closeTab: (_paneId, tabId) => { windows?.detachGlobal(tabId, GLOBAL_WORKSPACE_SESSION_ID) },
+    activateTab: (_paneId, tabId) => {
+      store.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => {
+        const leaf = leafWithTab(s.bottomSplits, tabId)
+        if (leaf === undefined) return s
+        return activateTab(s, leaf.id, tabId)
+      })
+    },
+    renameTab: () => {},
+    focusPane: (paneId) => {
+      store.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => ({ ...s, activePane: paneId }))
+    },
+    moveTabToEdge: () => {},
+    moveTabBefore: () => {},
+    resizeSplit: (splitId, index, deltaFrac) => {
+      store.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => resizeSplitIn(s, splitId, index, deltaFrac))
+    },
+  }), [store, windows])
+
+  const toggleBottom = (): void => {
+    store.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => ({ ...s, bottomOpen: !s.bottomOpen }))
+  }
 
   // Escape closes the page (the page owns the center area, so it owns its
   // dismissal key — no conflict with sidebar keybindings).
@@ -86,34 +156,6 @@ export function GlobalPage(props: { ctx: Context; windows?: WorkspaceWindowsStor
     return () => { document.removeEventListener('keydown', onKey, true) }
   }, [])
 
-  // A card click on the page has no CURRENT session (the page opened from
-  // the hero): close the page and restore the session it was opened from,
-  // with the clicked window attached there (attachGlobal targets that
-  // session through the store's reduceFor path; re-activating it shows the
-  // terminal). No session to restore (page opened from the hero with no
-  // sessions at all) — the click is a no-op, the page stays as an overview.
-  const attach = (window: WorkspaceWindow): void => {
-    if (windows === undefined) return
-    const before = getGlobalPageSessionBeforeOpen()
-    if (before === undefined) return
-    setGlobalPageOpen(false)
-    windows.attachGlobal(window.id, before)
-    try {
-      ctx.sessions?.open?.(before)
-    } catch {
-      // Best-effort: a failed re-activation leaves the window attached in
-      // that session's layout; the user opens the session themselves.
-    }
-  }
-
-  const unbind = (window: WorkspaceWindow): void => {
-    try {
-      void windows?.unbindGlobal(window.id, false)
-    } catch {
-      // Never let a card ✕ take the page down (unknown/racing id).
-    }
-  }
-
   return (
     <div className={css.globalPage} role="main" aria-label={t('globalInfo')}>
       <div className={css.globalPageHeader}>
@@ -128,9 +170,93 @@ export function GlobalPage(props: { ctx: Context; windows?: WorkspaceWindowsStor
             <span>{t('globalInfoSection')}</span>
             <span className={css.globalGroupCount}>{globalWindows.length}</span>
           </div>
-          <GlobalInfoList ctx={ctx} globalWindows={globalWindows} onAttach={attach} onUnbind={unbind} />
+          <GlobalInfoList
+            ctx={ctx}
+            globalWindows={globalWindows}
+            onAttach={(window) => { windows?.attachGlobal(window.id) }}
+            onUnbind={(window) => { windows?.unbindGlobal(window.id, false) }}
+          />
         </div>
       </div>
+      {bottomTabs.length > 0 && (
+        <div className={css.globalPageBottom}>
+          <div className={css.globalPageBottomHeader}>
+            <span className={css.globalPageBottomTitle}>{t('globalInfoBottomWorkbench')}</span>
+            <span className={css.globalGroupCount}>{bottomTabs.length}</span>
+            {bottomOpen ? (
+              <button
+                type="button"
+                className={css.globalPageBottomToggle}
+                aria-label={t('collapseBottomPanel')}
+                title={t('collapseBottomPanel')}
+                onClick={toggleBottom}
+              >
+                <IconCloseFill14 />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={css.globalPageBottomToggle}
+                aria-label={t('expandBottomPanel')}
+                title={t('expandBottomPanel')}
+                onClick={toggleBottom}
+              >
+                <IconPanelBottomOutline16 size={14} />
+              </button>
+            )}
+          </div>
+          {bottomOpen && (
+            <div className={css.globalPageBottomBody}>
+              <Workbench
+                state={globalState!}
+                tree={globalState!.bottomSplits}
+                newTabOptions={[]}
+                actions={actions}
+                onNewTab={() => {}}
+                renderTab={(tab) => renderGlobalTab(tab, store, windows, resolveTab)}
+                getTabIcon={globalTabIconOf}
+                isBoundTabId={isBoundTabId}
+                resolveTab={resolveTab}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
+}
+
+/** The terminal tab body in the page's bottom workbench: the chunk-loaded
+ *  TerminalView attaches to the stub's shared `gb:` pty. */
+function renderGlobalTab(
+  tab: SidebarTab,
+  store: SidebarStore,
+  windows: WorkspaceWindowsStore | undefined,
+  resolveTab: (tab: SidebarTab) => SidebarTab,
+): React.ReactNode {
+  const resolved = resolveTab(tab)
+  if (tab.type === 'terminal' && isGlobalTabId(tab.id)) {
+    return (
+      <LazyTerminal
+        scope={{ sessionId: GLOBAL_WORKSPACE_SESSION_ID }}
+        store={store}
+        tabId={tab.id}
+        onTitleChange={(title) => { try { windows?.update(tab.id, { title }) } catch { /* best-effort retitle */ } }}
+      />
+    )
+  }
+  return <div className={css.globalPageTabFallback}>{resolved.title}</div>
+}
+
+/** The tab strip icon in the page's bottom workbench (terminals only). */
+function globalTabIconOf(tab: SidebarTab): React.ReactNode {
+  return tab.type === 'terminal'
+    ? <IconTerminalOutline16 size={14} />
+    : <IconCloseFill14 size={14} />
+}
+
+/** All tabs of a split tree, depth-first. */
+function allTabsOf(node: SplitNode): SidebarTab[] {
+  if (node.kind === 'leaf') return node.tabs
+  return node.children.flatMap(allTabsOf)
 }

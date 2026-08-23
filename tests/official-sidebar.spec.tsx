@@ -11,9 +11,10 @@
  *   it from the whole instance (onUnbindGlobal), plus the "expand to full
  *   page" affordance.
  * - `GlobalPage` (the complete-page surface) renders the same list; a card
- *   click closes the page and restores the pre-page session with the window
- *   attached (the page is a no-session surface), the card ✕ unbinds, and
- *   Escape (or opening a session) dismisses the page.
+ *   click ATTACHES the window into the page's OWN bottom workbench (the
+ *   special `global-workspace` session — no real session is touched, the
+ *   page stays open), the card ✕ unbinds, and Escape (or opening a session)
+ *   dismisses the page.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,6 +28,7 @@ import {
 import { GlobalView } from '../src/client/GlobalView.tsx'
 import { GlobalPage, registerGlobalPageSurface } from '../src/client/GlobalPage.tsx'
 import { isGlobalPageOpen, openGlobalPage, resetGlobalPageForTests, setGlobalPageOpen } from '../src/client/global-page.ts'
+import { GLOBAL_WORKSPACE_SESSION_ID, createSidebarStore, firstLeaf, mapLeaf } from '../src/client/state.ts'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -181,14 +183,14 @@ describe('GlobalView (the panel tab face)', () => {
   })
 })
 
-describe('GlobalPage (the in-place conversation surface)', () => {
+describe('GlobalPage (the in-place conversation surface — a special session)', () => {
   const windowOf = (id: string, title: string) => ({ id, type: 'terminal', title, area: 'right' as const })
 
   /** A fake workspace windows store exposing a live global list plus the
    *  attach/unbind actions the page's cards drive. */
   const fakeWindows = (
     global: Array<{ id: string; type: string; title: string; area: string }>,
-    hooks: { attach?: (id: string, sessionId?: string) => void; unbind?: (id: string, keep: boolean) => void } = {},
+    hooks: { attach?: (id: string) => void; unbind?: (id: string, keep: boolean) => void } = {},
   ) => ({
     subscribe: () => () => {},
     getSnapshot: () => ({ global }),
@@ -196,9 +198,12 @@ describe('GlobalPage (the in-place conversation surface)', () => {
     unbindGlobal: hooks.unbind ?? vi.fn(),
   }) as unknown as Parameters<typeof GlobalPage>[0]['windows']
 
+  /** The virtual global-workspace session the page renders (real store). */
+  const freshStore = () => createSidebarStore()
+
   it('renders the global windows list under a page header', () => {
     const ctx = {} as unknown as Context
-    const container = mount(createElement(GlobalPage, { ctx, windows: fakeWindows([windowOf('gb:1', 'zsh')]) } as never))
+    const container = mount(createElement(GlobalPage, { ctx, store: freshStore(), windows: fakeWindows([windowOf('gb:1', 'zsh')]) } as never))
     expect(container.textContent).toContain('Global Workspace')
     expect(container.textContent).toContain('zsh')
     container.remove()
@@ -206,54 +211,57 @@ describe('GlobalPage (the in-place conversation surface)', () => {
 
   it('renders no header close button (Esc / opening a session dismiss the page)', () => {
     const ctx = {} as unknown as Context
-    const container = mount(createElement(GlobalPage, { ctx, windows: undefined } as never))
+    const container = mount(createElement(GlobalPage, { ctx, store: freshStore(), windows: undefined } as never))
     expect(container.querySelector('button[aria-label="Close"]')).toBeNull()
     container.remove()
   })
 
   it('Escape closes the page', () => {
     const ctx = {} as unknown as Context
-    const container = mount(createElement(GlobalPage, { ctx, windows: undefined } as never))
+    const container = mount(createElement(GlobalPage, { ctx, store: freshStore(), windows: undefined } as never))
     act(() => { setGlobalPageOpen(true) })
     act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
     expect(isGlobalPageOpen()).toBe(false)
     container.remove()
   })
 
-  it('a card click closes the page and restores the pre-page session with the window attached', () => {
+  it('a card click attaches the window into the page\u2019s OWN bottom workbench (the page stays open)', () => {
     const attach = vi.fn()
-    const open = vi.fn()
-    // Open the page the real way: openGlobalPage captures the current
-    // session (s1) before clearing it — the restore target for card clicks.
-    const sessions = {
-      list: { getSnapshot: () => ({ current: 's1', byId: {} }), subscribe: () => () => {} },
-      open,
-    }
-    const ctx = { sessions } as unknown as Context
-    openGlobalPage(ctx)
-    expect(isGlobalPageOpen()).toBe(true)
+    const ctx = {} as unknown as Context
+    act(() => { setGlobalPageOpen(true) }) // the page is open (its real entry path)
     const windows = fakeWindows([windowOf('gb:1', 'zsh')], { attach })
-    const container = mount(createElement(GlobalPage, { ctx, windows } as never))
+    const container = mount(createElement(GlobalPage, { ctx, store: freshStore(), windows } as never))
     const card = container.querySelector('button')!
     act(() => { card.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-    // The page closed and the window attached to the session it was opened
-    // from, which is re-activated ("take me back with this terminal").
-    expect(isGlobalPageOpen()).toBe(false)
-    expect(attach).toHaveBeenCalledWith('gb:1', 's1')
-    expect(open).toHaveBeenCalledWith('s1')
+    // NO real session is touched and the page stays open — attach is a
+    // virtual-session action (the special session's bottom workbench), not a
+    // navigation back to a real conversation.
+    expect(isGlobalPageOpen()).toBe(true)
+    expect(attach).toHaveBeenCalledWith('gb:1')
     container.remove()
   })
 
-  it('a card click with NO session to restore leaves the page open (no-op overview)', () => {
-    const attach = vi.fn()
+  it('renders the bottom workbench with the attached terminal stub (the special session\u2019s 下方工作区)', () => {
     const ctx = {} as unknown as Context
-    act(() => { setGlobalPageOpen(true) }) // page opened from the hero: no captured session
-    const windows = fakeWindows([windowOf('gb:1', 'zsh')], { attach })
-    const container = mount(createElement(GlobalPage, { ctx, windows } as never))
-    const card = container.querySelector('button')!
-    act(() => { card.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-    expect(isGlobalPageOpen()).toBe(true)
-    expect(attach).not.toHaveBeenCalled()
+    const store = freshStore()
+    // The virtual session already holds an attached global stub (its bottom
+    // box raised) — the page renders it as its own bottom workbench.
+    store.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => {
+      const leaf = firstLeaf(s.bottomSplits)
+      return {
+        ...s,
+        bottomOpen: true,
+        bottomSplits: mapLeaf(s.bottomSplits, leaf.id, target => {
+          target.tabs = [...target.tabs, { id: 'gb:1', type: 'terminal', title: 'zsh' }]
+          target.active = 'gb:1'
+        }),
+      }
+    })
+    const windows = fakeWindows([windowOf('gb:1', 'zsh')])
+    const container = mount(createElement(GlobalPage, { ctx, store, windows } as never))
+    expect(container.textContent).toContain('Bottom workbench')
+    // The attached stub's tab strip renders with its live title.
+    expect(container.textContent).toContain('zsh')
     container.remove()
   })
 
@@ -262,7 +270,7 @@ describe('GlobalPage (the in-place conversation surface)', () => {
     const ctx = {} as unknown as Context
     act(() => { setGlobalPageOpen(true) })
     const windows = fakeWindows([windowOf('gb:1', 'zsh')], { unbind })
-    const container = mount(createElement(GlobalPage, { ctx, windows } as never))
+    const container = mount(createElement(GlobalPage, { ctx, store: freshStore(), windows } as never))
     const close = container.querySelector('button[aria-label="Stop global sharing"]')!
     expect(close).toBeDefined()
     act(() => { close.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
@@ -283,7 +291,7 @@ describe('registerGlobalPageSurface (conversation-slot takeover)', () => {
         },
       },
     } as unknown as Context
-    const dispose = registerGlobalPageSurface(ctx, undefined)
+    const dispose = registerGlobalPageSurface(ctx, createSidebarStore(), undefined)
     expect(dispose).toBeTypeOf('function')
     expect(registered).toEqual([
       { name: 'conversation', id: 'dsh-better-sidebar:global-info', priority: -1 },
@@ -295,6 +303,6 @@ describe('registerGlobalPageSurface (conversation-slot takeover)', () => {
 
   it('is a no-op when the slots service is absent', () => {
     const ctx = {} as unknown as Context
-    expect(registerGlobalPageSurface(ctx, undefined)).toBeUndefined()
+    expect(registerGlobalPageSurface(ctx, createSidebarStore(), undefined)).toBeUndefined()
   })
 })

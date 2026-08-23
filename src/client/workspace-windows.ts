@@ -3,26 +3,28 @@
  * shared by every session of a workspace) PLUS instance-level GLOBAL
  * windows ("all projects" tabs). Global windows PARK in the Global
  * Workspace (the instance-level blob is the single source of truth for
- * their definitions); they are NOT merged into every session's tab bar —
- * a session ATTACHES one on demand (attachGlobal), inserting the window's
- * `gb:` stub into ITS OWN first leaf only, and a session's attachment
- * persists in its layout (validated against the blob on reload). One blob
- * per workspace, plus one instance-level blob, persisted in localStorage.
+ * their definitions); they are NOT merged into any session's tab bar —
+ * the Global Workspace's own bottom workbench ATTACHES one on demand
+ * (attachGlobal), inserting the window's `gb:` stub into the virtual
+ * `global-workspace` session's bottom tree, and that attachment persists
+ * in its layout (validated against the blob on reload). One blob per
+ * workspace, plus one instance-level blob, persisted in localStorage.
  * Sessions never persist workspace stubs: they hold only `ws:`-prefixed
- * (workspace) or `gb:`-prefixed (attached global) STUBS in their first
- * leaf (see state.ts `reconcileWorkspaceWindows` /
- * `stripWorkspaceWindows`), and the render layer resolves stub ids against
- * this store's live definitions — so a bind/unbind/update in one session
- * re-renders every session of the covering scope (a workspace for `ws:`
- * stubs, every attached session for `gb:` stubs) for free (no per-session
- * copies, no back-propagation).
+ * (workspace) or `gb:`-prefixed (attached global) STUBS in their trees
+ * (see state.ts `reconcileWorkspaceWindows` / `stripWorkspaceWindows`),
+ * and the render layer resolves stub ids against this store's live
+ * definitions — so a bind/unbind/update in one session re-renders every
+ * session of the covering scope (a workspace for `ws:` stubs, the Global
+ * Workspace for `gb:` stubs) for free (no per-session copies, no
+ * back-propagation).
  *
  * The store resolves session → workspace through the client runtime's
  * workspaces list feed (`ctx.workspaces.list`, mirror of
  * `WorkspaceRuntime.list`): a session belongs to the workspace whose
  * `sessionIds` contains it; sessions outside any workspace have no
- * workspace-bound windows (the bind menu is disabled for them) but can
- * still ATTACH the GLOBAL windows — that is the "all projects" semantic.
+ * workspace-bound windows (the bind menu is disabled for them). GLOBAL
+ * windows are instance-level and independent of workspaces — the Global
+ * Workspace's bottom workbench attaches them ("all projects" semantic).
  *
  * Scope: ANY tab can be workspace-bound except agent-owned terminals
  * (`agent:` ids — the model creates/closes them, and the reconcile would
@@ -43,7 +45,7 @@
 import type { Context, SidebarWorkspaceListState, SidebarWorkspaceView } from '../context-types.ts'
 import { api } from './api.ts'
 import {
-  GB_TAB_PREFIX, WS_TAB_PREFIX, activateTab, firstLeaf, isAgentTabId, isBoundTabId, isGlobalTabId, leafWithTab, mapLeaf, mintTabId,
+  GB_TAB_PREFIX, GLOBAL_WORKSPACE_SESSION_ID, WS_TAB_PREFIX, activateTab, firstLeaf, isAgentTabId, isBoundTabId, isGlobalTabId, leafWithTab, mapLeaf, mintTabId,
   type SidebarDiffRef, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceArea,
   type WorkspaceWindow, type WorkspaceWindowsSource,
 } from './state.ts'
@@ -485,65 +487,58 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
   }
 
   /**
-   * Attach a GLOBAL-shared window to a session — the "bring this global
-   * window here" action from the Global Workspace faces. The window's `gb:`
-   * stub (its in-session proxy) lands in the session's first leaf of the
-   * window's area and is focused — the terminal view attaches to the SAME
-   * `shared:gb:<n>` pty as every other attachment (one shell, many views).
-   * A session that already holds the stub just focuses it (no duplicate).
-   *
-   * `sessionId` defaults to the ACTIVE session. An explicit id — the
-   * full-page Global Workspace restoring the session it was opened from —
-   * goes through the targeted `reduceFor` path (loads/persists that
-   * session's layout WITHOUT switching the UI or notifying, mirror of the
-   * service's targeted openTab). No-op for a non-global or unknown id.
+   * Attach a GLOBAL-shared window to the GLOBAL WORKSPACE — the "open this
+   * window in the Global Workspace" action from the global workspace faces.
+   * The window's `gb:` stub lands in the Global Workspace's OWN bottom
+   * workbench (its `bottomSplits` first leaf, `bottomOpen` raised) — the
+   * special `global-workspace` session's state — and is focused; the
+   * terminal view attaches to the SAME `shared:gb:<n>` pty as every other
+   * attachment (one shell, many views). NO real session is touched: the
+   * full-page Global Workspace is a special session that owns this bottom
+   * box. A stub the Global Workspace already holds just focuses it (no
+   * duplicate, wherever it was dragged). No-op for a non-global or unknown
+   * id.
    */
-  attachGlobal(tabId: string, sessionId?: string): void {
-    const target = sessionId ?? this.sidebarStore?.getSnapshot().sessionId
-    if (target === undefined) return
+  attachGlobal(tabId: string): void {
     const blob = this.globalBlobOf()
     const window = blob.tabs.find(candidate => candidate.id === tabId)
     if (window === undefined) return
-    const reducer = (s: SidebarState): SidebarState => {
+    this.sidebarStore?.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => {
       // An existing attachment wins wherever it sits (stubs are draggable
       // across panels — a re-click focuses it, never duplicates it).
       const rightLeaf = leafWithTab(s.splits, tabId)
       if (rightLeaf !== undefined) return activateTab(s, rightLeaf.id, tabId)
       const bottomLeaf = leafWithTab(s.bottomSplits, tabId)
       if (bottomLeaf !== undefined) return activateTab(s, bottomLeaf.id, tabId)
-      // Insert the stub into the area's first leaf and focus it; open the
-      // covering panel so the attached window is in sight (mirror of the
-      // content-type openTab expansion rule).
-      const tree = window.area === 'bottom' ? s.bottomSplits : s.splits
-      const targetLeaf = firstLeaf(tree)
+      // Insert the stub into the GLOBAL WORKSPACE's bottom workbench (the
+      // "下方的 box" the page owns) and focus it; raise the box so the
+      // attached window is in sight.
+      const targetLeaf = firstLeaf(s.bottomSplits)
       return {
         ...s,
-        ...(window.area === 'bottom' ? { bottomOpen: true } : { panelOpen: true }),
-        [window.area === 'bottom' ? 'bottomSplits' : 'splits']: mapLeaf(tree, targetLeaf.id, leaf => {
+        bottomOpen: true,
+        bottomSplits: mapLeaf(s.bottomSplits, targetLeaf.id, leaf => {
           leaf.tabs = [...leaf.tabs, { id: window.id, type: window.type, title: window.title }]
           leaf.active = window.id
         }),
       }
-    }
-    if (sessionId === undefined || sessionId === this.sidebarStore?.getSnapshot().sessionId) {
-      this.sidebarStore?.reduce(reducer)
-    } else {
-      this.sidebarStore?.reduceFor(sessionId, reducer)
-    }
+    })
   }
 
   /**
-   * Detach a GLOBAL-shared window's stub from the ACTIVE session (the ✕ on
-   * an attached `gb:` stub): the local attachment is removed; the window
-   * and its shared pty live on in the Global Workspace (no close frame is
-   * sent — the window is still defined, so TerminalView's unmount skips the
-   * pty close; see SidebarStore.tabOpen). No-op when the session holds no
+   * Detach a GLOBAL-shared window's stub from a session (the ✕ on an
+   * attached `gb:` stub): the local attachment is removed; the window and
+   * its shared pty live on in the Global Workspace (no close frame is sent
+   * — the window is still defined, so TerminalView's unmount skips the pty
+   * close; see SidebarStore.tabOpen). `sessionId` defaults to the ACTIVE
+   * session (a legacy attachment in a real session); the Global Workspace
+   * page passes its own virtual session id. No-op when the session holds no
    * such stub.
    */
-  detachGlobal(tabId: string): void {
-    const sessionId = this.sidebarStore?.getSnapshot().sessionId
-    if (sessionId === undefined) return
-    this.sidebarStore?.reduce(s => {
+  detachGlobal(tabId: string, sessionId?: string): void {
+    const target = sessionId ?? this.sidebarStore?.getSnapshot().sessionId
+    if (target === undefined) return
+    const reducer = (s: SidebarState): SidebarState => {
       const rightLeaf = leafWithTab(s.splits, tabId)
       const bottomLeaf = rightLeaf === undefined ? leafWithTab(s.bottomSplits, tabId) : undefined
       if (rightLeaf === undefined && bottomLeaf === undefined) return s
@@ -556,7 +551,12 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
           if (leaf.active === tabId) leaf.active = null
         }),
       }
-    })
+    }
+    if (sessionId === undefined || sessionId === this.sidebarStore?.getSnapshot().sessionId) {
+      this.sidebarStore?.reduce(reducer)
+    } else {
+      this.sidebarStore?.reduceFor(sessionId, reducer)
+    }
   }
 
   /**

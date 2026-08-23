@@ -105,7 +105,8 @@ function TabContent(props: {
   onOpenDiff: (tab: SidebarTab) => void
   /** The instance-level global-shared windows (the global info tab reads them). */
   globalWindows?: readonly WorkspaceWindow[]
-  /** Attach a global-shared window to this session (the global tab's card click). */
+  /** Attach a global-shared window into the Global Workspace's bottom
+   *  workbench (the global tab's card click — no real session is touched). */
   onAttachGlobal?: (tabId: string) => void
   /** Unbind a global-shared window from the whole instance (the global tab's card ✕). */
   onUnbindGlobal?: (tabId: string) => void
@@ -269,14 +270,14 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     if (!globalPageOpen) return
     let dispose: (() => void) | undefined
     try {
-      dispose = registerGlobalPageSurface(ctx, windows)
+      dispose = registerGlobalPageSurface(ctx, store, windows)
     } catch (error) {
       console.error('[dsh-better-sidebar] global page takeover failed:', error)
       setGlobalPageOpen(false)
       return
     }
     return () => { dispose?.() }
-  }, [globalPageOpen, ctx, windows])
+  }, [globalPageOpen, ctx, store, windows])
 
   // The full-page view is session-bound: it occupies the CURRENT session's
   // conversation surface, so opening/switching to another conversation
