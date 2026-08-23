@@ -426,13 +426,16 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
    * `unbind`).
    */
   async unbindGlobal(tabId: string, keepInSession: boolean): Promise<void> {
+    // The ACTIVE session may be UNDEFINED: the full-page Global Workspace is
+    // a no-session surface (openGlobalPage clears the current session), and
+    // its card ✕ must still be able to unbind the window. `keepInSession`
+    // has nowhere to materialize there, so it degrades to a full close.
     const sessionId = this.sidebarStore?.getSnapshot().sessionId
-    if (sessionId === undefined) return
     const blob = this.globalBlobOf()
     const boundWindow = blob.tabs.find(candidate => candidate.id === tabId)
     if (boundWindow === undefined) return
-    const localId = keepInSession ? mintTabId() : undefined
-    if (keepInSession && boundWindow.type === 'terminal' && localId !== undefined) {
+    const localId = keepInSession && sessionId !== undefined ? mintTabId() : undefined
+    if (keepInSession && boundWindow.type === 'terminal' && localId !== undefined && sessionId !== undefined) {
       try {
         await api.ptyReparent({ sessionId }, tabId, localId)
       } catch {
@@ -443,7 +446,7 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     }
     blob.tabs = blob.tabs.filter(candidate => candidate.id !== tabId)
     this.persistGlobal(blob)
-    if (keepInSession && localId !== undefined) {
+    if (keepInSession && localId !== undefined && sessionId !== undefined) {
       this.sidebarStore?.reduce(s => {
         const rightLeaf = leafWithTab(s.splits, tabId)
         const bottomLeaf = rightLeaf === undefined ? leafWithTab(s.bottomSplits, tabId) : undefined

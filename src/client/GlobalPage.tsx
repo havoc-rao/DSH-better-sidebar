@@ -187,7 +187,12 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
               onNewTab={() => {}}
               renderTab={(tab) => renderGlobalTab(tab, store, windows, resolveTab)}
               getTabIcon={globalTabIconOf}
-              isBoundTabId={isBoundTabId}
+              // The page workbench holds ONLY global-window stubs, and its ✕
+              // DETACHES (the window stays in the card list — non-destructive):
+              // never treat them as "bound", so the tab close is a single
+              // click (the shared-window two-click confirm is for the
+              // destructive close-everywhere path in real sessions).
+              isBoundTabId={() => false}
               resolveTab={resolveTab}
             />
           </div>

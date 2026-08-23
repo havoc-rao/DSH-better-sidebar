@@ -693,6 +693,32 @@ describe('global-shared windows (the Global Workspace)', () => {
     ])
   })
 
+  it('unbindGlobal works from the no-session Global Workspace page (the card ✕ while the page is open)', async () => {
+    const { sidebar, windows } = makePair()
+    const calls = stubSidebarApi()
+    const t1 = terminalTab('terminal:1')
+    sidebar.setSession('a')
+    sidebar.reduce(s => openTabInActivePane(s, t1))
+    await windows.bindGlobal(t1)
+    const stubId = windows.globalWindows()[0]!.id
+    windows.attachGlobal(stubId)
+    // The full-page Global Workspace is a NO-SESSION surface (openGlobalPage
+    // clears the current session): the card ✕ must still be able to unbind
+    // the window — this used to early-return and could never delete it.
+    sidebar.setSession(undefined)
+    calls.length = 0
+
+    await windows.unbindGlobal(stubId, false)
+
+    expect(windows.globalWindows()).toHaveLength(0)
+    expect(globalBottomTabs(sidebar).filter(t => isGlobalTabId(t.id))).toHaveLength(0)
+    // The pty release falls back to a placeholder session id (ignored for
+    // the `gb:` shared key).
+    expect(calls).toEqual([
+      { method: 'pty.close', payload: { sessionId: 'global', tab: stubId } },
+    ])
+  })
+
   it('unbindGlobal(keep) materializes a legacy session stub as a local terminal in the active session', async () => {
     const { sidebar, windows } = makePair()
     const calls = stubSidebarApi()
