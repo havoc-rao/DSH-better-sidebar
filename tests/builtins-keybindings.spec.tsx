@@ -50,6 +50,7 @@ function setup(layout: 'docked' | 'vscode' = 'docked'): {
   runtime: KeybindingRuntime
   dispose: () => void
   setMenuOpen: (open: boolean) => void
+  ctx: Context
 } {
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
@@ -76,7 +77,7 @@ function setup(layout: 'docked' | 'vscode' = 'docked'): {
     activePaneTabs: [],
   }))
   const dispose = registerBuiltinKeybindings(runtime, ctx, store)
-  return { store, runtime, dispose, setMenuOpen: open => { menuOpen = open } }
+  return { store, runtime, dispose, setMenuOpen: open => { menuOpen = open }, ctx }
 }
 
 describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source control)', () => {
@@ -103,6 +104,38 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
         .flatMap(leaf => leaf.tabs)
         .filter(tab => tab.type === 'editor' && (tab.path === undefined || tab.path === ''))
       expect(homeTabs).toHaveLength(0)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘⇧E in the docked layout TOGGLES the docked tree of the active FILE tab (the keyboard equivalent of the header button)', () => {
+    const { store, runtime, dispose, ctx } = setup()
+    try {
+      // A file tab (path set): the docked tree is its per-tab toggle target.
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'main.ts', path: '/repo/main.ts' })
+      let active = activeTabOf(store.getSnapshot().state!)
+      expect(active?.type).toBe('editor')
+      expect(active?.path).toBe('/repo/main.ts')
+      // A file tab defaults to the tree CLOSED (no treeOpen meta yet).
+      expect(active?.meta === undefined || (active.meta as Record<string, unknown>).treeOpen !== true).toBe(true)
+
+      // First press: the docked tree OPENS (meta.treeOpen → true); the tab
+      // itself survives — ⌘⇧E toggles the tree, not the window.
+      expect(runtime.dispatch(like({ code: 'KeyE', metaKey: true, shiftKey: true }))).toBe(true)
+      active = activeTabOf(store.getSnapshot().state!)
+      expect((active?.meta as Record<string, unknown>).treeOpen).toBe(true)
+
+      // Second press: CLOSES again — a toggle, never a one-way reveal.
+      expect(runtime.dispatch(like({ code: 'KeyE', metaKey: true, shiftKey: true }))).toBe(true)
+      active = activeTabOf(store.getSnapshot().state!)
+      expect((active?.meta as Record<string, unknown>).treeOpen).toBe(false)
+
+      // The file tab is still open (only its tree toggled).
+      const fileTabs = allLeaves(store.getSnapshot().state!.splits)
+        .flatMap(leaf => leaf.tabs)
+        .filter(tab => tab.type === 'editor' && tab.path !== undefined && tab.path !== '')
+      expect(fileTabs.map(t => t.path)).toContain('/repo/main.ts')
     } finally {
       dispose()
     }

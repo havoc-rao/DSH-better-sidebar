@@ -11,7 +11,9 @@
  * - ⌘⇧E / Ctrl+Shift+E — TOGGLE EXPLORER (VSCode's `workbench.view.explorer`,
  *   with the Activity Bar explorer icon's close-on-second-press parity): in
  *   the vscode layout this toggles the Side Bar drawer; in the docked layout
- *   it reveals the files home window, or closes it when it is the one in
+ *   a FILE tab (with a path) toggles its own docked tree (the keyboard
+ *   equivalent of the editor header's folder-icon button), and the files
+ *   home window reveals — or closes on a second press when it is the one in
  *   view (the same path quick-open uses, minus the search focus);
  * - ⌘⇧G / Ctrl+Shift+G — SHOW SOURCE CONTROL (VSCode's
  *   `workbench.view.scm`): expands the panel and opens/focuses the git tab;
@@ -56,6 +58,22 @@ function scopeOf(ctx: Context, store: SidebarStore): { sessionId: string; cwd: s
 /** A path-less editor tab = the files HOME window (the search + tree). */
 function isHomeTab(tab: SidebarTab): boolean {
   return tab.type === 'editor' && (tab.path === undefined || tab.path === '')
+}
+
+/** The tab's persisted meta object (a malformed meta reads as empty) — the
+ *  same rule EditorHost's `metaOf` uses for the docked tree flag. */
+function tabMetaOf(tab: SidebarTab): Record<string, unknown> {
+  return tab.meta !== null && typeof tab.meta === 'object' && !Array.isArray(tab.meta)
+    ? tab.meta as Record<string, unknown>
+    : {}
+}
+
+/** Read the persisted docked-tree flag: an explicit meta wins; otherwise a
+ *  path-less home tab defaults OPEN and a file tab defaults closed (the
+ *  exact rule EditorHost's `treeOpenOf` applies). */
+function treeOpenOf(tab: SidebarTab): boolean {
+  const treeOpen = tabMetaOf(tab).treeOpen
+  return typeof treeOpen === 'boolean' ? treeOpen : (tab.path === undefined || tab.path === '')
 }
 
 /** Find the files home tab — the active pane's first, then any. */
@@ -178,6 +196,16 @@ export function registerBuiltinKeybindings(
           return
         }
         const active = before === undefined ? undefined : activeTabOf(before)
+        // Docked layout, a FILE tab (with a path) in view: ⌘⇧E toggles THAT
+        // tab's own docked tree — the keyboard equivalent of the editor
+        // header's folder-icon button (persisted as meta.treeOpen, so the
+        // header's highlight and the shortcut never disagree). The files
+        // HOME window keeps its close-on-second-press semantics below.
+        if (before?.panelOpen === true && active !== undefined
+            && active.type === 'editor' && active.path !== undefined && active.path !== '') {
+          ctx.betterSidebar?.updateTab(active.id, { meta: { ...tabMetaOf(active), treeOpen: !treeOpenOf(active) } })
+          return
+        }
         if (before?.panelOpen === true && active !== undefined && isHomeTab(active)) {
           const scope = scopeOf(ctx, store)
           if (scope !== undefined) ctx.betterSidebar?.closeTab(active.id, scope)
