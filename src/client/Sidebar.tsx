@@ -108,10 +108,12 @@ function TabContent(props: {
   /** Attach a global-shared window into the Global Workspace's bottom
    *  workbench (the global tab's card click — no real session is touched). */
   onAttachGlobal?: (tabId: string) => void
+  /** Create a new global-shared terminal directly (the global tab's quick-add). */
+  onNewGlobalTerminal?: () => void
   /** Unbind a global-shared window from the whole instance (the global tab's card ✕). */
   onUnbindGlobal?: (tabId: string) => void
 }) {
-  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, globalWindows, onAttachGlobal, onUnbindGlobal } = props
+  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, globalWindows, onAttachGlobal, onNewGlobalTerminal, onUnbindGlobal } = props
   const scope = { sessionId, cwd }
   const descriptor = ctx.betterSidebar?.getTab(tab.type)
   if (descriptor === undefined) {
@@ -131,7 +133,7 @@ function TabContent(props: {
     createElement(descriptor.component, {
       ctx, store, scope, tab, visible, expanded,
       onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
-      globalWindows, onAttachGlobal, onUnbindGlobal,
+      globalWindows, onAttachGlobal, onNewGlobalTerminal, onUnbindGlobal,
     }),
   )
 }
@@ -1128,6 +1130,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       onOpenDiff={(diffTab) => { store.reduce(s => openDiffTab(s, paneId, diffTab)) }}
       globalWindows={wsSnapshot.global}
       onAttachGlobal={windows === undefined ? undefined : (tabId) => { void windows.attachGlobal(tabId) }}
+      onNewGlobalTerminal={windows === undefined ? undefined : () => { void windows.createGlobalTerminal() }}
       onUnbindGlobal={windows === undefined ? undefined : (tabId) => { void windows.unbindGlobal(tabId, false) }}
     />
   )

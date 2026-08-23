@@ -231,7 +231,7 @@ describe('GlobalPage (the in-place conversation surface — a special session)',
     act(() => { setGlobalPageOpen(true) }) // the page is open (its real entry path)
     const windows = fakeWindows([windowOf('gb:1', 'zsh')], { attach })
     const container = mount(createElement(GlobalPage, { ctx, store: freshStore(), windows } as never))
-    const card = container.querySelector('button')!
+    const card = [...container.querySelectorAll('button')].find(b => b.textContent?.includes('zsh'))!
     act(() => { card.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     // NO real session is touched and the page stays open — attach is a
     // virtual-session action (the special session's bottom workbench), not a

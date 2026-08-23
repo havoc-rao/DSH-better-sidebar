@@ -605,6 +605,25 @@ describe('global-shared windows (the Global Workspace)', () => {
     // And the workspace bind itself stays disabled/no-op for this session.
     expect(windows.getSnapshot().workspaceId).toBeUndefined()
   })
+
+  it('createGlobalTerminal mints a fresh global window and attaches it into the GLOBAL WORKSPACE bottom workbench (no session needed)', () => {
+    const { sidebar, windows } = makePair()
+    // The full-page Global Workspace is a no-session surface: the tabby-style
+    // quick-add must work without any active session.
+    windows.createGlobalTerminal('Root Shell')
+    expect(windows.globalWindows()).toHaveLength(1)
+    const window = windows.globalWindows()[0]!
+    expect(window.id).toMatch(/^gb:\d+$/)
+    expect(window.type).toBe('terminal')
+    expect(window.title).toBe('Root Shell')
+    // Immediately attached into the virtual session's bottom workbench.
+    expect(globalBottomTabs(sidebar).filter(t => t.id === window.id)).toHaveLength(1)
+    expect(sidebar.getStateOf(GLOBAL_WORKSPACE_SESSION_ID)!.bottomOpen).toBe(true)
+    // A second quick-add creates a second, distinct window.
+    windows.createGlobalTerminal()
+    expect(windows.globalWindows()).toHaveLength(2)
+    expect(globalBottomTabs(sidebar).filter(t => isGlobalTabId(t.id))).toHaveLength(2)
+  })
   it('attachGlobal brings the window into the GLOBAL WORKSPACE\u2019s bottom workbench (no real session is touched)', () => {
     const { sidebar, windows } = makePair()
     const t1 = terminalTab('terminal:1')

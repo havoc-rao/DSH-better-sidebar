@@ -69,7 +69,7 @@ attach 后底部工作区的 TerminalView 以 `gb:<n>` id 连接 → host `share
 `TabComponentProps` 新增两个可选 prop：`onAttachGlobal(tabId)` / `onUnbindGlobal(tabId)`（宿主未暴露 windows store 时缺省，卡片点击静默 no-op）。`builtins/tabs.tsx` 导出 `LazyTerminal`（页面底部工作区复用终端懒加载渲染）。
 
 - **`GlobalView`（面板 tab）**：卡片点击 → `attachGlobal`（带入虚拟会话的底部工作区，不碰当前 session）；卡片 ✕ → `unbindGlobal(false)`。
-- **`GlobalPage`（完整页面）**：`registerGlobalPageSurface(ctx, store, windows)`（新增 store 参数）。页面经 `useSyncExternalStore` 同时订阅 windows store 与**虚拟会话状态**；本体 = 卡片列表 + **专属下方工作区**（`globalPageBottom`，**无 header**——有 attached 终端即直接渲染；复用 `Workbench` 渲染虚拟会话 `bottomSplits`，terminal stub 经 `LazyTerminal` 渲染、标题经 `windows.update` 回流）。卡片点击 = `attachGlobal`（页面不关闭）；卡片 ✕ = `unbindGlobal(false)`（列表实时刷新）。`openGlobalPage` 只 `ctx.sessions.clear()` + 置 open（不再捕获/恢复原 session）。
+- **`GlobalPage`（完整页面）**：`registerGlobalPageSurface(ctx, store, windows)`（新增 store 参数）。页面经 `useSyncExternalStore` 同时订阅 windows store 与**虚拟会话状态**；本体 = 卡片列表 + **专属下方工作区**（`globalPageBottom`，**无 header**——有 attached 终端即直接渲染；复用 `Workbench` 渲染虚拟会话 `bottomSplits`，terminal stub 经 `LazyTerminal` 渲染、标题经 `windows.update` 回流）。**直接新建终端（tabby 式）**：`windows.createGlobalTerminal()` mint 全新 `gb:` 窗口（title 缺省终端标签）并立即 `attachGlobal` 进底部工作区——无需会话/右键；host `sessionCwdOf` 对虚拟会话回退 `os.homedir()`（新终端的「根目录」启动 cwd）。卡片点击 = `attachGlobal`（页面不关闭）；卡片 ✕ = `unbindGlobal(false)`（列表实时刷新）。`openGlobalPage` 只 `ctx.sessions.clear()` + 置 open（不再捕获/恢复原 session）。
 - 文案：`bindGlobal` → 「全局共享（转移到全局工作区）」；徽标 → 「驻留全局工作区」；新增「下方工作区」（`globalInfoBottomWorkbench`）；empty 提示更新。
 
 ## 4. 实施偏差与注意

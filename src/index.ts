@@ -18,6 +18,7 @@ import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
+import { homedir } from 'node:os'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { Context, SidebarHttpRequest } from './context-types.ts'
 import {
@@ -101,6 +102,15 @@ export function mediaTypeForPath(path: string): string {
 }
 
 /**
+ * The reserved virtual session id of the Global Workspace (mirror of the
+ * client's GLOBAL_WORKSPACE_SESSION_ID in state.ts). The full-page Global
+ * Workspace owns terminals of its own, but no real conversation — its
+ * freshly created terminals (the tabby-style quick-add) have no session
+ * cwd to derive from.
+ */
+const GLOBAL_WORKSPACE_SESSION_ID = 'global-workspace'
+
+/**
  * Resolve a session's authoritative working directory. The attached session
  * header wins; while the session is still hydrating from persistence (the
  * web client attaches the current conversation a moment after page load, so
@@ -108,7 +118,10 @@ export function mediaTypeForPath(path: string): string {
  * list-summary cwd is used; the process cwd is the last resort (blank
  * sessions have no cwd anywhere yet). Never throws for a missing cwd, so
  * explorer/git/terminal work from first paint instead of surfacing
- * "session ... has no working directory".
+ * "session ... has no working directory". The virtual Global Workspace
+ * session is the one exception: its terminals start at the user's home —
+ * the "root" for the Global Workspace's directly created terminals (a
+ * real session's process cwd would leak the host's working directory).
  */
 function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): string {
   const session = ctx.sessions.get(sessionId)
@@ -121,6 +134,7 @@ function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): stri
       throw new SidebarError('bad-request', `invalid working directory "${clientCwd}"`)
     }
   }
+  if (sessionId === GLOBAL_WORKSPACE_SESSION_ID) return homedir()
   return process.cwd()
 }
 

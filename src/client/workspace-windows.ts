@@ -44,6 +44,7 @@
  */
 import type { Context, SidebarWorkspaceListState, SidebarWorkspaceView } from '../context-types.ts'
 import { api } from './api.ts'
+import { t } from './locales.ts'
 import {
   GB_TAB_PREFIX, GLOBAL_WORKSPACE_SESSION_ID, WS_TAB_PREFIX, activateTab, firstLeaf, isAgentTabId, isBoundTabId, isGlobalTabId, leafWithTab, mapLeaf, mintTabId,
   type SidebarDiffRef, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceArea,
@@ -487,6 +488,25 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     // attached `gb:` stub now (the window is no longer defined).
     this.notify()
     this.refreshSnapshot()
+  }
+
+  /**
+   * Create a NEW global-shared terminal directly in the Global Workspace
+   * (the tabby-style quick-add): mints a fresh `gb:` window into the global
+   * blob and immediately attaches it into the Global Workspace's own bottom
+   * workbench — no real session, no right-click bind involved. The pty is
+   * spawned on first attach (host keys it `shared:gb:<n>`); with no session
+   * context, the host starts it at the user's home (the virtual session's
+   * "root"). Title defaults to the terminal label.
+   */
+  createGlobalTerminal(title?: string): void {
+    const blob = this.globalBlobOf()
+    const id = `${GB_TAB_PREFIX}${blob.nextId}`
+    blob.nextId += 1
+    blob.tabs = [...blob.tabs, { id, type: 'terminal', title: title ?? t('terminal'), area: 'bottom' }]
+    this.persistGlobal(blob)
+    this.refreshSnapshot()
+    this.attachGlobal(id)
   }
 
   /**

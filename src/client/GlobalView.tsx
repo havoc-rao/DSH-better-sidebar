@@ -29,7 +29,7 @@
  * stubs render from — no duplicated state.
  */
 import { useMemo } from 'react'
-import { IconCheckOutline16, IconCloseFill14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline16, IconCloseFill14, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconGlobeOutline16, IconTerminalOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import type { Context } from '../context-types.ts'
@@ -106,7 +106,7 @@ export function GlobalInfoList(props: {
 
 /** The "Global info" TAB body (the compact panel face). */
 export function GlobalView(props: TabComponentProps) {
-  const { ctx, globalWindows, onAttachGlobal, onUnbindGlobal } = props
+  const { ctx, globalWindows, onAttachGlobal, onNewGlobalTerminal, onUnbindGlobal } = props
   return (
     <div className={css.globalTab}>
       <GlobalInfoList
@@ -115,13 +115,25 @@ export function GlobalView(props: TabComponentProps) {
         onAttach={onAttachGlobal === undefined ? undefined : (window) => { onAttachGlobal(window.id) }}
         onUnbind={onUnbindGlobal === undefined ? undefined : (window) => { onUnbindGlobal(window.id) }}
       />
-      <button
-        type="button"
-        className={css.gitLink}
-        onClick={() => { openGlobalPage(ctx) }}
-      >
-        {t('globalInfoExpand')}
-      </button>
+      <div className={css.globalTabActions}>
+        {onNewGlobalTerminal !== undefined && (
+          <button
+            type="button"
+            className={css.gitLink}
+            onClick={() => { onNewGlobalTerminal() }}
+          >
+            <IconPlusOutline16 size={13} />
+            {t('newTerminal')}
+          </button>
+        )}
+        <button
+          type="button"
+          className={css.gitLink}
+          onClick={() => { openGlobalPage(ctx) }}
+        >
+          {t('globalInfoExpand')}
+        </button>
+      </div>
     </div>
   )
 }

@@ -164,6 +164,12 @@ export interface TabComponentProps {
    *  session is touched. Built-in global-tab usage; absent when the host
    *  does not expose the workspace windows store. */
   onAttachGlobal?: (tabId: string) => void
+  /** Create a NEW global-shared terminal directly in the Global Workspace
+   *  (the tabby-style quick-add: no session, no right-click bind — the
+   *  terminal lands in the Global Workspace's own bottom workbench, started
+   *  at the user's home). Built-in global-tab usage; absent when the host
+   *  does not expose the workspace windows store. */
+  onNewGlobalTerminal?: () => void
   /** Unbind a GLOBAL-shared window (`gb:` id) from the whole instance
    *  (closes it everywhere, releasing its shared pty). Built-in global-tab
    *  usage; absent when the host does not expose the workspace windows

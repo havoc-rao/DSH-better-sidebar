@@ -2913,6 +2913,36 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The "new terminal" quick-add (tabby-style): a small ghost + button at the
+   group heading's right edge — mints a fresh global terminal and attaches
+   it into the page's bottom workbench. */
+.globalNewTerminal {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.globalNewTerminal:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.globalNewTerminal:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+}
+
 /* ── Global info content: the settings "icon card" recipe (SideCardSection
    sync) ─────────────────────────────────────────────────────────────────────
    Mirrors the DSH settings inventory cards so the global page/tab reads
@@ -3112,4 +3142,21 @@
   flex: none;
   align-self: flex-start;
   margin: 4px 12px 10px;
+}
+
+/* The tab's action row: the "new terminal" quick-add and the "expand to
+   full page" link side by side at the bottom. */
+.globalTabActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px 10px;
+}
+
+.globalTabActions .gitLink {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }

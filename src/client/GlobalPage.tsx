@@ -36,7 +36,7 @@
  * session — the page opens from the no-session hero).
  */
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
-import { IconCloseFill14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { t } from './locales.ts'
 import type { Context } from '../context-types.ts'
 import {
@@ -167,6 +167,15 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
           <div className={css.globalGroupHeading}>
             <span>{t('globalInfoSection')}</span>
             <span className={css.globalGroupCount}>{globalWindows.length}</span>
+            <button
+              type="button"
+              className={css.globalNewTerminal}
+              aria-label={t('newTerminal')}
+              title={t('newTerminal')}
+              onClick={() => { try { windows?.createGlobalTerminal() } catch { /* best-effort */ } }}
+            >
+              <IconPlusOutline16 size={14} />
+            </button>
           </div>
           <GlobalInfoList
             ctx={ctx}
