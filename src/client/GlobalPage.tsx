@@ -25,7 +25,8 @@
  *   everywhere, releasing its shared pty).
  *
  * The bottom workbench renders the virtual session's bottom tree through
- * the same Workbench the sidebar uses; a terminal stub's ✕ DETACHES it from
+ * the same Workbench the sidebar uses, with NO header bar (it appears
+ * directly once it holds a terminal); a terminal stub's ✕ DETACHES it from
  * the global workspace only (the window and its pty stay alive in the
  * card list).
  *
@@ -46,7 +47,7 @@ import type { WorkspaceWindowsStore } from './workspace-windows.ts'
 import { GlobalInfoList } from './GlobalView.tsx'
 import { LazyTerminal } from './builtins/tabs.tsx'
 import { setGlobalPageOpen } from './global-page.ts'
-import { IconTerminalOutline16, IconPanelBottomOutline16 } from './icons.tsx'
+import { IconTerminalOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import css from './sidebar.module.css'
 
@@ -99,12 +100,13 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
   )
 
   // The attached terminal stubs in the page's bottom workbench (the virtual
-  // session's bottom tree — only terminal windows ever attach here).
+  // session's bottom tree — only terminal windows ever attach here). The
+  // workbench has NO header bar: it renders directly once it holds a
+  // terminal (the page's own "下方的 box").
   const bottomTabs = useMemo(() => {
     if (globalState === undefined) return []
     return allTabsOf(globalState.bottomSplits).filter(tab => isGlobalTabId(tab.id))
   }, [globalState])
-  const bottomOpen = globalState?.bottomOpen === true
 
   // Resolve a stub to its LIVE definition (title/… from the global blob), so
   // a retitle in any attached view re-renders the page's tab strip.
@@ -137,10 +139,6 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
       store.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => resizeSplitIn(s, splitId, index, deltaFrac))
     },
   }), [store, windows])
-
-  const toggleBottom = (): void => {
-    store.reduceFor(GLOBAL_WORKSPACE_SESSION_ID, s => ({ ...s, bottomOpen: !s.bottomOpen }))
-  }
 
   // Escape closes the page (the page owns the center area, so it owns its
   // dismissal key — no conflict with sidebar keybindings).
@@ -180,46 +178,19 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
       </div>
       {bottomTabs.length > 0 && (
         <div className={css.globalPageBottom}>
-          <div className={css.globalPageBottomHeader}>
-            <span className={css.globalPageBottomTitle}>{t('globalInfoBottomWorkbench')}</span>
-            <span className={css.globalGroupCount}>{bottomTabs.length}</span>
-            {bottomOpen ? (
-              <button
-                type="button"
-                className={css.globalPageBottomToggle}
-                aria-label={t('collapseBottomPanel')}
-                title={t('collapseBottomPanel')}
-                onClick={toggleBottom}
-              >
-                <IconCloseFill14 />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className={css.globalPageBottomToggle}
-                aria-label={t('expandBottomPanel')}
-                title={t('expandBottomPanel')}
-                onClick={toggleBottom}
-              >
-                <IconPanelBottomOutline16 size={14} />
-              </button>
-            )}
+          <div className={css.globalPageBottomBody}>
+            <Workbench
+              state={globalState!}
+              tree={globalState!.bottomSplits}
+              newTabOptions={[]}
+              actions={actions}
+              onNewTab={() => {}}
+              renderTab={(tab) => renderGlobalTab(tab, store, windows, resolveTab)}
+              getTabIcon={globalTabIconOf}
+              isBoundTabId={isBoundTabId}
+              resolveTab={resolveTab}
+            />
           </div>
-          {bottomOpen && (
-            <div className={css.globalPageBottomBody}>
-              <Workbench
-                state={globalState!}
-                tree={globalState!.bottomSplits}
-                newTabOptions={[]}
-                actions={actions}
-                onNewTab={() => {}}
-                renderTab={(tab) => renderGlobalTab(tab, store, windows, resolveTab)}
-                getTabIcon={globalTabIconOf}
-                isBoundTabId={isBoundTabId}
-                resolveTab={resolveTab}
-              />
-            </div>
-          )}
         </div>
       )}
     </div>

@@ -259,8 +259,9 @@ describe('GlobalPage (the in-place conversation surface — a special session)',
     })
     const windows = fakeWindows([windowOf('gb:1', 'zsh')])
     const container = mount(createElement(GlobalPage, { ctx, store, windows } as never))
-    expect(container.textContent).toContain('Bottom workbench')
-    // The attached stub's tab strip renders with its live title.
+    // The bottom workbench has no header bar — the attached stub's tab strip
+    // renders directly with its live title.
+    expect(container.textContent).not.toContain('Bottom workbench')
     expect(container.textContent).toContain('zsh')
     container.remove()
   })
