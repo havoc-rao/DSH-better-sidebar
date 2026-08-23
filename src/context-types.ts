@@ -274,6 +274,14 @@ export interface SidebarSessionsService {
    */
   open?(id: string): void
   /**
+   * Clear the current selection into the no-session view state (mirror of the
+   * runtime ISessions.clear) — the full-page Global Workspace opens FROM the
+   * hero: clearing the active session before opening makes every session
+   * click a real open, so the page's close-on-session-open guard fires
+   * naturally (no "same session" ambiguity).
+   */
+  clear?(): void
+  /**
    * Resolve an Agent-scoped context view for one session (mirror of the
    * runtime ISessions.scope) — the ticket `ctx.conversation.input.for`
    * requires to reach that session's composer.

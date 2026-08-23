@@ -20,7 +20,7 @@
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { IconGlobeOutline16 } from './icons.tsx'
-import { setGlobalPageOpen } from './global-page.ts'
+import { openGlobalPage } from './global-page.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
@@ -38,14 +38,18 @@ interface OfficialFooterActionProps {
   wide: boolean
 }
 
-/** The official sidebar footer button that opens the FULL-PAGE global info. */
-export function GlobalInfoFooterButton(props: OfficialFooterActionProps) {
-  const { wide } = props
+/** The official sidebar footer button that opens the FULL-PAGE global info.
+ *  Carries the app context so the open can clear the current session's
+ *  activation first (the page is a no-session surface — see openGlobalPage). */
+export function GlobalInfoFooterButton(props: OfficialFooterActionProps & { ctx: Context }) {
+  const { wide, ctx } = props
   const open = (): void => {
     try {
       // The global info expands into a complete full-viewport page (not a
       // panel tab): the plugin shell renders <GlobalPage/> on this signal.
-      setGlobalPageOpen(true)
+      // The session activation is cleared first (openGlobalPage) so the page
+      // opens from the hero and any session click dismisses it naturally.
+      openGlobalPage(ctx)
     } catch {
       // Never let a footer click take the official sidebar down.
     }
@@ -85,6 +89,6 @@ export function registerOfficialSidebarEntry(ctx: Context): (() => void) | undef
     order: 10,
     label: () => t('globalInfoFooter'),
   }, (props: OfficialFooterActionProps) => (
-    <GlobalInfoFooterButton {...props} />
+    <GlobalInfoFooterButton {...props} ctx={ctx} />
   )))
 }

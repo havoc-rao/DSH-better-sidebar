@@ -25,7 +25,7 @@ import { t } from './locales.ts'
 import type { Context } from '../context-types.ts'
 import type { WorkspaceWindow } from './state.ts'
 import type { TabComponentProps } from './service.ts'
-import { setGlobalPageOpen } from './global-page.ts'
+import { openGlobalPage } from './global-page.ts'
 import css from './sidebar.module.css'
 
 /** The shared global-windows list body (both the tab and the full page). */
@@ -95,7 +95,7 @@ export function GlobalView(props: TabComponentProps) {
       <button
         type="button"
         className={css.gitLink}
-        onClick={() => { setGlobalPageOpen(true) }}
+        onClick={() => { openGlobalPage(ctx) }}
       >
         {t('globalInfoExpand')}
       </button>

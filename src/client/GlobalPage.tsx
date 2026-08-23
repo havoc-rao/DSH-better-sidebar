@@ -14,10 +14,10 @@
  *
  * Content uses the same `GlobalInfoList` the panel tab uses, styled with the
  * DSH settings "icon card" recipe (SideCardSection) so the page reads
- * consistently with the app's settings UI. Closed by the header ✕ or Escape.
+ * consistently with the app's settings UI. Closed by Escape (or by opening a
+ * session — the page opens from the no-session hero).
  */
 import { useEffect, useSyncExternalStore } from 'react'
-import { IconCloseFill14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { t } from './locales.ts'
 import type { Context } from '../context-types.ts'
 import type { WorkspaceWindow } from './state.ts'
@@ -85,14 +85,6 @@ export function GlobalPage(props: { ctx: Context; windows?: WorkspaceWindowsStor
           <span className={css.globalPageTitle}>{t('globalInfo')}</span>
           <span className={css.globalPageDesc}>{t('globalInfoDesc')}</span>
         </div>
-        <button
-          type="button"
-          className={css.globalPageClose}
-          aria-label={t('close')}
-          onClick={close}
-        >
-          <IconCloseFill14 />
-        </button>
       </div>
       <div className={css.globalPageBody}>
         <div className={css.globalGroup}>

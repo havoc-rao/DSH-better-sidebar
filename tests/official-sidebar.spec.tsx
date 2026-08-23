@@ -9,7 +9,8 @@
  *   from the host-side `globalWindows` prop, activates them, and offers the
  *   "expand to full page" affordance.
  * - `GlobalPage` (the complete-page overlay) renders the same list and
- *   closes via the header ✕, Escape, or a backdrop click.
+ *   closes via Escape (or by opening a session — the page opens from the
+ *   no-session hero; no header close button).
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -90,22 +91,34 @@ describe('registerOfficialSidebarEntry', () => {
 })
 
 describe('GlobalInfoFooterButton', () => {
+  /** A ctx whose sessions face records clear() calls (the no-session open contract). */
+  const ctxWithClear = () => {
+    const clear = vi.fn()
+    return { ctx: { sessions: { clear } } as unknown as Context, clear }
+  }
+
   it('opens the FULL-PAGE global info on click (wide variant carries the label)', () => {
-    const container = mount(createElement(GlobalInfoFooterButton, { wide: true }))
+    const { ctx, clear } = ctxWithClear()
+    const container = mount(createElement(GlobalInfoFooterButton, { wide: true, ctx }))
     const button = container.querySelector('button')!
     expect(button.textContent).toContain('Global Workspace')
     expect(isGlobalPageOpen()).toBe(false)
     act(() => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(isGlobalPageOpen()).toBe(true)
+    // The page opens FROM the hero: the current session's activation is
+    // cleared first, so any session click dismisses the page naturally.
+    expect(clear).toHaveBeenCalledTimes(1)
     container.remove()
   })
 
   it('renders the rail icon-only variant when collapsed and still opens the page', () => {
-    const container = mount(createElement(GlobalInfoFooterButton, { wide: false }))
+    const { ctx, clear } = ctxWithClear()
+    const container = mount(createElement(GlobalInfoFooterButton, { wide: false, ctx }))
     const button = container.querySelector('button')!
     expect(button.textContent?.trim()).toBe('') // icon-only in the rail
     act(() => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(isGlobalPageOpen()).toBe(true)
+    expect(clear).toHaveBeenCalledTimes(1)
     container.remove()
   })
 })
@@ -135,12 +148,15 @@ describe('GlobalView (the panel tab face)', () => {
   })
 
   it('the expand affordance opens the FULL-PAGE global info', () => {
-    const ctx = { betterSidebar: { activateTab: vi.fn() } } as unknown as Context
+    const clear = vi.fn()
+    const ctx = { betterSidebar: { activateTab: vi.fn() }, sessions: { clear } } as unknown as Context
     const container = mount(createElement(GlobalView, { ctx, globalWindows: [] } as never))
     const expand = [...container.querySelectorAll('button')].find(b => b.textContent?.includes('Expand to full page'))!
     expect(expand).toBeDefined()
     act(() => { expand.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(isGlobalPageOpen()).toBe(true)
+    // Same no-session open contract as the footer button.
+    expect(clear).toHaveBeenCalledTimes(1)
     container.remove()
   })
 })
@@ -162,15 +178,10 @@ describe('GlobalPage (the in-place conversation surface)', () => {
     container.remove()
   })
 
-  it('the header close button closes the page', () => {
+  it('renders no header close button (Esc / opening a session dismiss the page)', () => {
     const ctx = { betterSidebar: { activateTab: vi.fn() } } as unknown as Context
     const container = mount(createElement(GlobalPage, { ctx, windows: undefined } as never))
-    expect(isGlobalPageOpen()).toBe(false)
-    act(() => { setGlobalPageOpen(true) })
-    const close = container.querySelector('button[aria-label="Close"]') as HTMLButtonElement | null
-    expect(close).not.toBeNull()
-    act(() => { close!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-    expect(isGlobalPageOpen()).toBe(false)
+    expect(container.querySelector('button[aria-label="Close"]')).toBeNull()
     container.remove()
   })
 

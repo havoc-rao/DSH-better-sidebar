@@ -274,6 +274,38 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     return () => { dispose?.() }
   }, [globalPageOpen, ctx, windows])
 
+  // The full-page view is session-bound: it occupies the CURRENT session's
+  // conversation surface, so opening/switching to another conversation
+  // dismisses it (modal semantics — navigating the official sidebar's
+  // session rows returns you to the chat). The rule is deliberately narrow:
+  // close ONLY when a DEFINED session different from the one the page opened
+  // under becomes current. Transient `undefined` (the sessions feed blanks
+  // `current` through re-selection / masked gaps even when the user clicks
+  // the SAME session or workspace) never closes — the page survives a
+  // no-op click, and only real switches (s1 → s2, or a first session
+  // appearing under the no-session hero) dismiss it. The `armed` flag
+  // distinguishes "the page just opened (nothing captured yet)" from "the
+  // page opened under NO session" — both must dismiss on the next defined
+  // session change. The explicit close also guards the stuck-open state:
+  // the conversation-slot occupant remounts on a session switch, and a
+  // crash there would abdicate the entry while the module flag stayed true
+  // — the footer button could then never reopen the page until a reload.
+  const globalPageSessionRef = useRef<{ armed: boolean; sessionId: string | undefined }>({ armed: false, sessionId: undefined })
+  useEffect(() => {
+    if (!globalPageOpen) {
+      globalPageSessionRef.current.armed = false
+      return
+    }
+    if (!globalPageSessionRef.current.armed) {
+      globalPageSessionRef.current = { armed: true, sessionId: current }
+      return
+    }
+    if (current !== undefined && current !== globalPageSessionRef.current.sessionId) {
+      globalPageSessionRef.current.armed = false
+      setGlobalPageOpen(false)
+    }
+  }, [globalPageOpen, current])
+
   /**
    * The tab right-click menu (workspace bind/unbind). ANY tab can be bound
    * — content windows share their definition, session-scoped views
