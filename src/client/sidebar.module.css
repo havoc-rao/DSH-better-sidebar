@@ -2913,6 +2913,71 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The env bar shared by both Global Workspace faces: the editable project
+   root + (panel-tab face) the current session's running CLI. */
+.globalEnvBar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 4px;
+  margin: 8px 10px 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.globalEnvItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.globalEnvLabel {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.globalEnvInput {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxxs-11);
+  outline: none;
+}
+
+.globalEnvInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.globalEnvInput:focus {
+  border-color: var(--dsw-alias-button-primary-fill);
+}
+
+.globalEnvValue {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The full-page env bar sits directly under the page header, above the
+   group block (a hairline card matching the group's recipe). */
+.globalPageBody > .globalEnvBar {
+  margin: 0 0 12px;
+  border-color: var(--dsw-alias-border-l2);
+}
+
 /* The "new terminal" quick-add (tabby-style): a small ghost + button at the
    group heading's right edge — mints a fresh global terminal and attaches
    it into the page's bottom workbench. */
@@ -2965,13 +3030,21 @@
   background: transparent;
   font: inherit;
   color: inherit;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
 }
 
 /* A shared window is LIVE — lit like an enabled settings card. */
 .globalCardOn {
   border-color: var(--dsw-alias-button-primary-fill);
   background: var(--dsw-alias-interactive-bg-active);
+}
+
+/* Hover: a gentle lift so the card reads as actionable (token-driven — no
+   hardcoded colors; the shadow stays inside the card's own surface). */
+.globalCard:hover {
+  transform: translateY(-1px);
+  border-color: var(--dsw-alias-border-l4);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .globalCardMain {
@@ -3073,6 +3146,9 @@
 }
 
 .globalCardBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   align-self: flex-start;
   max-width: 100%;
   overflow: hidden;
@@ -3083,6 +3159,16 @@
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2);
+}
+
+/* The live dot: the window is parked/running in the Global Workspace. */
+.globalCardBadge::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-button-primary-fill);
 }
 
 /* Empty state: centered column — icon in a soft chip, title, hint. */

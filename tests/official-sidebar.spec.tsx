@@ -181,22 +181,82 @@ describe('GlobalView (the panel tab face)', () => {
     expect(clear).toHaveBeenCalledTimes(1)
     container.remove()
   })
+
+  it('renders the env bar with the project dir and the current session\u2019s running CLI', () => {
+    const jobs = {
+      s1: [
+        { id: 'bash-1', kind: 'bash', label: 'npm run dev', status: 'running', startedAt: 1 },
+        { id: 'bash-2', kind: 'bash', label: 'git log --oneline', status: 'completed', startedAt: 0, finishedAt: 2 },
+      ],
+    }
+    const ctx = {
+      sessions: {
+        list: {
+          subscribe: () => () => {},
+          getSnapshot: () => ({ current: 's1', byId: {}, jobsBySession: jobs }),
+        },
+      },
+    } as unknown as Context
+    const container = mount(createElement(GlobalView, {
+      ctx,
+      scope: { sessionId: 's1' },
+      globalWindows: [],
+      projectDir: '/workspace/myproj',
+      onSetProjectDir: vi.fn(),
+    } as never))
+    expect(container.textContent).toContain('Project dir')
+    // The project dir is an INPUT value (not text content).
+    expect((container.querySelector('input') as HTMLInputElement).value).toBe('/workspace/myproj')
+    // Only the RUNNING job is the "running CLI" (the completed one is not).
+    expect(container.textContent).toContain('npm run dev')
+    expect(container.textContent).not.toContain('git log --oneline')
+    container.remove()
+  })
+
+  it('commits the project dir edit on Enter', () => {
+    const ctx = { sessions: {} } as unknown as Context
+    const onSetProjectDir = vi.fn()
+    const container = mount(createElement(GlobalView, {
+      ctx,
+      scope: { sessionId: 's1' },
+      globalWindows: [],
+      projectDir: '',
+      onSetProjectDir,
+    } as never))
+    const input = container.querySelector('input')!
+    // React ignores direct `input.value =` — use the native value setter.
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    act(() => {
+      setter.call(input, '/new/root')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(onSetProjectDir).toHaveBeenCalledWith('/new/root')
+    container.remove()
+  })
 })
 
 describe('GlobalPage (the in-place conversation surface — a special session)', () => {
   const windowOf = (id: string, title: string) => ({ id, type: 'terminal', title, area: 'right' as const })
 
   /** A fake workspace windows store exposing a live global list plus the
-   *  attach/unbind actions the page's cards drive. */
+   *  attach/unbind actions the page's cards drive. The snapshot reference is
+   *  STABLE across calls (the uSES contract — the real store keeps one
+   *  object per change). */
   const fakeWindows = (
     global: Array<{ id: string; type: string; title: string; area: string }>,
     hooks: { attach?: (id: string) => void; unbind?: (id: string, keep: boolean) => void } = {},
-  ) => ({
-    subscribe: () => () => {},
-    getSnapshot: () => ({ global }),
-    attachGlobal: hooks.attach ?? vi.fn(),
-    unbindGlobal: hooks.unbind ?? vi.fn(),
-  }) as unknown as Parameters<typeof GlobalPage>[0]['windows']
+  ) => {
+    const snapshot = { global, projectDir: '' }
+    return {
+      subscribe: () => () => {},
+      getSnapshot: () => snapshot,
+      attachGlobal: hooks.attach ?? vi.fn(),
+      unbindGlobal: hooks.unbind ?? vi.fn(),
+    } as unknown as Parameters<typeof GlobalPage>[0]['windows']
+  }
 
   /** The virtual global-workspace session the page renders (real store). */
   const freshStore = () => createSidebarStore()

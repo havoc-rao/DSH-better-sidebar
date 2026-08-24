@@ -44,7 +44,7 @@ import {
   type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceWindow,
 } from './state.ts'
 import type { WorkspaceWindowsStore } from './workspace-windows.ts'
-import { GlobalInfoList } from './GlobalView.tsx'
+import { GlobalInfoList, GlobalEnvBar } from './GlobalView.tsx'
 import { LazyTerminal } from './builtins/tabs.tsx'
 import { setGlobalPageOpen } from './global-page.ts'
 import { IconTerminalOutline16 } from './icons.tsx'
@@ -56,6 +56,7 @@ export const GLOBAL_CONVERSATION_ENTRY = 'dsh-better-sidebar:global-info'
 
 /** Stable empty snapshot for useSyncExternalStore (never re-allocated). */
 const NO_WINDOWS: readonly WorkspaceWindow[] = []
+const NO_WINDOWS_SNAPSHOT = { global: NO_WINDOWS, projectDir: '' }
 
 /**
  * Take over the official `conversation` slot while the global page is open:
@@ -83,12 +84,15 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
   const { ctx, store, windows } = props
   const close = (): void => { setGlobalPageOpen(false) }
 
-  // Live global windows: subscribe to the windows store so a bind/unbind
-  // while the page is open re-renders the list in place.
-  const globalWindows = useSyncExternalStore(
+  // Live global windows + the project root: subscribe to the windows store
+  // so a bind/unbind/setProjectDir while the page is open re-renders in
+  // place.
+  const wsSnapshot = useSyncExternalStore(
     (callback: () => void) => windows?.subscribe(callback) ?? (() => {}),
-    () => windows?.getSnapshot().global ?? NO_WINDOWS,
+    () => windows?.getSnapshot() ?? NO_WINDOWS_SNAPSHOT,
   )
+  const globalWindows = wsSnapshot.global
+  const projectDir = wsSnapshot.projectDir
 
   // The virtual `global-workspace` session's state: the page IS this
   // session's view, so it subscribes to THAT session (per-session
@@ -163,6 +167,11 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
         </div>
       </div>
       <div className={css.globalPageBody}>
+        <GlobalEnvBar
+          ctx={ctx}
+          projectDir={projectDir}
+          onSetProjectDir={(dir) => { try { windows?.setProjectDir(dir) } catch { /* best-effort */ } }}
+        />
         <div className={css.globalGroup}>
           <div className={css.globalGroupHeading}>
             <span>{t('globalInfoSection')}</span>
@@ -194,7 +203,7 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
               newTabOptions={[]}
               actions={actions}
               onNewTab={() => {}}
-              renderTab={(tab) => renderGlobalTab(tab, store, windows, resolveTab)}
+              renderTab={(tab) => renderGlobalTab(tab, store, windows, resolveTab, projectDir)}
               getTabIcon={globalTabIconOf}
               // The page workbench holds ONLY global-window stubs, and its ✕
               // DETACHES (the window stays in the card list — non-destructive):
@@ -212,18 +221,22 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
 }
 
 /** The terminal tab body in the page's bottom workbench: the chunk-loaded
- *  TerminalView attaches to the stub's shared `gb:` pty. */
+ *  TerminalView attaches to the stub's shared `gb:` pty. `projectDir` (the
+ *  Global Workspace's editable project root) seeds the cwd of freshly
+ *  spawned terminals; the host's client-cwd path wins over its home
+ *  fallback. */
 function renderGlobalTab(
   tab: SidebarTab,
   store: SidebarStore,
   windows: WorkspaceWindowsStore | undefined,
   resolveTab: (tab: SidebarTab) => SidebarTab,
+  projectDir: string,
 ): React.ReactNode {
   const resolved = resolveTab(tab)
   if (tab.type === 'terminal' && isGlobalTabId(tab.id)) {
     return (
       <LazyTerminal
-        scope={{ sessionId: GLOBAL_WORKSPACE_SESSION_ID }}
+        scope={{ sessionId: GLOBAL_WORKSPACE_SESSION_ID, ...(projectDir !== '' ? { cwd: projectDir } : {}) }}
         store={store}
         tabId={tab.id}
         onTitleChange={(title) => { try { windows?.update(tab.id, { title }) } catch { /* best-effort retitle */ } }}
