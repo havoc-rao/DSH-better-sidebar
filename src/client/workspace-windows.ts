@@ -53,15 +53,6 @@ import {
 
 const STORAGE_PREFIX = 'dsh-sidebar:v1'
 
-/** Load the persisted Global Workspace project root ('' when absent). */
-function loadProjectDir(): string {
-  try {
-    return localStorage.getItem(`${STORAGE_PREFIX}:global-project-dir`) ?? ''
-  } catch {
-    return ''
-  }
-}
-
 /** The persisted per-workspace blob (validated on load, corrupt → reset). */
 interface WorkspaceWindowsBlob {
   version: 1
@@ -86,11 +77,6 @@ export interface WorkspaceWindowsSnapshot {
    *  so stub resolution (`resolveTab`) can find an attached `gb:` stub's
    *  live definition. [] when none. */
   global: readonly WorkspaceWindow[]
-  /** The Global Workspace's PROJECT ROOT: the start directory for directly
-   *  created global terminals (the env bar's editable value). Empty = unset
-   *  — the host falls back to the user's home. Persisted in its own
-   *  localStorage key. */
-  projectDir: string
 }
 
 /** The client runtime's workspaces list feed (structural subset; the full
@@ -108,9 +94,6 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
    *  stubs through the shared reconcile/persist/render machinery. Loaded
    *  from its own storage key on first access. */
   private globalBlob: WorkspaceWindowsBlob | null = null
-  /** The Global Workspace's project root ('' = unset). Persisted in its own
-   *  localStorage key; the env bars of both faces edit it. */
-  private projectDir: string = loadProjectDir()
   private readonly listeners = new Set<() => void>()
   /** Per-workspace persist debounce timers (one per workspace, mirroring
    *  SidebarStore's per-session pattern). */
@@ -123,7 +106,6 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     workspaceTitle: undefined,
     windows: [],
     global: [],
-    projectDir: loadProjectDir(),
   }
   private readonly dispose: Array<() => void> = []
 
@@ -528,26 +510,6 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
   }
 
   /**
-   * Set the Global Workspace's PROJECT ROOT — the start directory for
-   * directly created global terminals (the env bar's editable value; '' or
-   * whitespace clears it, and the host then falls back to the user's home).
-   * Persisted in its own localStorage key; notifies so both env bars
-   * re-render.
-   */
-  setProjectDir(dir: string): void {
-    const clean = dir.trim()
-    if (clean === this.projectDir) return
-    this.projectDir = clean
-    try {
-      if (clean === '') localStorage.removeItem(`${STORAGE_PREFIX}:global-project-dir`)
-      else localStorage.setItem(`${STORAGE_PREFIX}:global-project-dir`, clean)
-    } catch {
-      // Storage unavailable: the env bar still shows the in-memory value.
-    }
-    this.refreshSnapshot()
-  }
-
-  /**
    * Attach a GLOBAL-shared window to the GLOBAL WORKSPACE — the "open this
    * window in the Global Workspace" action from the global workspace faces.
    * The window's `gb:` stub lands in the Global Workspace's OWN bottom
@@ -780,7 +742,6 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
       && this.snapshot.workspaceTitle === workspace?.title
       && this.snapshot.windows === windows
       && this.snapshot.global === global
-      && this.snapshot.projectDir === this.projectDir
     ) {
       return
     }
@@ -790,7 +751,6 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
       workspaceTitle: workspace?.title,
       windows,
       global,
-      projectDir: this.projectDir,
     }
     this.notify()
   }

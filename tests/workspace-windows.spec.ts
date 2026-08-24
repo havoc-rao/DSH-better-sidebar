@@ -625,20 +625,6 @@ describe('global-shared windows (the Global Workspace)', () => {
     expect(globalBottomTabs(sidebar).filter(t => isGlobalTabId(t.id))).toHaveLength(2)
   })
 
-  it('setProjectDir sets and persists the Global Workspace project root', () => {
-    const { windows } = makePair()
-    expect(windows.getSnapshot().projectDir).toBe('')
-    windows.setProjectDir('/workspace/myproj')
-    expect(windows.getSnapshot().projectDir).toBe('/workspace/myproj')
-    expect(localStorage.getItem('dsh-sidebar:v1:global-project-dir')).toBe('/workspace/myproj')
-    // Reload: the persisted value comes back.
-    const { windows: reloaded } = makePair()
-    expect(reloaded.getSnapshot().projectDir).toBe('/workspace/myproj')
-    // Whitespace clears it (the host then falls back to the user's home).
-    windows.setProjectDir('   ')
-    expect(windows.getSnapshot().projectDir).toBe('')
-    expect(localStorage.getItem('dsh-sidebar:v1:global-project-dir')).toBeNull()
-  })
   it('attachGlobal brings the window into the GLOBAL WORKSPACE\u2019s bottom workbench (no real session is touched)', () => {
     const { sidebar, windows } = makePair()
     const t1 = terminalTab('terminal:1')

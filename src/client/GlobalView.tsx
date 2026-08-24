@@ -28,11 +28,11 @@
  * blob), so both faces always reflect the same source of truth the attached
  * stubs render from — no duplicated state.
  */
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useMemo } from 'react'
 import { IconCheckOutline16, IconCloseFill14, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconGlobeOutline16, IconTerminalOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
-import type { Context, SidebarJobView } from '../context-types.ts'
+import type { Context } from '../context-types.ts'
 import type { WorkspaceWindow } from './state.ts'
 import type { TabComponentProps } from './service.ts'
 import { openGlobalPage } from './global-page.ts'
@@ -106,10 +106,9 @@ export function GlobalInfoList(props: {
 
 /** The "Global info" TAB body (the compact panel face). */
 export function GlobalView(props: TabComponentProps) {
-  const { ctx, globalWindows, onAttachGlobal, onNewGlobalTerminal, onSetProjectDir, projectDir, onUnbindGlobal } = props
+  const { ctx, globalWindows, onAttachGlobal, onNewGlobalTerminal, onUnbindGlobal } = props
   return (
     <div className={css.globalTab}>
-      <GlobalEnvBar ctx={ctx} sessionId={props.scope?.sessionId} projectDir={projectDir} onSetProjectDir={onSetProjectDir} />
       <GlobalInfoList
         ctx={ctx}
         globalWindows={globalWindows}
@@ -138,75 +137,3 @@ export function GlobalView(props: TabComponentProps) {
     </div>
   )
 }
-
-/** The env bar shared by both Global Workspace faces: the editable PROJECT
- *  ROOT (the start dir for directly created global terminals) and — on the
- *  panel-tab face, which has a session — the session's currently RUNNING
- *  CLI (the live background jobs of the current conversation). */
-export function GlobalEnvBar(props: {
-  ctx: Context
-  /** The session whose running CLI is shown (undefined on the full page). */
-  sessionId?: string
-  projectDir?: string
-  onSetProjectDir?: (dir: string) => void
-}) {
-  const { ctx, sessionId, projectDir, onSetProjectDir } = props
-  const [draft, setDraft] = useState(projectDir ?? '')
-  // Follow external changes (the store's persisted value re-renders this bar).
-  useEffect(() => { setDraft(projectDir ?? '') }, [projectDir])
-
-  // The running CLI of the current session: the live `running` background
-  // jobs (host session/jobs push → sessions.list). Absent sessions service
-  // degrades to "none".
-  const runningCli = useSyncExternalStore(
-    (callback: () => void) => ctx.sessions?.list?.subscribe(callback) ?? (() => {}),
-    () => {
-      if (sessionId === undefined) return NO_JOBS
-      try {
-        return ctx.sessions?.list?.getSnapshot().jobsBySession?.[sessionId] ?? NO_JOBS
-      } catch {
-        return NO_JOBS
-      }
-    },
-  )
-  const cli = runningCli.filter(job => job.status === 'running' || job.status === 'stopping').map(job => job.label)
-
-  const commit = (): void => { onSetProjectDir?.(draft) }
-
-  return (
-    <div className={css.globalEnvBar}>
-      <label className={css.globalEnvItem}>
-        <span className={css.globalEnvLabel}>{t('globalProjectDir')}</span>
-        <input
-          className={css.globalEnvInput}
-          value={draft}
-          placeholder={t('globalProjectDirPlaceholder')}
-          spellCheck={false}
-          onChange={(event) => { setDraft(event.target.value) }}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return
-            if (event.key === 'Enter') {
-              event.preventDefault()
-              commit()
-              event.currentTarget.blur()
-            } else if (event.key === 'Escape') {
-              event.preventDefault()
-              setDraft(projectDir ?? '')
-              event.currentTarget.blur()
-            }
-          }}
-          onBlur={commit}
-        />
-      </label>
-      <div className={css.globalEnvItem}>
-        <span className={css.globalEnvLabel}>{t('globalRunningCli')}</span>
-        <span className={css.globalEnvValue} title={cli.join(' · ')}>
-          {cli.length > 0 ? cli.join(' · ') : t('globalRunningCliNone')}
-        </span>
-      </div>
-    </div>
-  )
-}
-
-/** Stable empty jobs snapshot (never re-allocated). */
-const NO_JOBS: readonly SidebarJobView[] = []

@@ -170,14 +170,6 @@ export interface TabComponentProps {
    *  at the project dir or, unset, at the user's home). Built-in global-tab
    *  usage; absent when the host does not expose the workspace windows store. */
   onNewGlobalTerminal?: () => void
-  /** The Global Workspace's PROJECT ROOT: the start directory for directly
-   *  created global terminals (the env bar's editable value; '' = unset —
-   *  the host falls back to the user's home). Built-in global-tab usage;
-   *  absent when the host does not expose the workspace windows store. */
-  projectDir?: string
-  /** Set the Global Workspace's project root (persisted; newly created
-   *  global terminals start there). Built-in global-tab usage. */
-  onSetProjectDir?: (dir: string) => void
   /** Unbind a GLOBAL-shared window (`gb:` id) from the whole instance
    *  (closes it everywhere, releasing its shared pty). Built-in global-tab
    *  usage; absent when the host does not expose the workspace windows

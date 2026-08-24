@@ -77,7 +77,6 @@ const EMPTY_WS_SNAPSHOT: WorkspaceWindowsSnapshot = {
   workspaceTitle: undefined,
   windows: [],
   global: [],
-  projectDir: '',
 }
 
 /**
@@ -111,14 +110,10 @@ function TabContent(props: {
   onAttachGlobal?: (tabId: string) => void
   /** Create a new global-shared terminal directly (the global tab's quick-add). */
   onNewGlobalTerminal?: () => void
-  /** The Global Workspace's project root (the env bar's editable value). */
-  projectDir?: string
-  /** Set the Global Workspace's project root (persisted). */
-  onSetProjectDir?: (dir: string) => void
   /** Unbind a global-shared window from the whole instance (the global tab's card ✕). */
   onUnbindGlobal?: (tabId: string) => void
 }) {
-  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, globalWindows, onAttachGlobal, onNewGlobalTerminal, onSetProjectDir, projectDir, onUnbindGlobal } = props
+  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, globalWindows, onAttachGlobal, onNewGlobalTerminal, onUnbindGlobal } = props
   const scope = { sessionId, cwd }
   const descriptor = ctx.betterSidebar?.getTab(tab.type)
   if (descriptor === undefined) {
@@ -138,7 +133,7 @@ function TabContent(props: {
     createElement(descriptor.component, {
       ctx, store, scope, tab, visible, expanded,
       onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
-      globalWindows, onAttachGlobal, onNewGlobalTerminal, onSetProjectDir, projectDir, onUnbindGlobal,
+      globalWindows, onAttachGlobal, onNewGlobalTerminal, onUnbindGlobal,
     }),
   )
 }
@@ -1136,8 +1131,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       globalWindows={wsSnapshot.global}
       onAttachGlobal={windows === undefined ? undefined : (tabId) => { void windows.attachGlobal(tabId) }}
       onNewGlobalTerminal={windows === undefined ? undefined : () => { void windows.createGlobalTerminal() }}
-      projectDir={wsSnapshot.projectDir}
-      onSetProjectDir={windows === undefined ? undefined : (dir) => { windows.setProjectDir(dir) }}
       onUnbindGlobal={windows === undefined ? undefined : (tabId) => { void windows.unbindGlobal(tabId, false) }}
     />
   )
