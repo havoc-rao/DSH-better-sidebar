@@ -54,6 +54,9 @@ export interface TerminalViewProps {
   /** Whether the tab is the active one with the panel open; hidden tabs
    *  re-fit + repaint on the way back to visible (tabby reactivate pattern). */
   visible?: boolean
+  /** Render the box's info bar (cwd + running CLI) above the terminal —
+   *  the Global Workspace's bottom workbench boxes use it. */
+  infoBar?: boolean
 }
 
 /** The chunk-loaded terminal view component (see the doc comment above). */

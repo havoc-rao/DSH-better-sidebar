@@ -970,15 +970,15 @@ async function attachTerminal(
     // unnoticed.
     if (handle.transcript !== '') backpressure.send(ws, handle.transcript)
     const broadcastTitle = (): void => {
-      if (handle.title === '') return
-      const frame = JSON.stringify({ type: 'title', title: handle.title })
+      if (handle.title === '' && handle.command === '') return
+      const frame = JSON.stringify({ type: 'title', title: handle.title, command: handle.command, cwd: handle.cwd })
       for (const target of terminalSockets.get(handle.key) ?? []) {
         if (target.readyState === WebSocket.OPEN) target.send(frame)
       }
     }
-    // A fresh attach replays the current title (a session joining a shared
-    // terminal that is already running a command shows it immediately).
-    if (handle.title !== '') ws.send(JSON.stringify({ type: 'title', title: handle.title }))
+    // A fresh attach replays the current title + command + cwd — the info
+    // bar needs the cwd even before any command has run.
+    ws.send(JSON.stringify({ type: 'title', title: handle.title, command: handle.command, cwd: handle.cwd }))
     let overCeilingWarned = false
     const onData = (data: string): void => {
       if (ws.readyState !== WebSocket.OPEN) return
@@ -1027,12 +1027,13 @@ async function attachTerminal(
         handle.pty.resize(dims.cols, dims.rows)
       } else {
         // Terminal input. Digest the command line for the tab title (first
-        // token of the last settled command); a title CHANGE is broadcast
-        // to every socket attached to this pty — shared terminals update
-        // their tab title in all sessions at once.
-        const digested = digestCommandInput({ title: handle.title, line: handle.inputLine }, text)
-        if (digested.title !== handle.title) {
+        // token) and the FULL command (the info bar's "running CLI"); a
+        // change to either is broadcast to every socket attached to this
+        // pty — shared terminals update everywhere at once.
+        const digested = digestCommandInput({ title: handle.title, line: handle.inputLine, lastCommand: handle.command }, text)
+        if (digested.title !== handle.title || digested.lastCommand !== handle.command) {
           handle.title = digested.title
+          handle.command = digested.lastCommand
           broadcastTitle()
         }
         handle.inputLine = digested.line

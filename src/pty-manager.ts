@@ -96,6 +96,10 @@ export interface SidebarPty {
    *  {@link digestCommandInput} at the attach layer and broadcast to every
    *  connected socket — the client tab title follows. */
   title: string
+  /** The FULL last executed command line (`pnpm run dev`), fed by
+   *  {@link digestCommandInput} alongside the title — broadcast to every
+   *  connected socket for the terminal box's "running CLI" info bar. */
+  command: string
   /** The in-progress input line (unsettled keystrokes), shared across
    *  every connection of this pty. */
   inputLine: string
@@ -117,6 +121,10 @@ export interface CommandTitleState {
   title: string
   /** The in-progress input line (unsettled). */
   line: string
+  /** The last settled FULL command line ('' until the first command) — the
+   *  complete `pnpm run dev`, not just the `pnpm` token. Feeds the
+   *  terminal box's "running CLI" info bar. */
+  lastCommand: string
 }
 
 /**
@@ -124,22 +132,26 @@ export interface CommandTitleState {
  * receives them) into the running command-line buffer, settling a title on
  * Enter. Heuristic — no shell integration: the echoed command line is
  * rebuilt from input, and the FIRST token of the last settled line becomes
- * the tab title (`npm run dev` → `npm`, `git log` → `git`). Edit keys are
- * honored (backspace pops the last char), ANSI control sequences are
- * skipped (arrows/home/end never pollute the line), C0 controls are
- * stripped at settlement, and only a non-empty settlement updates the
- * title (a bare Enter keeps the previous title). A multi-line paste settles
- * one line at a time — the LAST line wins.
+ * the tab title (`npm run dev` → `npm`, `git log` → `git`); the FULL
+ * settled line becomes `lastCommand` (the "running CLI" the client's
+ * terminal info bar shows). Edit keys are honored (backspace pops the last
+ * char), ANSI control sequences are skipped (arrows/home/end never pollute
+ * the line), C0 controls are stripped at settlement, and only a non-empty
+ * settlement updates the title / lastCommand (a bare Enter keeps the
+ * previous ones). A multi-line paste settles one line at a time — the LAST
+ * line wins.
  */
 export function digestCommandInput(state: CommandTitleState, text: string): CommandTitleState {
-  let { title, line } = state
+  let { title, line, lastCommand } = state
   let i = 0
   while (i < text.length) {
     const ch = text[i]!
     if (ch === '\r' || ch === '\n') {
       const token = firstTokenOf(line)
+      const cleaned = line.replace(/[\u0000-\u001f\u007f]/g, '').trim()
       line = ''
       if (token !== '') title = token
+      if (cleaned !== '') lastCommand = cleaned
       i += 1
       continue
     }
@@ -155,7 +167,7 @@ export function digestCommandInput(state: CommandTitleState, text: string): Comm
     line += ch
     i += 1
   }
-  return { title, line }
+  return { title, line, lastCommand }
 }
 
 /** Advance past one ESC-introduced sequence starting at `i` (the ESC). */
@@ -278,6 +290,7 @@ export class PtyManager {
       transcript: '',
       exited: false,
       title: '',
+      command: '',
       inputLine: '',
     }
     handle.pty.onData((data) => {

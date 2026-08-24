@@ -47,20 +47,26 @@ const FAILURE_LIMIT = 3
 const PTY_DEPS_MISSING = 'pty-deps-missing'
 
 /**
- * Parse one host-downlink control frame. Only the `title` frame exists
- * today ({type:'title', title}); anything else — including terminal output
- * that merely looks like JSON — returns null and is written verbatim.
- * Bounded length and a leading-`{` fast path so high-volume program output
- * never pays a JSON.parse per chunk.
+ * Parse one host-downlink control frame. The `title` frame today carries
+ * {type:'title', title, command, cwd} (the info bar's running CLI + project
+ * dir); anything else — including terminal output that merely looks like
+ * JSON — returns null and is written verbatim. Bounded length and a
+ * leading-`{` fast path so high-volume program output never pays a
+ * JSON.parse per chunk.
  */
-export function parseDownlinkFrame(data: string): { type: 'title'; title: string } | null {
+export function parseDownlinkFrame(data: string): { type: 'title'; title: string; command?: string; cwd?: string } | null {
   if (data.length > 512 || data.charCodeAt(0) !== 0x7b) return null // '{'
   try {
     const parsed = JSON.parse(data) as unknown
     if (parsed === null || typeof parsed !== 'object') return null
     const record = parsed as Record<string, unknown>
     if (record.type === 'title' && typeof record.title === 'string') {
-      return { type: 'title', title: record.title }
+      return {
+        type: 'title',
+        title: record.title,
+        ...(typeof record.command === 'string' ? { command: record.command } : {}),
+        ...(typeof record.cwd === 'string' ? { cwd: record.cwd } : {}),
+      }
     }
     return null
   } catch {
@@ -137,8 +143,11 @@ export function TerminalView(props: {
    *  repaint so the canvas never comes back blank (tabby's reactivate
    *  pattern). Absent = always visible (standalone/test callers). */
   visible?: boolean
+  /** Render the box's info bar (cwd + running CLI) above the terminal —
+   *  the Global Workspace's bottom workbench boxes use it. */
+  infoBar?: boolean
 }) {
-  const { scope, tabId, store, onTitleChange, visible = true } = props
+  const { scope, tabId, store, onTitleChange, visible = true, infoBar = false } = props
   const hostRef = useRef<HTMLDivElement>(null)
   // onTitleChange is a fresh closure on every parent render (the tab
   // descriptor builds it inline) — it must NEVER ride the effect deps: a
@@ -153,6 +162,8 @@ export function TerminalView(props: {
   const [fatal, setFatal] = useState<string | null>(null)
   const [depsFatal, setDepsFatal] = useState<TerminalDepsInfo | null>(null)
   const [lastUrl, setLastUrl] = useState<string | null>(null)
+  /** The info bar payload (cwd + running CLI), fed by host title frames. */
+  const [info, setInfo] = useState<{ cwd?: string; command?: string } | null>(null)
   const connectRef = useRef<(() => void) | null>(null)
   // Re-fit + repaint when the tab becomes visible again (the canvas can come
   // back stale/blank after a display:none stay). The main effect publishes
@@ -255,7 +266,10 @@ export function TerminalView(props: {
         // JSON — is written verbatim.
         const frame = parseDownlinkFrame(event.data)
         if (frame !== null) {
-          if (frame.type === 'title') onTitleChangeRef.current?.(frame.title)
+          if (frame.type === 'title') {
+            onTitleChangeRef.current?.(frame.title)
+            setInfo({ cwd: frame.cwd, command: frame.command })
+          }
           return
         }
         term.write(event.data)
@@ -414,9 +428,30 @@ export function TerminalView(props: {
         </div>
       )}
       {fatal === null && depsFatal === null && !connected && <div className={css.terminalBanner}>{t('disconnected')}</div>}
+      {infoBar && info !== null && (
+        <div className={css.terminalInfoBar}>
+          {info.cwd !== undefined && (
+            <span className={css.terminalInfoCwd} title={info.cwd}>
+              {baseNameOf(info.cwd)}
+            </span>
+          )}
+          {info.command !== undefined && info.command !== '' && (
+            <span className={css.terminalInfoCli} title={info.command}>
+              {info.command}
+            </span>
+          )}
+        </div>
+      )}
       <div ref={hostRef} className={css.terminal} />
     </div>
   )
+}
+
+/** The last path segment of a directory (the info bar's compact "project
+ *  dir" label); falls back to the raw path. */
+function baseNameOf(path: string): string {
+  const segments = path.split(/[\\/]/).filter(Boolean)
+  return segments.length > 0 ? segments[segments.length - 1]! : path
 }
 
 /**

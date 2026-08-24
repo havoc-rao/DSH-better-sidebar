@@ -239,6 +239,7 @@ function renderGlobalTab(
         scope={{ sessionId: GLOBAL_WORKSPACE_SESSION_ID, ...(projectDir !== '' ? { cwd: projectDir } : {}) }}
         store={store}
         tabId={tab.id}
+        infoBar
         onTitleChange={(title) => { try { windows?.update(tab.id, { title }) } catch { /* best-effort retitle */ } }}
       />
     )
