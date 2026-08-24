@@ -24,12 +24,15 @@ import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import '@xterm/xterm/css/xterm.css'
+import './terminal.css'
 import { t } from './locales.ts'
 import { openWhenSized } from './open-when-sized.ts'
 import { api, type SessionScope, type TerminalDepsStatus } from './api.ts'
 import { agentUuidOf, isAgentTabId, type SidebarStore } from './state.ts'
 import { isDarkScheme, subscribeColorScheme, effectiveTokenValue, tokenValue } from './theme.ts'
 import { resolveTerminalFont } from './terminal-font.ts'
+import { generatePalette } from './generate-palette.ts'
+import { createThrottledFit } from './throttled-fit.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive unreasoned failures before showing the error banner. */
@@ -103,13 +106,20 @@ function xtermTheme(): ITheme {
   // 0.96 porcelain) pass through — the skin still controls the terminal.
   const background = effectiveTokenValue('--dsw-alias-bg-base') || (dark ? '#111114' : '#ffffff')
   const foreground = effectiveTokenValue('--dsw-alias-label-primary') || (dark ? '#e6e6e6' : '#1a1a1a')
+  const base = dark ? ANSI_DARK : ANSI_LIGHT
   return {
     background,
     foreground,
     cursor: foreground,
     cursorAccent: background,
     selectionBackground: dark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.12)',
-    ...(dark ? ANSI_DARK : ANSI_LIGHT),
+    ...base,
+    // 256-color harmonization (ported from tabby-terminal's generatePalette,
+    // MIT): LAB-interpolate the 16 curated colors + the surface bg/fg into
+    // indices 16–255, so 256-color programs (htop, vim truecolor gradients)
+    // render a palette in tune with the scheme instead of the browser
+    // default ramp. Recomputed on every scheme flip like the 16 colors.
+    extendedAnsi: generatePalette(Object.values(base), background, foreground, false),
   }
 }
 
@@ -122,8 +132,13 @@ export function TerminalView(props: {
    *  local tabs (patchTab) and workspace-bound stubs (windows store →
    *  every session) retitle. */
   onTitleChange?: (title: string) => void
+  /** Whether this is the active tab with the panel open. Hidden tabs stay
+   *  mounted (display:none); flipping back to visible forces a re-fit +
+   *  repaint so the canvas never comes back blank (tabby's reactivate
+   *  pattern). Absent = always visible (standalone/test callers). */
+  visible?: boolean
 }) {
-  const { scope, tabId, store, onTitleChange } = props
+  const { scope, tabId, store, onTitleChange, visible = true } = props
   const hostRef = useRef<HTMLDivElement>(null)
   // onTitleChange is a fresh closure on every parent render (the tab
   // descriptor builds it inline) — it must NEVER ride the effect deps: a
@@ -139,6 +154,11 @@ export function TerminalView(props: {
   const [depsFatal, setDepsFatal] = useState<TerminalDepsInfo | null>(null)
   const [lastUrl, setLastUrl] = useState<string | null>(null)
   const connectRef = useRef<(() => void) | null>(null)
+  // Re-fit + repaint when the tab becomes visible again (the canvas can come
+  // back stale/blank after a display:none stay). The main effect publishes
+  // the live refresh closure here so visibility changes never restart the
+  // whole terminal effect.
+  const refreshRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const host = hostRef.current
@@ -194,6 +214,21 @@ export function TerminalView(props: {
       }
     }
 
+    // The visibility refresh closure (see refreshRef): fit + repaint when the
+    // tab is shown again. Guarded on term.element (set by open) so a
+    // visibility flip before the deferred open is a safe no-op.
+    refreshRef.current = (): void => {
+      try {
+        if (term.element !== undefined) {
+          fit.fit()
+          term.refresh(0, term.rows - 1)
+          sendResize()
+        }
+      } catch {
+        // The terminal may be mid-dispose; ignore.
+      }
+    }
+
     const connect = (): void => {
       if (closed) return
       const url = wsUrl()
@@ -203,6 +238,14 @@ export function TerminalView(props: {
         failures = 0
         setConnected(true)
         setFatal(null)
+        // Reset stale terminal modes (mouse tracking normal/button/any-event,
+        // SGR extended mouse, bracketed paste) IN THE XTERM INSTANCE itself —
+        // ported from tabby's resetTerminalModes (it writes into the
+        // frontend, not the session). A fresh instance no-ops; a reused
+        // instance that a previous program left in mouse/bracketed-paste
+        // mode stops leaking escape sequences into the shell (e.g. after the
+        // host respawned the pty for a cwd change or an exited handle).
+        term.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l')
         sendResize()
       }
       socket.onmessage = (event) => {
@@ -262,17 +305,24 @@ export function TerminalView(props: {
     }
     connectRef.current = connect
 
-    const inputSub = term.onData((data) => {
-      if (socket !== null && socket.readyState === WebSocket.OPEN) socket.send(data)
-    })
-    const observer = new ResizeObserver(() => {
+    // Reflows are rate-limited (see throttled-fit.ts): ResizeObserver fires
+    // every frame during a panel drag — each fit + pty resize would be a
+    // SIGWINCH storm and visible drag flicker. One trailing fit per 32ms
+    // window, with an explicit repaint after fit to close the blank-frame
+    // gap while the renderer re-uploads its drawing buffer.
+    const reflow = createThrottledFit(() => {
       try {
         fit.fit()
+        term.refresh(0, term.rows - 1)
         sendResize()
       } catch {
         // The terminal may be mid-dispose; ignore.
       }
     })
+    const inputSub = term.onData((data) => {
+      if (socket !== null && socket.readyState === WebSocket.OPEN) socket.send(data)
+    })
+    const observer = new ResizeObserver(() => { reflow.schedule() })
     observer.observe(host)
 
     // Custom font prefs (the terminal card's secondary settings) apply LIVE:
@@ -285,12 +335,7 @@ export function TerminalView(props: {
       if (next.fontFamily !== term.options.fontFamily || next.fontSize !== term.options.fontSize) {
         term.options.fontFamily = next.fontFamily
         term.options.fontSize = next.fontSize
-        try {
-          fit.fit()
-          sendResize()
-        } catch {
-          // The terminal may be mid-dispose; ignore.
-        }
+        reflow.schedule()
       }
     })
 
@@ -318,6 +363,8 @@ export function TerminalView(props: {
     return () => {
       closed = true
       cancelOpen()
+      reflow.cancel()
+      refreshRef.current = null
       window.clearTimeout(retry)
       observer.disconnect()
       fontSub()
@@ -341,6 +388,12 @@ export function TerminalView(props: {
       connectRef.current = null
     }
   }, [scope.sessionId, scope.cwd, tabId, store])
+
+  // Re-fit + repaint when the tab becomes visible again (refreshRef is
+  // published by the main effect above; flipping visible never restarts it).
+  useEffect(() => {
+    if (visible) refreshRef.current?.()
+  }, [visible])
 
   return (
     <div className={css.terminalWrap}>

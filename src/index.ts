@@ -48,6 +48,7 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
+import { createPtyBackpressure, type PtyBackpressure } from './backpressure.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
@@ -784,6 +785,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // `{type:'close'}` releases the underlying pty (immediate for agent
   // terminals, scheduled-0 for UI tabs which keep the same reconnect grace
   // contract the host has always had).
+  // The backpressure contract (see backpressure.ts) tracks in-flight bytes
+  // through the ws send callback; no server-level tuning is needed.
   const wss = new WebSocketServer({ noServer: true })
   ctx.effect(() => ctx.webServer.registerUpgrade({
     path: '/sidebar/ws/terminal',
@@ -864,6 +867,17 @@ async function attachAgentList(
  *  a title settlement on ANY connection updates every session's tab title). */
 const terminalSockets = new Map<string, Set<WebSocket>>()
 
+/** Per-pty output backpressure: pause/resume the pty instead of dropping
+ *  output when a socket's buffer backs up (see backpressure.ts). Keyed like
+ *  terminalSockets — one controller per pty, shared by all its sockets. */
+const terminalBackpressure = new Map<string, PtyBackpressure>()
+
+/** Agent-terminal sockets per uuid (close cleanup mirrors terminalSockets). */
+const agentTerminalSockets = new Map<string, Set<WebSocket>>()
+
+/** Per-agent-pty output backpressure (mirror of terminalBackpressure). */
+const agentBackpressure = new Map<string, PtyBackpressure>()
+
 /**
  * Wire one terminal socket to its pty: replay transcript, pump both ways.
  * Two attach modes share the wire protocol:
@@ -927,8 +941,6 @@ async function attachTerminal(
     // must not schedule a grace close on the new key.
     const socketKey = handle.key
     const socketShared = handle.shared
-    // Replay the transcript, then follow live output.
-    if (handle.transcript !== '') ws.send(handle.transcript)
     // The command-title registry: every socket attached to a pty, so a
     // title settlement (see digestCommandInput) reaches ALL connected
     // sessions — a workspace-shared terminal's tab title updates in every
@@ -939,6 +951,24 @@ async function attachTerminal(
       terminalSockets.set(socketKey, sockets)
     }
     sockets.add(ws)
+    // The pty's output backpressure controller (shared by every socket of
+    // this pty): pause the pty when a socket backs up, resume when it drains
+    // (see backpressure.ts). Created once per key, dropped with the last
+    // socket's close.
+    const backpressure = terminalBackpressure.get(socketKey)
+      ?? (() => {
+        const created = createPtyBackpressure(
+          () => { try { handle.pty.pause() } catch { /* pty mid-dispose */ } },
+          () => { try { handle.pty.resume() } catch { /* pty mid-dispose */ } },
+        )
+        terminalBackpressure.set(socketKey, created)
+        return created
+      })()
+    backpressure.attach(ws)
+    // Replay the transcript, then follow live output. The replay rides the
+    // same in-flight accounting so a big transcript cannot blow the buffer
+    // unnoticed.
+    if (handle.transcript !== '') backpressure.send(ws, handle.transcript)
     const broadcastTitle = (): void => {
       if (handle.title === '') return
       const frame = JSON.stringify({ type: 'title', title: handle.title })
@@ -949,9 +979,16 @@ async function attachTerminal(
     // A fresh attach replays the current title (a session joining a shared
     // terminal that is already running a command shows it immediately).
     if (handle.title !== '') ws.send(JSON.stringify({ type: 'title', title: handle.title }))
+    let overCeilingWarned = false
     const onData = (data: string): void => {
-      if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 4 * 1024 * 1024) {
-        ws.send(data)
+      if (ws.readyState !== WebSocket.OPEN) return
+      // Backpressure instead of dropping: in-flight bytes crossing the high
+      // watermark pause the pty so the client's WS buffer drains; only a
+      // hard-ceiling overflow (pause/resume unavailable on some exotic pty
+      // builds) drops frames, logged once per socket.
+      if (!backpressure.send(ws, data) && !overCeilingWarned) {
+        overCeilingWarned = true
+        console.warn('[dsh-better-sidebar] terminal output exceeded the hard ceiling; dropping frames until the socket drains')
       }
     }
     const onExit = ({ exitCode }: { exitCode: number; signal?: number }): void => {
@@ -1005,12 +1042,18 @@ async function attachTerminal(
     ws.on('close', () => {
       dataSub.dispose()
       exitSub.dispose()
+      // A dead socket must never hold the pty's pause; the last detach
+      // resumes it so a future attach does not inherit a frozen terminal.
+      backpressure.detach(ws)
       // Drop this socket from the title registry; an empty registry entry
       // is cleaned up so dead keys do not accumulate. The socket's own
       // attached key (see socketKey above): a re-parented handle must not
       // let a dying socket wipe the new key's registry entry.
       sockets?.delete(ws)
-      if (sockets !== undefined && sockets.size === 0) terminalSockets.delete(socketKey)
+      if (sockets !== undefined && sockets.size === 0) {
+        terminalSockets.delete(socketKey)
+        terminalBackpressure.delete(socketKey)
+      }
       // A bare socket drop (refresh, tab switch) leaves the process alive
       // for a grace period so a quick reconnect keeps it; the reconnect's
       // open() cancels the pending close. A SHARED pty (workspace-bound
@@ -1036,10 +1079,35 @@ function pumpAgentTerminal(
   handle: AgentTerminalHandle,
   ws: WebSocket,
 ): void {
-  if (handle.transcript !== '') ws.send(handle.transcript)
+  // Same backpressure wiring as the UI-tab path: one controller per uuid,
+  // pause/resume the pty instead of dropping output; the sockets set mirrors
+  // terminalSockets for close-time cleanup.
+  const uuid = handle.uuid
+  let sockets = agentTerminalSockets.get(uuid)
+  if (sockets === undefined) {
+    sockets = new Set()
+    agentTerminalSockets.set(uuid, sockets)
+  }
+  sockets.add(ws)
+  const backpressure = agentBackpressure.get(uuid)
+    ?? (() => {
+      const created = createPtyBackpressure(
+        () => { try { handle.pty.pause() } catch { /* pty mid-dispose */ } },
+        () => { try { handle.pty.resume() } catch { /* pty mid-dispose */ } },
+      )
+      agentBackpressure.set(uuid, created)
+      return created
+    })()
+  backpressure.attach(ws)
+  // Replay the transcript, then follow live output (same accounting as the
+  // UI-tab path: the replay rides the in-flight byte counter).
+  if (handle.transcript !== '') backpressure.send(ws, handle.transcript)
+  let overCeilingWarned = false
   const onData = (data: string): void => {
-    if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 4 * 1024 * 1024) {
-      ws.send(data)
+    if (ws.readyState !== WebSocket.OPEN) return
+    if (!backpressure.send(ws, data) && !overCeilingWarned) {
+      overCeilingWarned = true
+      console.warn('[dsh-better-sidebar] agent terminal output exceeded the hard ceiling; dropping frames until the socket drains')
     }
   }
   const onExit = ({ exitCode }: { exitCode: number; signal?: number }): void => {
@@ -1085,6 +1153,12 @@ function pumpAgentTerminal(
   ws.on('close', () => {
     dataSub.dispose()
     exitSub.dispose()
+    backpressure.detach(ws)
+    sockets.delete(ws)
+    if (sockets.size === 0) {
+      agentTerminalSockets.delete(uuid)
+      agentBackpressure.delete(uuid)
+    }
     // A bare socket drop (refresh, tab switch) leaves the agent's pty alive.
     // The agent owns the lifetime: only `terminal_close`, a `{type:'close'}`
     // frame, or plugin teardown kills it. A reconnecting view reattaches the

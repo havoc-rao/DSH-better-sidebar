@@ -51,6 +51,9 @@ export interface TerminalViewProps {
    *  tab title follows the running command's first token (workspace-bound
    *  stubs retitle in EVERY session via the windows store). */
   onTitleChange?: (title: string) => void
+  /** Whether the tab is the active one with the panel open; hidden tabs
+   *  re-fit + repaint on the way back to visible (tabby reactivate pattern). */
+  visible?: boolean
 }
 
 /** The chunk-loaded terminal view component (see the doc comment above). */
@@ -275,11 +278,12 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
-      component: ({ tab, scope, store, ctx }) => (
+      component: ({ tab, scope, store, ctx, visible }) => (
         <LazyTerminal
           scope={scope}
           store={store}
           tabId={tab.id}
+          visible={visible}
           onTitleChange={(title) => { ctx.betterSidebar?.updateTab(tab.id, { title }) }}
         />
       ),
