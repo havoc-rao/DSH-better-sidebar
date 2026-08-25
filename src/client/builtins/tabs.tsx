@@ -167,6 +167,29 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
               desc: () => t('sideBarSideRightDesc'),
             },
           ],
+        }, {
+          // The active file-icon theme picker (v0.16.0+): options resolve
+          // from the LIVE icon-theme registry (function form) — "built-in
+          // outline icons" plus every registered theme by `order`; the row
+          // hides entirely while no theme plugin is installed (`when`), so
+          // a stock install keeps the exact pre-0.16 settings popup.
+          key: 'fileIconTheme',
+          type: 'select',
+          title: () => t('iconTheme'),
+          desc: () => t('iconThemeDesc'),
+          when: (ctx) => (ctx.betterSidebar?.getIconThemes().length ?? 0) > 0,
+          options: (ctx) => {
+            const themes = [...(ctx.betterSidebar?.getIconThemes() ?? [])]
+              .sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
+            return [
+              { value: '', title: () => t('iconThemeBuiltin') },
+              ...themes.map(theme => ({
+                value: theme.id,
+                title: theme.title,
+                icon: theme.icon,
+              })),
+            ]
+          },
         }],
       },
       component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, visible }) => (

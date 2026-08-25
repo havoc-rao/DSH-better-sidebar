@@ -21,6 +21,7 @@ import { createSidebarStore, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { FeatureSettingsRows, mergePluginSetting, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
+import type { Context } from '../src/context-types.ts'
 
 /** One tab + one viewer + the subagent-style nested toggle under a tab. */
 function mount(): { store: SidebarStore; service: BetterSidebarService } {
@@ -189,6 +190,7 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('renders one switch row per declared toggle with its current value', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
+      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles,
       prefs,
       onToggle: () => {},
@@ -203,6 +205,7 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('checks the row when the pref is on', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
+      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles,
       prefs: { ...prefs, autoOpenSubagent: true },
       onToggle: () => {},
@@ -212,6 +215,7 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('renders a text row as an input seeded with the pref value (empty = theme default)', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
+      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [{
         key: 'terminalFontFamily',
         type: 'text',
@@ -232,6 +236,7 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('renders a number row with the pref value, the declared bounds and a unit suffix', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
+      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [{
         key: 'terminalFontSize',
         type: 'number',
@@ -255,6 +260,7 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('renders the title-bar strip row: the pref value, the 0–120 bounds and the px suffix', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
+      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [{
         key: 'titleBarStripPx',
         type: 'number',
@@ -306,6 +312,7 @@ describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => 
     // valueOf returns undefined (the plugin never wrote this key): the row
     // must render UNCHECKED even though the host pref openByDefault is true.
     let html = renderToString(createElement(FeatureSettingsRows, {
+      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [toggle],
       prefs,
       onToggle: () => {},
@@ -314,6 +321,7 @@ describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => 
     expect(html).not.toContain('checked=""')
     // The plugin wrote `true` into its own blob: the row is checked.
     html = renderToString(createElement(FeatureSettingsRows, {
+      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [toggle],
       prefs,
       onToggle: () => {},
@@ -322,6 +330,7 @@ describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => 
     expect(html).toContain('checked=""')
     // Without valueOf the row falls back to the prefs face (host semantics).
     html = renderToString(createElement(FeatureSettingsRows, {
+      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [toggle],
       prefs,
       onToggle: () => {},

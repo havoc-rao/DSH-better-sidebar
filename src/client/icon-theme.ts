@@ -218,6 +218,36 @@ export function buildIconThemeIndex(
   }
 }
 
+/**
+ * Inject a theme's @font-face rules into the document (browser only — a
+ * no-op when no document exists, so Node/unit environments can register
+ * font themes freely). One <style> per font face, tagged with the theme id
+ * for debugging; the returned disposer removes them. The family names come
+ * from {@link buildIconThemeIndex} (theme-scoped: `dsh-fi-<themeId>-<n>`),
+ * so a re-register after HMR reuses the same names and stale faces are
+ * replaced with the new ones.
+ */
+export function injectThemeFonts(
+  fonts: ReadonlyMap<string, { family: string; url: string }>,
+  themeId: string,
+): () => void {
+  if (typeof document === 'undefined' || fonts.size === 0) return () => {}
+  const styles: HTMLElement[] = []
+  for (const { family, url } of fonts.values()) {
+    const style = document.createElement('style')
+    style.dataset.dshThemeFont = themeId
+    style.textContent = `@font-face{font-family:"${family}";src:url("${url}");font-display:swap}`
+    document.head.appendChild(style)
+    styles.push(style)
+  }
+  return () => {
+    for (const style of styles) {
+      if (style.remove !== undefined) style.remove()
+      else style.parentNode?.removeChild(style)
+    }
+  }
+}
+
 /** The folder side of {@link matchFileIcon}: root variants when the folder
  *  is the session cwd, then expanded/collapsed name maps (expanded state
  *  prefers its dedicated map and falls back to the generic one), then the

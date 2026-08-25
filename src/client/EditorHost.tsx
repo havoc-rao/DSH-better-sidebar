@@ -307,6 +307,7 @@ export function EditorHost(props: {
         <TreePanel
           full
           sessionId={scope.sessionId}
+          ctx={ctx}
           cwd={scope.cwd}
           expanded={expanded}
           onToggle={onToggleDir}
@@ -413,6 +414,7 @@ export function EditorHost(props: {
             {(treeOpen || everOpened) && (
               <TreePanel
                 sessionId={scope.sessionId}
+                ctx={ctx}
                 cwd={scope.cwd}
                 expanded={expanded}
                 onToggle={onToggleDir}

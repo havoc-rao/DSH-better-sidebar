@@ -25,6 +25,8 @@ import { api, downloadUrl, type FsEntry } from './api.ts'
 import { gitStatusAt, type GitRowStatus, type GitStatusKind } from './git-status.ts'
 import { relativeTo } from './paths.ts'
 import { t, type CopyKey } from './locales.ts'
+import { useFileIconResolver } from './FileIcon.tsx'
+import type { Context } from '../context-types.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -84,6 +86,9 @@ export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
   expanded: string[]
+  /** The client context (v0.16.0+): enables the ACTIVE icon theme's file
+   *  icons on rows. Absent → the built-in outline icons (zero change). */
+  ctx?: Context
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
   /** Context-menu "open in a new tab" (file rows; absent → no entry). */
@@ -99,7 +104,10 @@ export function FileTree(props: {
    *  Absent → the tree renders clean (no badges, no fetch). */
   gitStatus?: ReadonlyMap<string, GitRowStatus>
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, gitStatus } = props
+  const { sessionId, cwd, expanded, ctx, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, gitStatus } = props
+  // The active icon theme's row resolver (null when no theme is active —
+  // the built-in outline icons below stay the default).
+  const fileIcon = useFileIconResolver(ctx)
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -225,7 +233,7 @@ export function FileTree(props: {
               }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
-              {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
+              {fileIcon({ name: entry.name, isDir: true, expanded: isOpen }) ?? (isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />)}
               <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {gitBadge(status)}
@@ -257,7 +265,7 @@ export function FileTree(props: {
           }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
-          <IconCodeOutline16 size={14} />
+          {fileIcon({ name: entry.name, isDir: false }) ?? <IconCodeOutline16 size={14} />}
           <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {gitBadge(status)}
@@ -278,7 +286,7 @@ export function FileTree(props: {
             style={{ paddingLeft: 6 }}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
           >
-            <IconFolderOpen16 size={14} />
+            {fileIcon({ name: baseName(root), isDir: true, expanded: true, isRoot: true }) ?? <IconFolderOpen16 size={14} />}
             <span className={css.explorerName}>{baseName(root)}</span>
             {copiedPath === root
               ? <span className={css.explorerCopied}>{t('copied')}</span>

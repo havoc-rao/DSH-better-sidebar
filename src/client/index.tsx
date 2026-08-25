@@ -348,7 +348,7 @@ export function apply(ctx: Context): void {
       id: 'better-sidebar',
       order: 100,
       label: () => t('settingsNav'),
-      inject: () => ({ store: sidebarStore, service }),
+      inject: () => ({ store: sidebarStore, service, ctx }),
     }, SideCardSection))
 
     // The official LEFT sidebar footer action: inject the "Global info"

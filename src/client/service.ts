@@ -33,7 +33,7 @@ import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { KeybindingRuntime, type KeybindingDescriptor } from './keybindings.ts'
 import {
-  buildIconThemeIndex,
+  buildIconThemeIndex, injectThemeFonts,
   matchFileIcon as matchFileIconOf,
   type FileIconContext, type FileIconRef, type IconThemeDescriptor, type IconThemeDocument,
   type IconThemeIndex,
@@ -104,11 +104,22 @@ export interface SidebarSettingToggle {
   placeholder?: string
   /** Unit suffix rendered after the input (e.g. 'px' for a size row). */
   unit?: string
-  /** Options of a `type: 'select'` row. */
-  options?: readonly SidebarSettingSelectOption[]
+  /** Options of a `type: 'select'` row. A FUNCTION (v0.16.0+) resolves the
+   *  options from the live registries at render time — e.g. the file-icon
+   *  theme picker lists everything registered so far. Throwing functions
+   *  degrade to the empty list (the settings UI must never break). */
+  options?: readonly SidebarSettingSelectOption[] | ((ctx: Context) => readonly SidebarSettingSelectOption[])
   /** Whether a `type: 'select'` row allows picking several options (the
    *  stored value is then an array of option values); defaults to false. */
   multi?: boolean
+  /**
+   * Row visibility predicate (v0.16.0+): the row renders only while this
+   * returns true (e.g. the icon-theme picker hides when no theme plugin is
+   * installed). Errors are swallowed and the row STAYS VISIBLE (fail-open —
+   * a broken predicate must never hide a user's settings). Defaults to
+   * always visible.
+   */
+  when?: (ctx: Context) => boolean
 }
 
 /** Props of a descriptor's custom settings panel (`settings.render`). */
@@ -687,8 +698,11 @@ export function createBetterSidebarService(
     }
     // Fail fast on malformed documents/assets (missing iconDefinitions,
     // non-data URLs, defs without iconPath/fontCharacter). The index is
-    // built once here; queries never allocate.
+    // built once here; queries never allocate. Font faces (@font-face for
+    // font themes) inject into the document and ride the disposer — SVG
+    // themes inject nothing.
     const index = buildIconThemeIndex(descriptor.theme, descriptor.id, descriptor.monochrome === true)
+    const removeFonts = injectThemeFonts(index.fonts, descriptor.id)
     iconThemes.set(descriptor.id, descriptor)
     iconThemeIndexes.set(descriptor.id, index)
     notify()
@@ -696,6 +710,7 @@ export function createBetterSidebarService(
       if (iconThemes.get(descriptor.id) === descriptor) {
         iconThemes.delete(descriptor.id)
         iconThemeIndexes.delete(descriptor.id)
+        removeFonts()
         notify()
       }
     }

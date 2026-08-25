@@ -53,7 +53,7 @@ export function SideBarPane(props: {
    *  handle rides that edge (dragging RIGHT widens). */
   flipped?: boolean
 }) {
-  const { store, state, scope, expanded, onToggleDir, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, visible, collapsed, flipped } = props
+  const { ctx, store, state, scope, expanded, onToggleDir, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, visible, collapsed, flipped } = props
 
   // Local width while dragging; the persisted width otherwise. The drag
   // commits the final value into state on release (the panel-drag contract).
@@ -111,6 +111,7 @@ export function SideBarPane(props: {
           full
           sessionId={scope.sessionId}
           cwd={scope.cwd}
+          ctx={ctx}
           expanded={expanded}
           onToggle={onToggleDir}
           onOpenFile={onOpenFile}

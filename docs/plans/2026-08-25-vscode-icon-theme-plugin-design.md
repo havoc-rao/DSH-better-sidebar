@@ -12,6 +12,10 @@
 > 3. 夹具实为 27 个 def id（设计文档初稿写 28，已按实修订）；`rootFolderNames` 在该主题版本为空 map，测试锁定「空 root 变体 → `rootFolder`/`rootFolderExpanded` 兜底」路径。
 >
 > 待实施：P2（渲染/集成/设置行）、P3（转换工具 + 参考插件）、P4（e2e 回归 + AGENTS.md）。
+>
+> **实施记录（P2，2026-08-25）**：渲染与集成已落地——`FileIcon` 组件三形态（彩色 SVG background-image / 单色 SVG mask+currentColor / 字体字形；prop 名 `icon`——React 保留 `ref`）、`useFileIconResolver` 钩子（service.subscribe + subscribeState 双订阅，注册与 prefs 变化实时重算）、FileTree 三类行（根/目录开合/文件）+ 编辑器 tab 条带 path 文件图标（`tabIconOf`）、editor 卡齿轮 `fileIconTheme` select 行（动态 options 函数 + `when` 谓词，无主题插件时整行隐藏=设置弹窗零感知）、字体主题注册期注入 @font-face（disposer 移除）。声明式设置契约增补落地：`SidebarSettingToggle.options` 函数形态 + `when` 行谓词（fail-open：谓词抛错=行可见、options 抛错=空列表），`FeatureSettingsRows` 增 `ctx` prop（`SideCardSectionInjected` 同步扩展，index.tsx 注入）。测试：`tests/file-icon.spec.tsx`（三形态/字体注入/树行实时切换）、`side-card-section-rows.spec.tsx`（when 隐藏 + fail-open、options 函数求值 + 提交、抛错降级）、`builtins.spec.ts`（editor toggles 四行 + when/options 形态断言）。实施偏差：① `FileIcon` 渲染不依赖 CSS Modules（全内联 style，`data-file-icon` 属性供测试/调试）；② 图标尺寸固定 14px（与现有树行/标签图标一致），`FileIcon` 支持 size 覆盖；③ 解析器异常吞掉返回 null（树行永不因主题炸）。
+>
+> 待实施：P3（转换工具 + 参考插件）、P4（e2e 回归 + AGENTS.md + mount e2e 断言）。
 
 ---
 

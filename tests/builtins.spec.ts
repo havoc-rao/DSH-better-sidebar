@@ -66,23 +66,30 @@ describe('built-in tab registrations', () => {
   it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'sidebarLayout', 'sideBarSide'])
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'sidebarLayout', 'sideBarSide', 'fileIconTheme'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.
     expect(toggles[0]?.type).toBe('select')
-    const options = toggles[0]?.options ?? []
+    const options = Array.isArray(toggles[0]?.options) ? toggles[0]!.options : []
     expect(options.map(o => o.value)).toEqual([true, false])
     expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
     // The vscode Side Bar position is an iconed select (left vs right).
     expect(toggles[2]?.type).toBe('select')
-    expect((toggles[2]?.options ?? []).map(o => o.value)).toEqual(['left', 'right'])
+    expect((Array.isArray(toggles[2]?.options) ? toggles[2]!.options : []).map(o => o.value)).toEqual(['left', 'right'])
     // The workbench-layout select (docked vs the VSCode-style side bar) is an
     // iconed select over string values; both options carry icon + title.
     expect(toggles[1]?.type).toBe('select')
-    const layoutOptions = toggles[1]?.options ?? []
+    const layoutOptions = Array.isArray(toggles[1]?.options) ? toggles[1]!.options : []
     expect(layoutOptions.map(o => o.value)).toEqual(['docked', 'vscode'])
     expect(layoutOptions.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
+    // The file-icon theme picker (v0.16.0+) resolves its options from the
+    // LIVE registry (function form) and hides entirely with no theme
+    // installed (`when`) — a stock install keeps the old popup unchanged.
+    expect(toggles[3]?.type).toBe('select')
+    expect(typeof toggles[3]?.options).toBe('function')
+    expect(toggles[3]?.when).toBeDefined()
+    expect(toggles[3]?.when!({ betterSidebar: { getIconThemes: () => [] } } as unknown as Context)).toBe(false)
   })
 
   it('the terminal tab declares the model terminal-tools, auto-terminal and custom-font settings', () => {

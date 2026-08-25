@@ -19,6 +19,7 @@ import clsx from 'clsx'
 import { IconRefreshOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, type GitStatusResult } from './api.ts'
 import { FileTree, gitKindCss } from './FileTree.tsx'
+import type { Context } from '../context-types.ts'
 import { buildGitStatusMap, subscribeGitStatusChanged } from './git-status.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
@@ -30,6 +31,8 @@ export function TreePanel(props: {
   sessionId: string
   cwd: string | undefined
   expanded: string[]
+  /** Passed through to FileTree (v0.16.0+): enables icon-theme row icons. */
+  ctx?: Context
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
   /** File context-menu "open in a new tab" (passed through to FileTree). */
@@ -45,7 +48,7 @@ export function TreePanel(props: {
    *  hidden tab's docked panel can never swallow ⌘P / ⌘F. */
   visible?: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, full, visible } = props
+  const { sessionId, cwd, expanded, ctx, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, full, visible } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -200,6 +203,7 @@ export function TreePanel(props: {
           sessionId={sessionId}
           cwd={cwd}
           expanded={expanded}
+          ctx={ctx}
           onToggle={onToggle}
           onOpenFile={onOpenFile}
           onOpenFileNewTab={onOpenFileNewTab}

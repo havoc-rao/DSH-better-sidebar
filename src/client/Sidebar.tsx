@@ -41,6 +41,8 @@ import {
 import { IconGlobeOffOutline16, IconGlobeOutline16, IconPanelBottomOutline16, IconPanelRightOutline16, IconPinOffOutline16, IconPinOutline16 } from './icons.tsx'
 import { panelHotkeyHint } from './hotkeys.ts'
 import { createHostSidebarKeeper } from './host-sidebar.ts'
+import { useFileIconResolver } from './FileIcon.tsx'
+import { baseName } from './FileTree.tsx'
 import { registerGlobalPageSurface } from './GlobalPage.tsx'
 import { isGlobalPageOpen, setGlobalPageOpen, subscribeGlobalPage } from './global-page.ts'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
@@ -213,6 +215,9 @@ function HeaderTabStrip(props: {
 
 export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: WorkspaceWindowsStore }) {
   const { ctx, store, windows } = props
+  // The active icon theme's row resolver (v0.16.0+): editor tabs carrying
+  // a path render the theme's file icon; null → the descriptor icon below.
+  const fileIconOf = useFileIconResolver(ctx)
 
   // Copy freshness: re-render the whole tree when the DSH locale switches.
   // The module-level t() reads the active locale at call time, so a root
@@ -1081,9 +1086,16 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
    * ctx and the conversation input service at click time; a missing service
    * or scope degrades to a logged no-op, never a crash.
    */
-  /** The tab icon from the tab-type registry (shared by every workbench). */
+  /** The tab icon from the tab-type registry (shared by every workbench).
+   *  Editor tabs carrying a path render the ACTIVE icon theme's file icon
+   *  instead (v0.16.0+); the path-less files home keeps the descriptor's
+   *  icon. A missing theme/descriptor falls back as before. */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
     const descriptor = ctx.betterSidebar?.getTab(tab.type)
+    if (tab.type === 'editor' && tab.path !== undefined && descriptor !== undefined) {
+      const themed = fileIconOf({ name: baseName(tab.path), isDir: false })
+      if (themed !== null) return themed
+    }
     if (descriptor === undefined) return null
     return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon
   }
