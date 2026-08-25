@@ -16,6 +16,12 @@
 > **实施记录（P2，2026-08-25）**：渲染与集成已落地——`FileIcon` 组件三形态（彩色 SVG background-image / 单色 SVG mask+currentColor / 字体字形；prop 名 `icon`——React 保留 `ref`）、`useFileIconResolver` 钩子（service.subscribe + subscribeState 双订阅，注册与 prefs 变化实时重算）、FileTree 三类行（根/目录开合/文件）+ 编辑器 tab 条带 path 文件图标（`tabIconOf`）、editor 卡齿轮 `fileIconTheme` select 行（动态 options 函数 + `when` 谓词，无主题插件时整行隐藏=设置弹窗零感知）、字体主题注册期注入 @font-face（disposer 移除）。声明式设置契约增补落地：`SidebarSettingToggle.options` 函数形态 + `when` 行谓词（fail-open：谓词抛错=行可见、options 抛错=空列表），`FeatureSettingsRows` 增 `ctx` prop（`SideCardSectionInjected` 同步扩展，index.tsx 注入）。测试：`tests/file-icon.spec.tsx`（三形态/字体注入/树行实时切换）、`side-card-section-rows.spec.tsx`（when 隐藏 + fail-open、options 函数求值 + 提交、抛错降级）、`builtins.spec.ts`（editor toggles 四行 + when/options 形态断言）。实施偏差：① `FileIcon` 渲染不依赖 CSS Modules（全内联 style，`data-file-icon` 属性供测试/调试）；② 图标尺寸固定 14px（与现有树行/标签图标一致），`FileIcon` 支持 size 覆盖；③ 解析器异常吞掉返回 null（树行永不因主题炸）。
 >
 > 待实施：P3（转换工具 + 参考插件）、P4（e2e 回归 + AGENTS.md + mount e2e 断言）。
+>
+> **实施记录（P3+P4，2026-08-25）**：全部落地。
+> - **P3 工具链**：`tools/convert-vscode-icon-theme.mjs`（纯 Node，CLI + 可测 API）——真实 material VSIX 端到端验证：**1251 定义 / 12820 映射 / 1.87MB 模块（374KB gzip）**，生成模块直接喂引擎逐行解析通过；`--no-strict` 缺失资产降级为警告+跳过；LICENSE 原文随生成模块逐字保留。参考插件 `samples/material-icon-theme/`（scripts/convert.mjs 一键再生成，完整数据 gitignore 不入库；README 含挂载与启用步骤）。测试 `tests/convert-icon-theme.spec.ts`（6 用例：base64 重写/忽略节丢弃/字体主题/fail-fast/降级/export name）。
+> - **P4 收口**：mount e2e 两链路各加回归断言（无主题插件时 `[data-file-icon]` 计数为 0 + 文件行保留内置 outline `<svg>`）；AGENTS.md 新增 **§11 图标主题注册 API**（descriptor/文档子集/注册与解析/转换工具/设置契约增补）；§5 服务清单补 5 个新方法。设计文档本页即实施记录。
+>
+> 说明：settings 的 `options` 函数形态与 `when` 谓词已随 P2 落地并通过测试（含 fail-open 语义）；「添加插件」目录的 `icon-theme` kind（§7.2）仍为后增量，未实施。
 
 ---
 

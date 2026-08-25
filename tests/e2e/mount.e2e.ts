@@ -287,6 +287,14 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // window's embedded tree is visible — match the visible row.
   const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
   await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
+  // The icon-theme system (v0.16.0+) must be INERT without a theme plugin:
+  // no themed spans render anywhere, and the file row keeps its built-in
+  // outline glyph (a plugin-less install changes nothing).
+  expect(
+    await sidebar.locator('[data-file-icon]').count(),
+    'no icon-theme spans may render while no theme is registered',
+  ).toBe(0)
+  await expect(fileRow.locator('svg'), 'the file row must keep its built-in outline icon').toHaveCount(1)
   // Click near the row's LEFT edge: hovering reveals an @-reference button at
   // the row's right end, and a center click on a narrow dock lands on it
   // (referencing the file into the composer instead of opening it).
@@ -418,6 +426,12 @@ test('vscode layout: the independent side bar + activity bar render and open fil
   await expect(sideBarSearch, 'the vscode layout must render the Side Bar tree with its search box').toHaveCount(1)
   const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
   await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the Side Bar tree`).toHaveCount(1, { timeout: 30_000 })
+  // Same inertness contract as the docked lane: no themed spans without a
+  // registered theme (the vscode-layout tree must be equally unaffected).
+  expect(
+    await sidebar.locator('[data-file-icon]').count(),
+    'no icon-theme spans may render in vscode mode while no theme is registered',
+  ).toBe(0)
 
   // Open the seeded file through the SIDE BAR tree (not a docked tree): a
   // per-path editor tab opens and the path input shows the file. The editor

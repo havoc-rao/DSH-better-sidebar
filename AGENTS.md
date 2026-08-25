@@ -512,6 +512,16 @@ interface BetterSidebarService {
   isViewerEnabled(id: string): boolean
   /** 按 path 匹配 file viewer（priority 降序单趟：detect → exts；跳过硬禁用 viewer） */
   matchFileViewer(path: string, head?: Uint8Array): FileViewerDescriptor | undefined
+  /** 注册文件图标主题（v0.16.0+）；返回 disposer（资产必须是 data: URL） */
+  registerIconTheme(descriptor: IconThemeDescriptor): () => void
+  /** 已注册的图标主题快照（注册顺序） */
+  getIconThemes(): readonly IconThemeDescriptor[]
+  /** 按 id 查图标主题 */
+  getIconTheme(id: string): IconThemeDescriptor | undefined
+  /** 当前激活主题（跟随 prefs.fileIconTheme；'' / 未知 id → undefined = 内置 outline 图标） */
+  getActiveIconTheme(): IconThemeDescriptor | undefined
+  /** 解析一行文件/目录在激活主题下的图标（未命中 → undefined，调用方回退内置图标） */
+  matchFileIcon(context: FileIconContext): FileIconRef | undefined
   /**
    * 打开一个 tab（+ 菜单和外部触发都用它；走 descriptor.dedupeKey 去重）。
    * title 可选：给出时优先于 descriptor.title（editor 显示文件名）；
@@ -781,3 +791,68 @@ better-sidebar 自己的内置 tab 和 viewer 就是参考实现（"吃狗粮"�
 - **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`** / **`docs/plans/2026-08-14-add-plugins-modal-design.md`** / **`docs/plans/2026-08-19-git-graph-lanes-design.md`**：设计文档（含实施偏差记录）
 
 调试时直接读这些文件即可看到所有 API 的真实用法。
+
+---
+
+## 11. 图标主题注册 API（v0.16.0+，`features.includes('iconTheme')` gate）
+
+「VSCode 插件体系契约兼容」首例（设计见 `docs/plans/2026-08-25-vscode-icon-theme-plugin-design.md`）：把 VSCode 的 `contributes.iconThemes` 声明式载荷移植为 better-sidebar 扩展点。插件注册一个 `IconThemeDescriptor`，文件树行与带 path 的编辑器 tab 即按激活主题渲染图标；未命中/无主题时**原样使用内置 outline 图标**（无插件安装 = 零变化）。
+
+### 11.1 `IconThemeDescriptor`
+
+```ts
+interface IconThemeDescriptor {
+  /** 唯一 id（建议包前缀：'material-icon-theme'）。 */
+  id: string
+  /** 展示名（i18n 友好：字符串或 () => string）。 */
+  title: string | (() => string)
+  /** 设置区预览图标（ReactNode 或 size 函数；通常是主题的默认文件图标）。 */
+  icon?: ReactNode | ((size: number) => ReactNode)
+  /** 归一化主题文档（资产必须是 data: URL，见 §11.3）。 */
+  theme: IconThemeDocument
+  /** 单色渲染：true 时 SVG 经 CSS mask + currentColor（跟随皮肤），
+   *  缺省 false = SVG 原色渲染（Material 主题的彩色图标）。 */
+  monochrome?: boolean
+  /** 设置区排序（升序）；默认 100。 */
+  order?: number
+}
+```
+
+`IconThemeDocument` 是 VSCode icon-theme JSON 的子集（`iconDefinitions` / `fileNames` / `fileExtensions`（可含多级后缀 `d.ts`）/ `folderNames` / `folderNamesExpanded` / `rootFolderNames` / `rootFolderNamesExpanded` / 兜底 `file` `folder` `folderExpanded` `rootFolder` `rootFolderExpanded`）；`languageIds` / `light` / `highContrast` / `hidesExplorerArrows` 被忽略（无语言模型 + 皮肤令牌驱动）。
+
+### 11.2 注册与解析
+
+```ts
+ctx.effect(() =>
+  ctx.betterSidebar.registerIconTheme({
+    id: 'my-plugin:theme',
+    title: () => 'My Theme',
+    theme: iconTheme,   // 来自转换工具（§11.3）
+    order: 10,
+  })
+)
+```
+
+- 重复 id 抛错；disposer 由 fiber 管理（HMR-safe）；**注册期 fail-fast**：非 `data:` URL 资产 / 定义缺 `iconPath`/`fontCharacter` → 抛错（提示先跑转换工具）。
+- 字体主题（`fontCharacter` + `fontPath`）注册时注入一次 `@font-face`（family `dsh-fi-<themeId>-<n>`），disposer 移除。
+- 激活选择：host pref **`fileIconTheme`**（`''` = 内置图标；未知/已卸载 id 静默回落内置，不清空用户选择）。设置入口 = **editor 卡齿轮内的「文件图标主题」select 行**——options 走**函数形态**（本节下方契约增补），按 `descriptor.order` 排序 + 「内置图标」；**无主题插件注册时整行隐藏**。
+- 查询：`matchFileIcon({ name, isDir, expanded?, isRoot? })` 在激活主题下解析（文件：`fileNames` 精确 → `fileExtensions` **最长后缀优先**（`foo.d.ts` 试 `d.ts` 再 `ts`）→ `file`；目录：root 变体 → 展开/收起名映射 → `folderExpanded`/`folder`）；渲染由内置 `FileIcon` 组件完成（`data-file-icon` 属性供测试/调试）。外部插件也可直接查询。
+
+### 11.3 官方转换工具（`tools/convert-vscode-icon-theme.mjs`）
+
+VSCode 图标主题的**二进制/资产不落消费者侧**：插件自带 bundle 无静态文件服务，所以用工具把解压后的 VSIX 转成纯数据 TS 模块：
+
+```bash
+unzip /path/to/theme-<ver>.vsix -d unpacked
+node tools/convert-vscode-icon-theme.mjs unpacked -o src/client/icons.generated.ts
+# 可选 --export-name <name>；--no-strict 把缺失图标降级为警告+跳过
+```
+
+产物：`data:` URL 重写 + 只保留 §11.1 子集 + 体积报告（raw/gzip）+ 源主题版本与 **LICENSE 原文**头。生成模块是纯数据（`import type` 只引用 `dsh-better-sidebar/client/service`），构建纯度门零风险。参考实现：`samples/material-icon-theme/`（含 `scripts/convert.mjs` 一键再生成，完整数据不入库——真实 material-icon-theme 5.38.1：1251 定义 / 12820 映射，~1.9MB raw / 374KB gzip）。测试：`tests/convert-icon-theme.spec.ts`。
+
+### 11.4 声明式设置契约增补（同版，向后兼容）
+
+`SidebarSettingToggle` 两个新形态（`features.includes('iconTheme')` 无关，任何行可用）：
+
+1. **`options` 函数形态**：`options?: readonly SidebarSettingSelectOption[] | ((ctx: Context) => readonly SidebarSettingSelectOption[])`——渲染时求值、注册表变化实时重算（弹窗打开期间订阅）；抛错降级空列表。
+2. **行级 `when` 谓词**：`when?: (ctx: Context) => boolean`——false 整行不渲染；抛错 fail-open（行保持可见）。
