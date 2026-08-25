@@ -30,7 +30,7 @@
  */
 import { useMemo } from 'react'
 import { IconCheckOutline16, IconCloseFill14, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { IconGlobeOutline16, IconTerminalOutline16 } from './icons.tsx'
+import { IconGlobalWorkspaceOutline16, IconTerminalOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import type { Context } from '../context-types.ts'
 import type { WorkspaceWindow } from './state.ts'
@@ -54,7 +54,7 @@ export function GlobalInfoList(props: {
   if (count === 0) {
     return (
       <div className={css.globalEmpty}>
-        <span className={css.globalEmptyIcon}><IconGlobeOutline16 size={22} /></span>
+        <span className={css.globalEmptyIcon}><IconGlobalWorkspaceOutline16 size={22} /></span>
         <span className={css.globalEmptyTitle}>{t('globalInfoEmptyTitle')}</span>
         <span className={css.globalEmptyHint}>{t('globalInfoEmpty')}</span>
       </div>
@@ -77,7 +77,7 @@ export function GlobalInfoList(props: {
               <span className={css.globalCardIconChip}>
                 {window.type === 'terminal'
                   ? <IconTerminalOutline16 size={16} />
-                  : <IconGlobeOutline16 size={16} />}
+                  : <IconGlobalWorkspaceOutline16 size={16} />}
               </span>
               <span className={css.globalCardTitle}>{window.title}</span>
               <IconCheckOutline16 size={14} className={css.globalCardCheck} />

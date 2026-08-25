@@ -1,10 +1,12 @@
 /**
  * Icons the sidebar needs beyond the primitives set: a terminal glyph (the
  * icon library has none), a diff glyph, the two panel-toggle glyphs for
- * the top-right cluster, a pushpin for workspace-bound windows, and a
- * swap-sides glyph for the Side Bar position toggle. Per-tab icons live on
- * the tab descriptors (`descriptor.icon`), not in a type-keyed switch — the
- * icon mapping was registry-ized with the tab types.
+ * the top-right cluster, a pushpin for workspace-bound windows, a
+ * swap-sides glyph for the Side Bar position toggle, and a
+ * global-workspace glyph (a monitor showing a globe) for the `global` tab —
+ * deliberately distinct from the browser tab's bare globe. Per-tab icons
+ * live on the tab descriptors (`descriptor.icon`), not in a type-keyed
+ * switch — the icon mapping was registry-ized with the tab types.
  */
 import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -174,5 +176,24 @@ export const IconGlobeOffOutline16 = ({ size = 16, className }: IconProps) => (
     <ellipse cx="8" cy="8" rx="2.8" ry="6.5" stroke="currentColor" strokeWidth="1.5" />
     <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     <path d="M2.3 13.7l11.4-11.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+)
+
+/**
+ * Global-workspace glyph (the `global` tab / the official sidebar footer
+ * entry / the shared-window cards): a desktop monitor showing a globe —
+ * "the workspace screen for the instance-level global windows". Kept
+ * visually distinct from the browser tab's bare globe (IconGlobeOutline16)
+ * so the two don't read as the same entry in the + menu, tab bar, and
+ * Activity Bar. App outline style (1.5px stroke, currentColor).
+ */
+export const IconGlobalWorkspaceOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2" width="13" height="9.5" rx="1.75" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="8" cy="6.9" r="2.4" stroke="currentColor" strokeWidth="1.25" />
+    <ellipse cx="8" cy="6.9" rx="0.95" ry="2.4" stroke="currentColor" strokeWidth="1.25" />
+    <path d="M5.6 6.9h4.8" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+    <path d="M8 11.5v1.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M5.5 14h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 )

@@ -20,7 +20,7 @@ import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
-import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16, IconPanelRightOutline16 } from '../icons.tsx'
+import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16, IconGlobalWorkspaceOutline16, IconPanelRightOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
@@ -369,7 +369,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       // the + menu and from the official left sidebar's footer action (the
       // plugin injects it into `sidebar.footer.action`).
       title: () => t('globalInfo'),
-      icon: (size: number) => <IconGlobeOutline16 size={size} />,
+      icon: (size: number) => <IconGlobalWorkspaceOutline16 size={size} />,
       order: 60,
       single: true,
       component: (props) => <GlobalView {...props} />,

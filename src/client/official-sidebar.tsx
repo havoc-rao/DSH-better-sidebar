@@ -19,7 +19,7 @@
  */
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { IconGlobeOutline16 } from './icons.tsx'
+import { IconGlobalWorkspaceOutline16 } from './icons.tsx'
 import { openGlobalPage } from './global-page.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -61,7 +61,7 @@ export function GlobalInfoFooterButton(props: OfficialFooterActionProps & { ctx:
       aria-label={t('globalInfoFooter')}
       onClick={open}
     >
-      <IconGlobeOutline16 size={wide ? 16 : 18} />
+      <IconGlobalWorkspaceOutline16 size={wide ? 16 : 18} />
       {wide && <span className={css.officialFooterActionLabel}>{t('globalInfoFooter')}</span>}
     </button>
   )
