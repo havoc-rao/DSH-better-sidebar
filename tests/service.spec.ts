@@ -1049,6 +1049,7 @@ describe('independent CR follow-up fixes', () => {
     expect(SIDEBAR_FEATURES).toContain('targetedOpen')
     expect(SIDEBAR_FEATURES).toContain('stateSubscription')
     expect(SIDEBAR_FEATURES).toContain('tabMeta')
+    expect(SIDEBAR_FEATURES).toContain('iconTheme')
     expect(SIDEBAR_SERVICE_VERSION).toMatch(/^\d+\.\d+\.\d+/)
   })
 

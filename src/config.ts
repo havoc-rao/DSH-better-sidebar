@@ -124,6 +124,9 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   editorExplorer: z.boolean().default(true),
   sidebarLayout: z.union([z.const('docked'), z.const('vscode')]).default('docked'),
   sideBarSide: z.union([z.const('left'), z.const('right')]).default('right'),
+  // The active file-icon theme id ('' = built-in outline icons); unknown
+  // ids are not a schema error — the client falls back to the built-ins.
+  fileIconTheme: z.string().default(''),
   titleBarCompat: z.boolean().default(false),
   titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),
   htmlViewerNoSandbox: z.boolean().default(false),

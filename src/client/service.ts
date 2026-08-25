@@ -32,6 +32,12 @@ import { isNarrowWidth } from './breakpoints.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { KeybindingRuntime, type KeybindingDescriptor } from './keybindings.ts'
+import {
+  buildIconThemeIndex,
+  matchFileIcon as matchFileIconOf,
+  type FileIconContext, type FileIconRef, type IconThemeDescriptor, type IconThemeDocument,
+  type IconThemeIndex,
+} from './icon-theme.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -50,6 +56,9 @@ export type {
 export type { SessionScope } from './api.ts'
 export type { SidebarPrefs } from '../prefs-shared.ts'
 export type { KeybindingDescriptor, KeybindingEventLike, KeySpec, SidebarKeybindingContext } from './keybindings.ts'
+export type {
+  FileIconContext, FileIconRef, IconThemeDescriptor, IconThemeDocument, IconThemeIconDefinition, IconThemeIndex,
+} from './icon-theme.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -390,6 +399,33 @@ export interface BetterSidebarService {
    */
   matchFileViewer(path: string, head?: Uint8Array): FileViewerDescriptor | undefined
   /**
+   * Register an icon theme (v0.16.0+): a VSCode-style file/folder icon
+   * theme whose assets are `data:` URLs (the official VSIX converter emits
+   * exactly this). Registers a duplicate id throws, like tabs/viewers; the
+   * returned disposer unregisters (HMR-safe through `ctx.effect`).
+   * Registration validates the document FAIL-FAST: a malformed definition
+   * or a non-data asset throws instead of rendering broken rows later.
+   */
+  registerIconTheme(descriptor: IconThemeDescriptor): () => void
+  /** The registered icon themes (registration order). */
+  getIconThemes(): readonly IconThemeDescriptor[]
+  /** Find an icon theme by id (undefined when not registered). */
+  getIconTheme(id: string): IconThemeDescriptor | undefined
+  /**
+   * The ACTIVE icon theme: the registry hit for prefs `fileIconTheme`.
+   * `''` (the default) or an unknown id resolves undefined — the caller
+   * renders the built-in outline icons (an uninstalled theme must never
+   * break the tree, matching VSCode's fallback to the default theme).
+   */
+  getActiveIconTheme(): IconThemeDescriptor | undefined
+  /**
+   * Resolve a file/folder row's icon under the ACTIVE theme (v0.16.0+);
+   * undefined when no theme is active or nothing matches — the caller then
+   * keeps its built-in outline icon. The ref is render-ready (SVG data URL
+   * or theme-scoped font family); font faces are injected by the renderer.
+   */
+  matchFileIcon(context: FileIconContext): FileIconRef | undefined
+  /**
    * Open a tab (used by external tabs and the + menu). `title` overrides
    * the descriptor's title when given (the editor tab shows the file name);
    * when the descriptor provides `createTab` it mints the tab itself and
@@ -534,6 +570,8 @@ export const SIDEBAR_SERVICE_VERSION = '0.14.0'
  * - 'urlTarget' (v0.13.0): TabDescriptor.urlTarget (external-link claims)
  * - 'settingSelect': SidebarSettingToggle type 'select' (options/multi)
  * - 'keybindings' (v0.14.0): registerKeybinding / getKeybindings
+ * - 'iconTheme' (v0.16.0): registerIconTheme / getIconThemes /
+ *   getActiveIconTheme / matchFileIcon
  */
 export const SIDEBAR_FEATURES = [
   'badge',
@@ -547,6 +585,7 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'keybindings',
+  'iconTheme',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -576,6 +615,8 @@ export function createBetterSidebarService(
 ): BetterSidebarService {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
+  const iconThemes = new Map<string, IconThemeDescriptor>()
+  const iconThemeIndexes = new Map<string, IconThemeIndex>()
   const listeners = new Set<() => void>()
   // A private runtime when none is shared (standalone/tests): the registry
   // semantics (dup ids, disposal, listing) work the same either way, only
@@ -639,6 +680,42 @@ export function createBetterSidebarService(
   const getTabs = (): readonly TabDescriptor[] => Array.from(tabs.values())
   const getFileViewers = (): readonly FileViewerDescriptor[] => Array.from(viewers.values())
   const getTab = (id: string): TabDescriptor | undefined => tabs.get(id)
+
+  const registerIconTheme = (descriptor: IconThemeDescriptor): (() => void) => {
+    if (iconThemes.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] icon theme "${descriptor.id}" already registered`)
+    }
+    // Fail fast on malformed documents/assets (missing iconDefinitions,
+    // non-data URLs, defs without iconPath/fontCharacter). The index is
+    // built once here; queries never allocate.
+    const index = buildIconThemeIndex(descriptor.theme, descriptor.id, descriptor.monochrome === true)
+    iconThemes.set(descriptor.id, descriptor)
+    iconThemeIndexes.set(descriptor.id, index)
+    notify()
+    return () => {
+      if (iconThemes.get(descriptor.id) === descriptor) {
+        iconThemes.delete(descriptor.id)
+        iconThemeIndexes.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  const getIconThemes = (): readonly IconThemeDescriptor[] => Array.from(iconThemes.values())
+  const getIconTheme = (id: string): IconThemeDescriptor | undefined => iconThemes.get(id)
+  const getActiveIconTheme = (): IconThemeDescriptor | undefined => {
+    const id = store.getPrefs().fileIconTheme
+    return id === '' ? undefined : iconThemes.get(id)
+  }
+
+  /** Resolve a row icon under the ACTIVE theme (built-in fallback is the
+   *  caller's job: undefined means "render your default outline icon"). */
+  const matchFileIcon = (context: FileIconContext): FileIconRef | undefined => {
+    const active = getActiveIconTheme()
+    if (active === undefined) return undefined
+    const index = iconThemeIndexes.get(active.id)
+    return index === undefined ? undefined : matchFileIconOf(index, context)
+  }
 
   // The enable switches come from the user's side card prefs (the shared
   // store the service is bound to): an absent key means enabled.
@@ -910,6 +987,11 @@ export function createBetterSidebarService(
     isTabEnabled,
     isViewerEnabled,
     matchFileViewer,
+    registerIconTheme,
+    getIconThemes,
+    getIconTheme,
+    getActiveIconTheme,
+    matchFileIcon,
     openTab,
     closeTab,
     subscribe,

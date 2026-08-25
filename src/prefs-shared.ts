@@ -89,6 +89,16 @@ export interface SidebarPrefs {
    */
   sideBarSide: 'left' | 'right'
   /**
+   * The ACTIVE file-icon theme id (v0.16.0+): `''` (the default) renders
+   * the built-in outline icons; a non-empty value must name a registered
+   * icon theme (a plugin's `registerIconTheme` call). An unknown or
+   * uninstalled id silently falls back to the built-in icons — matching
+   * VSCode's "theme missing → default theme" behavior — the stored value
+   * is kept so reinstalling the theme restores the choice. The picker row
+   * lives under the editor card's gear (`fileIconTheme` select).
+   */
+  fileIconTheme: string
+  /**
    * Position compatibility mode: reserves space at the top for the native
    * Windows title bar (drawn at the window's top-right corner over the web
    * content in frameless/hidden-title-bar windows). When on, the toggle
@@ -217,6 +227,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   editorExplorer: true,
   sidebarLayout: 'docked',
   sideBarSide: 'right',
+  fileIconTheme: '',
   titleBarCompat: false,
   titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,
   htmlViewerNoSandbox: false,

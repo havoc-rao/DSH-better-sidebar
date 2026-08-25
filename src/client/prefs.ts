@@ -65,6 +65,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
     sidebarLayout: normalizeSidebarLayout(record.sidebarLayout),
     sideBarSide: normalizeSideBarSide(record.sideBarSide),
+    fileIconTheme: typeof record.fileIconTheme === 'string'
+      ? record.fileIconTheme
+      : SIDEBAR_PREFS_DEFAULTS.fileIconTheme,
     titleBarCompat: typeof record.titleBarCompat === 'boolean'
       ? record.titleBarCompat
       : SIDEBAR_PREFS_DEFAULTS.titleBarCompat,
