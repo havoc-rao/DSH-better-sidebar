@@ -111,8 +111,15 @@ export function GitView(props: {
   const [logLoadingMore, setLogLoadingMore] = useState(false)
   /** Whether an AI commit draft is streaming right now. */
   const [drafting, setDrafting] = useState(false)
-  /** The live side-card prefs (the AI draft reads the git tab's own blob). */
-  const prefs = useSyncExternalStore(store.subscribe, () => store.getSnapshot().prefs)
+  /** The live side-card prefs (the AI draft reads the git tab's own blob).
+   *  `store.subscribe` is an unbound class method — React calls the
+   *  subscribe function as a bare function (strict mode → `this` is
+   *  undefined), so it MUST be wrapped; a raw method reference would crash
+   *  reading `this.listeners` (regression: "reading 'listeners'"). */
+  const prefs = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot().prefs, [store]),
+  )
 
   /** The open file-row context menu (cursor position for the portaled Menu). */
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
