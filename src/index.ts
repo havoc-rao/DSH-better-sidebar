@@ -38,6 +38,20 @@ import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
+import type { LlmRuntime } from '@deepseek-ai/dsh-llm'
+import {
+  buildCommitContext,
+  catalogOf,
+  composeCommitDraftPrompt,
+  draftCommitMessage,
+  resolveCommitTemplate,
+} from './commit-draft.ts'
+import {
+  COMMIT_CUSTOM_TEMPLATE_MAX,
+  COMMIT_HISTORY_REFS_DEFAULT,
+  COMMIT_HISTORY_REFS_MAX,
+  COMMIT_HISTORY_REFS_MIN,
+} from './commit-draft-shared.ts'
 import { defaultShell, digestCommandInput, ensureSpawnHelper, isSharedTabId, PtyManager, ptyKeyOf, shellDisplayName } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
 import {
@@ -364,6 +378,55 @@ function buildApi(
       const path = await resolveGitPath(cwd, requireString(payload, 'path'))
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path) }
+    },
+    // The live LLM provider/model catalog the git tab's AI commit-draft
+    // settings panel offers (advisory per the llm service: model ids that are
+    // not listed still route fine). `available: false` when the deployment
+    // lacks the llm service — the panel then shows guidance instead of rows.
+    'llm.catalog': async () => catalogOf(ctx.get('llm') as LlmRuntime | undefined),
+    // Draft a commit message for the STAGED changes: the host formats the
+    // staged diff (stat + capped patch + recent subjects as style reference,
+    // see src/commit-draft.ts) and streams one completion through the
+    // user-selected provider/model, following the user-selected template.
+    'git.commit-draft': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const record = payload as {
+        template?: unknown
+        customTemplate?: unknown
+        provider?: unknown
+        model?: unknown
+        historyRefs?: unknown
+      } | null
+      const template = typeof record?.template === 'string' && record.template !== '' ? record.template : undefined
+      const customTemplate = typeof record?.customTemplate === 'string'
+        ? record.customTemplate.slice(0, COMMIT_CUSTOM_TEMPLATE_MAX)
+        : undefined
+      const provider = requireString(payload, 'provider')
+      const model = requireString(payload, 'model')
+      const historyRefs = typeof record?.historyRefs === 'number' && Number.isFinite(record.historyRefs)
+        ? Math.min(COMMIT_HISTORY_REFS_MAX, Math.max(COMMIT_HISTORY_REFS_MIN, Math.round(record.historyRefs)))
+        : COMMIT_HISTORY_REFS_DEFAULT
+      const llm = ctx.get('llm') as LlmRuntime | undefined
+      if (llm === undefined) {
+        throw new SidebarError('llm-unavailable', 'the LLM service is not mounted in this deployment', 503)
+      }
+      const context = await buildCommitContext(cwd, historyRefs)
+      if (context === null) {
+        throw new SidebarError('no-staged-changes', 'nothing is staged — stage changes first', 400)
+      }
+      const resolved = resolveCommitTemplate(template, customTemplate)
+      const prompt = composeCommitDraftPrompt(context, resolved.instructions)
+      const message = await draftCommitMessage(llm, { provider, model }, prompt)
+      return {
+        message,
+        fileCount: context.fileCount,
+        insertions: context.insertions,
+        deletions: context.deletions,
+        patchTruncated: context.patchTruncated,
+        provider,
+        model,
+        template: resolved.id,
+      }
     },
     // Release a terminal immediately. The WebSocket close frame already does
     // this while the socket is open; this route covers the tab-close that

@@ -19,6 +19,9 @@ export type SidebarErrorCode =
   | 'job-error'
   | 'settings-rejected'
   | 'settings-conflict'
+  | 'no-staged-changes'
+  | 'llm-unavailable'
+  | 'llm-error'
   | 'internal'
 
 /** One API failure with its wire code and HTTP status. */

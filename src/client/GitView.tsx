@@ -8,19 +8,27 @@
  * revert, cherry-pick, copy paths/hashes). Refresh is manual + on mount/
  * focus (no file watcher — KISS).
  */
-import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useSyncExternalStore, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
-  IconTrashOutline16, Input, Menu, Modal, Tooltip, writeClipboard,
+  IconSparkle16, IconTrashOutline16, Input, Menu, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitGraphEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
-import { api } from './api.ts'
+import { api, SidebarApiError } from './api.ts'
 import { notifyGitStatusChanged } from './git-status.ts'
 import { GitGraphSvg } from './GitGraph.tsx'
 import { computeGraphRows } from './git-graph.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
-import type { SidebarTab } from './state.ts'
+import type { SidebarStore, SidebarTab } from './state.ts'
+import {
+  GIT_COMMIT_SETTING_KEYS,
+  commitCustomTemplateOf,
+  commitHistoryRefsOf,
+  commitLlmModelOf,
+  commitLlmProviderOf,
+  commitTemplateOf,
+} from '../commit-draft-shared.ts'
 import css from './sidebar.module.css'
 
 /** The XY status letters a row badge shows (X = index, Y = worktree). */
@@ -84,11 +92,12 @@ const LOG_BATCH = 20
 
 export function GitView(props: {
   scope: SessionScope
+  store: SidebarStore
   onOpenFile: (path: string) => void
   /** Open a diff tab (the shell places it below the git pane on first use). */
   onOpenDiff: (tab: SidebarTab) => void
 }) {
-  const { scope, onOpenFile, onOpenDiff } = props
+  const { scope, store, onOpenFile, onOpenDiff } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -100,6 +109,10 @@ export function GitView(props: {
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
+  /** Whether an AI commit draft is streaming right now. */
+  const [drafting, setDrafting] = useState(false)
+  /** The live side-card prefs (the AI draft reads the git tab's own blob). */
+  const prefs = useSyncExternalStore(store.subscribe, () => store.getSnapshot().prefs)
 
   /** The open file-row context menu (cursor position for the portaled Menu). */
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
@@ -195,7 +208,7 @@ export function GitView(props: {
 
   const commit = async (): Promise<void> => {
     const message = commitMsg.trim()
-    if (message === '' || busy) return
+    if (message === '' || busy || drafting) return
     setBusy(true)
     setCommitError(null)
     try {
@@ -206,6 +219,41 @@ export function GitView(props: {
       setCommitError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setBusy(false)
+    }
+  }
+
+  /** Draft a commit message for the STAGED changes through the LLM chosen in
+   *  the Side card settings (git card gear). The draft fills the message box
+   *  as editable text — it never commits. */
+  const draftCommit = async (): Promise<void> => {
+    if (busy || drafting) return
+    const blob = prefs.pluginSettings['git']
+    const provider = commitLlmProviderOf(blob)
+    const model = commitLlmModelOf(blob)
+    if (provider === '' || model === '') {
+      setCommitError(`${t('commitDraftNoLlm')} — ${t('commitDraftNoLlmDesc')}`)
+      return
+    }
+    setDrafting(true)
+    setCommitError(null)
+    try {
+      const result = await api.gitCommitDraft(scope, {
+        template: commitTemplateOf(blob),
+        customTemplate: commitCustomTemplateOf(blob),
+        provider,
+        model,
+        historyRefs: commitHistoryRefsOf(blob),
+      })
+      setCommitMsg(result.message)
+    } catch (reason) {
+      const code = reason instanceof SidebarApiError ? reason.code : undefined
+      const message = code === 'no-staged-changes' ? t('commitDraftNoStaged')
+        : code === 'llm-unavailable' ? `${t('commitDraftNoLlm')} — ${t('commitDraftNoLlmDesc')}`
+        : code === 'llm-error' ? `${t('commitDraftFailed')}: ${reason instanceof Error ? reason.message : String(reason)}`
+        : reason instanceof Error ? reason.message : String(reason)
+      setCommitError(message)
+    } finally {
+      setDrafting(false)
     }
   }
 
@@ -351,16 +399,29 @@ export function GitView(props: {
               className={css.gitCommitInput}
               placeholder={t('commitPlaceholder')}
               value={commitMsg}
-              disabled={busy}
+              disabled={busy || drafting}
               onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
               onKeyDown={(event) => {
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
               }}
             />
+            <Tooltip label={t('commitDraftTooltip')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.gitDraftButton}
+                aria-label={t('commitDraft')}
+                title={t('commitDraft')}
+                disabled={busy || drafting || stagedEntries.length === 0}
+                onClick={() => { void draftCommit() }}
+              >
+                <IconSparkle16 size={14} />
+                <span>{drafting ? t('commitDraftBusy') : t('commitDraft')}</span>
+              </button>
+            </Tooltip>
             <button
               type="button"
               className={css.gitCommitButton}
-              disabled={busy || commitMsg.trim() === '' || stagedEntries.length === 0}
+              disabled={busy || drafting || commitMsg.trim() === '' || stagedEntries.length === 0}
               onClick={() => { void commit() }}
             >
               {t('commit')}

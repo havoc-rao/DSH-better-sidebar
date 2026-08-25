@@ -2525,6 +2525,91 @@
   cursor: default;
 }
 
+/* The AI commit-draft button (left of the commit button): an outline chip
+   with a sparkle glyph, brand-tinted like the .gitLink actions. */
+.gitDraftButton {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-brand-primary);
+  font: var(--dsw-font-xxs-12);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gitDraftButton:hover:not(:disabled) {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.gitDraftButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The git tab's AI commit-draft settings panel (settings.render): stacked
+   rows of label + control, mirroring the popup row chrome (l2 hairline,
+   12px radius, layer-3 fill) used by the declarative settings rows. */
+.gitSettings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.gitSettingsHint {
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-3);
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.gitSettingsRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gitSettingsLabel {
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.gitSettingsSelect,
+.gitSettingsInput {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.gitSettingsTextarea {
+  min-height: 72px;
+  padding: 6px;
+  resize: vertical;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.gitSettingsDesc {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* A history row: the commit-graph lane SVG on the left, body on the right
    (line 1 = hash + subject, line 2 = ref badges + author/date). The lane
    colors come from the `--gg-lane-N` custom properties below — defaults are

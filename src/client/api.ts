@@ -8,6 +8,7 @@
  */
 import { encodeHtmlUrl } from '../html-route.ts'
 import type { BrowserProbeResult } from './browser.ts'
+import type { CommitDraftRequest, CommitDraftResult, LlmCatalog } from '../commit-draft-shared.ts'
 
 /** One wire failure. */
 export class SidebarApiError extends Error {
@@ -190,6 +191,13 @@ export const api = {
   /** Cherry-pick one commit onto the current branch. */
   gitCherryPick: (scope: SessionScope, hash: string) =>
     call<{ ok: true }>('git.cherry-pick', scopePayload(scope, { hash })),
+  /** The live LLM provider/model catalog (the AI commit-draft settings). */
+  llmCatalog: (signal?: AbortSignal) =>
+    call<LlmCatalog>('llm.catalog', {}, signal),
+  /** Draft a commit message for the STAGED changes through the harness LLM
+   *  service, following the selected provider/model and reference template. */
+  gitCommitDraft: (scope: SessionScope, request: CommitDraftRequest) =>
+    call<CommitDraftResult>('git.commit-draft', scopePayload(scope, { ...request })),
   /** Release a terminal's process immediately (tab closed; the WS close frame
    *  may be unreachable while the socket is down, so the host also accepts
    *  this explicit route). */

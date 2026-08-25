@@ -201,6 +201,53 @@ export async function diff(cwd: string, path: string | undefined, staged: boolea
   return runGit(cwd, args)
 }
 
+/** One `git diff --cached --numstat` row; binary entries carry null counts. */
+export interface StagedNumstatRow {
+  path: string
+  added: number | null
+  deleted: number | null
+}
+
+/**
+ * Parse `git diff --numstat` output (tab-separated `added\tdeleted\tpath`
+ * lines; binary entries report `-` for both counts). Row paths may contain
+ * tabs, so only the two leading fields split — the remainder is the path.
+ */
+export function parseNumstat(output: string): StagedNumstatRow[] {
+  const rows: StagedNumstatRow[] = []
+  for (const line of output.split('\n')) {
+    if (line === '') continue
+    const [addedRaw, deletedRaw, ...pathParts] = line.split('\t')
+    if (addedRaw === undefined || deletedRaw === undefined || pathParts.length === 0) continue
+    const count = (raw: string): number | null => raw === '-' ? null : Number(raw)
+    rows.push({
+      path: pathParts.join('\t'),
+      added: count(addedRaw),
+      deleted: count(deletedRaw),
+    })
+  }
+  return rows
+}
+
+/** Per-file staged line counts (`git diff --cached --numstat`). */
+export async function stagedNumstat(cwd: string): Promise<StagedNumstatRow[]> {
+  const raw = await runGit(cwd, ['diff', '--cached', '--numstat'])
+  return parseNumstat(raw)
+}
+
+/** The `--stat` summary of the staged changes ('' when nothing is staged). */
+export async function stagedStat(cwd: string): Promise<string> {
+  return runGit(cwd, ['diff', '--cached', '--stat'])
+}
+
+/** The subjects of the most recent commits, newest first — the style
+ *  reference the AI commit draft imports into its prompt. */
+export async function recentSubjects(cwd: string, count: number): Promise<string[]> {
+  if (count <= 0) return []
+  const raw = await runGit(cwd, ['log', '-n', String(count), '--pretty=format:%s'])
+  return raw.split('\n').filter(line => line !== '')
+}
+
 /** Stage paths (all when path is undefined). */
 export async function stage(cwd: string, path: string | undefined): Promise<void> {
   await runGit(cwd, ['add', '-A', ...(path !== undefined ? ['--', path] : [])])
