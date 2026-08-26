@@ -2015,6 +2015,17 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   height: 100%;
 }
 
+/* Block-mode "add to conversation": the shared selectionPopup chrome, but
+   pinned inside the terminal wrap (top-right) instead of floating at the
+   selection — offers the last CLI execution block as one insertable unit. */
+.terminalAddBlock {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  transform: none;
+  z-index: 6;
+}
+
 .terminalBanner {
   flex: none;
   display: flex;
