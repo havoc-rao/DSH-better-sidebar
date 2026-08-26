@@ -7,6 +7,11 @@
  * caller also owns the refresh affordance — a `refreshTick` bump wipes the
  * level cache so the visible set reloads.
  *
+ * Indent guides: rows paint VSCode-style vertical guide lines under each
+ * expanded ancestor (via inline background gradients — see
+ * `treeGuideBackground`), with a horizontal corner on expanded directory
+ * rows, so the sibling structure reads at a glance.
+ *
  * Row actions: hovering a row reveals an @-reference button on the far
  * right (appends `@<relative path>` to the composer draft), and right-click
  * opens a context menu: file rows offer the caller's open escapes
@@ -15,7 +20,7 @@
  * relative or absolute path (with a brief "copied" label replacing the
  * button after a successful write).
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
@@ -33,6 +38,65 @@ import css from './sidebar.module.css'
 interface LevelData {
   entries?: FsEntry[]
   error?: string
+}
+
+/** The tree's indent geometry: one 22px column per depth level plus the
+ *  fixed 6px left inset — this is the row padding formula (`depth * 22 + 6`),
+ *  hoisted so the guide painter and the paddings can never drift apart. */
+const INDENT_STEP = 22
+const INDENT_BASE = 6
+
+/** The indent-guide stroke: the app's border token slightly faded (the
+ *  repo's color-mix pattern), the visual weight of VSCode's guide lines —
+ *  clearly visible but quieter than the row dividers. */
+const GUIDE_STROKE = 'color-mix(in srgb, var(--dsw-alias-border-l1) 70%, transparent)'
+
+/** VSCode-style indent guides for one row, as a CSS background layer set
+ *  (zero extra DOM, drops out entirely at depth 0 — the root row): a 1px
+ *  vertical stroke under every expanded ancestor at that ancestor's icon
+ *  column (the root is always expanded, so depth-1 rows draw one stroke at
+ *  x=6), plus — on expanded DIRECTORY rows only — the horizontal corner
+ *  segment joining the deepest ancestor stroke to the folder icon (the "├─"
+ *  joint). Files and collapsed dirs keep just the verticals, so sibling
+ *  structure reads at a glance exactly like the VSCode explorer.
+ *
+ *  Neighboring rows decide where strokes stop: a row at depth D draws only
+ *  the D ancestor columns, so the first shallower sibling below a subtree
+ *  simply has no stroke for it — each guide ends flush at its subtree's last
+ *  row, never dangling into empty space.
+ *
+ *  The style is applied inline as background longhands (never the `background`
+ *  shorthand): the shorthand would claim `background-color`, which the
+ *  stylesheet's row fill and hover fill own.
+ */
+export function treeGuideBackground(depth: number, isOpenDir: boolean): CSSProperties {
+  if (depth <= 0) return {}
+  const image: string[] = []
+  const size: string[] = []
+  const position: string[] = []
+  const repeat: string[] = []
+  if (isOpenDir) {
+    // The corner: a horizontal stroke across the deepest indent column at
+    // the row's vertical center (rows are 34px tall → 16.5–17.5px).
+    const from = (depth - 1) * INDENT_STEP + INDENT_BASE
+    image.push(`linear-gradient(0deg, transparent 16.5px, ${GUIDE_STROKE} 16.5px, ${GUIDE_STROKE} 17.5px, transparent 17.5px)`)
+    size.push(`${INDENT_STEP}px 100%`)
+    position.push(`${from}px 0`)
+    repeat.push('no-repeat')
+  }
+  for (let k = 0; k < depth; k++) {
+    const x = k * INDENT_STEP + INDENT_BASE
+    image.push(`linear-gradient(90deg, transparent ${x}px, ${GUIDE_STROKE} ${x}px, ${GUIDE_STROKE} ${x + 1}px, transparent ${x + 1}px)`)
+    size.push('100% 100%')
+    position.push('0px 0px')
+    repeat.push('no-repeat')
+  }
+  return {
+    backgroundImage: image.join(', '),
+    backgroundSize: size.join(', '),
+    backgroundPosition: position.join(', '),
+    backgroundRepeat: repeat.join(', '),
+  }
 }
 
 /** Root label: the last path segment (mirror of the host rootLabel). */
@@ -217,11 +281,11 @@ export function FileTree(props: {
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
     if (level === undefined) {
-      return <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>{t('loading')}</div>
+      return <div className={css.explorerRow} style={{ paddingLeft: depth * INDENT_STEP + INDENT_BASE }}>{t('loading')}</div>
     }
     if (level.error !== undefined) {
       return (
-        <div className={clsx(css.explorerRow, css.explorerError)} style={{ paddingLeft: depth * 22 + 6 }}>
+        <div className={clsx(css.explorerRow, css.explorerError)} style={{ paddingLeft: depth * INDENT_STEP + INDENT_BASE }}>
           {level.error}
         </div>
       )
@@ -237,7 +301,10 @@ export function FileTree(props: {
               role="button"
               tabIndex={0}
               className={clsx(css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden)}
-              style={{ paddingLeft: depth * 22 + 6 }}
+              style={{
+                paddingLeft: depth * INDENT_STEP + INDENT_BASE,
+                ...treeGuideBackground(depth, isOpen),
+              }}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -268,7 +335,10 @@ export function FileTree(props: {
             entry.broken && css.explorerBroken,
             status?.deleted === true && css.explorerDeleted,
           )}
-          style={{ paddingLeft: depth * 22 + 6 }}
+          style={{
+            paddingLeft: depth * INDENT_STEP + INDENT_BASE,
+            ...treeGuideBackground(depth, false),
+          }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
           onClick={() => { onOpenFile(entry.path) }}
           onKeyDown={(event) => {
@@ -297,7 +367,7 @@ export function FileTree(props: {
         <>
           <div
             className={css.explorerRow}
-            style={{ paddingLeft: 6 }}
+            style={{ paddingLeft: INDENT_BASE }}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
           >
             {fileIcon({ name: baseName(root), isDir: true, expanded: true, isRoot: true }) ?? <IconFolderOpen16 size={14} />}
