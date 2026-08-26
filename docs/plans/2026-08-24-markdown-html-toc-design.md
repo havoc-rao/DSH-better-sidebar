@@ -33,6 +33,7 @@ DSH 宿主的 `MarkdownText` 出于聊天安全把 raw HTML 按字面文本渲�
 - 标题从**渲染后的 DOM** 收集（h1–h6，含 HTML 段内标题），MutationObserver 重扫（签名比对防重渲染循环）。
 - 跳转：展开 `closest('details:not([open])')` → `scrollIntoView({behavior:'smooth'})` → CSS 动画高亮 1.2s。
 - **⚠️ 关键实现陷阱（本次踩坑）**：MdToc **不能**通过传入父容器 ref 定位——React 的 layout 阶段子先于父，子组件的 `useLayoutEffect` 执行时父 div 的 ref **尚未挂上**（实测 `containerRef.current === null`，且依赖数组恒定导致 effect 永不重跑，按钮永不出现；jsdom 单测传预填 ref 对象会掩盖此 bug，只有真实挂载 e2e 能抓到）。修复：MdToc 用**自身 bar div 的 ref**（自身 effect 前必然已挂）取 `parentElement` 作为容器——挂载契约「渲染为目标滚动容器的直接子元素」写入组件文档；bar 常驻渲染（零高度无副作用）以保证 ref 恒在。
+- **层叠层级（2026-08-26 修复记录）**：TOC bar `z-index: 8`，**必须高于 DSH `CodeBlock` 的 sticky 头部**（宿主 `CodeBlock.module.css` 的 `.bannerWrap` 是 `position: sticky; top: 0; z-index: 6`）。文档以代码围栏开头或滚动到代码块时，banner 会钉在预览滚动区顶部、正好压在右上角 TOC 按钮下——若 TOC bar 层级更低，图标被不透明 banner 完全遮住（实测 `z-index: 3` 时按钮被挡、点击落在 banner 上）。取舍：TOC chrome 是预览滚动区内的最顶层；banner 钉顶期间 TOC 按钮会盖住 banner 右端的复制按钮一角（两者同钉顶、角落必然交叠，二选一）。配套 hover 表现：按钮浮在 banner 上时 hover 用**边框强化的 border 表现**（`border-l1 → border-l2`）而非半透明 `interactive-bg-hover` 填充，避免透出背后的复制按钮。回归守卫：e2e 在 `readme-style.md` 种子顶部加了代码围栏，`tocButton` 的 topmost 断言 + 点击即证明不被遮挡。
 
 ### 2.4 依赖与产物
 
