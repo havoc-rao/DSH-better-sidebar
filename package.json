@@ -156,6 +156,7 @@
     "@deepseek-ai/dsh-settings": "0.1.1-rc.1",
     "@deepseek-ai/dsh-subagent": "0.1.1-rc.1",
     "@deepseek-ai/dsh-tools": "0.1.1-rc.1",
+    "@havocrao/dsh-code-finder": "link:/Users/havoc/Documents/Projects/tools/DSH-code-finder",
     "@huanlin/dsh-plugin-better-locale": "^0.1.0",
     "@playwright/test": "^1.62.1",
     "@types/node": "^24.0.0",

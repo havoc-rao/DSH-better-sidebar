@@ -147,6 +147,9 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: 0.1.1-rc.1
         version: 0.1.1-rc.1(5493e0ab460eb504a0593977b284c2a8)
+      '@havocrao/dsh-code-finder':
+        specifier: link:/Users/havoc/Documents/Projects/tools/DSH-code-finder
+        version: link:../../DSH-code-finder
       '@huanlin/dsh-plugin-better-locale':
         specifier: ^0.1.0
         version: 0.1.0(cb831dcffe1fb561624a57e14d05c62c)
