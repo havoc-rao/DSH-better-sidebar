@@ -34,6 +34,17 @@ export default defineConfig({
     // default include only matches *.test.* / *.spec.*) and by an explicit
     // exclude. NOTE: `exclude` REPLACES vitest's defaults, so the standard
     // node_modules/dist/etc. excludes must be restated here.
+    // The real-git / real-PTY specs (git.spec, git-worktree.spec, smoke.spec)
+    // spawn many child processes; under a fully parallel run macOS's
+    // per-exec signature/linkage checks queue up and a single `git` can take
+    // far longer than the 5s default test timeout (visible as "Test timed
+    // out in 5000ms", not an assertion failure). Cap the worker pool and give
+    // the child-process-heavy specs breathing room; a real regression still
+    // fails deterministically within the longer window.
+    maxWorkers: 8,
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    retry: 1,
     exclude: [
       'tests/e2e/**',
       '**/node_modules/**',

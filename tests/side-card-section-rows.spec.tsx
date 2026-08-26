@@ -211,7 +211,9 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
     const { container, unmount } = mount(createElement(FeatureSettingsRows, {
       ctx,
       toggles: [toggle],
-      prefs,
+      // Merged is the selected option for this scenario (the default is now
+      // separate — the anchor must render whatever value the prefs carry).
+      prefs: { ...prefs, editorExplorer: true },
       onToggle: () => {},
       onSelectValue: (t, next) => { commits.push([t.key, next]) },
     }))

@@ -1,16 +1,19 @@
 /**
- * The sidebar shell: fixed-position panels portalled onto document.body
- * (the core AppFrame owns the left sidebar / center / details columns and
- * has no right-side hole for plugins). The right panel hosts the original
- * workbench; the bottom panel hosts a second, independent workbench. The
- * bottom panel squeezes ONLY the center column (the agent output area): it
- * spans from the app shell's own left sidebar to the right panel's left
- * edge, so neither sidebar gives up any position (the right panel keeps its
- * full height). A persistent two-button cluster at the top-right corner
- * toggles each panel; the right panel's width drags from its left edge, the
- * bottom panel's height from its top edge, and the shared corner drags both
- * at once. The whole layout lives in the per-session store, so switching
- * conversations swaps the sidebar.
+ * The sidebar shell: panels mounted inside the unified panel host — a
+ * fixed, viewport-sized containing block ([data-dsh-panel-host]) appended
+ * to document.body — instead of individual fixed-position elements, so a
+ * desktop shell's intermediate wrapper transforms can never hijack the
+ * panels' fixed containing block (the core AppFrame owns the left sidebar /
+ * center / details columns and has no right-side hole for plugins). The
+ * right panel hosts the original workbench; the bottom panel hosts a
+ * second, independent workbench. The bottom panel squeezes ONLY the center
+ * column (the agent output area): it spans from the app shell's own left
+ * sidebar to the right panel's left edge, so neither sidebar gives up any
+ * position (the right panel keeps its full height). A persistent two-button
+ * cluster at the top-right corner toggles each panel; the right panel's
+ * width drags from its left edge, the bottom panel's height from its top
+ * edge, and the shared corner drags both at once. The whole layout lives in
+ * the per-session store, so switching conversations swaps the sidebar.
  *
  * The shell binds the workbench actions to the store and dispatches tab
  * content to the views. New tabs come from the + menu (explorer / git /
@@ -25,19 +28,20 @@
  * drawer floats). Widening does not migrate back: the tabs keep living in
  * the right tree.
  */
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarLayoutService, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, allLeaves, firstLeaf, isAgentTabId, isBoundTabId, isGlobalTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
-  patchTab,
-  reconcileAgentTerminals,
-  resizeSplitIn, setBottomHeight, setSideBarOpen, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized, treeOf,
+BOTTOM_MIN, PANEL_MIN, activateTab, agentUuidOf, allLeaves, closeFloatByTab, closeTab, dockFloat, firstLeaf, floatTab,
+  floatWithTab, isAgentTabId, isBoundTabId, isGlobalTabId, leafWithTab, migrateBottomTabs,
+  moveFloat, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, raiseFloat, reconcileAgentTerminals,
+  resizeFloat, resizeSplitIn, setBottomHeight, setSideBarOpen, setTabPin, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized, treeOf,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceWindow,
 } from './state.ts'
+import { collectPinnedTabs, createPinnedVirtualTab, getPinnedHomeScope, injectPinnedIntoTree, isPinnedVirtualId, isPinnedVirtualTab, parsePinnedVirtualId, type PinnedTabEntry } from './pinned.ts'
 import { IconGlobeOffOutline16, IconGlobeOutline16, IconPanelBottomOutline16, IconPanelRightOutline16, IconPinOffOutline16, IconPinOutline16 } from './icons.tsx'
 import { panelHotkeyHint } from './hotkeys.ts'
 import { createHostSidebarKeeper } from './host-sidebar.ts'
@@ -47,10 +51,15 @@ import { commandMenuRows } from './commands.ts'
 import { registerGlobalPageSurface } from './GlobalPage.tsx'
 import { isGlobalPageOpen, setGlobalPageOpen, subscribeGlobalPage } from './global-page.ts'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
-import { useNarrowViewport } from './breakpoints.ts'
+import { isNarrowWidth, useViewportSize } from './breakpoints.ts'
+import { layoutPushSize } from './layout-push.ts'
+import { parseDesktopEnv } from './desktop-env.ts'
+import { getWcoSnapshot, subscribeWco } from './wco.ts'
+import { getShellPreset } from './shell-presets.ts'
+import { computeTitleBarStrip } from './titlebar-strip.ts'
 import type { NewTabOption } from './TabBar.tsx'
-import { TabBar } from './TabBar.tsx'
-import type { TabDragPayload } from './TabBar.tsx'
+import { TabBar, TAB_DRAG_TYPE, parseDrag, type TabDragPayload } from './TabBar.tsx'
+import { FreeWindow } from './FreeWindow.tsx'
 import type { WorkspaceWindowsSnapshot, WorkspaceWindowsStore } from './workspace-windows.ts'
 import { relativeTo } from './paths.ts'
 import { OrphanedTab } from './OrphanedTab.tsx'
@@ -58,6 +67,7 @@ import { ActivityBar } from './ActivityBar.tsx'
 import { SideBarPane } from './SideBarPane.tsx'
 import { openSidebarFile } from './intercept.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
+import { tabContentCompare, type TabContentMemoKey } from './tab-content-memo.ts'
 import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
@@ -90,8 +100,64 @@ const EMPTY_WS_SNAPSHOT: WorkspaceWindowsSnapshot = {
  */
 const canRenameTab = (tab: SidebarTab): boolean => tab.type === 'terminal'
 
-/** Render the content of one tab (dispatched by type). */
-function TabContent(props: {
+/**
+ * Subagent auto-open debounce (ms). The host delivers a new child's origin
+ * and its title in SEPARATE frames: a Side Chat thread's first visible
+ * frame still shows a fallback title (no 'Side: ' prefix), so an immediate
+ * 0→N decision mistakes it for a genuine subagent and pops the task page.
+ * The trigger therefore re-evaluates against the live snapshot once the
+ * title frame has had time to land.
+ */
+const AUTO_OPEN_DEBOUNCE_MS = 500
+
+/**
+ * OS file drags over the sidebar belong to the sidebar, not to the chat:
+ * DSH's composer (InputBar) listens for file drags on the DOCUMENT and
+ * answers with a full-screen "drop image here" mask plus image intake on
+ * drop. Both panel-host render sites swallow the whole event quartet —
+ * enter/over/leave/drop — so the region is a black hole to that document
+ * listener. All four must be stopped: InputBar keeps an enter/leave depth
+ * counter, and a leave that escapes without its matching enter unbalances
+ * the count (this was the full-screen mask flickering over the sidebar).
+ * The conversation column keeps DSH's native overlay and intake untouched;
+ * gated on the 'Files' type so in-app drags (tab reorder, split zones)
+ * propagate exactly as before.
+ */
+const swallowOsFileDrag = (event: ReactDragEvent): void => {
+  if (!(event.dataTransfer?.types.includes('Files') ?? false)) return
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+/** The four drag events a file drag must never carry past the panel host. */
+const osFileDragShield = {
+  onDragEnter: swallowOsFileDrag,
+  onDragOver: swallowOsFileDrag,
+  onDragLeave: swallowOsFileDrag,
+  onDrop: swallowOsFileDrag,
+}
+
+/**
+ * Append one user-space stylesheet (preset or custom CSS) as a tagged
+ * `<style>` element. The tag attribute carries the source identity so the
+ * running configuration is inspectable in DevTools; the returned tag is
+ * removed by the caller's effect cleanup.
+ */
+function injectUserCss(attr: string, id: string, cssText: string): HTMLStyleElement {
+  const tag = document.createElement('style')
+  tag.setAttribute(attr, id)
+  tag.textContent = cssText
+  document.head.appendChild(tag)
+  return tag
+}
+
+/** Props of one tab's content cell = the memo key (tab-content-memo.ts) plus
+ *  the runtime objects/callbacks the cell renders with. The memo comparator
+ *  is the pure `tabContentCompare`; anything in the key decides a re-render
+ *  must propagate, anything outside it must be a stable object (ctx/store)
+ *  or covered by a compared field (paneId covers onOpenDiff's captured
+ *  pane; sessionId/cwd cover onReferenceFile). */
+interface TabContentProps extends TabContentMemoKey {
   tab: SidebarTab
   sessionId: string
   cwd: string | undefined
@@ -100,13 +166,11 @@ function TabContent(props: {
   onReferenceFile: (path: string) => void
   ctx: Context
   store: SidebarStore
-  /** Whether this tab is the active one AND the panel is open (live views pause otherwise). */
-  visible: boolean
   /** Fired before a topology node jumps to its child session (see Sidebar). */
   onSubagentJump: (childSessionId: string) => void
   /** Open a diff tab from the git panel (placement handled by the store). */
   onOpenDiff: (tab: SidebarTab) => void
-  /** The instance-level global-shared windows (the global info tab reads them). */
+/** The instance-level global-shared windows (the global info tab reads them). */
   globalWindows?: readonly WorkspaceWindow[]
   /** Attach a global-shared window into the Global Workspace's bottom
    *  workbench (the global tab's card click — no real session is touched). */
@@ -115,31 +179,31 @@ function TabContent(props: {
   onNewGlobalTerminal?: () => void
   /** Unbind a global-shared window from the whole instance (the global tab's card ✕). */
   onUnbindGlobal?: (tabId: string) => void
-}) {
-  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, globalWindows, onAttachGlobal, onNewGlobalTerminal, onUnbindGlobal } = props
+}
+
+/** Render the content of one tab (dispatched by type). */
+const TabContent = memo(function TabContent(props: TabContentProps) {
+  const { tab, effectiveTabId, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, globalWindows, onAttachGlobal, onNewGlobalTerminal, onUnbindGlobal } = props
   const scope = { sessionId, cwd }
-  const descriptor = ctx.betterSidebar?.getTab(tab.type)
+  const descriptor = (ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.getTab(tab.type)
   if (descriptor === undefined) {
     return <OrphanedTab ctx={ctx} store={store} scope={scope} tab={tab} visible={visible} />
   }
-  // One boundary per tab: a render crash in a viewer/editor shows a strip in
-  // THIS tab's pane only — the toggle cluster, the other tabs, and the panel
-  // stay alive (issue #31). The tab strip (close button) lives outside, so a
-  // crashing tab stays closable; the root boundary in index.tsx remains the
-  // last resort for errors in the sidebar shell itself. The descriptor is
-  // rendered as a REAL element (not called directly): a direct call would
-  // throw inside TabContent's own render, which the boundary cannot catch —
-  // as a child fiber, every render error (top-level or deep) lands in it.
+  // For pinned virtual tabs, the tab descriptor's component (e.g. TerminalView)
+  // must receive the ORIGINAL tab id so it connects to the home session's PTY.
+  // The virtual tab's own id is a unique display key (prefixed); effectiveTabId
+  // restores the real id at the component boundary.
+  const componentTab = effectiveTabId !== undefined ? { ...tab, id: effectiveTabId } : tab
   return createElement(
     RenderBoundary,
     { className: css.tabBoundaryError },
     createElement(descriptor.component, {
-      ctx, store, scope, tab, visible, expanded,
+      ctx, store, scope, tab: componentTab, visible, expanded, revealed,
       onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
       globalWindows, onAttachGlobal, onNewGlobalTerminal, onUnbindGlobal,
     }),
   )
-}
+}, tabContentCompare)
 
 /** The + menu options for the current state, driven by the tab registry.
  * Hidden tabs (editor/diff) never show; `available` returning false shows
@@ -147,7 +211,7 @@ function TabContent(props: {
  * Tabs the user disabled in the side card settings are filtered out
  * entirely — re-enabling them is the settings page's job. */
 function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionScope): NewTabOption[] {
-  const service = ctx.betterSidebar
+  const service = ctx.get?.('betterSidebar') ?? ctx.betterSidebar
   if (service === undefined) return []
   return service.getTabs()
     .filter(d => !d.hidden && service.isTabEnabled(d.id))
@@ -229,6 +293,52 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   )
   void localeRevision
 
+  // better-locale override freshness: when @huanlin/dsh-plugin-better-locale
+  // is installed and the user picks an override language (e.g. ja), the
+  // store's `active` changes but the DSH locale's `active` does NOT —
+  // better-locale keeps the dsh active value (zh/en) unchanged and only
+  // patches `LocaleRuntime.prototype.lookup`. The localeRevision uSES
+  // above reads `getSnapshot().active`, so it sees no change and skips
+  // re-render. This second uSES reads the better-locale store's `active`
+  // directly, so an override switch fires a full re-render and t() picks
+  // up the new override text. Optional: ctx.get returns undefined when
+  // better-locale is absent (or when ctx is a minimal test mock without
+  // a `get` method), in which case this is a no-op uSES.
+  type BetterLocaleStore = {
+    readonly active: string | undefined
+    subscribe(listener: () => void): () => void
+  }
+  const betterLocaleStore = typeof ctx.get === 'function'
+    ? (ctx as unknown as {
+        get(name: 'betterLocale'): BetterLocaleStore | undefined
+      }).get('betterLocale')
+    : undefined
+  const betterLocaleActive = useSyncExternalStore(
+    useMemo(() => {
+      const store = betterLocaleStore
+      if (store === undefined) return (_cb: () => void) => () => {}
+      return (callback: () => void) => store.subscribe(callback)
+    }, [betterLocaleStore]),
+    useMemo(() => {
+      const store = betterLocaleStore
+      if (store === undefined) return () => undefined
+      return () => store.active
+    }, [betterLocaleStore]),
+  )
+  void betterLocaleActive
+
+  // Tab-registry revision: TabContent memo cells must pick up a descriptor
+  // a plugin registers/disposes after mount (the + menu / icons already read
+  // the registry at render). Rare events (plugin (un)mount), so one full
+  // re-render per change is fine — this is what keeps the memoized cells
+  // from going stale, mirroring the localeRevision mechanism above.
+  const [tabsVersion, setTabsVersion] = useState(0)
+  useEffect(() => {
+    const service = ctx.get?.('betterSidebar') ?? ctx.betterSidebar
+    if (service === undefined) return
+    return service.subscribe(() => setTabsVersion(version => version + 1))
+  }, [ctx])
+
   // Narrow (mobile) viewports collapse the two panels into one: the right
   // panel becomes a full-width drawer holding BOTH workbenches, the bottom
   // panel (and its toggle button) disappears, and the layout push is
@@ -237,7 +347,45 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   // — the merged display is the right sidebar alone, the bottom tabs thrown
   // into its strips. Widening never rewrites the migrated state: the tabs
   // keep living in the right tree.
-  const narrow = useNarrowViewport()
+  const viewport = useViewportSize()
+  const narrow = isNarrowWidth(viewport.width)
+
+  // On-screen keyboard / visual-viewport inset (mobile, split-screen, …):
+  // when the visual viewport shrinks below the layout viewport, bottom-
+  // anchored panels would hide under the keyboard. Track the inset and
+  // offset the bottom-anchored surfaces by it. The obscured bottom strip is
+  // innerHeight − (vv.height + vv.offsetTop): offsetTop is nonzero while
+  // the visual viewport is scrolled/zoomed under browser chrome, so
+  // omitting it would over-lift the panels (CR #232 P2). offsetTop changes
+  // through the viewport's scroll event too, so both events are listened.
+  // Guarded: browsers without visualViewport (older WebViews, jsdom) stay
+  // at 0. rAF-throttled, same pattern as useNarrowViewport.
+  const [keyboardInset, setKeyboardInset] = useState(0)
+  const [visualViewportHeight, setVisualViewportHeight] = useState<number | null>(null)
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (vv === null || vv === undefined) return
+    let frame: number | null = null
+    const measure = (): void => {
+      frame = null
+      const inset = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop))
+      setKeyboardInset(inset > 1 ? Math.round(inset) : 0)
+      setVisualViewportHeight(Math.max(0, Math.round(vv.height)))
+    }
+    const onResize = (): void => { if (frame === null) frame = requestAnimationFrame(measure) }
+    vv.addEventListener('resize', onResize)
+    vv.addEventListener('scroll', onResize)
+    measure()
+    return () => {
+      vv.removeEventListener('resize', onResize)
+      vv.removeEventListener('scroll', onResize)
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
+  }, [])
+  // The bottom panel is offset above the on-screen keyboard. Cap its height
+  // against that same visible area, not the taller layout viewport, so the
+  // conversation keeps PANEL_MIN even on wide touch devices.
+  const layoutViewportHeight = visualViewportHeight ?? viewport.height
 
   // Current conversation (the sessions list feed).
   const sessionList = useSyncExternalStore(
@@ -338,7 +486,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     const current = tabMenu
     setTabMenu(null)
     if (current === null) return
-    if (id === 'bind') void windows?.bind(current.tab)
+    if (id === 'float') actions.floatTab?.(current.tab.id)
+    else if (id === 'bind') void windows?.bind(current.tab)
     else if (id === 'unbind') void windows?.unbind(current.tab.id, true)
     else if (id === 'bindGlobal') void windows?.bindGlobal(current.tab)
     else if (id === 'unbindGlobal') void windows?.unbindGlobal(current.tab.id, true)
@@ -367,6 +516,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   const state = snapshot.state
   const sessionId = snapshot.sessionId
   const summaryCwd = sessionId === undefined ? undefined : sessionList.byId[sessionId]?.cwd
+  const pushedBottomHeight = (bottomOpen: boolean, bottomHeight: number): number => layoutPushSize({
+    narrow,
+    panelOpen: false,
+    bottomOpen,
+    width: 0,
+    bottomHeight,
+    viewportWidth: viewport.width,
+    viewportHeight: layoutViewportHeight,
+  }).height
 
   // The collapsed toggle cluster reclaims the top-right corner, so the DSH
   // session header's right-aligned utilities (the "Session log" download
@@ -380,18 +538,31 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     return () => { document.body.removeAttribute('data-dsh-sidebar-collapsed') }
   }, [collapsed])
 
-  // Position compatibility mode (titleBarCompat pref): Windows frameless
-  // windows draw the native title bar (minimize/maximize/close) at the
-  // window's top-right corner, OVER the web content. When the user enables
-  // the pref, the body attribute lets sidebar.module.css drop the toggle
-  // cluster below the strip and push the right panel's content below it.
-  // The strip height is user-tunable (titleBarStripPx) and rides a CSS
-  // variable so the rules stay declarative. The attribute rides the
-  // snapshot's prefs, so flipping the setting re-renders and re-applies
-  // immediately; the cleanup removes both on unmount/boundary swap so a
-  // crashed sidebar never leaves them behind.
-  const titleBarCompat = snapshot.prefs.titleBarCompat
-  const titleBarStrip = snapshot.prefs.titleBarStripPx
+  // Title-bar / shell compatibility (the "位置兼容模式" scheme):
+  //   auto    — CONSERVATIVE: only the standard Window Controls Overlay
+  //             geometry contributes (the real caption-overlay height,
+  //             reactive to maximize/restore). No URL stamp, no preset, no
+  //             guess — plain browsers see zero modification.
+  //   preset  — an opt-in built-in shell preset (shell-presets.ts) adds its
+  //             per-shell strip as the no-WCO fallback.
+  //   custom  — the user's own CSS (injected below) + the legacy manual
+  //             strip px.
+  // The resolved strip drives the SAME body attribute + CSS variable as the
+  // legacy boolean did, so the CSS contract is unchanged (layout.css /
+  // sidebar.module.css); only the value source changed. The cleanup removes
+  // both on unmount/boundary swap so a crashed sidebar never leaves them
+  // behind.
+  const desktopEnv = parseDesktopEnv()
+  const wco = useSyncExternalStore(
+    useMemo(() => subscribeWco, []),
+    getWcoSnapshot,
+  )
+  const scheme = snapshot.prefs.titleBarScheme
+  const preset = scheme === 'preset' ? getShellPreset(snapshot.prefs.titleBarPresetId) : undefined
+  const titleBarStrip = computeTitleBarStrip(
+    desktopEnv, wco, scheme, preset, snapshot.prefs.titleBarStripPx,
+  )
+  const titleBarCompat = titleBarStrip > 0
   useEffect(() => {
     const root = document.documentElement
     if (titleBarCompat) {
@@ -406,6 +577,22 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       root.style.removeProperty('--dsh-title-bar-strip')
     }
   }, [titleBarCompat, titleBarStrip])
+
+  // User-space CSS injection (the escape hatch): preset CSS (scheme
+  // `preset`) and free-form custom CSS (scheme `custom`) are appended AFTER
+  // the plugin's own styles — later in the cascade wins ties, and
+  // `!important` can override the JS-written inline strip variable. Each
+  // source gets its own tagged <style> so the running configuration stays
+  // inspectable; tags are removed on change/unmount so a stale stylesheet
+  // never outlives its fiber (HMR-safe).
+  const presetCss = scheme === 'preset' ? preset?.css ?? '' : ''
+  const customCss = scheme === 'custom' ? snapshot.prefs.customCss : ''
+  useEffect(() => {
+    const tags: HTMLStyleElement[] = []
+    if (presetCss !== '') tags.push(injectUserCss('data-dsh-preset-css', preset?.id ?? '', presetCss))
+    if (customCss !== '') tags.push(injectUserCss('data-dsh-custom-css', 'custom', customCss))
+    return () => { for (const tag of tags) tag.remove() }
+  }, [presetCss, customCss, preset?.id])
 
   /**
    * Bottom-panel merge on narrow viewports: whenever a session is current
@@ -484,7 +671,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
         try {
           const list = JSON.parse(event.data) as Array<{ uuid: string; title: string; command: string; exited: boolean }>
           if (!Array.isArray(list)) return
-          store.reduce(s => ctx.betterSidebar?.isTabEnabled('terminal') === false
+          store.reduce(s => (ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.isTabEnabled('terminal') === false
             ? s
             : reconcileAgentTerminals(s, list))
         } catch {
@@ -511,6 +698,78 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   }, [sessionId, store])
 
   /**
+   * Agent opens push: subscribe to the host's `sidebar_open` requests for
+   * this session (the model actively opens a file / folder / HTTP(S) page).
+   * The host pushes one JSON request per open; the sidebar routes it to the
+   * matching built-in tab: a file opens in the editor (per-path dedupe), a
+   * folder opens a file window whose tree is rooted at the folder
+   * (`meta.dir`), and a URL opens in the browser tab. A disconnected socket
+   * retries with a short backoff (mirror of the agent-terminals loop): the
+   * host queue keeps undelivered requests and replays them on the first
+   * attach, so a refresh or a session switch lands the opens the model
+   * queued while no view was connected.
+   * While the side-card setting is off, pushes are ignored as a defensive
+   * gate — the host already unregisters the tool and drains the queue.
+   */
+  useEffect(() => {
+    if (sessionId === undefined) return
+    let socket: WebSocket | null = null
+    let retry: number | undefined
+    let closed = false
+    let failures = 0
+    const connect = (): void => {
+      if (closed) return
+      const url = new URL('/sidebar/ws/agent-opens', location.origin)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      url.search = new URLSearchParams({ sessionId }).toString()
+      socket = new WebSocket(url.toString())
+      socket.onmessage = (event) => {
+        if (typeof event.data !== 'string') return
+        try {
+          const request = JSON.parse(event.data) as { kind?: unknown; target?: unknown; title?: unknown }
+          if (request === null || typeof request !== 'object') return
+          if (request.kind !== 'file' && request.kind !== 'folder' && request.kind !== 'url') return
+          if (typeof request.target !== 'string' || request.target === '') return
+          if (store.getPrefs().agentOpenTools !== true) return
+          const scope = { sessionId }
+          const title = typeof request.title === 'string' && request.title !== '' ? request.title : undefined
+          if (request.kind === 'url') {
+            ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({ type: 'browser', url: request.target, title }, scope)
+          } else if (request.kind === 'folder') {
+            ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({
+              type: 'editor',
+              title,
+              path: request.target,
+              id: `editor:${request.target}`,
+              meta: { dir: true },
+            }, scope)
+          } else {
+            ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openFile(scope, request.target, title)
+          }
+        } catch {
+          // Malformed push: ignore (the next push carries its own request).
+        }
+      }
+      socket.onclose = () => {
+        if (closed) return
+        failures += 1
+        if (failures >= FAILURE_LIMIT) {
+          console.error('[dsh-better-sidebar] agent-opens connection failed; stopping reconnect loop', sessionId)
+          return
+        }
+        retry = window.setTimeout(connect, 2000)
+      }
+      socket.onerror = () => { socket?.close() }
+    }
+    connect()
+    return () => {
+      closed = true
+      window.clearTimeout(retry)
+      socket?.close()
+    }
+  }, [sessionId, store])
+
+  /**
    * Subagent auto-activation: the moment the current conversation spawns its
    * FIRST direct subagent (a 0 → N transition on the list feed), the "auto
    * open" pref is on, and the Subagent tab type is enabled in settings,
@@ -519,22 +778,44 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
    * Switching to a session that already has subagents never triggers — its
    * baseline starts at the current count — so a deliberate layout is never
    * fought.
+   *
+   * The decision is DEBOUNCED (AUTO_OPEN_DEBOUNCE_MS): a Side Chat thread
+   * is also a subagent-origin child, and its 'Side: ' title lands one frame
+   * after its origin — an immediate check would misread that first frame as
+   * a new subagent and pop this page on every thread creation. The timer
+   * re-evaluates the ORIGINAL baseline against the live snapshot; by then
+   * the title filter (isSideThreadSummary) sees the settled label.
    */
   const listBaselineRef = useRef<SidebarSessionList | undefined>(undefined)
+  const autoOpenPendingRef = useRef<{ baseline: SidebarSessionList; timer: number } | null>(null)
   useEffect(() => {
     const prev = listBaselineRef.current
     listBaselineRef.current = sessionList
     if (sessionId === undefined || prev === undefined) return
+    if (autoOpenPendingRef.current !== null) return
     if (!detectNewDirectSubagent(prev, sessionList, sessionId)) return
-    if (!store.getPrefs().autoOpenSubagent) return
-    if (ctx.betterSidebar?.isTabEnabled('subagent') === false) return
-    store.reduce(s => s.panelOpen ? s : togglePanel(s))
-    // Pin the landing to the right panel: the auto-opened Subagent page must
-    // appear where the panel just expanded, not in a bottom-panel pane the
-    // user last touched.
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-    ctx.betterSidebar?.openTab({ type: 'subagent', title: t('subagent') })
+    const baseline = prev
+    const timer = window.setTimeout(() => {
+      autoOpenPendingRef.current = null
+      if (!detectNewDirectSubagent(baseline, ctx.sessions.list.getSnapshot(), sessionId)) return
+      if (!store.getPrefs().autoOpenSubagent) return
+      if ((ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.isTabEnabled('subagent') === false) return
+      store.reduce(s => s.panelOpen ? s : togglePanel(s))
+      // Pin the landing to the right panel: the auto-opened Subagent page must
+      // appear where the panel just expanded, not in a bottom-panel pane the
+      // user last touched.
+      store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
+      ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({ type: 'subagent', title: t('subagent') })
+    }, AUTO_OPEN_DEBOUNCE_MS)
+    autoOpenPendingRef.current = { baseline, timer }
   }, [sessionList, sessionId, store, ctx])
+
+  // A session switch (or unmount) voids any armed auto-open recheck.
+  useEffect(() => () => {
+    const pending = autoOpenPendingRef.current
+    if (pending !== null) window.clearTimeout(pending.timer)
+    autoOpenPendingRef.current = null
+  }, [sessionId])
 
   /**
    * Job auto-activation: the moment a NEW background job appears for the
@@ -552,10 +833,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     if (sessionId === undefined || prev === undefined) return
     if (!detectNewJob(prev, sessionList, sessionId)) return
     if (!store.getPrefs().autoOpenJobs) return
-    if (ctx.betterSidebar?.isTabEnabled('subagent') === false) return
+    if ((ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.isTabEnabled('subagent') === false) return
     store.reduce(s => s.panelOpen ? s : togglePanel(s))
     store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-    ctx.betterSidebar?.openTab({ type: 'subagent', title: t('subagent') })
+    ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({ type: 'subagent', title: t('subagent') })
   }, [sessionList, sessionId, store, ctx])
 
   /**
@@ -576,8 +857,52 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     subagentJumpRef.current = undefined
     store.reduce(s => s.panelOpen ? s : togglePanel(s))
     store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-    ctx.betterSidebar?.openTab({ type: 'subagent', title: t('subagent') })
+    ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({ type: 'subagent', title: t('subagent') })
   }, [sessionId, store, ctx])
+
+  /**
+   /**
+    * Inline pinned terminals (v0.17.0+): pinned tabs from OTHER sessions
+    * inject as VIRTUAL tabs into the first leaf of the right panel's split
+    * tree. The virtual tabs have unique ids (prefixed with the home session)
+    * and carry the home scope in meta. Clicking a virtual tab sets
+    * `activePinnedTabId` — the augmented tree overrides the leaf's `active`
+    * so the pinned tab's content renders in-place (TerminalView connects to
+    * the home session's PTY via WS, no session jump).
+    *
+    * Closing/unpinning a virtual tab targets the HOME session via reduceFor
+    * (which doesn't notify — targeted opens must not re-render the active
+    * session). The `pinnedRevision` state bump forces the pinnedEntries
+    * useMemo to recompute after such an action.
+    */
+  const [activePinnedTabId, setActivePinnedTabId] = useState<string | null>(null)
+  const [pinnedRevision, setPinnedRevision] = useState(0)
+
+  /**
+   * Cross-session pinned-tab collection. Recomputed on every store notify,
+   * session-list change, and pinned action (the revision bump covers
+   * reduceFor updates that don't notify). Only tabs from OTHER sessions —
+   * the viewer's own pinned tabs are already on its tab strip.
+   */
+  const pinnedEntries: readonly PinnedTabEntry[] = useMemo(() => {
+    if (sessionId === undefined) return []
+    return collectPinnedTabs(store.getSessionStates(), { sessionId, cwd })
+  }, [store, sessionId, cwd, snapshot, pinnedRevision])
+
+  /** Virtual SidebarTab objects for the pinned entries (stable references
+   *  via useMemo so TabContent's memo comparator holds). */
+  const pinnedVirtualTabs = useMemo(
+    () => pinnedEntries.map(createPinnedVirtualTab),
+    [pinnedEntries],
+  )
+
+  /** The right panel's split tree with pinned virtual tabs injected into the
+   *  first leaf. When `activePinnedTabId` is set, that leaf's `active` is
+   *  overridden so the pinned tab's content is visible. */
+  const augmentedTree = useMemo(
+    () => state === undefined ? undefined : injectPinnedIntoTree(state.splits, pinnedVirtualTabs, activePinnedTabId),
+    [state, pinnedVirtualTabs, activePinnedTabId],
+  )
 
   // The app shell's center column: the bottom panel spans ONLY that column
   // ("squeezes the agent output area") — it starts at the app sidebar's
@@ -589,7 +914,16 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   // horizontal edges — including the animated margin-right push while the
   // right panel opens/closes; a frame that never appears keeps the initial
   // zero-size fallback (the panel renders at 0 width until measured).
-  const [centerRect, setCenterRect] = useState({ left: 0, right: 0 })
+  // The rect lives in a REF (not state): the open/close transition resizes
+  // the center column EVERY frame for its duration, and reacting per frame
+  // with setState re-renders the whole Sidebar (every mounted tab) at
+  // animation cadence — the visible toggle jank (#315). measureCenter
+  // writes the bottom panel's edges directly (same DOM-write pattern as
+  // applyDrag), so the panel still tracks the column per frame with zero
+  // React work; `centerMeasured` flips ONCE to gate the hidden→visible
+  // first-paint fallback.
+  const centerRectRef = useRef({ left: 0, right: 0 })
+  const [centerMeasured, setCenterMeasured] = useState(false)
   // Refs keep the measure step stable across renders and let it skip work
   // mid-drag: during a width/corner drag the layout push resizes the center
   // column every frame, and reacting (setCenterRect → re-render) would
@@ -603,14 +937,27 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     if (draggingRef.current) return
     const col = centerColRef.current
     if (col === null) return
+    if (!col.isConnected) {
+      // The observed column was detached (HMR re-render swapped the node
+      // in place): its rect is stale garbage. Drop the ref — the locate
+      // chain re-runs on the next mutation/interval tick and picks up the
+      // new column node (issue #248).
+      centerColRef.current = null
+      return
+    }
     const rect = col.getBoundingClientRect()
-    // The bottom panel only cares about the horizontal edges: a pure height
-    // change (the bottom panel itself opening/closing) must not re-render,
-    // so keep the previous object when left/right are unchanged.
-    setCenterRect(prev =>
-      prev.left === rect.left && prev.right === rect.right
-        ? prev
-        : { left: rect.left, right: rect.right })
+    // Ref + direct DOM write (see the centerRectRef comment): the bottom
+    // panel keeps tracking the center column per frame during the right
+    // panel's open/close animation without re-rendering the shell. The
+    // one-shot measured flip renders the panel visible once (a stale
+    // {0,0} fallback would flash full-width).
+    centerRectRef.current = { left: rect.left, right: rect.right }
+    const bottom = bottomRef.current
+    if (bottom !== null) {
+      bottom.style.setProperty('left', `${rect.left}px`)
+      bottom.style.setProperty('right', `${window.innerWidth - rect.right}px`)
+    }
+    setCenterMeasured(prev => (prev ? prev : true))
   }, [])
   useEffect(() => {
     let disposed = false
@@ -621,15 +968,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     // so its parent IS that column — no hashed-class or positional
     // dependency (layout.css uses the same anchor). The shell swaps the
     // boot page for the AppFrame only AFTER boot settles, so the first
-    // query may miss it. Never give up: watch #root's children (the swap
-    // mutates them) and re-run this locator — querying once and bailing
-    // would strand the panel at the zero-size fallback forever (observed:
-    // a 1px sliver at the viewport's left edge).
+    // query may miss it. Never give up: watch #root's subtree (the swap and
+    // HMR re-renders mutate it) and re-run this locator — querying once and
+    // bailing would strand the panel at the zero-size fallback forever
+    // (observed: a 1px sliver at the viewport's left edge).
     const locate = (): void => {
       if (disposed) return
       const col = document.querySelector('#root [data-slot="conversation"]')
         ?.parentElement as HTMLElement | undefined
-      if (col === undefined) {
+      if (col === undefined || !col.isConnected) {
         if (centerColRef.current !== null) {
           centerColRef.current = null
           observer?.disconnect()
@@ -638,24 +985,151 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
         return
       }
       if (centerColRef.current !== col) {
+        // A NEW column node (boot swap, HMR re-render, or a previous locate
+        // that found nothing): attach the ResizeObserver to THIS node and
+        // measure it once. Same-node size changes are the ResizeObserver's
+        // job — no forced measurement here, because a forced
+        // getBoundingClientRect per mutation would reflow the shell at
+        // mutation cadence.
         centerColRef.current = col
         observer?.disconnect()
         observer = new ResizeObserver(measureCenter)
         observer.observe(col)
+        measureCenter()
       }
-      measureCenter()
     }
     locate()
-    const watcher = new MutationObserver(locate)
+    // rAF-debounce the mutation watchers: #root's subtree changes at chat
+    // cadence (streaming turns), and locate() itself must stay cheap.
+    let locateFrame: number | null = null
+    const scheduleLocate = (): void => {
+      if (locateFrame !== null) return
+      // Mid-drag every frame writes --dsh-sidebar-* on <html>'s style
+      // attribute, which is the mutation this watcher observes — relocating
+      // per drag frame is pointless (the center column node cannot change
+      // while the pointer is captured) and adds a querySelector to every
+      // frame's budget (#315). The 1.5s retry below still covers any node
+      // swap that somehow lands mid-drag.
+      if (draggingRef.current) return
+      locateFrame = requestAnimationFrame(() => {
+        locateFrame = null
+        locate()
+      })
+    }
+    const watcher = new MutationObserver(scheduleLocate)
     const root = document.getElementById('root')
-    if (root !== null) watcher.observe(root, { childList: true })
+    if (root !== null) watcher.observe(root, { childList: true, subtree: true })
+    // The layout push writes --dsh-sidebar-* on <html>. A HMR re-activation
+    // clears those variables on teardown and re-writes them on setup — and
+    // that is also the moment the shell may have re-created the center
+    // column under a REUSED #root child (React swaps nodes in place, so
+    // #root's childList never changes and the watcher above never fires).
+    // Watching <html>'s style attribute catches that re-sync: the push
+    // rewrite re-locates and re-measures, so the bottom panel recovers
+    // instead of staying hidden on a stale {0,0} center rect.
+    const htmlStyleWatcher = new MutationObserver(scheduleLocate)
+    htmlStyleWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
+    // Last-resort safety net (issue #248): no watcher is guaranteed to fire
+    // for every HMR teardown/setup interleaving (e.g. the style attribute
+    // may end up byte-identical, and the col may be swapped before the
+    // subtree watcher attaches). A slow unconditional re-locate makes the
+    // panel converge on the real column within a couple of seconds no
+    // matter what sequence the shell used. locate() is cheap when nothing
+    // changed (one querySelector + an identity compare; no forced layout).
+    const retry = window.setInterval(locate, 1500)
     return () => {
       disposed = true
+      if (locateFrame !== null) cancelAnimationFrame(locateFrame)
+      window.clearInterval(retry)
       observer?.disconnect()
       watcher.disconnect()
+      htmlStyleWatcher.disconnect()
       centerColRef.current = null
     }
-  }, [measureCenter])
+    // Opening the bottom panel re-runs the whole locate/measure chain: a
+    // panel opened before the center column was ever found must not stay
+    // invisible forever (the HMR recovery path depends on the observers
+    // above, this is the belt-and-braces retry for the open moment itself).
+  }, [measureCenter, state?.bottomOpen])
+
+  /**
+   * Free windows — drag-out detection. The tab strips already drive HTML5
+   * DnD (payload application/x-dsh-tab) with drops owned by the panes
+   * (split/merge); this shell watches the DOCUMENT (capture) for the same
+   * drag hovering OUTSIDE the panel host: while the pointer is over the
+   * conversation column it arms the drop (preventDefault) and shows a hint
+   * overlay there, and the drop floats the tab at the release point. Targets
+   * inside the host are ignored here, so pane drops keep their behavior
+   * untouched. Only OUR tab drags count (the body flag is the tab strip's;
+   * OS file drags and any DSH drags pass through). Narrow viewports skip
+   * the gesture — the merged drawer covers the conversation, leaving
+   * nothing to drop onto (the tab context menu entry still floats tabs).
+   */
+  const [floatHint, setFloatHint] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+  const floatHintRef = useRef(false)
+  useEffect(() => {
+    if (narrow || sessionId === undefined) return
+    const inPanelHost = (target: EventTarget | null): boolean =>
+      target instanceof Element && target.closest('[data-dsh-panel-host]') !== null
+    /** The conversation column's rect when the pointer is over it (and not
+     *  over our own surfaces); null otherwise. */
+    const overConversation = (event: DragEvent): DOMRect | null => {
+      if (inPanelHost(event.target)) return null
+      const col = centerColRef.current
+      if (col === null || !col.isConnected) return null
+      const rect = col.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return null
+      const { clientX: x, clientY: y } = event
+      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null
+      return rect
+    }
+    const onDragOver = (event: DragEvent): void => {
+      if (!document.body.hasAttribute('data-dsh-tab-dragging')) return
+      const rect = overConversation(event)
+      if (rect !== null) {
+        // preventDefault on dragover is what makes the browser deliver the
+        // drop (and drop the "no" cursor) over the conversation area.
+        event.preventDefault()
+        setFloatHint((prev) => {
+          const next = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+          if (prev !== null && prev.left === next.left && prev.top === next.top
+            && prev.width === next.width && prev.height === next.height) return prev
+          return next
+        })
+        floatHintRef.current = true
+      } else if (floatHintRef.current) {
+        floatHintRef.current = false
+        setFloatHint(null)
+      }
+    }
+    const onDrop = (event: DragEvent): void => {
+      if (!floatHintRef.current) return
+      floatHintRef.current = false
+      setFloatHint(null)
+      const rect = overConversation(event)
+      if (rect === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      const payload = parseDrag(event.dataTransfer?.getData(TAB_DRAG_TYPE) ?? '')
+      if (payload === null) return
+      store.reduce(s => floatTab(s, payload.tabId, event.clientX, event.clientY))
+    }
+    const clear = (): void => {
+      if (!floatHintRef.current) return
+      floatHintRef.current = false
+      setFloatHint(null)
+    }
+    document.addEventListener('dragover', onDragOver, true)
+    document.addEventListener('drop', onDrop, true)
+    window.addEventListener('dragend', clear, true)
+    window.addEventListener('blur', clear)
+    return () => {
+      document.removeEventListener('dragover', onDragOver, true)
+      document.removeEventListener('drop', onDrop, true)
+      window.removeEventListener('dragend', clear, true)
+      window.removeEventListener('blur', clear)
+    }
+  }, [narrow, sessionId, store])
 
   /**
    * Host left-sidebar keeper: the right panel's layout push squeezes the
@@ -756,11 +1230,16 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     if (wasOpen === undefined || wasOpen || !state.bottomOpen) return
     if (state.bottomOpenedOnce) return
     if (store.getPrefs().bottomPanelAutoTerminal === false) return
-    if (ctx.betterSidebar?.isTabEnabled('terminal') === false) return
+    if ((ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.isTabEnabled('terminal') === false) return
     // Land the tab in the bottom panel's first pane; the once-flag is set
     // atomically so later expansions never repeat the auto-open.
     store.reduce(s => ({ ...s, activePane: firstLeaf(s.bottomSplits).id, bottomOpenedOnce: true }))
-    ctx.betterSidebar?.openTab({ type: 'terminal' })
+    try {
+      ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({ type: 'terminal' })
+    } catch (error) {
+      console.error('[PROBE3]', (error as Error).message)
+    }
+    ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({ type: 'terminal' })
   }, [state, store, ctx, narrow])
 
   // Panel drags: the right panel's width (left edge strip), the bottom
@@ -800,13 +1279,35 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   const clampHeight = (height: number): number =>
     Math.min(Math.max(BOTTOM_MIN, Math.round(height)), Math.max(BOTTOM_MIN, window.innerHeight - PANEL_MIN))
 
+/** Single writer for the layout-push variables: the app shell gives up
+   *  the panel's width/height while open (0 while collapsed) through
+   *  layout.css's margins. Every size change — drag frames and committed
+   *  state — flows through here so the push never forks between paths. */
+  const writeGeometry = (width: number, height: number): void => {
+    document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
+    document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
+    // The corner handle positions itself relative to the panel (CSS
+    // `bottom: calc(var(--dsh-sidebar-height) + 6px)`), so these two layout
+    // variables are all it needs — no viewport coordinates written here
+    // (issue #106: skins that inset the panels must not fight JS coords).
+  }
+
+  /** Last size a drag actually applied to the DOM (updated by applyDrag).
+   *  When a pointer stream dies without any position info (issue #247: an
+   *  ultra-fast flick whose release events carried no usable coordinates),
+   *  the abort path adopts this instead of rolling back to the pre-drag
+   *  value — the DOM's current size is the only truthful record left. */
+  const lastDragSize = useRef<{ width: number; height: number } | null>(null)
+
   /** Apply a drag size to the DOM without touching React state or the store.
    *  The bottom panel's right edge tracks the right panel's left edge HERE
    *  too — React state only updates on release, so the inline right must be
-   *  written directly or the bottom panel would lag the sidebar mid-drag. */
+   *  written directly or the bottom panel would lag the sidebar mid-drag.
+   *  The layout push rides the shared writer (writeGeometry). */
   const applyDrag = (width: number, height: number): void => {
-    // IDE FULLSCREEN: the panel rides its inline 100vw — writing the docked
-    // width here would shrink the fullscreen cover mid-drag.
+    lastDragSize.current = { width, height }
+    // IDE FULLSCREEN (⌘⌥⇧B): the panel rides its inline 100vw — writing
+    // the docked width here would shrink the fullscreen cover mid-drag.
     if (state?.rightMaximized !== true) {
       panelRef.current?.style.setProperty('width', `${width}px`)
     }
@@ -818,19 +1319,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     // bottom panel docks flush to the fullscreen panel's right edge (0).
     bottomRef.current?.style.setProperty('right', state?.rightMaximized === true
       ? '0px'
-      : `${(window.innerWidth - centerRect.right) + (width - (state?.width ?? 0))}px`)
+      : `${(window.innerWidth - centerRectRef.current.right) + (width - (state?.width ?? 0))}px`)
     if (state?.rightMaximized === true) {
       // The editor slot above the docked bottom panel shrinks in lockstep —
       // React commits the margin only on release, so write it mid-drag or
       // the growing panel overlaps the editor's bottom lines while dragging.
       editorSlotRef.current?.style.setProperty('margin-bottom', `${height}px`)
     }
-    document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
-    document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
-    // The corner handle positions itself relative to the panel (CSS
-    // `bottom: calc(var(--dsh-sidebar-height) + 6px)`), so these two layout
-    // variables are all it needs — no viewport coordinates written here
-    // (issue #106: skins that inset the panels must not fight JS coords).
+    const bottomPush = !narrow && state?.bottomOpen === true ? height + keyboardInset : 0
+    writeGeometry(width, bottomPush)
   }
 
   // Drags write at most once per frame: pointer events fire several times
@@ -862,23 +1359,115 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     pendingDrag.current = null
   }
 
+  /**
+   * Finalize a drag on pointer up: flush the LAST drag frame to the DOM
+   * synchronously, then commit the SAME clamped values to the store. A fast
+   * release cancels the rAF before it ran — without the flush the DOM would
+   * sit at the pre-drag size until React re-renders with the committed
+   * value, and a value that never made it into a move handler would never
+   * be applied at all. The measurement pause ends here too: the center
+   * column is re-measured BEFORE the committed re-render lands, so the
+   * bottom panel's React-rendered right edge already reflects the new
+   * width (otherwise the re-render would re-apply the stale rect — the
+   * bottom panel visibly jumps for one frame).
+   */
+  const commitDrag = (
+    width: number,
+    height: number,
+    reduce: (state: SidebarState) => SidebarState,
+  ): void => {
+    stopDragScheduling()
+    applyDrag(width, height)
+    draggingRef.current = false
+    measureCenter()
+    store.reduce(reduce)
+  }
+
   /** Set once a drag's pointerup handler commits — premature capture loss
    *  (pointercancel / lostpointercapture without pointerup) must then be told
    *  apart from a normal release. */
   const dragCommitted = useRef(false)
-  /** Abort a drag whose pointer stream was interrupted (pointercancel, or
-   *  capture lost before pointerup): no pointerup will arrive, so without
-   *  this the dragging state would stick true and center-column measurement
-   *  would stay paused forever — the bottom panel freezes at stale edges and
-   *  stops tracking sidebar/app-rail layout changes. Reverts the DOM and the
-   *  layout variables to the store's committed sizes. */
-  const abortDrag = (reset: () => void): void => {
+  /**
+   * Abort a drag whose pointer stream was interrupted (pointercancel, or
+   * capture lost before pointerup): no pointerup will arrive, so without
+   * this the dragging state would stick true and center-column measurement
+   * would stay paused forever — the bottom panel freezes at stale edges and
+   * stops tracking sidebar/app-rail layout changes.
+   *
+   * A FAST release is the common trigger: browsers merge pointermove bursts,
+   * and an ultra-fast flick can cancel the stream before ANY move lands.
+   * The commit order is therefore: the LAST KNOWN dragged size (the rAF
+   * pending value) first, then the interrupting event's own pointer
+   * position (only pointercancel is trusted to carry coordinates —
+   * lostpointercapture's coordinates are not guaranteed, so the handlers
+   * pass the event only from pointercancel), and finally the size the drag
+   * last APPLIED to the DOM (lastDragSize). A drag that produced none of
+   * those (pure down+up at the same spot) commits the store's own sizes —
+   * a no-op, never an explicit rollback (issue #247: v0.13.1 never reverted
+   * an interrupted fast flick; the abort path added in the unified-host
+   * refactor did, and that regression is what this ordering removes).
+   *
+   * Every commit path marks the drag committed, so the interrupt
+   * double-fire (pointercancel → lostpointercapture) cannot commit once
+   * and then roll the same drag back.
+   */
+  const abortDrag = (reset: () => void, event?: { clientX: number; clientY: number }): void => {
     if (dragCommitted.current) return
-    stopDragScheduling()
-    applyDrag(
-      !narrow && state?.panelOpen === true ? Math.min(state?.width ?? 0, window.innerWidth) : 0,
-      !narrow && state?.bottomOpen === true ? Math.min(state.bottomHeight, window.innerHeight) : 0,
-    )
+    const pending = pendingDrag.current
+    let width: number | undefined
+    let height: number | undefined
+    if (pending !== null) {
+      width = pending.width
+      height = pending.height
+    } else if (event !== undefined) {
+      // No move ever landed: the cancel position is all we have — commit it
+      // (clamped) instead of rolling back the flick.
+      if (draggingWidth) {
+        width = clampWidth(widthDrag.current.startWidth + (widthDrag.current.startX - event.clientX))
+        height = pushedBottomHeight(state?.bottomOpen === true, state?.bottomHeight ?? 0)
+      } else if (draggingBottom) {
+        width = Math.min(state?.width ?? 0, window.innerWidth)
+        height = pushedBottomHeight(true, clampHeight(bottomDrag.current.startHeight + (bottomDrag.current.startY - event.clientY)))
+      } else if (draggingCorner) {
+        width = clampWidth(cornerDrag.current.startWidth + (cornerDrag.current.startX - event.clientX))
+        height = pushedBottomHeight(true, clampHeight(cornerDrag.current.startHeight + (cornerDrag.current.startY - event.clientY)))
+      }
+    }
+    if (width !== undefined && height !== undefined) {
+      dragCommitted.current = true
+      pendingDrag.current = null
+      if (dragFrame.current !== null) {
+        cancelAnimationFrame(dragFrame.current)
+        dragFrame.current = null
+      }
+      applyDrag(width, height)
+      draggingRef.current = false
+      measureCenter()
+      store.reduce(s => setBottomHeight(setWidth(s, width), height))
+    } else {
+      // No pending write and no usable event coordinates: keep the size the
+      // drag last applied instead of rolling back to the pre-drag value
+      // (the flick's moves may have been consumed by the rAF just before
+      // the stream died — the DOM already shows the dragged size). Clamp to
+      // the current geometry like the layout-push effect (closed/narrow
+      // panels are written 0 by the push).
+      dragCommitted.current = true
+      stopDragScheduling()
+      const last = lastDragSize.current
+      const { width: adoptedWidth, height: adoptedHeight } = layoutPushSize({
+        narrow,
+        panelOpen: state?.panelOpen === true,
+        bottomOpen: state?.bottomOpen === true,
+        width: last?.width ?? state?.width ?? 0,
+        bottomHeight: last?.height ?? state?.bottomHeight ?? 0,
+        viewportWidth: viewport.width,
+        viewportHeight: layoutViewportHeight,
+      })
+      applyDrag(adoptedWidth, adoptedHeight)
+      draggingRef.current = false
+      measureCenter()
+      store.reduce(s => setBottomHeight(setWidth(s, adoptedWidth), adoptedHeight))
+    }
     reset()
   }
 
@@ -900,12 +1489,39 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   // the push (issue #31: without it the stale variables keep squeezing
   // #root — "the sidebar cannot be hidden" until a full reload).
   useEffect(() => {
+    const { width, height } = layoutPushSize({
+      narrow,
+      panelOpen: snapshot.state?.panelOpen === true,
+      bottomOpen: snapshot.state?.bottomOpen === true,
+      width: snapshot.state?.width ?? 0,
+      bottomHeight: snapshot.state?.bottomHeight ?? 0,
+      viewportWidth: viewport.width,
+      viewportHeight: layoutViewportHeight,
+    })
+    const bottomPush = !narrow && snapshot.state?.bottomOpen === true
+      ? height + keyboardInset
+      : 0
+    writeGeometry(width, bottomPush)
+  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight, viewport.width, layoutViewportHeight, keyboardInset])
+  // Unmount must release the push (issue #31): when the boundary swaps the
+  // whole sidebar after a render crash (or the plugin fiber is disposed /
+  // HMR), the CSS variables would otherwise stay on <html> and layout.css
+  // keeps squeezing #root with a stale margin — "the sidebar cannot be
+  // hidden" until a full reload. This lives in an UNMOUNT-ONLY effect, NOT
+  // in the push effect's cleanup: React can yield between a passive
+  // effect's cleanup and setup phases, and removing the variables on a
+  // dependency change used to paint the push-less layout for a frame (the
+  // center column went full width) while the re-add restarted the margin
+  // transition — the bottom panel flashed full width after every width
+  // drag (issue #258). Keeping the variables continuously valid while
+  // mounted makes the push invisible to mid-flush style recals.
+  useEffect(() => {
     return () => {
       document.documentElement.style.removeProperty('--dsh-sidebar-width')
       document.documentElement.style.removeProperty('--dsh-sidebar-height')
     }
   }, [])
-  useEffect(() => {
+useEffect(() => {
     // The width push is released while the right panel is in IDE FULLSCREEN
     // (⌘⌥⇧B): the panel COVERS the whole viewport, so the app shell must not
     // be squeezed (mirror of the maximized bottom panel's released push).
@@ -976,7 +1592,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       // Route through the service: the tab-bar close is the canonical close
       // path (finds the pane itself, fires descriptor.onClose); the session
       // scope (with its cwd) rides to the callback.
-      ctx.betterSidebar?.closeTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
+      ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.closeTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
       if (tab?.type === 'terminal') {
         if (isAgentTabId(tabId)) {
           const uuid = agentUuidOf(tabId)
@@ -990,7 +1606,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       // Route through the service: same reducer (finds the pane in EITHER
       // tree, sets the active pane) and fires descriptor.onActivate; the
       // session scope (with its cwd) rides to the callback.
-      ctx.betterSidebar?.activateTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
+      ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.activateTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
     },
     // Rename the label of one open tab (patchTab persists it with the
     // layout, so a reload keeps the custom name). Pane id is not needed by
@@ -1016,7 +1632,101 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     resizeSplit: (splitId, index, deltaFrac) => {
       store.reduce(s => resizeSplitIn(s, splitId, index, deltaFrac))
     },
+// The tab context menu's "move to free window": no drop point exists, so
+    // the window is born over the conversation column's center (the user's
+    // focus area; clamped into the viewport by the reducer) — the same
+    // landing the drag-out gesture produces.
+    floatTab: (tabId) => {
+      const col = centerColRef.current
+      const rect = col !== null && col.isConnected ? col.getBoundingClientRect() : null
+      const x = rect !== null ? (rect.left + rect.right) / 2 : window.innerWidth / 2
+      const y = rect !== null ? (rect.top + rect.bottom) / 2 : window.innerHeight / 2
+      store.reduce(s => floatTab(s, tabId, x, y))
+    },
+    // Pin/unpin a terminal tab (v0.17.0+): the home cwd is snapshotted at
+    // pin time so a workspace-scoped pin only resurfaces in sessions whose
+    // cwd matches. Unpin passes null — the tab stays open in its home
+    // session, just unmarked.
+    pinTab: (tabId, scope) => {
+      store.reduce(s => setTabPin(s, tabId, scope === null ? null : { scope, homeCwd: cwd }))
+    },
   }), [store, sessionId, cwd, windows])
+
+  /**
+   * Wrap the base actions to intercept pinned VIRTUAL tab ids (injected from
+   * other sessions). Regular tab ids pass through unchanged. Virtual ids are
+   * detected by the `pinned:` prefix and routed to the HOME session via
+   * reduceFor (which doesn't notify — the revision bump is the local signal).
+   */
+  const wrappedActions = useMemo<WorkbenchActions>(() => {
+    if (pinnedVirtualTabs.length === 0) return actions
+    const closePinnedInHome = (virtualId: string): void => {
+      const { homeSessionId, tabId: originalId } = parsePinnedVirtualId(virtualId)
+      // The home cwd lives in the virtual tab's meta (snapshotted at pin
+      // time) — pass it to ptyClose so the host resolves the PTY in the
+      // correct workspace container (same scope the WS open used).
+      const vtab = pinnedVirtualTabs.find(t => t.id === virtualId)
+      const homeCwd = vtab !== undefined ? getPinnedHomeScope(vtab)?.cwd : undefined
+      store.reduceFor(homeSessionId, s => {
+        const leaf = leafWithTab(s.splits, originalId) ?? leafWithTab(s.bottomSplits, originalId)
+        if (leaf !== undefined) return closeTab(s, leaf.id, originalId)
+        if (s.floats.some(f => f.tab.id === originalId)) return closeFloatByTab(s, originalId)
+        return s
+      })
+      if (isAgentTabId(originalId)) {
+        void api.agentPtyClose(agentUuidOf(originalId)).catch(() => { /* already released */ })
+      } else {
+        void api.ptyClose({ sessionId: homeSessionId, ...(homeCwd !== undefined ? { cwd: homeCwd } : {}) }, originalId).catch(() => { /* already released */ })
+      }
+      if (activePinnedTabId === virtualId) setActivePinnedTabId(null)
+      setPinnedRevision(v => v + 1)
+    }
+    return {
+      ...actions,
+      activateTab: (paneId, tabId) => {
+        if (isPinnedVirtualId(tabId)) {
+          setActivePinnedTabId(tabId)
+        } else {
+          setActivePinnedTabId(null)
+          actions.activateTab(paneId, tabId)
+        }
+      },
+      closeTab: (paneId, tabId) => {
+        if (isPinnedVirtualId(tabId)) {
+          closePinnedInHome(tabId)
+        } else {
+          actions.closeTab(paneId, tabId)
+        }
+      },
+      moveTabBefore: (payload, toPane, beforeTabId) => {
+        if (isPinnedVirtualId(payload.tabId)) return
+        if (isPinnedVirtualId(beforeTabId)) {
+          actions.moveTabToEdge(payload, toPane, 'center')
+        } else {
+          actions.moveTabBefore(payload, toPane, beforeTabId)
+        }
+      },
+      moveTabToEdge: (payload, toPane, zone) => {
+        if (isPinnedVirtualId(payload.tabId)) return
+        actions.moveTabToEdge(payload, toPane, zone)
+      },
+      floatTab: (tabId) => {
+        if (isPinnedVirtualId(tabId)) return
+        actions.floatTab?.(tabId)
+      },
+      pinTab: (tabId, scope) => {
+        if (isPinnedVirtualId(tabId)) {
+          if (scope !== null) return
+          const { homeSessionId, tabId: originalId } = parsePinnedVirtualId(tabId)
+          store.reduceFor(homeSessionId, s => setTabPin(s, originalId, null))
+          if (activePinnedTabId === tabId) setActivePinnedTabId(null)
+          setPinnedRevision(v => v + 1)
+        } else {
+          actions.pinTab?.(tabId, scope)
+        }
+      },
+    }
+  }, [actions, pinnedVirtualTabs, activePinnedTabId, store])
 
   /**
    * The explorer's @-reference button: append `@<relative path>` to the
@@ -1055,28 +1765,44 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   }, [store, state?.rightMaximized])
 
   if (state === undefined || sessionId === undefined) {
+    // Keep the unavailable controls focusable: touch users have no hover, so
+    // focus is the only way the existing Tooltip can explain what is missing.
     return (
-      <div className={css.toggleCluster}>
-        {!narrow && (
+      <div data-dsh-panel-host {...osFileDragShield}>
+        <div className={css.toggleCluster} data-dsh-toggle-cluster>
+          {!narrow && (
+            <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
+              <button type="button" className={css.toggleButton} aria-disabled="true" aria-label={t('noSession')}>
+                <IconPanelBottomOutline16 />
+              </button>
+            </Tooltip>
+          )}
           <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
-            <button type="button" className={css.toggleButton} disabled aria-label={t('noSession')}>
-              <IconPanelBottomOutline16 />
+            <button type="button" className={css.toggleButton} aria-disabled="true" aria-label={t('noSession')}>
+              <IconPanelRightOutline16 />
             </button>
           </Tooltip>
-        )}
-        <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
-          <button type="button" className={css.toggleButton} disabled aria-label={t('noSession')}>
-            <IconPanelRightOutline16 />
-          </button>
-        </Tooltip>
+        </div>
       </div>
     )
   }
 
+  const bottomPanelHeight = layoutPushSize({
+    narrow,
+    panelOpen: state.panelOpen,
+    // Keep the hidden panel's geometry ready for its slide-in transition;
+    // only the layout push itself becomes zero while it is closed.
+    bottomOpen: true,
+    width: state.width,
+    bottomHeight: state.bottomHeight,
+    viewportWidth: viewport.width,
+    viewportHeight: layoutViewportHeight,
+  }).height
+
   const onNewTab = (optionId: string): void => {
-    const service = ctx.betterSidebar
+    const service = ctx.get?.('betterSidebar') ?? ctx.betterSidebar
     const descriptor = service?.getTab(optionId)
-    if (descriptor === undefined) return
+    if (service === undefined || descriptor === undefined) return
     const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
     // The session scope rides along: lifecycle callbacks receive it (and
     // the open stays in the current session, as before).
@@ -1094,7 +1820,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
    *  instead (v0.16.0+); the path-less files home keeps the descriptor's
    *  icon. A missing theme/descriptor falls back as before. */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
-    const descriptor = ctx.betterSidebar?.getTab(tab.type)
+    const descriptor = (ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.getTab(tab.type)
     if (tab.type === 'editor' && tab.path !== undefined && descriptor !== undefined) {
       const themed = fileIconOf({ name: baseName(tab.path), isDir: false })
       if (themed !== null) return themed
@@ -1109,7 +1835,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
    * strip must never break because a plugin's badge computation failed.
    */
   const tabBadgeOf = (tab: SidebarTab): ReactNode => {
-    const descriptor = ctx.betterSidebar?.getTab(tab.type)
+    const descriptor = (ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.getTab(tab.type)
     if (descriptor?.badge === undefined) return null
     let value: string | number | null | undefined
     try {
@@ -1130,28 +1856,53 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
    * polling while the page is not actually visible). The pane id travels
    * with the tab so diff tabs can split below their source pane.
    */
-  const renderTab = (tab: SidebarTab, active: boolean, paneId: string, bottom = false) => (
-    <TabContent
-      tab={tab}
-      sessionId={sessionId}
-      cwd={cwd}
-      expanded={state.expanded}
-      onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
-      onReferenceFile={referenceInChat}
-      ctx={ctx}
-      store={store}
-      visible={bottom ? state.bottomOpen && active : state.panelOpen && active}
-      onSubagentJump={(childSessionId) => { subagentJumpRef.current = childSessionId }}
-      onOpenDiff={(diffTab) => { store.reduce(s => openDiffTab(s, paneId, diffTab)) }}
-      globalWindows={wsSnapshot.global}
-      onAttachGlobal={windows === undefined ? undefined : (tabId) => { void windows.attachGlobal(tabId) }}
-      onNewGlobalTerminal={windows === undefined ? undefined : () => { void windows.createGlobalTerminal() }}
-      onUnbindGlobal={windows === undefined ? undefined : (tabId) => { void windows.unbindGlobal(tabId, false) }}
-    />
-  )
+// `placement` decides the visibility contract handed to the tab component:
+  // pane tabs are visible while their panel is open and they are active, but
+  // a free window is its own surface — its tab stays visible no matter what
+  // the panels do (the AGENTS §7.5 contract; plugin components honor
+  // `visible` to pause work, so tying floats to panelOpen would blank them
+  // the moment the sidebar collapses).
+  const renderTab = (tab: SidebarTab, active: boolean, paneId: string, placement: 'top' | 'bottom' | 'float' = 'top') => {
+    // Pinned virtual tabs: pass the home session's scope (sessionId + cwd) so
+    // TerminalView's WS URL resolves to the home PTY, and effectiveTabId so
+    // the descriptor component receives the ORIGINAL tab id (the virtual id
+    // is only a display key). Regular tabs: effectiveTabId is undefined (no
+    // override), scope is the current session's.
+    const home = getPinnedHomeScope(tab)
+    return (
+      <TabContent
+        tab={tab}
+        effectiveTabId={home?.tabId}
+        paneId={paneId}
+        sessionId={home?.sessionId ?? sessionId}
+        cwd={home?.cwd ?? cwd}
+        expanded={state.expanded}
+        revealed={state.revealed ?? []}
+        onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
+        onReferenceFile={referenceInChat}
+        ctx={ctx}
+        store={store}
+        visible={
+          placement === 'float'
+            ? true
+            : placement === 'bottom'
+              ? state.bottomOpen && active
+              : state.panelOpen && active
+        }
+        onSubagentJump={(childSessionId) => { subagentJumpRef.current = childSessionId }}
+        onOpenDiff={(diffTab) => { store.reduce(s => openDiffTab(s, paneId, diffTab)) }}
+        localeRevision={localeRevision}
+        tabsVersion={tabsVersion}
+        globalWindows={wsSnapshot.global}
+        onAttachGlobal={windows === undefined ? undefined : (tabId) => { void windows.attachGlobal(tabId) }}
+        onNewGlobalTerminal={windows === undefined ? undefined : () => { void windows.createGlobalTerminal() }}
+        onUnbindGlobal={windows === undefined ? undefined : (tabId) => { void windows.unbindGlobal(tabId, false) }}
+      />
+    )
+  }
 
   return (
-    <>
+    <div data-dsh-panel-host {...osFileDragShield}>
       {/*
         The persistent toggle cluster at the top-right corner: the bottom
         panel's button (bottom glyph) LEFT of the right panel's (side glyph).
@@ -1160,7 +1911,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
         right end it really squeezes (the strip reserves its width via CSS),
         so the tabs genuinely yield space to it.
       */}
-      <div className={css.toggleCluster}>
+      <div className={css.toggleCluster} data-dsh-toggle-cluster>
         {/*
           Narrow viewports merge the two workbenches into the one drawer —
           there is no bottom panel, so its toggle button is not offered.
@@ -1199,8 +1950,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       */}
       <div
         ref={panelRef}
-        className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaximized && css.panelMaximized)}
-        style={{ width: state.rightMaximized ? '100vw' : narrow ? '100vw' : Math.min(state.width, window.innerWidth) }}
+className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaximized && css.panelMaximized)}
+        data-dsh-panel
+        style={{
+          width: state.rightMaximized ? '100vw' : narrow ? '100vw' : Math.min(state.width, window.innerWidth),
+          // Narrow drawer: keep the bottom-anchored sheet above the on-screen
+          // keyboard (visualViewport inset); desktop panels are full-height
+          // and unaffected.
+          bottom: narrow && keyboardInset > 0 ? `${keyboardInset}px` : undefined,
+        }}
        
         data-dragging={anyDragging || undefined}
       >
@@ -1219,32 +1977,31 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
                 if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
                 const { startX, startWidth } = widthDrag.current
                 const width = clampWidth(startWidth + (startX - event.clientX))
-                const height = state.bottomOpen ? Math.min(state.bottomHeight, window.innerHeight) : 0
+                const height = pushedBottomHeight(state.bottomOpen, state.bottomHeight)
                 scheduleDrag(width, height)
               }}
               onPointerUp={(event) => {
                 if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+                if (dragCommitted.current) return
                 dragCommitted.current = true
                 event.currentTarget.releasePointerCapture(event.pointerId)
                 const { startX, startWidth } = widthDrag.current
-                // Write the FINAL size to the DOM synchronously, BEFORE the
-                // store commit re-enables the layout transitions (the commit
-                // removes `data-dsh-sidebar-dragging` / `data-dragging`).
-                // During the drag the DOM lags the pointer by up to one
-                // frame (applyDrag is rAF-batched; a fast nudge never even
-                // flushes), so without this the just-re-enabled `margin-right`
-                // / width / height transitions animate the residual delta —
-                // the chat box audibly "bounces" on release. Writing the
-                // committed size first makes the commit a visual no-op: no
-                // computed change, no transition (issue #92 family).
+// The up position is the pointer's FINAL position — a fast
+                // flick's tail is coalesced into the up event, so the last
+                // pointermove (the rAF pending value) can be stale. Commit
+                // from the up position (v0.13.1 semantics; issue #247).
+                // commitDrag flushes the final size to the DOM synchronously
+                // BEFORE the store commit re-enables the layout transitions
+                // (the commit removes `data-dsh-sidebar-dragging` /
+                // `data-dragging`), so the just-re-enabled margin/width
+                // transitions animate no residual delta — the chat box does
+                // not "bounce" on release (issue #92 family).
                 const width = clampWidth(startWidth + (startX - event.clientX))
-                const height = state.bottomOpen ? Math.min(state.bottomHeight, window.innerHeight) : 0
-                stopDragScheduling()
-                applyDrag(width, height)
-                store.reduce(s => setWidth(s, width))
+                const height = pushedBottomHeight(state.bottomOpen, state.bottomHeight)
+                commitDrag(width, height, s => setWidth(s, width))
                 setDraggingWidth(false)
               }}
-              onPointerCancel={() => { abortDrag(() => setDraggingWidth(false)) }}
+              onPointerCancel={(event) => { abortDrag(() => setDraggingWidth(false), event) }}
               onLostPointerCapture={() => { abortDrag(() => setDraggingWidth(false)) }}
             />
           )}
@@ -1294,7 +2051,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           </Tooltip>
         )}
         <div className={css.panelBody}>
-          {/*
+{/*
             The VSCode-style layout (sidebarLayout: 'vscode' on a wide
             viewport): the file tree lives in an independent EXPLORER drawer
             (Side Bar column) that the Activity Bar's explorer icon expands
@@ -1343,15 +2100,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
             ref={editorSlotRef}
             className={css.editorSlot}
             // IDE FULLSCREEN: the slot's bottom margin reserves the docked
-            // bottom panel's height so the editor tabs sit fully above it.
+            // bottom panel's height so the editor tabs sit fully above it
+            // (the shared bottom-height cap still applies).
             style={ideMode && state.bottomOpen
-              ? { marginBottom: Math.min(state.bottomHeight, window.innerHeight) }
+              ? { marginBottom: bottomPanelHeight }
               : undefined}
           >
             <Workbench
               state={state}
+              tree={augmentedTree}
               newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
-              actions={actions}
+              actions={wrappedActions}
               onNewTab={onNewTab}
               renderTab={renderTab}
               getTabIcon={tabIconOf}
@@ -1421,26 +2180,25 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
               if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
               const { startX, startY, startWidth, startHeight } = cornerDrag.current
               const width = clampWidth(startWidth + (startX - event.clientX))
-              const height = clampHeight(startHeight + (startY - event.clientY))
+              const height = pushedBottomHeight(true, clampHeight(startHeight + (startY - event.clientY)))
               scheduleDrag(width, height)
             }}
             onPointerUp={(event) => {
               if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+              if (dragCommitted.current) return
               dragCommitted.current = true
               event.currentTarget.releasePointerCapture(event.pointerId)
               const { startX, startY, startWidth, startHeight } = cornerDrag.current
-              // Same release contract as the width drag: apply the final size
-              // synchronously so the store commit (which re-enables the
-              // transitions) lands on already-current DOM values — no
-              // animated residual delta, no bounce.
+// Up position wins over the rAF pending value (see the width
+              // strip handler — issue #247). commitDrag flushes the final
+              // size synchronously before the store commit re-enables the
+              // transitions — no animated residual delta, no bounce.
               const width = clampWidth(startWidth + (startX - event.clientX))
-              const height = clampHeight(startHeight + (startY - event.clientY))
-              stopDragScheduling()
-              applyDrag(width, height)
-              store.reduce(s => setBottomHeight(setWidth(s, width), height))
+              const height = pushedBottomHeight(true, clampHeight(startHeight + (startY - event.clientY)))
+              commitDrag(width, height, s => setBottomHeight(setWidth(s, width), height))
               setDraggingCorner(false)
             }}
-            onPointerCancel={() => { abortDrag(() => setDraggingCorner(false)) }}
+            onPointerCancel={(event) => { abortDrag(() => setDraggingCorner(false), event) }}
             onLostPointerCapture={() => { abortDrag(() => setDraggingCorner(false)) }}
           />
         )}
@@ -1457,14 +2215,25 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
         On NARROW viewports it does not exist — the bottom workbench lives
         inside the drawer (MobileWorkbench).
       */}
+      {/* The bottom panel only becomes VISIBLE once the center column is
+          measured: before that, `centerRect` is the {0,0} fallback and
+          `right` computes to the full viewport width — the panel (and its
+          overflow content) would flash full-width for a frame until the
+          first measurement lands. Rendering stays unconditional so the
+          mount/render chain (auto-terminal etc.) is never gated on
+          geometry. */}
       {!narrow && (
       <div
         ref={bottomRef}
         className={clsx(css.bottomPanel, !state.bottomOpen && css.bottomPanelHidden)}
+        data-dsh-panel
+        data-dsh-bottom-panel
         style={{
-          // Maximized: cover the whole center column (bottom:0 + full
-          // viewport height); normal: the drag height.
-          height: state.bottomMaximized ? window.innerHeight : Math.min(state.bottomHeight, window.innerHeight),
+// Maximized: cover the whole center column (bottom:0 + full
+          // viewport height); normal: the drag height. Both stay inside the
+          // shared push cap (bottomPanelHeight), so a maximized panel can
+          // never exceed the viewport visible above the keyboard.
+          height: bottomPanelHeight,
           // IDE FULLSCREEN: the bottom workbench docks INSIDE the fullscreen
           // panel, BELOW the editor tabs — flush to the panel's right edge,
           // starting after the activity bar (48px) and the explorer column
@@ -1473,19 +2242,25 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           // the center column as before.
           left: ideMode
             ? IDE_ACTIVITY_BAR_WIDTH + (state.sideBarOpen ? state.sideBarWidth : 0)
-            : centerRect.left,
+            : centerRectRef.current.left,
+          // Keep the panel above the on-screen keyboard when the visual
+          // viewport shrinks (see the keyboardInset effect).
+          bottom: keyboardInset > 0 ? `${keyboardInset}px` : undefined,
           // Direct from the center column's measured right edge: the bottom
           // panel spans ONLY the center column, ending exactly at the
           // details column's left edge (the details column sits between the
           // center and the right panel, and the right panel's margin-right
           // push is already baked into centerRect.right).
-          right: ideMode ? 0 : window.innerWidth - centerRect.right,
+right: ideMode ? 0 : window.innerWidth - centerRectRef.current.right,
           zIndex: ideMode ? 1001 : undefined,
           // The seam against the open right panel needs its own hairline
           // (the right panel's border-left alone is covered by this panel's
           // fill — without it the corner looks cut off). In IDE mode the
           // panel ends at the fullscreen panel's right edge — no seam.
           borderRight: ideMode ? undefined : (state.panelOpen ? '1px solid var(--dsw-alias-border-l2)' : undefined),
+          // Unmeasured center column → keep the panel invisible (zero-size
+          // geometry would flash full-width overflow instead).
+          visibility: centerMeasured ? undefined : 'hidden',
         }}
        
         data-dragging={(draggingBottom || draggingCorner) || undefined}
@@ -1504,25 +2279,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
           onPointerMove={(event) => {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
             const { startY, startHeight } = bottomDrag.current
-            const height = clampHeight(startHeight + (startY - event.clientY))
+            const height = pushedBottomHeight(true, clampHeight(startHeight + (startY - event.clientY)))
             scheduleDrag(Math.min(state.width, window.innerWidth), height)
           }}
           onPointerUp={(event) => {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+            if (dragCommitted.current) return
             dragCommitted.current = true
             event.currentTarget.releasePointerCapture(event.pointerId)
             const { startY, startHeight } = bottomDrag.current
-            // Same release contract as the width drag: apply the final size
-            // synchronously before the store commit re-enables the
-            // transitions, so the vertical push (and the panel) never animate
-            // the one-frame residual (`--dsh-sidebar-height` / margin-bottom).
-            const height = clampHeight(startHeight + (startY - event.clientY))
-            stopDragScheduling()
-            applyDrag(Math.min(state.width, window.innerWidth), height)
-            store.reduce(s => setBottomHeight(s, height))
+// Up position wins over the rAF pending value (see the width
+            // strip handler — issue #247). commitDrag flushes the final
+            // size synchronously before the store commit re-enables the
+            // transitions, so the vertical push (and the panel) never
+            // animate the one-frame residual (`--dsh-sidebar-height` /
+            // margin-bottom).
+            const height = pushedBottomHeight(true, clampHeight(startHeight + (startY - event.clientY)))
+            commitDrag(Math.min(state.width, window.innerWidth), height, s => setBottomHeight(s, height))
             setDraggingBottom(false)
           }}
-          onPointerCancel={() => { abortDrag(() => setDraggingBottom(false)) }}
+          onPointerCancel={(event) => { abortDrag(() => setDraggingBottom(false), event) }}
           onLostPointerCapture={() => { abortDrag(() => setDraggingBottom(false)) }}
         />
         )}
@@ -1553,7 +2329,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
             newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
             actions={actions}
             onNewTab={onNewTab}
-            renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
+            renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, 'bottom')}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
             isBoundTabId={isBoundTabId}
@@ -1565,7 +2341,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       </div>
       )}
       {/*
-        The tab right-click menu, positioned at the cursor like the file
+The tab right-click menu, positioned at the cursor like the file
         tree's row menu (portal so nothing crops it). It is a small
         multi-tier workspace/GLOBAL-share menu, each action with its own
         glyph:
@@ -1580,6 +2356,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
         open={tabMenu !== null}
         onClose={closeTabMenu}
         items={tabMenu === null ? [] : [
+          // Float into a free window is the FIRST row (the window's own
+          // close path owns bound stubs — a bound stub never floats).
+          { id: 'float', label: t('floatDropHint') },
           ...(isGlobalTabId(tabMenu.tab.id)
             ? [{ id: 'unbindGlobal', label: t('unbindGlobal'), icon: <IconGlobeOffOutline16 size={14} /> }]
             : isBoundTabId(tabMenu.tab.id)
@@ -1608,6 +2387,40 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
         getAnchorRect={() => (tabMenu === null ? null : new DOMRect(tabMenu.x, tabMenu.y, 0, 0))}
         anchor={<span />}
       />
-    </>
+      {/*
+        Free windows: tabs dragged out onto the conversation area (or floated
+        from the tab context menu). They live in the panel host like the
+        panels (viewport coordinates, immune to desktop-shell transforms) but
+        are independent of panel state — a window stays up while panels
+        collapse. The floats array's order is the stacking order; the content
+        reuses the regular tab renderer, so every tab type floats unchanged.
+      */}
+      {state.floats.map(float => (
+        <FreeWindow
+          key={float.id}
+          float={float}
+          renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, 'float')}
+          getTabIcon={tabIconOf}
+          onRaise={() => { store.reduce(s => raiseFloat(s, float.id)) }}
+          onMove={(x, y) => { store.reduce(s => moveFloat(s, float.id, x, y)) }}
+          onResize={(w, h) => { store.reduce(s => resizeFloat(s, float.id, w, h)) }}
+          onDock={(paneId) => { store.reduce(s => dockFloat(s, float.id, paneId ?? undefined)) }}
+          onClose={() => { (ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.closeTab(float.tab.id, sessionId === undefined ? undefined : { sessionId, cwd }) }}
+        />
+      ))}
+      {/*
+        The drag-out hint: while a tab drag hovers the conversation column,
+        a dashed overlay marks the drop zone there (pointer-transparent — it
+        must not disturb the drag it describes).
+      */}
+      {floatHint !== null && (
+        <div
+          className={css.floatDropHint}
+          style={{ left: floatHint.left, top: floatHint.top, width: floatHint.width, height: floatHint.height }}
+        >
+          <span className={css.floatDropHintLabel}>{t('floatDropHint')}</span>
+        </div>
+      )}
+    </div>
   )
 }

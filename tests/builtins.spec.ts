@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 6 tabs and 6 file
+ * Built-in registration tests: the plugin registers 7 tabs and 6 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer, the NUL-sniffing `binary-download` viewer,
  * and the html sandbox settings pin the registry's behavior. (Office
@@ -16,6 +16,7 @@ import { createSidebarStore } from '../src/client/state.ts'
 import { allLeaves } from '../src/client/state.ts'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
 import type { BuiltinTabOptions } from '../src/client/builtins/tabs.tsx'
+import { parkSidechatReopen } from '../src/client/SideChatView.tsx'
 import { t } from '../src/client/locales.ts'
 
 function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
@@ -26,10 +27,10 @@ function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof cr
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 7 built-in tabs', () => {
+  it('registers the 8 built-in tabs', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'git', 'global', 'subagent', 'terminal'],
+      ['browser', 'diff', 'editor', 'git', 'global', 'sidechat', 'subagent', 'terminal'],
     )
   })
 
@@ -48,13 +49,41 @@ describe('built-in tab registrations', () => {
     }
   })
 
-  it('the global tab records the instance-level global info page (single, + menu visible, order 60)', () => {
+it('the global tab records the instance-level global info page (single, + menu visible, order 60)', () => {
     const { service } = setup()
     const tab = service.getTab('global')
     expect(tab?.hidden).toBeFalsy() // reachable from the + menu
     expect(tab?.order).toBe(60)
     expect(tab?.single).toBe(true)
     expect(tab?.title).toBeDefined()
+  })
+
+  it('the side chat tab sits between tasks and terminal in the + menu', () => {
+    const { service } = setup()
+    const sidechat = service.getTab('sidechat')
+    expect(sidechat?.order).toBe(35)
+    expect(sidechat?.hidden).not.toBe(true)
+  })
+
+  it('side chat mints one tab per thread (Codex-style multi-instance)', () => {
+    const { service } = setup()
+    const sidechat = service.getTab('sidechat')
+    expect(sidechat?.single).not.toBe(true)
+    // A plain open mints a fresh autoCreate tab (the view creates the
+    // thread on mount); two opens never collide. (createTab ignores the
+    // state argument for sidechat — the cast stands in for it.)
+    const first = sidechat?.createTab?.(undefined as never)
+    const second = sidechat?.createTab?.(undefined as never)
+    expect(first?.tab.meta).toEqual({ autoCreate: true })
+    expect(first?.tab.id).not.toBe(second?.tab.id)
+    // A parked reopen target mints the deterministic reattach tab, and
+    // dedupeKey focuses an already-open thread instead of duplicating it.
+    parkSidechatReopen('session-t1')
+    const reopen = sidechat?.createTab?.(undefined as never)
+    expect(reopen?.tab.id).toBe('sidechat:session-t1')
+    expect(reopen?.tab.meta).toEqual({ threadId: 'session-t1' })
+    expect(sidechat?.dedupeKey?.(reopen!.tab)).toBe('session-t1')
+    expect(sidechat?.dedupeKey?.(first!.tab)).toBeUndefined()
   })
 
   it('the subagent tab declares its auto-open related settings', () => {
@@ -74,7 +103,7 @@ describe('built-in tab registrations', () => {
     const options = Array.isArray(toggles[0]?.options) ? toggles[0]!.options : []
     expect(options.map(o => o.value)).toEqual([true, false])
     expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
-    // The vscode Side Bar position is an iconed select (left vs right).
+// The vscode Side Bar position is an iconed select (left vs right).
     expect(toggles[2]?.type).toBe('select')
     expect((Array.isArray(toggles[2]?.options) ? toggles[2]!.options : []).map(o => o.value)).toEqual(['left', 'right'])
     // The workbench-layout select (docked vs the VSCode-style side bar) is an
@@ -90,21 +119,30 @@ describe('built-in tab registrations', () => {
     expect(typeof toggles[3]?.options).toBe('function')
     expect(toggles[3]?.when).toBeDefined()
     expect(toggles[3]?.when!({ betterSidebar: { getIconThemes: () => [] } } as unknown as Context)).toBe(false)
+    // The open-with configuration (SSH host + custom editors) is the custom
+    // panel rendered below the declarative rows.
+    expect(service.getTab('editor')?.settings?.render).toBeDefined()
   })
 
-  it('the terminal tab declares the model terminal-tools, auto-terminal and custom-font settings', () => {
+  it('the terminal tab declares the model terminal-tools, auto-terminal, shell and custom-font settings', () => {
     const { service } = setup()
     const toggles = service.getTab('terminal')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['agentTerminalTools', 'bottomPanelAutoTerminal', 'terminalFontFamily', 'terminalFontSize'])
-    // The font rows are text/number inputs (not switches), with the size
-    // row bounded by the shared 9–32 contract.
+    expect(toggles.map(t => t.key)).toEqual(['agentTerminalTools', 'bottomPanelAutoTerminal', 'terminalShell', 'terminalShellArgs', 'terminalFontFamily', 'terminalFontSize'])
+    // The shell rows are text inputs (empty = yaml/auto resolution), the
+    // font rows text/number inputs (not switches), with the size row bounded
+    // by the shared 9–32 contract.
     expect(toggles[2]?.type).toBe('text')
     expect(toggles[2]?.title).toBeDefined()
     expect(toggles[2]?.placeholder).toBeDefined()
-    expect(toggles[3]?.type).toBe('number')
-    expect(toggles[3]?.min).toBe(9)
-    expect(toggles[3]?.max).toBe(32)
-    expect(toggles[3]?.unit).toBe('px')
+    expect(toggles[3]?.type).toBe('text')
+    expect(toggles[3]?.title).toBeDefined()
+    expect(toggles[4]?.type).toBe('text')
+    expect(toggles[4]?.title).toBeDefined()
+    expect(toggles[4]?.placeholder).toBeDefined()
+    expect(toggles[5]?.type).toBe('number')
+    expect(toggles[5]?.min).toBe(9)
+    expect(toggles[5]?.max).toBe(32)
+    expect(toggles[5]?.unit).toBe('px')
     // The first two rows stay plain boolean switches.
     expect(toggles[0]?.type ?? 'switch').toBe('switch')
     expect(toggles[1]?.type ?? 'switch').toBe('switch')
@@ -118,6 +156,7 @@ describe('built-in tab registrations', () => {
       'browserInterceptLinks',
       'browserInterceptHttp',
       'browserInterceptHttps',
+      'browserAllowedLoopback',
     ])
     for (const toggle of toggles) {
       expect(toggle.title).toBeDefined()

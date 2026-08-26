@@ -113,6 +113,7 @@ export function SideBarPane(props: {
           cwd={scope.cwd}
           ctx={ctx}
           expanded={expanded}
+          revealed={state.revealed}
           onToggle={onToggleDir}
           onOpenFile={onOpenFile}
           onOpenFileNewTab={onOpenFileNewTab}

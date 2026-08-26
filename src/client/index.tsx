@@ -14,7 +14,7 @@ import type { Context, SidebarLayoutService } from '../context-types.ts'
 import { createSidebarStore, activeTabOf, activePaneTabsOf } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { createWorkspaceWindowsStore } from './workspace-windows.ts'
-import { resetChunks } from './chunk-loader.ts'
+import { revalidateChunksOnReactivate, resetChunks, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { registerBuiltinKeybindings } from './builtins/keybindings.ts'
 import { Sidebar } from './Sidebar.tsx'
@@ -29,13 +29,18 @@ import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
 import { isNarrowWidth } from './breakpoints.ts'
-import { LOCALE_NS, attachLocale, t, zh, en } from './locales.ts'
+import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en,
+  ja, de, fr, pt, ko, ar, hi, id, tr, vi, th, ru, it, nl, sv, pl,
+  zhHK, zhTW, zhMO,
+} from './locales.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
 /** Services required before mounting (provided by the client runtime; the
- *  locale service backs the sidebar's copy — see locales.ts). */
-export const inject = ['slots', 'sessions', 'connection', 'workspaces', 'locale']
+ *  locale service backs the sidebar's copy — see locales.ts). `modules`
+ *  (rc.8+) is the client module system the chunk loader resolves its
+ *  externals through — Cordis guards service access without inject. */
+export const inject = ['slots', 'sessions', 'connection', 'workspaces', 'locale', 'modules']
 
 /**
  * Error boundary over the sidebar tree (root scope): a render error in the
@@ -60,6 +65,57 @@ export function apply(ctx: Context): void {
     const offEn = ctx.locale.register(LOCALE_NS, 'en', en)
     return () => { offZh(); offEn() }
   }, 'dsh-better-sidebar: dictionaries')
+
+  // Opt-in third-language support through @huanlin/dsh-plugin-better-locale.
+  // When that plugin is installed, it publishes `ctx.betterLocale` (the
+  // override store) and patches LocaleRuntime.prototype.lookup to consult
+  // it. We mirror the same override awareness into the sidebar's own `t()`:
+  // attachBetterLocale() makes t() consult the store's getOverride first,
+  // so the sidebar's chrome (which bypasses ctx.locale and calls t()
+  // directly) also switches to the override language. We also register
+  // the ja dict with the better-locale store so external callers of
+  // ctx.locale.lookup('betterSidebar', key) get the override text too.
+  //
+  // Activation-order-safe: ctx.get('betterLocale') is a non-reactive read
+  // (cordis only re-evaluates declared `inject` deps). If better-locale
+  // activates after better-sidebar, the initial read returns undefined.
+  // We subscribe to the locale revision — better-locale bumps it on
+  // activation (when a persisted override exists) and on every override
+  // switch — and re-check ctx.get on each bump, attaching + registering
+  // the ja dict once the store becomes available.
+  ctx.effect(() => {
+    let dispose: (() => void) | undefined
+    const sync = (): void => {
+      dispose?.()
+      dispose = undefined
+      const store = ctx.get('betterLocale') as
+        | {
+            readonly active: string | undefined
+            getOverride(dshActive: string, ns: string, key: string): string | undefined
+            isOverrideActive(dshActive: string): boolean
+            register(ns: string, dicts: Record<string, Record<string, string>>): () => void
+            subscribe(listener: () => void): () => void
+          }
+        | undefined
+      attachBetterLocale(store)
+      if (store !== undefined) {
+        dispose = store.register(LOCALE_NS, {
+          ja, de, fr, pt, ko, ar, hi, id, tr, vi, th, ru, it, nl, sv, pl,
+          'zh-HK': zhHK, 'zh-TW': zhTW, 'zh-MO': zhMO,
+        })
+      }
+    }
+    // Initial check (picks up the store if better-locale activated first).
+    sync()
+    // Re-check on every locale revision bump (better-locale bumps when it
+    // activates with a persisted override, and when the user switches).
+    const unsubscribe = ctx.locale.subscribe(sync)
+    return () => {
+      unsubscribe()
+      dispose?.()
+      attachBetterLocale(undefined)
+    }
+  }, 'dsh-better-sidebar: better-locale lazy integration')
   // One store instance per activation: production code creates it only here,
   // then hands it to the mounted panel and closes over it in the slot
   // registrations (the official createXXXStore() factory rule — no
@@ -135,22 +191,95 @@ export function apply(ctx: Context): void {
     }
   }
   try {
-    // Fresh chunk state for this activation: invalidate any chunk factories
-    // registered by a previous fiber (HMR) and drop the in-memory load cache
-    // so the next lazy open re-fetches the current chunk scripts.
-    resetChunks()
+    // rc.8+ exposes the client module system as the `ctx.modules` service
+    // (no window.__DSH_MODULES__ page global anymore); the chunk loader needs
+    // it to resolve its externals, so inject it before anything can load a
+    // lazy chunk. The loader falls back to the rc.7 global when absent.
+    setChunkModuleSystem(ctx.modules)
+    // Fresh chunk state for this activation: drop per-test fixtures and
+    // revalidate loaded chunk scripts against the bundle route's ETags —
+    // unchanged chunks keep their resolved exports (no re-inject /
+    // re-execute on HMR), changed ones are dropped for a clean re-fetch.
+    void revalidateChunksOnReactivate()
     ctx.effect(() => {
       let disposed = false
       let root: Root | undefined
       let host: HTMLDivElement | undefined
       let mounted = false
+      let bodyObserver: MutationObserver | undefined
+      let hostCheckFrame: number | null = null
       const unmount = (): void => {
         if (!mounted) return
         mounted = false
+        bodyObserver?.disconnect()
+        bodyObserver = undefined
+        if (hostCheckFrame !== null) {
+          cancelAnimationFrame(hostCheckFrame)
+          hostCheckFrame = null
+        }
         root?.unmount()
         root = undefined
         host?.remove()
         host = undefined
+      }
+      /** Re-attach the host if the page (a desktop shell wrapper, SPA
+       *  navigation, …) ever removes it from <body>. Cheap: childList only,
+       *  no subtree, no attribute filtering. */
+      const guardAnchor = (): void => {
+        if (bodyObserver !== undefined) return
+        bodyObserver = new MutationObserver(() => {
+          if (host !== undefined && !document.body.contains(host)) {
+            document.body.appendChild(host)
+          }
+        })
+        bodyObserver.observe(document.body, { childList: true })
+      }
+      /** One-shot geometry self-check: if the host page transforms
+       *  <html>/<body> itself (exotic shells), a fixed panel host would
+       *  track the transformed box instead of the viewport. Flip the
+       *  degraded mode and pin the host to the viewport every frame until
+       *  the ancestor transform is actually gone. The normal path (no
+       *  page-level transform) never runs the sync loop. */
+      const scheduleHostCheck = (): void => {
+        hostCheckFrame ??= requestAnimationFrame(() => {
+          hostCheckFrame = null
+          const layer = host?.querySelector<HTMLElement>('[data-dsh-panel-host]')
+          if (layer === null || layer === undefined) return
+          const rect = layer.getBoundingClientRect()
+          const mismatched = Math.abs(rect.left) > 8 || Math.abs(rect.top) > 8
+            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - window.innerHeight) > 8
+          if (!mismatched) {
+            layer.removeAttribute('data-dsh-panel-host-degraded')
+            layer.style.transform = ''
+            return
+          }
+          layer.setAttribute('data-dsh-panel-host-degraded', '')
+          console.warn('[dsh-better-sidebar] panel host geometry mismatch — a page-level transform was detected; using degraded viewport sync')
+          // Track our own compensating translation so the loop judges the
+          // UNCORRECTED geometry: clearing degraded mode must wait for the
+          // ancestor transform to actually disappear — the frame right after
+          // our correction applies would otherwise look "fixed" and the
+          // offset would return immediately (CR #232 P1).
+          let applied = { x: 0, y: 0 }
+          const sync = (): void => {
+            const r = layer.getBoundingClientRect()
+            const rawLeft = r.left - applied.x
+            const rawTop = r.top - applied.y
+            if (Math.abs(rawLeft) <= 1 && Math.abs(rawTop) <= 1
+              && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1) {
+              layer.removeAttribute('data-dsh-panel-host-degraded')
+              layer.style.transform = ''
+              return
+            }
+            const next = { x: -rawLeft, y: -rawTop }
+            if (next.x !== applied.x || next.y !== applied.y) {
+              applied = next
+              layer.style.transform = `translate(${applied.x}px, ${applied.y}px)`
+            }
+            hostCheckFrame = requestAnimationFrame(sync)
+          }
+          hostCheckFrame = requestAnimationFrame(sync)
+        })
       }
       const mount = (): void => {
         if (mounted || disposed) return
@@ -176,6 +305,8 @@ export function apply(ctx: Context): void {
           root = createRoot(host)
           root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore, windows: workspaceWindows })))
           mounted = true
+          guardAnchor()
+          scheduleHostCheck()
         } catch (error) {
           fail('mount', error)
         }
@@ -222,7 +353,7 @@ export function apply(ctx: Context): void {
           return registerTurnTailInterception(ctx, sidebarStore)
         } catch (error) {
           fail('interception', error)
-          return undefined
+          return () => {}
         }
       },
       'dsh-better-sidebar: turn-tail interception',
@@ -234,7 +365,7 @@ export function apply(ctx: Context): void {
           return registerOpenPathInterception(ctx, sidebarStore)
         } catch (error) {
           fail('interception', error)
-          return undefined
+          return () => {}
         }
       },
       'dsh-better-sidebar: open-path interception',
@@ -272,13 +403,13 @@ export function apply(ctx: Context): void {
               let title: string | undefined
               try { title = new URL(url).hostname } catch { /* keep the default title */ }
               const type = urlTargetOf(new URL(url)) ?? 'browser'
-              ctx.betterSidebar?.openTab({ type, url, title })
+              ctx.get('betterSidebar')?.openTab({ type, url, title })
             },
             selfOrigin: window.location.origin,
           })
         } catch (error) {
           fail('interception', error)
-          return undefined
+          return () => {}
         }
       },
       'dsh-better-sidebar: link interception',
@@ -298,7 +429,7 @@ export function apply(ctx: Context): void {
           return registerImeGuard()
         } catch (error) {
           fail('ime guard', error)
-          return undefined
+          return () => {}
         }
       },
       'dsh-better-sidebar: IME composition guard',
@@ -322,7 +453,7 @@ export function apply(ctx: Context): void {
           }
         } catch (error) {
           fail('keybindings', error)
-          return undefined
+          return () => { /* keybindings unavailable: the tabs still work */ }
         }
       },
       'dsh-better-sidebar: keybindings',

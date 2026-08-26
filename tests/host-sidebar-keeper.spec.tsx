@@ -94,6 +94,9 @@ function mountSidebar(): Mounted {
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
   // Fresh-session seed: the right panel starts OPEN (the push is live).
+  // openByDefault defaults off since the flat-chrome rework, so the keeper
+  // tests opt back in explicitly.
+  store.setPrefs({ ...store.getPrefs(), openByDefault: true })
   store.setSession('s1')
   const layoutSpy = vi.fn<() => void>()
   const localeSnapshot = { active: 'en' }
@@ -143,6 +146,7 @@ describe('host-sidebar keeper — DOM wiring', () => {
 
   it('re-expands the host sidebar when our push crosses the breakpoint and the host renders the rail', async () => {
     const { frame, layoutSpy, setFrameWidth, fireFrameResize } = mounted!
+
     fireFrameResize() // baseline: 1263px, no crossing
 
     setFrameWidth(1008) // the right panel's push squeezes the frame < 1024

@@ -3,7 +3,10 @@
  * overflow scrolls horizontally, a close button per tab, a four-way split
  * button cluster, and the + menu that opens new tabs (explorer / git /
  * terminal). Tabs are draggable; dropping onto another tab inserts before it,
- * dropping on the strip background appends to this pane.
+* dropping on the strip background appends to this pane. Right-clicking a
+ * tab opens the tab context menu (float as a free window / close / close
+ * others / close to the left / close to the right, the close ones scoped to
+ * this pane).
  *
  * Workspace-bound windows (the "pinned" stubs) render at the END of the
  * strip behind a divider, whatever their array position: the caller hands
@@ -16,6 +19,8 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouse
 import clsx from 'clsx'
 import { IconCloseFill14, IconPlusOutline16, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
+import { isAgentTabId } from './state.ts'
+import { isPinnedVirtualTab } from './pinned.ts'
 import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import {
@@ -73,6 +78,16 @@ export function TabBar(props: {
   newTabOptions: NewTabOption[]
   /** Drop of a tab from any pane: (payload, insertBeforeTabId | null). */
   onDropTab: (payload: TabDragPayload, before: string | null) => void
+  /** Float a tab out as a free window (the tab context menu's entry; the
+   *  drag-to-conversation gesture is handled at the Sidebar shell level). */
+  onFloatTab?: (tabId: string) => void
+  /**
+   * Pin/unpin a terminal tab (v0.17.0+). Called with `'workspace'` or
+   * `'global'` to pin (the shell snapshots the home cwd), or `null` to
+   * unpin. Non-terminal tabs never trigger this callback. Optional: the
+   * menu hides the pin entry when unset (legacy callers).
+   */
+  onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
   /** Icon resolver for tab labels (reads from the tab descriptor registry). */
   getTabIcon?: (tab: SidebarTab) => ReactNode
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
@@ -89,21 +104,39 @@ export function TabBar(props: {
   onRename?: (tabId: string, title: string) => void
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
+paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onFloatTab, onPinTab, getTabIcon, getTabBadge,
     isBoundTabId, onTabContextMenu, canRenameTab, onRename,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
+  // The tab right-click context menu: the target tab plus the cursor
+  // position (the portaled Menu anchors there, following GitView/FileTree).
+  const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   /** The bound stub whose close button is ARMED (first click of the
    *  two-step close confirm); null = nothing armed. */
   const [armedCloseId, setArmedCloseId] = useState<string | null>(null)
   const armedTimerRef = useRef<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
-  /** The + menu's keyboard highlight (drives Menu's `selectedId`). */
+/** The + menu's keyboard highlight (drives Menu's `selectedId`). */
   const [menuHighlightId, setMenuHighlightId] = useState<string | null>(null)
   /** The letter-typeahead cursor: the same letter re-pressed advances to the
    *  NEXT matching option (standard menu typeahead). */
   const letterCursorRef = useRef<{ letter: string; index: number } | null>(null)
+  // The context target's index in the render-time tab snapshot; -1 when the
+  // tab disappeared since the menu opened (the menu hides then).
+  const tabMenuIndex = tabMenu === null ? -1 : tabs.findIndex(tab => tab.id === tabMenu.tabId)
+
+  // Middle-click close: the press target is recorded on middle mousedown
+  // (preventDefaulted to disarm Chrome's autoscroll) and the close settles
+  // on the first middle mouseup OVER that same tab — release-position
+  // semantics matching VS Code (microsoft/vscode#101028). The browser
+  // dispatches auxclick to the common ancestor of press/release targets
+  // when they differ (or suppresses it entirely), so settling on the
+  // recorded press target keeps release semantics without depending on
+  // auxclick delivery.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => { onCloseRef.current = onClose })
+  const middlePressedRef = useRef<{ id: string; node: HTMLElement; bound: boolean } | null>(null)
 
   // Inline rename: the tab id being edited + the draft text. A ref mirrors
   // the state so Enter (commit → unmount → blur) and IME composition never
@@ -335,6 +368,36 @@ export function TabBar(props: {
     }
   }, [])
 
+  // Middle-click close: the press target is recorded on middle mousedown
+  // (preventDefaulted to disarm Chrome's autoscroll) and the close settles
+  // on the first middle mouseup OVER that same tab — release-position
+  // semantics matching VS Code (microsoft/vscode#101028). The browser
+  // dispatches auxclick to the common ancestor of press/release targets
+  // when they differ (or suppresses it entirely), so settling on the
+  // recorded press target keeps release semantics without depending on
+  // auxclick delivery.
+  useEffect(() => {
+    const onWindowMouseUp = (event: globalThis.MouseEvent): void => {
+      if (event.button !== 1) return
+      const pressed = middlePressedRef.current
+      middlePressedRef.current = null
+      // Close only when the release lands on the pressed tab; a drag-away
+      // release cancels the press (one-shot per press).
+      if (pressed === null || !pressed.node.isConnected || !pressed.node.contains(event.target as Node)) return
+      // Bound stubs share the two-step confirm (same as their close button).
+      if (!pressed.bound) {
+        onCloseRef.current(pressed.id)
+      } else if (armedCloseId === pressed.id) {
+        disarmClose()
+        onCloseRef.current(pressed.id)
+      } else {
+        armClose(pressed.id)
+      }
+    }
+    window.addEventListener('mouseup', onWindowMouseUp)
+    return () => window.removeEventListener('mouseup', onWindowMouseUp)
+  }, [armedCloseId, armClose, disarmClose])
+
   // Wheel over the strip scrolls the tab row horizontally (a plain mouse
   // wheel emits deltaY, which overflow-x alone never consumes). Bound as a
   // native NON-passive listener: React registers onWheel passively at the
@@ -379,12 +442,26 @@ export function TabBar(props: {
    *  window as workspace-shared, not as immovable — dragging a stub to
    *  another leaf or panel moves the shared window's per-session
    *  placement (reconcile only re-homes stubs that are missing entirely). */
-  const renderTabEl = (tab: SidebarTab, bound: boolean): ReactNode => (
+  const renderTabEl = (tab: SidebarTab, bound: boolean): ReactNode => {
+    // Virtual (cross-session injected) tabs and pinned terminals render with
+    // the pin mark and stay in place; bound stubs keep their distinct style.
+    const pinned = bound || isPinnedVirtualTab(tab) || tab.pin !== undefined
+    return (
     <div
       key={tab.id}
-      className={clsx(css.tab, active === tab.id && css.tabActive, bound && css.tabBound)}
+      className={clsx(css.tab, active === tab.id && css.tabActive, bound && css.tabBound, pinned && css.pinnedTab)}
       title={renaming === tab.id ? undefined : tab.title}
-      draggable={renaming !== tab.id}
+      draggable={renaming !== tab.id && !isPinnedVirtualTab(tab)}
+      onMouseDown={(event) => {
+        if (event.button === 1) {
+          // Record the press target and disarm Chrome's middle-click
+          // autoscroll (its indicator is inert here — the strip scrolls via
+          // the wheel handler only). The close settles on the first middle
+          // mouseup over this same tab (window-level handler above).
+          event.preventDefault()
+          middlePressedRef.current = { id: tab.id, node: event.currentTarget, bound }
+        }
+      }}
       onDragStart={(event) => {
         setTabDragging(true)
         event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
@@ -405,28 +482,23 @@ export function TabBar(props: {
         disarmClose()
         onActivate(tab.id)
       }}
-      onAuxClick={(event) => {
-        // Middle-click closes the tab (and suppresses autoscroll). Bound
-        // stubs share the two-step confirm: the first middle-click arms.
-        if (event.button === 1) {
-          event.preventDefault()
-          if (!bound) onClose(tab.id)
-          else if (armedCloseId === tab.id) {
-            disarmClose()
-            onClose(tab.id)
-          } else armClose(tab.id)
-        }
-      }}
       onContextMenu={(event) => {
-        if (onTabContextMenu === undefined) return
         event.preventDefault()
         event.stopPropagation()
         disarmClose()
-        onTabContextMenu(tab, event)
+        // The shell's workspace menu (when provided) takes precedence; the
+        // built-in tab menu (float / pin / close operations) is the fallback
+        // so floating and pinned-terminal tabs stay manageable in any host.
+        if (onTabContextMenu !== undefined) {
+          onTabContextMenu(tab, event)
+        } else {
+          setMenuOpen(false)
+          setTabMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
+        }
       }}
     >
       {getTabIcon?.(tab) ?? null}
-      {bound && <IconPinOutline16 size={12} className={css.tabPin} />}
+      {pinned && <IconPinOutline16 size={12} className={css.tabPin} />}
       {getTabBadge?.(tab) ?? null}
       {renaming === tab.id ? (
         <input
@@ -495,7 +567,8 @@ export function TabBar(props: {
         </button>
       </Tooltip>
     </div>
-  )
+    )
+  }
 
   return (
     <div
@@ -520,7 +593,7 @@ export function TabBar(props: {
       }}
     >
       <div ref={listRef} className={css.tabList}>
-        {sessionTabs.map(tab => renderTabEl(tab, false))}
+{sessionTabs.map(tab => renderTabEl(tab, false))}
         {pinnedTabs.length > 0 && <div className={css.tabBarDivider} role="separator" />}
         {pinnedTabs.map(tab => renderTabEl(tab, true))}
         {/*
@@ -542,19 +615,101 @@ export function TabBar(props: {
           portal
           align="end"
           anchor={(
-            <Tooltip label={t('newTab')} side="bottom" delayMs={500}>
+<Tooltip label={t('newTab')} side="bottom" delayMs={500}>
               <button
                 type="button"
                 className={css.tabBarPlus}
                 aria-label={t('newTab')}
+                title={t('newTab')}
                 aria-haspopup="menu"
                 aria-expanded={menuOpen || undefined}
-                onClick={() => { if (menuOpen) closeMenu(); else openMenu() }}
+                onClick={() => { if (menuOpen) closeMenu(); else openMenu(); setTabMenu(null) }}
               >
                 <IconPlusOutline16 />
               </button>
             </Tooltip>
           )}
+        />
+        {/*
+          The tab context menu, positioned at the right-click cursor (portal
+          so the panel's overflow clip cannot crop it). Close operations are
+          scoped to THIS pane: "close others/left/right" walk the render-time
+          tab snapshot and reuse the per-tab onClose path (which routes
+          through the service and releases terminals), so the target tab is
+          never closed and the pane never empties mid-loop.
+        */}
+        <Menu
+          open={tabMenu !== null && tabMenuIndex >= 0}
+          onClose={() => { setTabMenu(null) }}
+          items={(() => {
+            // The target tab drives the pin entry's shape: terminal tabs
+            // get either a "Pin ▸" submenu (unpinned) or a single "Unpin"
+            // row (pinned). Non-terminal tabs and missing onPinTab get no
+            // pin entry at all — the menu stays exactly the legacy 5-item
+            // shape. Pinned VIRTUAL tabs (injected from other sessions)
+            // get a stripped menu: only Unpin + Close (no float, no
+            // close-others/left/right — those are pane-scoped operations
+            // that don't apply to cross-session virtual tabs).
+            const targetTab = tabMenuIndex >= 0 ? tabs[tabMenuIndex] : undefined
+            const isTerminal = targetTab?.type === 'terminal'
+            const isPinnedVirtual = targetTab !== undefined && isPinnedVirtualTab(targetTab)
+            const pinEntries = isTerminal && onPinTab !== undefined
+              ? targetTab!.pin !== undefined
+                ? [{ id: 'unpin', label: t('unpinTerminal') }]
+                : [{
+                    id: 'pin',
+                    label: isAgentTabId(targetTab!.id) ? t('pinAgentTerminal') : t('pinTerminal'),
+                    submenu: [
+                      { id: 'pinWorkspace', label: t('pinToWorkspace') },
+                      { id: 'pinGlobal', label: t('pinToGlobal') },
+                    ],
+                  }]
+              : []
+            if (isPinnedVirtual) {
+              return [
+                ...pinEntries,
+                { id: 'close', label: t('close') },
+              ]
+            }
+            return [
+              { id: 'float', label: t('moveToFreeWindow') },
+              ...pinEntries,
+              { id: 'close', label: t('close') },
+              { id: 'closeOthers', label: t('closeOtherTabs'), ...(tabs.length <= 1 ? { disabled: true } : {}) },
+              { id: 'closeLeft', label: t('closeLeftTabs'), ...(tabMenuIndex <= 0 ? { disabled: true } : {}) },
+              { id: 'closeRight', label: t('closeRightTabs'), ...(tabMenuIndex >= tabs.length - 1 ? { disabled: true } : {}) },
+            ]
+          })()}
+          onSelect={(id) => {
+            const target = tabMenu
+            if (target === null) return
+            setTabMenu(null)
+            const index = tabs.findIndex(tab => tab.id === target.tabId)
+            if (index < 0) return
+            if (id === 'float') {
+              onFloatTab?.(target.tabId)
+            } else if (id === 'pinWorkspace') {
+              onPinTab?.(target.tabId, 'workspace')
+            } else if (id === 'pinGlobal') {
+              onPinTab?.(target.tabId, 'global')
+            } else if (id === 'unpin') {
+              onPinTab?.(target.tabId, null)
+            } else if (id === 'close') {
+              onClose(target.tabId)
+            } else if (id === 'closeOthers') {
+              for (const tab of tabs) {
+                if (tab.id !== target.tabId) onClose(tab.id)
+              }
+            } else if (id === 'closeLeft') {
+              for (const tab of tabs.slice(0, index)) onClose(tab.id)
+            } else if (id === 'closeRight') {
+              for (const tab of tabs.slice(index + 1)) onClose(tab.id)
+            }
+          }}
+          portal
+          align="start"
+          getAnchorRect={() => (tabMenu === null ? null : new DOMRect(tabMenu.x, tabMenu.y, 0, 0))}
+          anchor={<span />}
         />
       </div>
     </div>
