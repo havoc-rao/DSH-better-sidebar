@@ -522,6 +522,12 @@ interface BetterSidebarService {
   getActiveIconTheme(): IconThemeDescriptor | undefined
   /** 解析一行文件/目录在激活主题下的图标（未命中 → undefined，调用方回退内置图标） */
   matchFileIcon(context: FileIconContext): FileIconRef | undefined
+  /** 注册命令（v0.16.0+）；返回 disposer（可挂到行/tab 右键菜单 + 可编程执行） */
+  registerCommand(descriptor: CommandDescriptor): () => void
+  /** 已注册的命令快照（注册顺序） */
+  getCommands(): readonly CommandDescriptor[]
+  /** 执行命令（未知 id → false 严格 no-op；run 抛错被吞掉但仍返回 true） */
+  executeCommand(id: string, payload?: CommandRunPayload): boolean
   /**
    * 打开一个 tab（+ 菜单和外部触发都用它；走 descriptor.dedupeKey 去重）。
    * title 可选：给出时优先于 descriptor.title（editor 显示文件名）；
@@ -549,7 +555,8 @@ interface BetterSidebarService {
   readonly version: string
   /** 单调能力清单（只增不删）：'badge' | 'tabLifecycle' | 'updateTab' |
    *  'openFile' | 'targetedOpen' | 'stateSubscription' | 'tabMeta' |
-   *  'pluginSettings' | 'urlTarget' | 'settingSelect'——消费插件用 `features.includes('xxx')` 按能力 gate。 */
+   *  'pluginSettings' | 'urlTarget' | 'settingSelect' | 'keybindings' |
+   *  'iconTheme' | 'commands'——消费插件用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
    *  session 未激活时 state/sessionId 为 undefined。 */
@@ -856,3 +863,53 @@ node tools/convert-vscode-icon-theme.mjs unpacked -o src/client/icons.generated.
 
 1. **`options` 函数形态**：`options?: readonly SidebarSettingSelectOption[] | ((ctx: Context) => readonly SidebarSettingSelectOption[])`——渲染时求值、注册表变化实时重算（弹窗打开期间订阅）；抛错降级空列表。
 2. **行级 `when` 谓词**：`when?: (ctx: Context) => boolean`——false 整行不渲染；抛错 fail-open（行保持可见）。
+
+---
+
+## 12. 命令注册 API（v0.16.0+，`features.includes('commands')` gate）
+
+插件的第四个扩展点：`registerCommand` 注册一个动作，可（a）**挂到既有右键菜单**（文件树行 / tab 条）——VSCode `contributes.commands` + `menus` 的移植；（b）**可编程执行**（其它插件 / keybinding `run` / tab 组件互调）——`vscode.commands.executeCommand` 的移植。命令只出现在侧边栏的表面（portal 限制，AGENTS.md §7），无法进入宿主菜单。
+
+```ts
+interface CommandDescriptor {
+  /** 唯一 id（建议包前缀：'my-plugin:format'）；重复注册抛错。 */
+  id: string
+  /** 展示名（i18n 友好：字符串或 () => string）。 */
+  title: string | (() => string)
+  /** 菜单行图标（可选；ReactNode 或 (size) => ReactNode）。 */
+  icon?: ReactNode | ((size: number) => ReactNode)
+  /** 挂载的右键菜单表面（缺省 = 仅可编程执行）。 */
+  menus?: readonly {
+    /** 'file-row' 文件行 / 'dir-row' 目录行 / 'root-row' 会话根行 / 'tab' tab 条 */
+    where: 'file-row' | 'dir-row' | 'root-row' | 'tab'
+    /** 上下文谓词；false 隐藏该行；抛错 fail-open（保持可见）。 */
+    when?: (menu: CommandMenuContext) => boolean
+    /** 组内排序（升序）；默认 100。 */
+    order?: number
+  }[]
+  /** 执行体；payload 携带触发上下文。抛错被吞掉（safeCall），绝不打断菜单流程。 */
+  run: (payload: CommandRunPayload) => void
+}
+
+interface CommandMenuContext { path?: string; isDir?: boolean; isRoot?: boolean; tab?: SidebarTab }
+interface CommandRunPayload extends CommandMenuContext { where: 'file-row' | 'dir-row' | 'root-row' | 'tab' | 'programmatic' }
+```
+
+- `executeCommand(id, payload?)`：未知 id → `false` 严格 no-op；命中 → safeCall 执行并返回 `true`（run 抛错不向外传播）。
+- 菜单行恒追加在**内置行之后**（顺序即分组），按 `order` 稳定排序；`where` 由触发行自动派生（file/dir/root）。
+- 行菜单的内置 id（open-new-tab / open-side / download / relative / absolute）优先路由，未知 id 才走 `executeCommand`——插件命令 id 永不落入复制路径。
+- 注册示例：
+
+```ts
+ctx.effect(() =>
+  ctx.betterSidebar.registerCommand({
+    id: 'my-plugin:format',
+    title: () => 'Format this file',
+    icon: (size: number) => <SparkleIcon size={size} />,
+    menus: [{ where: 'file-row', order: 10 }],
+    run: ({ where, path }) => runFormatter(path),   // 其它插件也可 executeCommand 触发
+  })
+)
+```
+
+- 测试：`tests/commands.spec.ts`（注册表 / executeCommand 语义 / 纯构建器）、`tests/commands-menu.spec.tsx`（FileTree 行/目录/根行菜单集成 + 回归）。设计见 `docs/plans/2026-08-25-vscode-commands-extension-design.md`。

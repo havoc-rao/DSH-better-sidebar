@@ -38,6 +38,7 @@ import {
   type FileIconContext, type FileIconRef, type IconThemeDescriptor, type IconThemeDocument,
   type IconThemeIndex,
 } from './icon-theme.ts'
+import type { CommandDescriptor, CommandRunPayload } from './commands.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -59,6 +60,10 @@ export type { KeybindingDescriptor, KeybindingEventLike, KeySpec, SidebarKeybind
 export type {
   FileIconContext, FileIconRef, IconThemeDescriptor, IconThemeDocument, IconThemeIconDefinition, IconThemeIndex,
 } from './icon-theme.ts'
+export type {
+  CommandDescriptor, CommandMenuContext, CommandMenuContribution, CommandMenuRow, CommandMenuWhere,
+  CommandRunPayload, CommandRunWhere,
+} from './commands.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -437,6 +442,23 @@ export interface BetterSidebarService {
    */
   matchFileIcon(context: FileIconContext): FileIconRef | undefined
   /**
+   * Register a command (v0.16.0+): an action that may attach to the
+   * existing context menus (file-tree rows, the tab bar) through
+   * `menus` and/or run programmatically via {@link executeCommand} —
+   * the VSCode `contributes.commands` + `menus` + `executeCommand`
+   * triangle scoped to the sidebar's surfaces. A duplicate id throws;
+   * the disposer unregisters (HMR-safe through `ctx.effect`).
+   */
+  registerCommand(descriptor: CommandDescriptor): () => void
+  /** The registered commands (registration order). */
+  getCommands(): readonly CommandDescriptor[]
+  /**
+   * Run a registered command (v0.16.0+). An unknown id is a strict
+   * no-op returning false; a throwing `run` is swallowed (console.error)
+   * and still returns true — the command was found and invoked.
+   */
+  executeCommand(id: string, payload?: CommandRunPayload): boolean
+  /**
    * Open a tab (used by external tabs and the + menu). `title` overrides
    * the descriptor's title when given (the editor tab shows the file name);
    * when the descriptor provides `createTab` it mints the tab itself and
@@ -583,6 +605,7 @@ export const SIDEBAR_SERVICE_VERSION = '0.14.0'
  * - 'keybindings' (v0.14.0): registerKeybinding / getKeybindings
  * - 'iconTheme' (v0.16.0): registerIconTheme / getIconThemes /
  *   getActiveIconTheme / matchFileIcon
+ * - 'commands' (v0.16.0): registerCommand / getCommands / executeCommand
  */
 export const SIDEBAR_FEATURES = [
   'badge',
@@ -597,6 +620,7 @@ export const SIDEBAR_FEATURES = [
   'settingSelect',
   'keybindings',
   'iconTheme',
+  'commands',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -628,6 +652,7 @@ export function createBetterSidebarService(
   const viewers = new Map<string, FileViewerDescriptor>()
   const iconThemes = new Map<string, IconThemeDescriptor>()
   const iconThemeIndexes = new Map<string, IconThemeIndex>()
+  const commands = new Map<string, CommandDescriptor>()
   const listeners = new Set<() => void>()
   // A private runtime when none is shared (standalone/tests): the registry
   // semantics (dup ids, disposal, listing) work the same either way, only
@@ -730,6 +755,29 @@ export function createBetterSidebarService(
     if (active === undefined) return undefined
     const index = iconThemeIndexes.get(active.id)
     return index === undefined ? undefined : matchFileIconOf(index, context)
+  }
+
+  const registerCommand = (descriptor: CommandDescriptor): (() => void) => {
+    if (commands.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] command "${descriptor.id}" already registered`)
+    }
+    commands.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (commands.get(descriptor.id) === descriptor) {
+        commands.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  const getCommands = (): readonly CommandDescriptor[] => Array.from(commands.values())
+
+  const executeCommand = (id: string, payload?: CommandRunPayload): boolean => {
+    const descriptor = commands.get(id)
+    if (descriptor === undefined) return false
+    safeCall(() => descriptor.run(payload ?? { where: 'programmatic' }))
+    return true
   }
 
   // The enable switches come from the user's side card prefs (the shared
@@ -1007,6 +1055,9 @@ export function createBetterSidebarService(
     getIconTheme,
     getActiveIconTheme,
     matchFileIcon,
+    registerCommand,
+    getCommands,
+    executeCommand,
     openTab,
     closeTab,
     subscribe,

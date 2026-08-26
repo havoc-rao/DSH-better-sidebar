@@ -43,6 +43,7 @@ import { panelHotkeyHint } from './hotkeys.ts'
 import { createHostSidebarKeeper } from './host-sidebar.ts'
 import { useFileIconResolver } from './FileIcon.tsx'
 import { baseName } from './FileTree.tsx'
+import { commandMenuRows } from './commands.ts'
 import { registerGlobalPageSurface } from './GlobalPage.tsx'
 import { isGlobalPageOpen, setGlobalPageOpen, subscribeGlobalPage } from './global-page.ts'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
@@ -341,7 +342,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     else if (id === 'unbind') void windows?.unbind(current.tab.id, true)
     else if (id === 'bindGlobal') void windows?.bindGlobal(current.tab)
     else if (id === 'unbindGlobal') void windows?.unbindGlobal(current.tab.id, true)
-  }, [tabMenu, windows])
+    // Plugin commands (v0.16.0+): unknown ids route to the registry.
+    else ctx.betterSidebar?.executeCommand(id, { where: 'tab', tab: current.tab })
+  }, [tabMenu, windows, ctx])
 
   /**
    * Resolve a workspace-bound stub to its LIVE definition: the session tree
@@ -1576,25 +1579,29 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       <Menu
         open={tabMenu !== null}
         onClose={closeTabMenu}
-        items={tabMenu === null ? [] : isGlobalTabId(tabMenu.tab.id)
-          ? [{ id: 'unbindGlobal', label: t('unbindGlobal'), icon: <IconGlobeOffOutline16 size={14} /> }]
-          : isBoundTabId(tabMenu.tab.id)
-            ? [{ id: 'unbind', label: t('unbindFromWorkspace'), icon: <IconPinOffOutline16 size={14} /> }]
-            : [
-              {
-                id: 'bind',
-                label: wsSnapshot.workspaceId === undefined
-                  ? t('bindToWorkspaceNoWorkspace')
-                  : wsSnapshot.workspaceTitle !== undefined
-                    ? t('bindToWorkspaceWithName', { title: wsSnapshot.workspaceTitle })
-                    : t('bindToWorkspace'),
-                icon: <IconPinOutline16 size={14} />,
-                disabled: wsSnapshot.workspaceId === undefined,
-              },
-              ...(tabMenu.tab.type === 'terminal'
-                ? [{ id: 'bindGlobal', label: t('bindGlobal'), icon: <IconGlobeOutline16 size={14} /> }]
-                : []),
-            ]}
+        items={tabMenu === null ? [] : [
+          ...(isGlobalTabId(tabMenu.tab.id)
+            ? [{ id: 'unbindGlobal', label: t('unbindGlobal'), icon: <IconGlobeOffOutline16 size={14} /> }]
+            : isBoundTabId(tabMenu.tab.id)
+              ? [{ id: 'unbind', label: t('unbindFromWorkspace'), icon: <IconPinOffOutline16 size={14} /> }]
+              : [
+                {
+                  id: 'bind',
+                  label: wsSnapshot.workspaceId === undefined
+                    ? t('bindToWorkspaceNoWorkspace')
+                    : wsSnapshot.workspaceTitle !== undefined
+                      ? t('bindToWorkspaceWithName', { title: wsSnapshot.workspaceTitle })
+                      : t('bindToWorkspace'),
+                  icon: <IconPinOutline16 size={14} />,
+                  disabled: wsSnapshot.workspaceId === undefined,
+                },
+                ...(tabMenu.tab.type === 'terminal'
+                  ? [{ id: 'bindGlobal', label: t('bindGlobal'), icon: <IconGlobeOutline16 size={14} /> }]
+                  : []),
+              ]),
+          // Plugin-command rows (v0.16.0+), appended after the built-ins.
+          ...commandMenuRows(ctx.betterSidebar?.getCommands() ?? [], 'tab', { tab: tabMenu.tab }),
+        ]}
         onSelect={selectTabMenu}
         portal
         align="start"

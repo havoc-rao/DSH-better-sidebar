@@ -26,6 +26,7 @@ import { gitStatusAt, type GitRowStatus, type GitStatusKind } from './git-status
 import { relativeTo } from './paths.ts'
 import { t, type CopyKey } from './locales.ts'
 import { useFileIconResolver } from './FileIcon.tsx'
+import { commandMenuRows, type CommandMenuWhere } from './commands.ts'
 import type { Context } from '../context-types.ts'
 import css from './sidebar.module.css'
 
@@ -200,6 +201,19 @@ export function FileTree(props: {
 
   const root = cwd
 
+  // Plugin-command rows for the row context menu (v0.16.0+): appended
+  // after the built-in rows, driven by the pure builder — zero logic here.
+  const rowWhere: CommandMenuWhere = rowMenu === null
+    ? 'file-row'
+    : rowMenu.isDir
+      ? (rowMenu.path === root ? 'root-row' : 'dir-row')
+      : 'file-row'
+  const commandItems = ctx?.betterSidebar === undefined ? [] : commandMenuRows(
+    ctx.betterSidebar.getCommands(),
+    rowWhere,
+    { path: rowMenu?.path, isDir: rowMenu?.isDir, isRoot: rowMenu !== null && rowMenu.path === root },
+  )
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
     if (level === undefined) {
@@ -329,6 +343,7 @@ export function FileTree(props: {
             : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={14} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={14} /> },
+          ...commandItems,
         ]}
         onSelect={(id) => {
           const target = rowMenu
@@ -346,10 +361,23 @@ export function FileTree(props: {
             downloadFile(target.path)
             return
           }
-          copyPath(
-            id === 'relative' ? relativeTo(cwd ?? '', target.path) : target.path,
-            target.path,
-          )
+          if (id === 'relative') {
+            copyPath(relativeTo(cwd ?? '', target.path), target.path)
+            return
+          }
+          if (id === 'absolute') {
+            copyPath(target.path, target.path)
+            return
+          }
+          // Plugin commands (v0.16.0+): unknown ids route to the registry;
+          // a missing command is a strict no-op (executeCommand returns
+          // false) — never falls through into the copy actions.
+          ctx?.betterSidebar?.executeCommand(id, {
+            where: rowWhere,
+            path: target.path,
+            isDir: target.isDir,
+            isRoot: target.path === root,
+          })
         }}
         portal
         align="start"
