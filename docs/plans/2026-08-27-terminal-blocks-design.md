@@ -1,6 +1,6 @@
 # 终端块框架（Terminal Blocks）设计
 
-> 2026-08-27 · 状态：已实施（feat/terminal-blocks）
+> 2026-08-27 · 状态：已实施（feat/terminal-blocks，v2 含 hover block 层）
 > 需求：优化 term 框架，把终端里不同 CLI 执行拆成独立的 block；参考文件/代码 viewer 里「添加到对话框」（selection popup → `appendToDraft`）的能力，复用到 xterm 中——选中即浮出按钮、以及把「最后一次执行」作为一个整体插入对话草稿。
 
 ## 0. 决策记录（已确认）
@@ -13,7 +13,8 @@
 | 「添加到对话框」两种形态 | ① **选中**：TextEditor 同款浮钮（`.xterm-selection` 首段 DOM rect 锚定 + `createPortal` 到 body）；② **block**：终端右上角内置小药丸（每次命令提交后出现），点击把当前 block（命令 + 当前输出）整块插入 |
 | 输出上限 | `TERMINAL_INSERT_LIMIT = 4000` 字符，超出**截断 + `\n…` 标记**（不丢弃——终端 block 的价值就是输出本身，与文件选择的「超限只留 header」不同） |
 | 纯逻辑位置 | `src/client/terminal-blocks.ts`（零依赖，结构类型对齐 xterm `IBuffer`/`IBufferLine`），随 TerminalView 打进懒加载 chunk，不进核心 bundle |
-| 视觉分隔线 | **不做**（v1）：xterm 无稳定非 propose API 画行分隔（`registerMarker` 叠加层需渲染器内省，且 decoration 是 proposed API）；block 的可见形态 = 右上角药丸 + 选中 popup |
+| 锚点健壮性 | 每个 block 提交时由视图 `term.registerMarker(0)`（cursor 行 = echo 行）钉住锚点——marker 随 scrollback trim 平移、随 reflow 平移、滚出 buffer 自动 dispose；`blockStartLine` 优先 marker.line，disposed marker 解析为 **+Infinity**（行已消失 = 整体不可见），无 marker 时退回索引 |
+| 视觉 block 化与 hover | **已实施**（v2）：`TerminalBlockOverlay.tsx` 以每次 CLI 执行的 echo 行为界画 hairline 分隔线；鼠标悬停某个 block → 该 block 行区间淡色高亮 + 悬停行右侧浮出「添加到对话」药丸，点击整块插入草稿（选中模式 popup 优先）；矩形几何 = `.xterm-screen` rect + `(row - viewportY) × cellH`，不依赖 renderer 内部行元素 |
 
 ## 1. 现状关键事实（实施依据）
 

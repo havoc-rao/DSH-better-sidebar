@@ -33,7 +33,6 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import clsx from 'clsx'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -49,8 +48,11 @@ import {
   TerminalBlockTracker,
   blockForSelection,
   blockOutputText,
+  blockSpanLines,
   buildTerminalInsert,
+  type TerminalBlock,
 } from './terminal-blocks.ts'
+import { TerminalBlockOverlay } from './TerminalBlockOverlay.tsx'
 import type { Context } from '../context-types.ts'
 import css from './sidebar.module.css'
 
@@ -115,11 +117,18 @@ function xtermTheme(): ITheme {
 
 /** The floating "add to conversation" action: payload + viewport anchor
  *  (the selection-mode port of the text viewers' popup — the block mode is
- *  the pill pinned inside the terminal instead, see {@link TerminalView}). */
+ *  the hover-driven overlay layer, see {@link TerminalBlockOverlay}). */
 interface SelectionPopup {
   insert: string
   left: number
   top: number
+}
+
+/** The live terminal session handed to the block overlay (state, so the
+ *  overlay re-mounts per session instead of chasing refs). */
+interface TerminalSession {
+  term: Terminal
+  tracker: TerminalBlockTracker
 }
 
 export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: string; store: SidebarStore }) {
@@ -134,9 +143,9 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
    *  the popup commits so the payload is always built at click time). */
   const termRef = useRef<Terminal | null>(null)
   const trackerRef = useRef<TerminalBlockTracker | null>(null)
-  /** Whether at least one command was submitted since mount (block mode of
-   *  the "add to conversation" pill). */
-  const [blockReady, setBlockReady] = useState(false)
+  /** The mounted terminal session (null until the mount effect ran); the
+   *  block overlay mounts on it. */
+  const [session, setSession] = useState<TerminalSession | null>(null)
   /** The floating "add to conversation" popup for a selection (null = hidden). */
   const [selectionPopup, setSelectionPopup] = useState<SelectionPopup | null>(null)
   /** Live mirror of the popup state for click-time reads (no re-render race). */
@@ -166,15 +175,16 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
     hideSelectionPopup()
   }
 
-  /** The block pill's click: build the CURRENT block's payload live (the
-   *  command + its output rows so far) and insert it into the draft. */
-  const commitBlockPopup = (): void => {
+  /** The block overlay pill's click: build THE hovered block's payload live
+   *  (command + its output rows, marker-resolved boundaries) and insert it
+   *  into the draft. */
+  const commitBlock = (block: TerminalBlock): void => {
     const tracker = trackerRef.current
     const term = termRef.current
     if (tracker === null || term === null) return
-    const block = tracker.current
-    if (block === null) return
-    const output = blockOutputText(term.buffer.active, block, tracker.pending)
+    const buffer = term.buffer.active
+    const span = blockSpanLines(tracker.blocks, block, buffer.length)
+    const output = blockOutputText(buffer, block, tracker.pending, span.end)
     appendToDraft(ctx, scope.sessionId, buildTerminalInsert(block.command, output))
   }
 
@@ -184,7 +194,6 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
     // A (re)mount starts with a clean block model: the replay/resumed
     // transcript has no input history, and any stale popup from a previous
     // session must not survive.
-    setBlockReady(false)
     hideSelectionPopup()
 
     // The custom font prefs (side card settings, terminal card) resolve at
@@ -201,9 +210,15 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
     })
     // The block model: every Enter in the input stream submits a command and
     // opens a new block anchored at the shell's echo row (terminal-blocks.ts).
-    const tracker = new TerminalBlockTracker()
+    // Each block pins that row with an xterm marker — markers slide with
+    // scrollback trims and reflows, keeping the bloc UI honest over time.
+    const tracker = new TerminalBlockTracker((block) => {
+      const marker = term.registerMarker(0)
+      if (marker !== undefined) block.marker = marker
+    })
     termRef.current = term
     trackerRef.current = tracker
+    setSession({ term, tracker })
     const fit = new FitAddon()
     term.loadAddon(fit)
     // Re-theme in place when the app's scheme flips (tokens + palette).
@@ -304,7 +319,6 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
 
     const inputSub = term.onData((data) => {
       tracker.onData(data, term.buffer.active.length)
-      if (tracker.current !== null) setBlockReady(true)
       if (socket !== null && socket.readyState === WebSocket.OPEN) socket.send(data)
     })
     // Selection → the floating "add to conversation" popup (the shared
@@ -434,6 +448,7 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
       connectRef.current = null
       termRef.current = null
       trackerRef.current = null
+      setSession(null)
       hideSelectionPopup()
     }
   }, [scope.sessionId, scope.cwd, tabId, store])
@@ -457,21 +472,20 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
         </div>
       )}
       {fatal === null && depsFatal === null && !connected && <div className={css.terminalBanner}>{t('disconnected')}</div>}
-      <div ref={hostRef} className={css.terminal} />
-      {/* Block mode of the "add to conversation" action (the terminal analog
-          of the text viewers' selection popup): once a command was submitted
-          this pill offers the current block — the last CLI execution and its
-          output rows so far — pinned to the terminal's top-right corner. The
-          selection popup takes precedence while a selection is active. */}
-      {selectionPopup === null && blockReady && connected && fatal === null && depsFatal === null && (
-        <button
-          type="button"
-          className={clsx(css.selectionPopup, css.terminalAddBlock)}
-          onClick={commitBlockPopup}
-        >
-          {t('addToConversation')}
-        </button>
-      )}
+      <div ref={hostRef} className={css.terminal}>
+        {/* The block layer: hairline dividers at every CLI block boundary;
+            hovering a block highlights its span and raises the per-block
+            "add to conversation" pill (see TerminalBlockOverlay). */}
+        {session !== null && (
+          <TerminalBlockOverlay
+            hostRef={hostRef}
+            term={session.term}
+            tracker={session.tracker}
+            visible={connected && fatal === null && depsFatal === null}
+            onAddBlock={commitBlock}
+          />
+        )}
+      </div>
       {/* Selection mode: portalled to document.body and position:fixed, so
           the terminal's overflow clips cannot crop it (same as TextEditor). */}
       {selectionPopup !== null && createPortal(

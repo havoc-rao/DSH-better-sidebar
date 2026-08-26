@@ -3,16 +3,20 @@
  * extraction, selection attribution, insert payloads) — no xterm, the
  * buffer is a fake over the minimal structural contract.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   BLOCK_KEEP,
   TERMINAL_INSERT_LIMIT,
   TerminalBlockTracker,
+  blockEndLine,
   blockForSelection,
   blockOutputText,
+  blockSpanLines,
+  blockStartLine,
   buildTerminalInsert,
   type TerminalBlock,
   type TerminalBlockBuffer,
+  type TerminalBlockMarker,
 } from '../src/client/terminal-blocks.ts'
 
 /** A fake buffer row honoring the structural contract (trim + wrap flags). */
@@ -234,5 +238,82 @@ describe('buildTerminalInsert', () => {
     expect(insert).not.toContain('y')
     expect(insert).toContain('\n…\n')
     expect(insert.endsWith('```')).toBe(true)
+  })
+})
+describe('markers (blockStartLine / blockEndLine / blockSpanLines)', () => {
+  function marker(line: number, disposed = false): TerminalBlockMarker {
+    return { line, isDisposed: disposed, dispose: vi.fn() }
+  }
+
+  it('prefers the live marker line over the index', () => {
+    const b = block({ startRow: 0, marker: marker(27) })
+    expect(blockStartLine(b)).toBe(27)
+    // Trimmed out (marker disposed): the rows are gone — resolves to
+    // +Infinity so every consumer treats the block as absent.
+    const trimmed = block({ startRow: 0, marker: marker(0, true) })
+    expect(blockStartLine(trimmed)).toBe(Number.POSITIVE_INFINITY)
+    // Never attached: index fallback.
+    expect(blockStartLine(block({ startRow: 9 }))).toBe(9)
+  })
+
+  it('blockEndLine is the next block’s start line, Infinity for the newest', () => {
+    const a = block({ startRow: 0, marker: marker(4) })
+    const b = block({ startRow: 10, marker: marker(16) })
+    const c = block({ startRow: 20 })
+    expect(blockEndLine([a, b, c], a)).toBe(16)
+    expect(blockEndLine([a, b, c], c)).toBe(Number.POSITIVE_INFINITY)
+    expect(blockEndLine([a], b)).toBe(Number.POSITIVE_INFINITY) // unknown block
+  })
+
+  it('blockSpanLines clamps into the live buffer and handles trims', () => {
+    const a = block({ startRow: 0, marker: marker(4) })
+    const b = block({ startRow: 10, marker: marker(16) })
+    expect(blockSpanLines([a, b], a, 50)).toEqual({ start: 4, end: 16 })
+    expect(blockSpanLines([a, b], b, 50)).toEqual({ start: 16, end: 50 })
+    // Buffer shrank (trim overflowed): degraded to what remains.
+    expect(blockSpanLines([a, b], a, 10)).toEqual({ start: 4, end: 10 })
+    // Block fully trimmed out: empty span (start === end).
+    const gone = block({ startRow: 0, marker: marker(0, true) })
+    expect(blockSpanLines([gone], gone, 10)).toEqual({ start: 10, end: 10 })
+  })
+
+  it('blockForSelection resolves spans through markers (trim drift)', () => {
+    const a = block({ startRow: 0, marker: marker(30), endRow: 40, finished: true })
+    const b = block({ startRow: 40, marker: marker(45) })
+    // Row indices drifted (scrollback trimmed), markers still accurate.
+    expect(blockForSelection([a, b], 30)!.id).toBe(a.id)
+    expect(blockForSelection([a, b], 44)!.id).toBe(b.id)
+    expect(blockForSelection([a, b], 45)!.id).toBe(b.id)
+    // A trimmed block is never attributed (its rows are gone).
+    const gone = block({ startRow: 0, marker: marker(0, true) })
+    expect(blockForSelection([gone], 0)).toBeNull()
+    expect(blockForSelection([gone], 5)).toBeNull()
+  })
+
+  it('blockOutputText honors marker-resolved boundaries and endRow', () => {
+    const buf = buffer(['@ ~ old rows', '@ ~ npm test', '✓ 3 passed', '@ ~ git status'])
+    const moved = block({ startRow: 0, marker: marker(1), endRow: 3, finished: true })
+    // The echo row is now line 1 (marker), output starts at 2.
+    expect(blockOutputText(buf, moved)).toBe('✓ 3 passed')
+    // endRow override (marker-resolved closed span).
+    expect(blockOutputText(buf, block({ startRow: 1, endRow: 3 }), '', 3)).toBe('✓ 3 passed')
+  })
+
+  it('the tracker fires onSubmit per block and disposes dropped markers on cap', () => {
+    const submitted: TerminalBlock[] = []
+    const disposes: ReturnType<typeof vi.fn>[] = []
+    const tracker = new TerminalBlockTracker((b) => {
+      const dispose = vi.fn()
+      disposes.push(dispose)
+      b.marker = { line: b.startRow, isDisposed: false, dispose }
+      submitted.push(b)
+    })
+    for (let i = 0; i < BLOCK_KEEP + 3; i++) tracker.onData(`c${i}\r`, i + 1)
+    expect(submitted).toHaveLength(BLOCK_KEEP + 3)
+    expect(submitted.at(-1)!.marker).toBeDefined()
+    // Dropped blocks' markers were disposed (only the survivors stay).
+    expect(disposes).toHaveLength(BLOCK_KEEP + 3)
+    disposes.slice(0, 3).forEach(dispose => expect(dispose).toHaveBeenCalledTimes(1))
+    disposes.slice(3).forEach(dispose => expect(dispose).not.toHaveBeenCalled())
   })
 })

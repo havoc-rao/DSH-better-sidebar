@@ -35,6 +35,18 @@ export interface TerminalBlockBuffer {
   getLine(y: number): TerminalBlockLine | undefined
 }
 
+/** A row anchor that survives scrollback trimming and reflow (matches
+ *  xterm's IMarker — `registerMarker(0)` anchors the cursor's row). The
+ *  VIEW attaches one to a block right after its submit; the tracker itself
+ *  never creates markers, keeping the framework xterm-free. */
+export interface TerminalBlockMarker {
+  /** The current buffer row of the anchor. */
+  readonly line: number
+  /** True once the anchor's row was trimmed out of the buffer. */
+  readonly isDisposed: boolean
+  dispose(): void
+}
+
 /** How many finished blocks the tracker keeps (older ones drop off). */
 export const BLOCK_KEEP = 32
 
@@ -51,12 +63,18 @@ export interface TerminalBlock {
    *  closes the span when the next command submits. */
   endRow: number | null
   finished: boolean
+  /** The live anchor of the echo row (attached by the view right after the
+   *  submit; {@link blockStartLine} prefers it over the index-based
+   *  `startRow`, which drifts when the scrollback trims). */
+  marker?: TerminalBlockMarker
 }
 
 /**
  * Segments the terminal's input stream into blocks. Feed every onData chunk
  * (with the buffer length at that moment) — submits, pending text and the
- * block list all derive from it.
+ * block list all derive from it. The optional `onSubmit` callback fires
+ * right after a block is created — the view uses it to attach the xterm
+ * marker anchoring the echo row — keeping the framework xterm-free.
  */
 export class TerminalBlockTracker {
   private _mode: 0 | 1 | 2 | 3 = 0
@@ -64,6 +82,11 @@ export class TerminalBlockTracker {
   private _blocks: TerminalBlock[] = []
   private _current: TerminalBlock | null = null
   private _nextId = 1
+  private readonly _onSubmit: ((block: TerminalBlock) => void) | undefined
+
+  constructor(onSubmit?: (block: TerminalBlock) => void) {
+    this._onSubmit = onSubmit
+  }
 
   /** All tracked blocks, oldest first (capped at {@link BLOCK_KEEP}). */
   get blocks(): readonly TerminalBlock[] {
@@ -131,31 +154,84 @@ export class TerminalBlockTracker {
     }
     this._blocks.push(block)
     if (this._blocks.length > BLOCK_KEEP) {
-      this._blocks.splice(0, this._blocks.length - BLOCK_KEEP)
+      const dropped = this._blocks.splice(0, this._blocks.length - BLOCK_KEEP)
+      for (const old of dropped) {
+        if (old.marker !== undefined && !old.marker.isDisposed) old.marker.dispose()
+      }
     }
     this._current = block
+    this._onSubmit?.(block)
   }
 }
 
 /**
- * The plain-text rows of a block's output: `[startRow+1, end)` where the
- * echo row (prompt + command) is skipped — the payload's fence header
- * carries the command instead. Wrapped rows re-join without a newline,
- * trailing blank rows (prompt stamps, empty lines) are stripped, and a
- * trailing row that still ends with the *pending* next command (the shell
- * echoes while the user types) is peeled off so a half-typed command never
- * leaks into the payload. Best-effort by design: reply races (a pasted
- * Enter landing before its echo) and prompt redraws shift the anchor a
- * little, never worse than a misplaced boundary line.
+ * The live buffer row a block's echo row currently sits on: the marker's
+ * line when one was attached (markers slide with scrollback trims and
+ * reflows), the index-based `startRow` when no marker exists (never
+ * attached). A DISPOSED marker means the echo row was trimmed out of the
+ * buffer entirely — the block's rows are gone, so it resolves to
+ * +Infinity, which every consumer treats as "not present".
+ */
+export function blockStartLine(block: TerminalBlock): number {
+  if (block.marker === undefined) return block.startRow
+  return block.marker.isDisposed ? Number.POSITIVE_INFINITY : block.marker.line
+}
+
+/**
+ * The buffer row where a block's span ENDS (exclusive): the next block's
+ * start line, or Infinity for the newest block (its span runs to the live
+ * buffer end).
+ */
+export function blockEndLine(
+  blocks: readonly TerminalBlock[],
+  block: TerminalBlock,
+): number {
+  const index = blocks.indexOf(block)
+  if (index === -1 || index >= blocks.length - 1) return Infinity
+  return blockStartLine(blocks[index + 1]!)
+}
+
+/**
+ * The clipped visible span of a block: `{ start, end }` with end exclusive,
+ * both clamped into `[0, bufferLength]` (rows trimmed away or an alt-buffer
+ * swap shrink the buffer; the span then degrades gracefully to what remains).
+ */
+export function blockSpanLines(
+  blocks: readonly TerminalBlock[],
+  block: TerminalBlock,
+  bufferLength: number,
+): { start: number; end: number } {
+  const endLine = blockEndLine(blocks, block)
+  const end = Math.min(Number.isFinite(endLine) ? endLine : bufferLength, bufferLength)
+  return {
+    start: Math.min(Math.max(blockStartLine(block), 0), bufferLength),
+    end,
+  }
+}
+
+/**
+ * The plain-text rows of a block's output: `[start+1, end)` where the echo
+ * row (prompt + command) is skipped — the payload's fence header carries the
+ * command instead, and the span itself resolves through the block's live
+ * marker when available. Wrapped rows re-join without a newline, trailing
+ * blank rows (prompt stamps, empty lines) are stripped, and a trailing row
+ * that still ends with the *pending* next command (the shell echoes while
+ * the user types) is peeled off so a half-typed command never leaks into
+ * the payload. Best-effort by design: reply races (a pasted Enter landing
+ * before its echo) and prompt redraws shift the anchor a little, never
+ * worse than a misplaced boundary line. `endRow` overrides the closed-span
+ * boundary (callers resolve it marker-aware via {@link blockSpanLines});
+ * the open block always runs to the live buffer end.
  */
 export function blockOutputText(
   buffer: TerminalBlockBuffer,
   block: TerminalBlock,
   pending = '',
+  endRow?: number,
 ): string {
   const length = buffer.length
-  const from = Math.min(Math.max(block.startRow + 1, 0), length)
-  const end = Math.min(block.endRow ?? length, length)
+  const from = Math.min(Math.max(blockStartLine(block) + 1, 0), length)
+  const end = Math.min(endRow ?? block.endRow ?? length, length)
   if (end <= from) return ''
   let text = ''
   let first = true
@@ -182,8 +258,10 @@ export function blockOutputText(
 
 /**
  * The block containing a buffer row (1-based xterm coordinates become
- * 0-based here), newest first: returns null when the row predates all
- * tracked blocks — the header then falls back to a bare fence.
+ * 0-based here), newest first — spans resolve through the blocks' live
+ * markers, so the attribution stays correct after scrollback trims. Returns
+ * null when the row predates all tracked blocks — the header then falls
+ * back to a bare fence.
  */
 export function blockForSelection(
   blocks: readonly TerminalBlock[],
@@ -193,8 +271,16 @@ export function blockForSelection(
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i]
     if (block === undefined) continue
-    if (block.startRow > bufferRow) continue
-    if (block.endRow === null || bufferRow < block.endRow) return block
+    if (blockStartLine(block) > bufferRow) continue
+    if (i < blocks.length - 1) {
+      if (bufferRow >= blockStartLine(blocks[i + 1]!)) continue
+    } else if (block.endRow !== null && bufferRow >= block.endRow) {
+      // Defensive: the tracker only closes a block when a NEXT one exists,
+      // but a synthetic last-and-finished block must not own rows past its
+      // closed span either.
+      continue
+    }
+    return block
   }
   return null
 }
