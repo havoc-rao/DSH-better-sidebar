@@ -3686,7 +3686,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tocBar {
   position: sticky;
   top: 0;
-  z-index: 3;
+  /* Above the DSH CodeBlock banner: the host's CodeBlock.module.css gives
+     .bannerWrap `position: sticky; top: 0; z-index: 6`, so a code fence at
+     the top of the scrollport pins its opaque header right under the TOC
+     button and would otherwise paint over it. The TOC chrome is the
+     topmost layer inside the preview scrollport. */
+  z-index: 8;
   display: flex;
   justify-content: flex-end;
   height: 0;
@@ -3710,7 +3715,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .tocButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  /* Border-based hover, not a fill: the button floats over the DSH code
+     banner's copy button, and the translucent interactive-bg-hover fill
+     let the copy button show through. */
+  border-color: var(--dsw-alias-border-l2);
   color: var(--dsw-alias-label-primary);
 }
 

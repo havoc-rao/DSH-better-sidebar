@@ -97,7 +97,16 @@ async function seedSession(): Promise<void> {
   // The README-style probe file: raw-HTML runs (badge wall div with an
   // embedded script, a <details> nesting a fence + heading) plus inline tags
   // inside a table cell. The script must be sanitized away in the preview.
+  // The document OPENS with a code fence: its sticky banner pins at the top
+  // of the preview scrollport, exactly under the pinned TOC button — the
+  // TOC probe below proves the button stays the topmost element there
+  // (regression: the DSH CodeBlock banner's sticky header used to paint
+  // over the TOC bar because its z-index 6 beat the bar's 3).
   writeFileSync(join(WORKSPACE_PATH, SEEDED_README_FILE), [
+    '```ts',
+    'export const tocStaysOnTop = true',
+    '```',
+    '',
     '# Readme Style',
     '',
     '<div align="center">',
@@ -579,13 +588,27 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     sidebar.locator('a[href="https://example.com/def"]'),
     'reference links must resolve across lifted HTML runs',
   ).toHaveCount(1, { timeout: 30_000 })
-  // TOC: the outline button appears (4 headings), opens the panel, and
-  // jumping into the collapsed details expands it.
+  // TOC: the outline button appears (4 headings), must stay the topmost
+  // element over the leading code fence's sticky banner, opens the panel,
+  // and jumping into the collapsed details expands it.
   const tocButton = sidebar.locator('[data-dsh-md-toc]')
   await expect(
     tocButton,
     'the TOC button must appear once the document has enough headings',
   ).toHaveCount(1, { timeout: 30_000 })
+  // The seed document opens with a code fence, so its sticky header is
+  // pinned under the TOC button right from the top of the preview. The
+  // button's center must hit-test back to the button (regression: the DSH
+  // banner's sticky z-index 6 used to paint over the TOC bar's 3).
+  await expect
+    .poll(async () => tocButton.evaluate((el) => {
+      const rect = el.getBoundingClientRect()
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+      return hit === el || (hit !== null && el.contains(hit))
+    }), {
+      message: 'the TOC button must be the topmost element at its center (not covered by the code banner)',
+    })
+    .toBe(true)
   await tocButton.click()
   const tocPanel = sidebar.locator('[data-dsh-md-toc-panel]')
   await expect(tocPanel, 'the TOC panel must open').toHaveCount(1)
