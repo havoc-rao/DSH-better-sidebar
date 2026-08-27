@@ -438,14 +438,21 @@ function buildApi(
     },
     'git.log-graph': async (payload) => {
       const { cwd } = cwdOf(payload)
-      const record = payload as { count?: unknown; skip?: unknown }
+      const record = payload as { count?: unknown; skip?: unknown; worktree?: unknown }
       const count = typeof record.count === 'number' && Number.isInteger(record.count) && record.count > 0
         ? record.count
         : undefined
       const skip = typeof record.skip === 'number' && Number.isInteger(record.skip) && record.skip >= 0
         ? record.skip
         : undefined
-      return git.graphLog(cwd, count, skip)
+      // Optional checkout pin (linked worktree path); an empty/missing value
+      // resolves to the session cwd via git.graphLog's resolveWorktree seam
+      // (the same allowlist that keeps every other git.* route from being
+      // aimed at an unrelated repository).
+      const worktree = typeof record.worktree === 'string' && record.worktree !== ''
+        ? record.worktree
+        : undefined
+      return git.graphLog(cwd, count, skip, worktree)
     },
     'git.commit-diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)

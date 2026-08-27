@@ -248,11 +248,15 @@ export const api = {
       ...(skip !== undefined ? { skip } : {}),
     }), signal),
   /** Recent commit history WITH parent hashes (topo-ordered, for the graph
-   *  view's lane layout); pageable like {@link gitLog}. */
-  gitLogGraph: (scope: SessionScope, count?: number, skip?: number, signal?: AbortSignal) =>
+   *  view's lane layout); pageable like {@link gitLog}. Pinning a linked
+   *  `worktree` keeps the lane graph for the linked checkout (was previously
+   *  a flat single-column fallback — losing parents meant the layout
+   *  collapsed, breaking the MR/merge-request review scenarios). */
+  gitLogGraph: (scope: SessionScope, count?: number, skip?: number, worktree?: string, signal?: AbortSignal) =>
     call<GitGraphEntry[]>('git.log-graph', scopePayload(scope, {
       ...(count !== undefined ? { count } : {}),
       ...(skip !== undefined ? { skip } : {}),
+      ...(worktree !== undefined ? { worktree } : {}),
     }), signal),
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>

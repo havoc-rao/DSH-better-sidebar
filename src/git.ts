@@ -501,9 +501,18 @@ export async function log(cwd: string, count = 30, skip = 0, selected?: string):
  * (the lane layout algorithm's precondition), at the cost of a less strictly
  * chronological order when branches diverge — which is the conventional
  * arrangement for a commit graph (parallel branches stay visually grouped).
+ *
+ * `worktree` may pin the log to one of the repo's linked checkouts (passed
+ * through `resolveWorktree`'s allowlist — a caller cannot point this seam at
+ * an unrelated repository). The previous behavior — falling back to
+ * `parents: []` for linked worktrees — collapsed the lane graph to a single
+ * column because the plain `git.log` route has no parent info; the host now
+ * supports `git.log-graph` for every checkout so the panel keeps its lane
+ * structure even when an MR review toggles the worktree selector.
  */
-export async function graphLog(cwd: string, count = 30, skip = 0): Promise<GitGraphEntry[]> {
-  const raw = await runGit(cwd, [
+export async function graphLog(cwd: string, count = 30, skip = 0, worktree?: string): Promise<GitGraphEntry[]> {
+  const targetCwd = await resolveWorktree(cwd, worktree)
+  const raw = await runGit(targetCwd, [
     'log', '-n', String(count), '--skip', String(skip), '--topo-order', '--decorate=short',
     '--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ai%x1f%D',
   ])

@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { parseWorktreeList, resolveWorktree, status, worktrees } from '../src/git.ts'
+import { graphLog, parseWorktreeList, resolveWorktree, status, worktrees } from '../src/git.ts'
 
 const IDENTITY = {
   GIT_AUTHOR_NAME: 'dsh-better-sidebar-test',
@@ -92,6 +92,56 @@ describe('linked Git worktrees', () => {
       await expect(resolveWorktree(main, agentPath)).rejects.toThrow('unknown linked worktree')
     } finally {
       try { git(main, ['worktree', 'remove', '--force', agent]) } catch { /* fixture may not be fully initialized */ }
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('graphLog populates parents when pinned to a linked checkout (MR scenario)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-graph-worktree-'))
+    const main = join(root, 'main')
+    const feature = join(root, 'feature worktree')
+    try {
+      // Build an MR-shaped fixture: main has commits, a feature worktree
+      // forks off and adds commits, then merges back into main via a
+      // --no-ff merge. The merge is the key data point: it must carry
+      // TWO parents and drive the merge arc the lane graph was missing.
+      git(root, ['init', '-q', main])
+      git(main, ['checkout', '-q', '-b', 'main'])
+      writeFileSync(join(main, 'main.txt'), 'main\n')
+      git(main, ['add', '-A'])
+      git(main, ['commit', '-q', '-m', 'base'])
+      writeFileSync(join(main, 'main2.txt'), 'main2\n')
+      git(main, ['add', '-A'])
+      git(main, ['commit', '-q', '-m', 'main ahead'])
+      git(main, ['worktree', 'add', '-q', '-b', 'feature', feature])
+      writeFileSync(join(feature, 'feature.txt'), 'feature\n')
+      git(feature, ['add', '-A'])
+      git(feature, ['commit', '-q', '-m', 'feature commit'])
+      git(main, ['merge', '--no-ff', '-m', 'merge feature into main', 'feature'])
+
+      const fromMain = await graphLog(main)
+      expect(fromMain.length).toBeGreaterThanOrEqual(4)
+      expect(fromMain[0]!.hashFull).toMatch(/^[0-9a-f]{40}$/)
+      // The freshest commit on main is the merge — it MUST carry TWO parents
+      // (the previous main tip + the feature tip). That parent data is what
+      // the lane layout needs to render the fork/merge arc the screenshot
+      // was missing (a flat single-column graph when parents came back as []).
+      expect(fromMain[0]!.parents).toHaveLength(2)
+
+      const featurePath = realpathSync(feature)
+      const fromFeature = await graphLog(main, 30, 0, featurePath)
+      expect(fromFeature.length).toBeGreaterThanOrEqual(3)
+      // Pinned to the feature checkout, the feature tip still has its
+      // single parent (main's previous tip) — i.e. parents survive the
+      // resolveWorktree → git -C <worktree> indirection exactly as the
+      // non-worktree path produces them.
+      expect(fromFeature[0]!.parents).toHaveLength(1)
+
+      // resolveWorktree refuses unrelated paths so the route cannot be aimed
+      // at an arbitrary directory. graphLog must propagate the same guard.
+      await expect(graphLog(main, 30, 0, root)).rejects.toThrow('unknown linked worktree')
+    } finally {
+      try { git(main, ['worktree', 'remove', '--force', feature]) } catch { /* fixture may not be fully initialized */ }
       rmSync(root, { recursive: true, force: true })
     }
   })

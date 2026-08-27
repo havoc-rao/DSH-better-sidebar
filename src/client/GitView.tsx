@@ -14,7 +14,7 @@ import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconSparkle16, IconTrashOutline16, Input, Menu, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitGraphEntry, GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
+import type { GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api, SidebarApiError } from './api.ts'
 import { notifyGitStatusChanged } from './git-status.ts'
 import { GitGraphSvg } from './GitGraph.tsx'
@@ -93,21 +93,19 @@ interface ConfirmState {
  *  floods the panel at once (the end of the log is reached by paging). */
 const LOG_BATCH = 20
 
-/** One history page for the given scope. The graph route (`git.log-graph`)
- *  has no linked-worktree scope, so a selected linked checkout pages through
- *  the plain log instead (rows lose their lane parents — a flat lane). */
+/** One history page for the given scope. The graph route now also
+ *  accepts the selected linked worktree (resolveWorktree enforces the
+ *  allowlist on the host), so we route BOTH branches through it and keep
+ *  parents on every row — without parents the lane layout collapses to a
+ *  single column, exactly the symptom we saw when an MR review toggled the
+ *  worktree selector onto a dirty linked checkout. */
 const historyPage = async (
   scope: SessionScope,
   count: number,
   skip: number,
   worktree: string | undefined,
-): Promise<GitGraphEntry[]> => {
-  if (worktree === undefined) {
-    return api.gitLogGraph(scope, count, skip).catch(() => [] as GitGraphEntry[])
-  }
-  return (await api.gitLog(scope, count, skip, worktree).catch(() => [] as GitLogEntry[]))
-    .map(row => ({ ...row, parents: [] as string[] }))
-}
+): Promise<GitGraphEntry[]> =>
+  api.gitLogGraph(scope, count, skip, worktree).catch(() => [] as GitGraphEntry[])
 
 export function GitView(props: {
   scope: SessionScope

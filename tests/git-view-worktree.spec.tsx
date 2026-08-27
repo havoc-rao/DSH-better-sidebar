@@ -10,7 +10,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { GitView } from '../src/client/GitView.tsx'
-import { api, type GitLogEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
+import { api, type GitGraphEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -28,7 +28,7 @@ function statusFor(target?: string): GitStatusResult {
     : { isRepo: true, branch: 'main', entries: [{ path: 'main-change.ts', xy: ' M' }] }
 }
 
-function logFor(target?: string, index = 0): GitLogEntry[] {
+function logFor(target?: string, index = 0): GitGraphEntry[] {
   const agent = target === AGENT
   const digit = agent ? 'a' : 'b'
   const suffix = index.toString(16).padStart(8, '0')
@@ -39,6 +39,11 @@ function logFor(target?: string, index = 0): GitLogEntry[] {
     author: 'Test',
     date: '2026-08-20 00:00:00 +0800',
     refs: agent ? 'HEAD -> agent' : 'HEAD -> main',
+    // GitGraphEntry requires parents; the lane algorithm treats the empty
+    // list as a single-column chain (every commit on col 0). The graph
+    // controller is therefore happy with [] and the assertions below stay
+    // focused on the worktree-selection consistency they were meant to guard.
+    parents: [],
   }]
 }
 
@@ -46,6 +51,9 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolvePromise!: (value: T) => void
   const promise = new Promise<T>((resolve) => { resolvePromise = resolve })
   return { promise, resolve: resolvePromise }
+}
+function lateGraphPage(): GitGraphEntry[] {
+  return logFor(AGENT, 99)
 }
 
 async function flushEffects(): Promise<void> {
@@ -63,7 +71,9 @@ describe('GitView linked-worktree consistency', () => {
       current: target === AGENT ? 'agent' : 'main',
       names: target === AGENT ? ['agent'] : ['main'],
     }))
-    const log = vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
+    const log = vi.spyOn(api, 'gitLogGraph').mockImplementation(
+      async (_scope, _count, _skip, worktree) => logFor(worktree),
+    )
 
     const container = document.createElement('div')
     document.body.append(container)
@@ -88,6 +98,8 @@ describe('GitView linked-worktree consistency', () => {
       expect(container.textContent).toContain('Agent checkout commit')
       expect(container.textContent).not.toContain('Main checkout commit')
       expect(branch).toHaveBeenCalledWith(expect.anything(), AGENT)
+      // gitLogGraph is now the single history route — its worktree arg pins
+      // the same checkout every other git.* call landed on.
       expect(log).toHaveBeenCalledWith(expect.anything(), 20, 0, AGENT)
 
       await act(async () => {
@@ -109,16 +121,16 @@ describe('GitView linked-worktree consistency', () => {
   })
 
   it('drops a late history page when the selected worktree changes', async () => {
-    const lateAgentPage = deferred<GitLogEntry[]>()
+    const lateAgentPage = deferred<GitGraphEntry[]>()
     vi.spyOn(api, 'gitWorktrees').mockResolvedValue(inventories)
     vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
     vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
       current: target === AGENT ? 'agent' : 'main',
       names: target === AGENT ? ['agent'] : ['main'],
     }))
-    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, skip, target) => {
-      if (target === AGENT && skip === 20) return lateAgentPage.promise
-      if (target === AGENT) return Array.from({ length: 20 }, (_value, index) => logFor(AGENT, index)[0]!)
+    vi.spyOn(api, 'gitLogGraph').mockImplementation(async (_scope, _count, skip, worktree) => {
+      if (worktree === AGENT && skip === 20) return lateAgentPage.promise
+      if (worktree === AGENT) return Array.from({ length: 20 }, (_value, index) => logFor(AGENT, index)[0]!)
       return logFor(MAIN)
     })
 
@@ -149,7 +161,7 @@ describe('GitView linked-worktree consistency', () => {
       await flushEffects()
       expect(container.textContent).toContain('Main checkout commit 0')
 
-      lateAgentPage.resolve(logFor(AGENT, 99))
+      lateAgentPage.resolve(lateGraphPage())
       await flushEffects()
       expect(container.textContent).toContain('Main checkout commit 0')
       expect(container.textContent).not.toContain('Agent checkout commit 99')
