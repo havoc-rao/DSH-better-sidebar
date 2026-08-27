@@ -26,7 +26,7 @@ import {
   registerPanelHotkeys,
   type HotkeyEventLike,
 } from '../src/client/hotkeys.ts'
-import { createSidebarStore, type SidebarStore } from '../src/client/state.ts'
+import { createSidebarStore, toggleRightMaximized, type SidebarStore } from '../src/client/state.ts'
 
 /** A bare event-like object for the pure matcher (no DOM needed). */
 function like(overrides: Partial<HotkeyEventLike>): HotkeyEventLike {
@@ -271,6 +271,43 @@ describe('registerPanelHotkeys — the native path', () => {
     input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, altKey: true, shiftKey: true }))
     expect(seen).toEqual(['document:keydown', 'document:keydown'])
     expect(leftSpy).not.toHaveBeenCalled()
+  })
+
+  it('⌘B inside IDE FULLSCREEN toggles the EXPLORER drawer — the host sidebar is never touched', () => {
+    dispose = registerPanelHotkeys(store, leftSpy)
+    // Enter IDE fullscreen: the left explorer drawer defaults EXPANDED.
+    store.reduce(toggleRightMaximized)
+    expect(store.getSnapshot().state?.rightMaximized).toBe(true)
+    expect(store.getSnapshot().state?.sideBarOpen).toBe(true)
+
+    input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true }))
+    expect(store.getSnapshot().state?.sideBarOpen).toBe(false)
+    expect(leftSpy).not.toHaveBeenCalled()
+    expect(seen).toEqual([])
+
+    input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true }))
+    expect(store.getSnapshot().state?.sideBarOpen).toBe(true)
+  })
+
+  it('⌘⇧B toggles the IDE chat column inside fullscreen and passes through outside it', () => {
+    dispose = registerPanelHotkeys(store, leftSpy)
+    // Outside IDE mode the chord is unbound: the document bubble sees it.
+    input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }))
+    expect(seen).toEqual(['document:keydown'])
+
+    // Inside IDE fullscreen it collapses the right column…
+    store.reduce(toggleRightMaximized)
+    input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }))
+    expect(store.getSnapshot().state?.chatOpen).toBe(false)
+    expect(seen).toEqual(['document:keydown']) // consumed at capture phase
+    // …and a second press expands it again.
+    input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }))
+    expect(store.getSnapshot().state?.chatOpen).toBe(true)
+
+    // Exiting restores the passthrough.
+    store.reduce(toggleRightMaximized)
+    input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }))
+    expect(seen).toEqual(['document:keydown', 'document:keydown'])
   })
 
   it('each panel toggles independently (⌘J then ⌘⌥B leaves both flipped)', () => {

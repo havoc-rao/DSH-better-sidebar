@@ -33,6 +33,7 @@ import { clampChatWidth, CHAT_WIDTH_DEFAULT, setChatWidth, type SidebarStore, ty
 import { SideChatView } from './SideChatView.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { t } from './locales.ts'
+import { panelHotkeyHint } from './hotkeys.ts'
 import type { SessionScope } from './api.ts'
 import css from './sidebar.module.css'
 
@@ -131,7 +132,7 @@ export function SideChatPane(props: {
       )}
       <div className={css.chatHeader}>
         <span className={css.chatHeaderTitle}>{t('sideChat')}</span>
-        <Tooltip label={t('sideChatCollapse')} side="bottom" delayMs={500}>
+        <Tooltip label={`${t('sideChatCollapse')} (${panelHotkeyHint('chat')})`} side="bottom" delayMs={500}>
           <button
             type="button"
             className={css.chatCollapse}

@@ -28,9 +28,11 @@ import { IconSwapSides16 } from './icons.tsx'
 import css from './sidebar.module.css'
 
 /** The platform-aware shortcut hints shown in the icon tooltips (⌘⇧E / ⌘⇧G,
- *  matching the builtin view-switch keybindings). */
+ *  matching the builtin view-switch keybindings). The IDE chat-column toggle
+ *  carries ⌘⇧B — its hotkey exists only inside IDE FULLSCREEN. */
 const EXPLORER_HINT = keySpecLabel(parseKeySpec('Cmd+Shift+E'))
 const GIT_HINT = keySpecLabel(parseKeySpec('Cmd+Shift+G'))
+const CHAT_HINT = keySpecLabel(parseKeySpec('Cmd+Shift+B'))
 
 /** One iconized launcher derived from a tab descriptor. */
 interface ActivityIcon {
@@ -120,8 +122,12 @@ export function ActivityBar(props: {
             ? (chatOpen === true)
             : icon.id === activeType
         // The styled hover tooltip (the corner toggles' look): the explorer /
-        // git icons also carry their view-switch shortcut hint.
-        const hint = isExplorer ? EXPLORER_HINT : icon.id === 'git' ? GIT_HINT : undefined
+        // git / (IDE) chat icons also carry their shortcut hint.
+        const hint = isExplorer
+          ? EXPLORER_HINT
+          : isChat
+            ? CHAT_HINT
+            : icon.id === 'git' ? GIT_HINT : undefined
         return (
           <Tooltip
             key={icon.id}

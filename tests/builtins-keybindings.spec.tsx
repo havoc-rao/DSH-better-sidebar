@@ -14,7 +14,7 @@
  * - both yield while a + menu is open (no stealing inside the menu).
  */
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { registerBuiltinKeybindings } from '../src/client/builtins/keybindings.ts'
 import {
   KeybindingRuntime,
@@ -240,6 +240,84 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
       state = store.getSnapshot().state!
       expect(state.panelOpen).toBe(true)
       expect(state.rightMaximized).toBe(false)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘B inside IDE FULLSCREEN toggles the EXPLORER drawer — the host sidebar is never touched', () => {
+    const { store, runtime, dispose, ctx } = setup()
+    try {
+      // Pin the host-toggle spy: the IDE branch must RE-ROUTE ⌘B to the IDE
+      // window's own left column instead of the host (which sits behind the
+      // fullscreen cover — a host toggle would be invisible).
+      const get = vi.fn(() => undefined)
+      ;(ctx as unknown as { get: (name: string) => unknown }).get = get
+      // Enter IDE fullscreen: the left explorer drawer defaults EXPANDED.
+      store.reduce(toggleRightMaximized)
+      expect(store.getSnapshot().state?.rightMaximized).toBe(true)
+      expect(store.getSnapshot().state?.sideBarOpen).toBe(true)
+
+      // First press COLLAPSES the left column ("左侧 sider 收起" in the IDE)…
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true }))).toBe(true)
+      expect(store.getSnapshot().state?.sideBarOpen).toBe(false)
+      expect(get).not.toHaveBeenCalled()
+
+      // …a second press EXPANDS it again (a toggle, like the drawer icon /
+      // ⌘⇧E — never a one-way collapse).
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true }))).toBe(true)
+      expect(store.getSnapshot().state?.sideBarOpen).toBe(true)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘⇧B toggles the IDE chat column INSIDE fullscreen and passes through outside it', () => {
+    const { store, runtime, dispose } = setup()
+    try {
+      const chatOpen = (): boolean | undefined => store.getSnapshot().state?.chatOpen
+      // Outside IDE mode the chord is unbound: not consumed, no state change.
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBe(false)
+      expect(chatOpen()).toBe(true) // the column defaults expanded
+
+      store.reduce(toggleRightMaximized)
+      expect(store.getSnapshot().state?.rightMaximized).toBe(true)
+      expect(chatOpen()).toBe(true) // entering defaults the column expanded
+
+      // First press COLLAPSES the right column ("右侧收起" in the IDE)…
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBe(true)
+      expect(chatOpen()).toBe(false)
+      // …a second press EXPANDS it again.
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBe(true)
+      expect(chatOpen()).toBe(true)
+
+      // Exiting the IDE restores the passthrough (⌘⇧B is a host/page key
+      // outside the mode — the runtime must not swallow it).
+      store.reduce(toggleRightMaximized)
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBe(false)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘⇧J inside IDE FULLSCREEN expands the docked bottom box upward (maximize / restore)', () => {
+    const { store, runtime, dispose } = setup()
+    try {
+      // Inside IDE mode the bottom workbench docks BELOW the editor tabs;
+      // ⌘⇧J maximizes it — "下侧 box 向上展开".
+      store.reduce(toggleRightMaximized)
+      expect(store.getSnapshot().state?.bottomMaximized).toBe(false)
+
+      expect(runtime.dispatch(like({ code: 'KeyJ', metaKey: true, shiftKey: true }))).toBe(true)
+      let state = store.getSnapshot().state!
+      expect(state.bottomOpen).toBe(true)
+      expect(state.bottomMaximized).toBe(true)
+
+      // The same key restores the drag height (the panel stays open).
+      expect(runtime.dispatch(like({ code: 'KeyJ', metaKey: true, shiftKey: true }))).toBe(true)
+      state = store.getSnapshot().state!
+      expect(state.bottomOpen).toBe(true)
+      expect(state.bottomMaximized).toBe(false)
     } finally {
       dispose()
     }

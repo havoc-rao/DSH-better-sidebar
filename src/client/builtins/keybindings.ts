@@ -2,9 +2,11 @@
  * The sidebar's built-in keybindings (v0.14.0+), registered through the ONE
  * shared keybinding runtime (see keybindings.ts):
  *
- * - panel toggles: ⌘B (host left sidebar) / ⌘⌥B (right panel) / ⌘J (bottom
- *   panel) / ⌘⇧J (maximize bottom) — the historical panel hotkeys, migrated
- *   onto the registry (panelToggleBindings in hotkeys.ts);
+ * - panel toggles: ⌘B (host left sidebar — inside IDE FULLSCREEN the IDE
+ *   window's own explorer drawer) / ⌘⌥B (right panel) / ⌘J (bottom panel)
+ *   / ⌘⇧J (maximize bottom) / ⌘⇧B (IDE FULLSCREEN only: the Side Chat
+ *   column) — the historical panel hotkeys, migrated onto the registry
+ *   (panelToggleBindings in hotkeys.ts);
  * - ⌘P / Ctrl+P — QUICK OPEN: expands the panel, ensures a files window
  *   (activating an existing path-less editor tab or minting a fresh home),
  *   and focuses its search box (type-ahead file open);
@@ -20,7 +22,11 @@
  *   `workbench.view.scm`): expands the panel and opens/focuses the git tab;
  * - ⌘⌥⇧B / Ctrl+Alt+Shift+B — TOGGLE IDE FULLSCREEN: the right panel covers
  *   the whole viewport (a standalone VSCode-window-like state); entering
- *   opens the panel, the exit button / same key restores the docked size;
+ *   opens the panel, the exit button / same key restores the docked size.
+ *   This is THE enter/exit hotkey of the mode — the other panel keys keep
+ *   their ordinary meanings inside it: ⌘B toggles the IDE's left explorer
+ *   drawer, ⌘⇧B toggles its right Side Chat column, ⌘⇧J maximizes the
+ *   docked bottom box;
  * - ⌘F / Ctrl+F — focuses the files search box when the active tab IS a
  *   files window (yields to the host otherwise — no blanket stealing);
  * - ⌘Tab / ⌘Shift+Tab — cycle next / previous tab of the active pane;

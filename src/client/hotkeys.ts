@@ -3,13 +3,20 @@
  *
  *   ⌘B      toggle the host app shell's LEFT sidebar (ui-layout's
  *           `ctx.layout.toggleSidebar()`) — VSCode's "View: Toggle Side Bar
- *           Visibility";
+ *           Visibility"; inside IDE FULLSCREEN (⌘⌥⇧B) the host sidebar sits
+ *           BEHIND the fullscreen cover, so ⌘B then toggles the IDE window's
+ *           own left column (the explorer drawer, `sideBarOpen`) instead;
  *   ⌘J      toggle the bottom panel — VSCode's "View: Toggle Panel";
  *   ⌘⇧J     toggle the bottom panel MAXIMIZED (fullscreen over the center
  *           column; closed opens fullscreen, fullscreen restores the drag
- *           height) — VSCode's "View: Toggle Maximized Panel";
+ *           height) — VSCode's "View: Toggle Maximized Panel". Inside IDE
+ *           FULLSCREEN the docked bottom box expands UPWARD the same way;
  *   ⌘⌥B     toggle the right sidebar — the plugin's own panel, Option held
- *           so the plain ⌘B stays the host sidebar's binding.
+ *           so the plain ⌘B stays the host sidebar's binding;
+ *   ⌘⇧B     INSIDE IDE FULLSCREEN ONLY: toggle the IDE window's right column
+ *           (the Side Chat column, `chatOpen`). Outside IDE mode the chord
+ *           is unbound and passes through to the page untouched (the shift
+ *           guard below) — only ⌘⇧J carries Shift outside the mode.
  *
  * The listener is document-CAPTURE (like the IME guard), so it wins against
  * React's delegated handlers and any inlined third-party keydown code; a
@@ -42,11 +49,11 @@ import {
   type KeybindingDescriptor,
   type SidebarKeybindingContext,
 } from './keybindings.ts'
-import { activeTabOf, toggleBottomMaximized, toggleBottomPanel, togglePanel, type SidebarStore } from './state.ts'
+import { activeTabOf, setChatOpen, setSideBarOpen, toggleBottomMaximized, toggleBottomPanel, togglePanel, type SidebarStore } from './state.ts'
 import { t } from './locales.ts'
 
 /** The panel a matched shortcut toggles. */
-export type PanelHotkeyTarget = 'left' | 'right' | 'bottom' | 'maximize' | 'ide'
+export type PanelHotkeyTarget = 'left' | 'right' | 'bottom' | 'maximize' | 'ide' | 'chat'
 
 /** The subset of KeyboardEvent the matcher reads (pure: testable without DOM). */
 export interface HotkeyEventLike {
@@ -118,13 +125,35 @@ export function panelToggleBindings(store: SidebarStore, toggleLeftSidebar: () =
       id: 'builtin:toggle-left-sidebar',
       title: () => t('hotkeyToggleLeftSidebar'),
       key: 'Cmd+B',
-      run: () => { toggleLeftSidebar() },
+      run: (event, context) => {
+        // IDE FULLSCREEN: the host's left sidebar sits BEHIND the fullscreen
+        // cover (toggling it would be invisible), so ⌘B operates on the IDE
+        // window's own left column — the explorer drawer (`sideBarOpen`, the
+        // same toggle the Activity Bar icon / ⌘⇧E use). Outside the mode the
+        // host app shell's sidebar transition applies as always.
+        if (context.state?.rightMaximized === true) {
+          store.reduce(s => setSideBarOpen(s, !s.sideBarOpen))
+          return
+        }
+        toggleLeftSidebar()
+      },
     },
     {
       id: 'builtin:toggle-right-panel',
       title: () => t('hotkeyToggleRightPanel'),
       key: 'Cmd+Alt+B',
       run: () => { store.reduce(togglePanel) },
+    },
+    {
+      // IDE FULLSCREEN ONLY: ⌘⇧B toggles the right column of the IDE window
+      // (the Side Chat column). Outside the mode the chord is deliberately
+      // left unbound — it passes through to the page (the historical shift
+      // guard: only ⌘⇧J carries Shift) instead of stealing a host key.
+      id: 'builtin:toggle-ide-chat',
+      title: () => t('hotkeyToggleChatColumn'),
+      key: 'Cmd+Shift+B',
+      when: context => context.state?.rightMaximized === true,
+      run: () => { store.reduce(s => setChatOpen(s, !s.chatOpen)) },
     },
     {
       id: 'builtin:toggle-bottom-panel',
@@ -160,15 +189,16 @@ export function registerPanelHotkeys(store: SidebarStore, toggleLeftSidebar: () 
 
 /**
  * The display hint for one toggle shortcut (tooltip suffix). macOS spells
- * ⌘B / ⌘J / ⌘⇧J / ⌘⌥B / ⌘⌥⇧B; other platforms Ctrl+B / Ctrl+J /
- * Ctrl+Shift+J / Ctrl+Alt+B / Ctrl+Alt+Shift+B — all accepted by
- * {@link matchPanelHotkey} / the keybinding runtime.
+ * ⌘B / ⌘J / ⌘⇧J / ⌘⌥B / ⌘⌥⇧B / ⌘⇧B; other platforms Ctrl+B / Ctrl+J /
+ * Ctrl+Shift+J / Ctrl+Alt+B / Ctrl+Alt+Shift+B / Ctrl+Shift+B — all
+ * accepted by {@link matchPanelHotkey} / the keybinding runtime.
  */
 export function panelHotkeyHint(target: PanelHotkeyTarget): string {
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
   if (target === 'left') return mac ? '⌘B' : 'Ctrl+B'
   if (target === 'bottom') return mac ? '⌘J' : 'Ctrl+J'
   if (target === 'maximize') return mac ? '⌘⇧J' : 'Ctrl+Shift+J'
+  if (target === 'chat') return mac ? '⌘⇧B' : 'Ctrl+Shift+B'
   if (target === 'ide') return mac ? '⌘⌥⇧B' : 'Ctrl+Alt+Shift+B'
   return mac ? '⌘⌥B' : 'Ctrl+Alt+B'
 }

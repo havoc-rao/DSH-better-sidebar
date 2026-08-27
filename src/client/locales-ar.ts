@@ -431,6 +431,7 @@ export const ar: Record<string, string> = {
   hotkeyShowExplorer: '显示资源管理器',
   hotkeyShowGit: '打开源代码管理',
   hotkeyToggleBottomMaximized: '最大化底部面板',
+  hotkeyToggleChatColumn: '切换侧边对话列（IDE 模式）',
   hotkeyToggleBottomPanel: '切换底部面板',
   hotkeyToggleLeftSidebar: '切换左侧栏（主应用）',
   hotkeyToggleRightPanel: '切换右侧侧边栏',
