@@ -316,6 +316,8 @@ export const ko: Record<string, string> = {
   sideChatClose: '스레드 닫기',
   sideChatCloseTitle: '스레드의 agent를 해제합니다(기록은 유지)',
   sideChatError: '사이드 대화 오류: {message}',
+  sideChatCollapse: '사이드 채팅 접기',
+  sideChatExpand: '사이드 채팅 펼치기',
   jobs: '백그라운드 작업',
   jobsCount: '백그라운드 작업 {count}개',
   jobsCountRunning: '백그라운드 작업 {count}개 · {running} 실행 중',

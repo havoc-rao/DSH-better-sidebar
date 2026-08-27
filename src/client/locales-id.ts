@@ -322,6 +322,8 @@ export const id: Record<string, string> = {
   sideChatClose: 'Tutup thread',
   sideChatCloseTitle: 'Lepaskan agen thread (riwayat dipertahankan)',
   sideChatError: 'Kesalahan Side Chat: {message}',
+  sideChatCollapse: 'Ciutkan chat samping',
+  sideChatExpand: 'Perluas chat samping',
   jobs: 'Tugas latar',
   jobsCount: '{count} tugas latar',
   jobsCountRunning: '{count} tugas latar · {running} berjalan',

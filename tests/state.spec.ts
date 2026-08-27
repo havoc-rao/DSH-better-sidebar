@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-activateTab, allLeaves, areaOfTab, BOTTOM_DEFAULT, BOTTOM_MIN, closeFloatByTab, closeTab, createSidebarStore,
+activateTab, allLeaves, areaOfTab, BOTTOM_DEFAULT, BOTTOM_MIN, CHAT_WIDTH_DEFAULT, CHAT_WIDTH_MAX, CHAT_WIDTH_MIN, closeFloatByTab, closeTab, createSidebarStore,
   dockFloat, FLOAT_MIN_H, FLOAT_MIN_W, floatTab, floatWithTab, insertLeafAt, makeDefaultState,
   migrateBottomTabs, moveFloat, moveTab, moveTabToEdge, openDiffTab,
   openTabInActivePane, paneInArea, PANEL_DEFAULT, patchTab, raiseFloat, reconcileAgentTerminals, resizeFloat, resizeSplit,
-  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight, setTabPin,
+  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight, setChatOpen, setChatWidth, setTabPin,
   setSideBarView, setSideBarWidth, setSideBarOpen, splitPane, tabOpenIn, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized,
   type SidebarLeaf, type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
@@ -491,6 +491,47 @@ describe('sidebar state', () => {
     s = toggleRightMaximized(s)
     expect(s.rightMaximized).toBe(false)
     expect(s.sideBarOpen).toBe(true)
+  })
+
+  it('entering IDE fullscreen defaults the CHAT COLUMN expanded (the mode\'s conversation surface)', () => {
+    let s = { ...state(), chatOpen: false }
+    expect(s.chatOpen).toBe(false)
+    s = toggleRightMaximized(s)
+    expect(s.rightMaximized).toBe(true)
+    expect(s.chatOpen).toBe(true)
+    // A collapse inside the mode is the user's own choice — exiting keeps it.
+    s = toggleRightMaximized(setChatOpen(s, false))
+    expect(s.rightMaximized).toBe(false)
+    expect(s.chatOpen).toBe(false)
+  })
+
+  it('makeDefaultState seeds the chat column expanded at the default width', () => {
+    const s = makeDefaultState()
+    expect(s.chatOpen).toBe(true)
+    expect(s.chatWidth).toBe(CHAT_WIDTH_DEFAULT)
+  })
+
+  it('setChatOpen is a no-op for the same value and setChatWidth clamps to the contract', () => {
+    const s = state()
+    expect(setChatOpen(s, true)).toBe(s)
+    expect(setChatOpen(s, false).chatOpen).toBe(false)
+    expect(setChatWidth(s, 1).chatWidth).toBe(CHAT_WIDTH_MIN)
+    expect(setChatWidth(s, 9999).chatWidth).toBe(CHAT_WIDTH_MAX)
+    expect(setChatWidth(s, 350).chatWidth).toBe(350)
+  })
+
+  it('sanitizeState restores chat column fields leniently (later-build defaults)', () => {
+    const base = JSON.parse(JSON.stringify(makeDefaultState())) as Record<string, unknown>
+    // A pre-chat-column persisted state restores expanded at the default width.
+    const legacy = { ...base }
+    delete legacy.chatOpen
+    delete legacy.chatWidth
+    expect(sanitizeState(legacy)?.chatOpen).toBe(true)
+    expect(sanitizeState(legacy)?.chatWidth).toBe(CHAT_WIDTH_DEFAULT)
+    // Malformed values degrade to the defaults, valid ones clamp.
+    expect(sanitizeState({ ...base, chatOpen: false })?.chatOpen).toBe(false)
+    expect(sanitizeState({ ...base, chatWidth: 'wide' })?.chatWidth).toBe(CHAT_WIDTH_DEFAULT)
+    expect(sanitizeState({ ...base, chatWidth: 99999 })?.chatWidth).toBe(CHAT_WIDTH_MAX)
   })
 
   it('setBottomHeight clamps to the contract range', () => {

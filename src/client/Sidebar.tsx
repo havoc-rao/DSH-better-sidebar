@@ -38,7 +38,7 @@ import {
 BOTTOM_MIN, PANEL_MIN, activateTab, agentUuidOf, allLeaves, closeFloatByTab, closeTab, dockFloat, firstLeaf, floatTab,
   floatWithTab, isAgentTabId, isBoundTabId, isGlobalTabId, leafWithTab, migrateBottomTabs,
   moveFloat, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, raiseFloat, reconcileAgentTerminals,
-  resizeFloat, resizeSplitIn, setBottomHeight, setSideBarOpen, setTabPin, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized, treeOf,
+  resizeFloat, resizeSplitIn, setBottomHeight, setChatOpen, setSideBarOpen, setTabPin, setWidth, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel, toggleRightMaximized, treeOf,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode, type WorkspaceWindow,
 } from './state.ts'
 import { collectPinnedTabs, createPinnedVirtualTab, getPinnedHomeScope, injectPinnedIntoTree, isPinnedVirtualId, isPinnedVirtualTab, parsePinnedVirtualId, type PinnedTabEntry } from './pinned.ts'
@@ -65,6 +65,7 @@ import { relativeTo } from './paths.ts'
 import { OrphanedTab } from './OrphanedTab.tsx'
 import { ActivityBar } from './ActivityBar.tsx'
 import { SideBarPane } from './SideBarPane.tsx'
+import { SideChatPane } from './SideChatPane.tsx'
 import { openSidebarFile } from './intercept.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { tabContentCompare, type TabContentMemoKey } from './tab-content-memo.ts'
@@ -640,6 +641,28 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   const ideMode = !narrow && state !== undefined && state.rightMaximized
   const ideVscode = vscodeLayout || ideMode
   const sideBarLeft = ideVscode && (snapshot.prefs.sideBarSide === 'left' || ideMode)
+  /**
+   * The IDE-fullscreen chat column's mirrored tab: the ACTIVE pane's
+   * `sidechat` tab (the tab whose thread the column shows), or the pane's
+   * MOST RECENTLY OPENED sidechat tab when the active tab is not a chat
+   * (the column is persistent — switching to a file keeps the last chat on
+   * screen), or null when the pane has no sidechat tab at all (the column
+   * shows the hero). The pane chosen is the same one the header strip
+   * hosts (HeaderTabStrip): the active pane when it lives in the right
+   * tree, else the right tree's first leaf — interactions on the bottom
+   * panel must not swap the column's thread.
+   */
+  const ideChatTab: SidebarTab | null = useMemo(() => {
+    if (state === undefined) return null
+    const paneId = state.activePane !== null && treeOf(state, state.activePane) === 'splits'
+      ? state.activePane
+      : firstLeaf(state.splits).id
+    const leaf = allLeaves(state.splits).find(candidate => candidate.id === paneId)
+    if (leaf === undefined) return null
+    const chatTabs = leaf.tabs.filter(tab => tab.type === 'sidechat')
+    if (chatTabs.length === 0) return null
+    return chatTabs.find(tab => tab.id === leaf.active) ?? chatTabs[chatTabs.length - 1]!
+  }, [state])
 
   /**
    * Agent terminals push: subscribe to the host's live list of agent-owned
@@ -1316,9 +1339,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     // width (innerWidth - state.width - detailsWidth), so this equals
     // `width + detailsWidth` — derived from the measured column, keeping the
     // drag write-only (no React re-render mid-drag). IDE FULLSCREEN: the
-    // bottom panel docks flush to the fullscreen panel's right edge (0).
+    // bottom panel docks flush to the fullscreen panel's right edge minus
+    // the IDE chat column (its left edge; the column width is static during
+    // bottom-height drags).
     bottomRef.current?.style.setProperty('right', state?.rightMaximized === true
-      ? '0px'
+      ? `${state?.chatOpen === true ? (state?.chatWidth ?? 0) : 0}px`
       : `${(window.innerWidth - centerRectRef.current.right) + (width - (state?.width ?? 0))}px`)
     if (state?.rightMaximized === true) {
       // The editor slot above the docked bottom panel shrinks in lockstep —
@@ -1764,6 +1789,13 @@ useEffect(() => {
     })
   }, [store, state?.rightMaximized])
 
+  /** Toggle the IDE-fullscreen chat column (the Side Chat section at the
+   *  panel's right edge). Only dispatched inside IDE mode — the Activity
+   *  Bar's chat icon and the column's own collapse button both use it. */
+  const toggleChat = useCallback((): void => {
+    store.reduce(s => setChatOpen(s, !s.chatOpen))
+  }, [store])
+
   if (state === undefined || sessionId === undefined) {
     // Keep the unavailable controls focusable: touch users have no hover, so
     // focus is the only way the existing Tooltip can explain what is missing.
@@ -1863,6 +1895,14 @@ useEffect(() => {
   // `visible` to pause work, so tying floats to panelOpen would blank them
   // the moment the sidebar collapses).
   const renderTab = (tab: SidebarTab, active: boolean, paneId: string, placement: 'top' | 'bottom' | 'float' = 'top') => {
+    // IDE FULLSCREEN: side-chat tabs render in the CHAT COLUMN
+    // (SideChatPane, the panel's right edge) instead of the editor group's
+    // cells — the column mirrors the ACTIVE pane's chat tab, so a workbench
+    // cell would double-mount the view (and double-fire thread creation).
+    // Bottom-panel and floated chat tabs keep their regular cells — those
+    // are their own surfaces (and a floated tab is not in the pane the
+    // column mirrors, so no duplication).
+    if (ideMode && placement === 'top' && tab.type === 'sidechat') return null
     // Pinned virtual tabs: pass the home session's scope (sessionId + cwd) so
     // TerminalView's WS URL resolves to the home PTY, and effectiveTabId so
     // the descriptor component receives the ORIGINAL tab id (the virtual id
@@ -2075,6 +2115,8 @@ className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaxim
               sideBarOpen={state.sideBarOpen}
               onToggleSideBar={() => { store.reduce(s => setSideBarOpen(s, !s.sideBarOpen)) }}
               onToggleSideBarSide={flipSideBarSide}
+              chatOpen={ideMode ? state.chatOpen : undefined}
+              onToggleChat={ideMode ? toggleChat : undefined}
             />
           )}
           {ideVscode && sideBarLeft && (
@@ -2146,6 +2188,30 @@ className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaxim
               sideBarOpen={state.sideBarOpen}
               onToggleSideBar={() => { store.reduce(s => setSideBarOpen(s, !s.sideBarOpen)) }}
               onToggleSideBarSide={flipSideBarSide}
+              chatOpen={ideMode ? state.chatOpen : undefined}
+              onToggleChat={ideMode ? toggleChat : undefined}
+            />
+          )}
+          {/*
+            The IDE-FULLSCREEN CHAT COLUMN (⌘⌥⇧B): the Side Chat section
+            docked at the panel's RIGHT edge — Cursor-style, the mode's
+            conversation surface (the main chat sits behind the fullscreen
+            panel). It renders LAST in the body row so the editor group
+            (flex: 1) yields it width; it mirrors the active pane's side-chat
+            tab or shows the hero (SideChatPane). Only inside IDE mode —
+            docked/vscode layouts keep chat tabs in the workbench.
+          */}
+          {ideMode && (
+            <SideChatPane
+              ctx={ctx}
+              store={store}
+              state={state}
+              scope={{ sessionId, cwd }}
+              tab={ideChatTab}
+              onToggleChat={toggleChat}
+              onNewThread={() => {
+                ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({ type: 'sidechat' }, { sessionId, cwd })
+              }}
             />
           )}
         </div>
@@ -2235,11 +2301,12 @@ className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaxim
           // never exceed the viewport visible above the keyboard.
           height: bottomPanelHeight,
           // IDE FULLSCREEN: the bottom workbench docks INSIDE the fullscreen
-          // panel, BELOW the editor tabs — flush to the panel's right edge,
-          // starting after the activity bar (48px) and the explorer column
-          // (side bar width), and raised above the fullscreen panel
-          // (z-index 1001) so it is never covered. Outside IDE mode it spans
-          // the center column as before.
+          // panel, BELOW the editor tabs — flush to the panel's right edge
+          // minus the chat column (it starts after the activity bar (48px)
+          // and the explorer column (side bar width), and ends before the
+          // IDE chat column when it is expanded), and raised above the
+          // fullscreen panel (z-index 1001) so it is never covered. Outside
+          // IDE mode it spans the center column as before.
           left: ideMode
             ? IDE_ACTIVITY_BAR_WIDTH + (state.sideBarOpen ? state.sideBarWidth : 0)
             : centerRectRef.current.left,
@@ -2251,7 +2318,9 @@ className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaxim
           // details column's left edge (the details column sits between the
           // center and the right panel, and the right panel's margin-right
           // push is already baked into centerRect.right).
-right: ideMode ? 0 : window.innerWidth - centerRectRef.current.right,
+right: ideMode
+            ? (state.chatOpen ? state.chatWidth : 0)
+            : window.innerWidth - centerRectRef.current.right,
           zIndex: ideMode ? 1001 : undefined,
           // The seam against the open right panel needs its own hairline
           // (the right panel's border-left alone is covered by this panel's

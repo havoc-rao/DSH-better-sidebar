@@ -324,6 +324,8 @@ export const ja: Record<string, string> = {
   sideChatClose: 'スレッドを閉じる',
   sideChatCloseTitle: 'スレッドの agent を解放（履歴は保持）',
   sideChatError: 'サイド会話エラー：{message}',
+  sideChatCollapse: 'サイドチャットを閉じる',
+  sideChatExpand: 'サイドチャットを開く',
   jobs: 'バックグラウンドタスク',
   jobsCount: '{count} 個のバックグラウンドタスク',
   jobsCountRunning: '{count} 個のバックグラウンドタスク ・ {running} 個実行中',

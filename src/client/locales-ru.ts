@@ -322,6 +322,8 @@ export const ru: Record<string, string> = {
   sideChatClose: 'Закрыть поток',
   sideChatCloseTitle: 'Освободить агента потока (история сохраняется)',
   sideChatError: 'Ошибка бокового чата: {message}',
+  sideChatCollapse: 'Свернуть боковой чат',
+  sideChatExpand: 'Развернуть боковой чат',
   jobs: 'Фоновые задачи',
   jobsCount: '{count} фоновых задач',
   jobsCountRunning: '{count} фоновых задач · {running} выполняется',

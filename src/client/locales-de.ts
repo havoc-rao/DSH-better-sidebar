@@ -310,6 +310,8 @@ export const de: Record<string, string> = {
   sideChatClose: 'Thread schließen',
   sideChatCloseTitle: 'Den Agenten des Threads freigeben (Verlauf bleibt erhalten)',
   sideChatError: 'Seitenchat-Fehler: {message}',
+  sideChatCollapse: 'Seitenchat einklappen',
+  sideChatExpand: 'Seitenchat erweitern',
   jobs: 'Hintergrundaufgaben',
   jobsCount: '{count} Hintergrundaufgaben',
   jobsCountRunning: '{count} Hintergrundaufgaben · {running} läuft',

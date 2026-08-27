@@ -70,6 +70,14 @@ export function ActivityBar(props: {
   sideBarOpen?: boolean
   /** Toggle the explorer drawer (wired with `sideBarOpen`). */
   onToggleSideBar?: () => void
+  /** Whether the IDE-FULLSCREEN chat column (the Side Chat section at the
+   *  panel's right edge) is expanded. When given, the Side Chat icon becomes
+   *  the chat column toggle (click collapses/expands it, highlight =
+   *  expanded) instead of opening a chat tab — inside the IDE the column IS
+   *  the chat surface. Absent = the plain launcher behavior. */
+  chatOpen?: boolean
+  /** Toggle the IDE chat column (wired with `chatOpen`). */
+  onToggleChat?: () => void
   /** Mirror the whole bar to the panel's LEFT edge (`sideBarSide: 'left'`):
    *  the border + active indicator flip, and the icon tooltips open to the
    *  RIGHT (VSCode's activity-bar tooltip side) instead of below. */
@@ -79,7 +87,7 @@ export function ActivityBar(props: {
    *  spot) instead of a separate strip. */
   onToggleSideBarSide?: () => void
 }) {
-  const { ctx, state, scope, onOpen, sideBarOpen, onToggleSideBar, flipped, onToggleSideBarSide } = props
+  const { ctx, state, scope, onOpen, sideBarOpen, onToggleSideBar, chatOpen, onToggleChat, flipped, onToggleSideBarSide } = props
   const icons = activityIcons(state, ctx, scope)
   const activeTab = activeTabOf(state)
   const activeType = activeTab?.type ?? ''
@@ -95,8 +103,22 @@ export function ActivityBar(props: {
         // icon expands/collapses it (highlight follows sideBarOpen) instead
         // of opening an editor tab.
         const isExplorer = icon.id === 'editor' && onToggleSideBar !== undefined
-        const label = isExplorer ? t('explorer') : icon.label
-        const active = isExplorer ? (sideBarOpen === true) : icon.id === activeType
+        // Inside IDE FULLSCREEN the Side Chat icon is the CHAT COLUMN
+        // toggle: the column at the panel's right edge IS the chat surface
+        // (a chat tab would hide behind the fullscreen editor group), so the
+        // icon expands/collapses it (highlight follows chatOpen) instead of
+        // opening another chat tab.
+        const isChat = icon.id === 'sidechat' && onToggleChat !== undefined
+        const label = isExplorer
+          ? t('explorer')
+          : isChat
+            ? (chatOpen === true ? t('sideChat') : t('sideChatExpand'))
+            : icon.label
+        const active = isExplorer
+          ? (sideBarOpen === true)
+          : isChat
+            ? (chatOpen === true)
+            : icon.id === activeType
         // The styled hover tooltip (the corner toggles' look): the explorer /
         // git icons also carry their view-switch shortcut hint.
         const hint = isExplorer ? EXPLORER_HINT : icon.id === 'git' ? GIT_HINT : undefined
@@ -115,7 +137,7 @@ export function ActivityBar(props: {
               aria-current={active ? 'true' : undefined}
               disabled={icon.disabled}
               onClick={() => {
-                if (isExplorer) { onToggleSideBar() } else { onOpen(icon.id) }
+                if (isExplorer) { onToggleSideBar() } else if (isChat) { onToggleChat() } else { onOpen(icon.id) }
               }}
             >
               {icon.icon}

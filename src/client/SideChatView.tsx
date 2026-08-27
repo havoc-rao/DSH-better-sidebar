@@ -239,8 +239,16 @@ export function SideChatView(props: {
   scope: SessionScope
   tab: SidebarTab
   visible: boolean
+  /**
+   * Optional override for the HERO's start button (v0.18.0+): surfaces that
+   * mirror the chat (the IDE-fullscreen chat column) render the hero with a
+   * SYNTHETIC unbound tab and route the click through here (openTab), so the
+   * created thread is a REAL tab the surface then mirrors — the synthetic
+   * tab cannot own a thread (updateTab would no-op on its id).
+   */
+  heroAction?: () => void
 }): React.ReactNode {
-  const { ctx, scope, tab, visible } = props
+  const { ctx, scope, tab, visible, heroAction } = props
   const rowLabels = useMemo<RowLabels>(
     () => ({
       copyLabel: t('copy'),
@@ -533,7 +541,10 @@ export function SideChatView(props: {
             <button
               type="button"
               className={css.sidechatPrimaryBtn}
-              onClick={() => void startThread()}
+              onClick={() => {
+                if (heroAction !== undefined) heroAction()
+                else void startThread()
+              }}
             >
               {error === null ? t('sideChatNew') : t('sideChatRetry')}
             </button>

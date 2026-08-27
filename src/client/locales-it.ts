@@ -315,6 +315,8 @@ export const it: Record<string, string> = {
   sideChatClose: 'Chiudi conversazione',
   sideChatCloseTitle: 'Rilascia l’agente della conversazione (la cronologia è conservata)',
   sideChatError: 'Errore della chat laterale: {message}',
+  sideChatCollapse: 'Comprimi la chat laterale',
+  sideChatExpand: 'Espandi la chat laterale',
   jobs: 'Attività in background',
   jobsCount: '{count} attività in background',
   jobsCountRunning: '{count} attività in background · {running} in esecuzione',

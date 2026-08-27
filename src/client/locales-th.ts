@@ -324,6 +324,8 @@ export const th: Record<string, string> = {
   sideChatClose: 'ปิดเธรด',
   sideChatCloseTitle: 'ปล่อยตัวแทนของเธรด (ประวัติยังคงอยู่)',
   sideChatError: 'ข้อผิดพลาดแชทด้านข้าง: {message}',
+  sideChatCollapse: 'ยุบแชทด้านข้าง',
+  sideChatExpand: 'ขยายแชทด้านข้าง',
   jobs: 'งานเบื้องหลัง',
   jobsCount: '{count} งานเบื้องหลัง',
   jobsCountRunning: '{count} งานเบื้องหลัง · {running} กำลังทำงาน',

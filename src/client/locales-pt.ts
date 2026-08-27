@@ -307,6 +307,8 @@ export const pt: Record<string, string> = {
   sideChatClose: 'Fechar tópico',
   sideChatCloseTitle: 'Liberar o agente do tópico (o histórico é mantido)',
   sideChatError: 'Erro no chat lateral: {message}',
+  sideChatCollapse: 'Recolher chat lateral',
+  sideChatExpand: 'Expandir chat lateral',
   jobs: 'Tarefas em segundo plano',
   jobsCount: '{count} tarefas em segundo plano',
   jobsCountRunning: '{count} tarefas em segundo plano · {running} executando',

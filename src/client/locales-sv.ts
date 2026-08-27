@@ -307,6 +307,8 @@ export const sv: Record<string, string> = {
   sideChatClose: 'Stäng tråd',
   sideChatCloseTitle: 'Frigör trådens agent (historik behålls)',
   sideChatError: 'Sidochattsfel: {message}',
+  sideChatCollapse: 'Fäll ihop sidochatten',
+  sideChatExpand: 'Fäll ut sidochatten',
   jobs: 'Bakgrundsjobb',
   jobsCount: '{count} bakgrundsjobb',
   jobsCountRunning: '{count} bakgrundsjobb · {running} kör',

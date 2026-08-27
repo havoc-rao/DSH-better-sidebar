@@ -324,6 +324,8 @@ export const hi: Record<string, string> = {
   sideChatClose: 'थ्रेड बंद करें',
   sideChatCloseTitle: 'थ्रेड का एजेंट रिलीज़ करें (इतिहास रखा जाता है)',
   sideChatError: 'साइड चैट त्रुटि: {message}',
+  sideChatCollapse: 'साइड चैट संक्षिप्त करें',
+  sideChatExpand: 'साइड चैट विस्तृत करें',
   jobs: 'बैकग्राउंड कार्य',
   jobsCount: '{count} बैकग्राउंड कार्य',
   jobsCountRunning: '{count} बैकग्राउंड कार्य · {running} चल रहे',

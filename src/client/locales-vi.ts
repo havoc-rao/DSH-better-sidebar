@@ -324,6 +324,8 @@ export const vi: Record<string, string> = {
   sideChatClose: 'Đóng luồng',
   sideChatCloseTitle: 'Giải phóng agent của luồng (lịch sử được giữ)',
   sideChatError: 'Lỗi chat bên: {message}',
+  sideChatCollapse: 'Thu gọn chat bên',
+  sideChatExpand: 'Mở rộng chat bên',
   jobs: 'Tác vụ nền',
   jobsCount: '{count} tác vụ nền',
   jobsCountRunning: '{count} tác vụ nền · {running} đang chạy',

@@ -322,6 +322,8 @@ export const nl: Record<string, string> = {
   sideChatClose: 'Thread sluiten',
   sideChatCloseTitle: 'De agent van de thread vrijgeven (geschiedenis blijft behouden)',
   sideChatError: 'Side Chat-fout: {message}',
+  sideChatCollapse: 'Zijchat samenvouwen',
+  sideChatExpand: 'Zijchat uitvouwen',
   jobs: 'Achtergrondtaken',
   jobsCount: '{count} achtergrondtaken',
   jobsCountRunning: '{count} achtergrondtaken · {running} actief',

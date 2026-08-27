@@ -324,6 +324,8 @@ export const tr: Record<string, string> = {
   sideChatClose: 'İş parçacığını kapat',
   sideChatCloseTitle: 'İş parçacığının aracısını serbest bırak (geçmiş korunur)',
   sideChatError: 'Yan sohbet hatası: {message}',
+  sideChatCollapse: 'Yan sohbeti daralt',
+  sideChatExpand: 'Yan sohbeti genişlet',
   jobs: 'Arka plan işleri',
   jobsCount: '{count} arka plan işi',
   jobsCountRunning: '{count} arka plan işi · {running} çalışıyor',

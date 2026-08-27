@@ -325,6 +325,8 @@ export const ar: Record<string, string> = {
   sideChatClose: 'إغلاق الخيط',
   sideChatCloseTitle: 'تحرير وكيل الخيط (يُحتفظ بالسجل)',
   sideChatError: 'خطأ في المحادثة الجانبية: {message}',
+  sideChatCollapse: 'طي المحادثة الجانبية',
+  sideChatExpand: 'توسيع المحادثة الجانبية',
   jobs: 'المهام الخلفية',
   jobsCount: '{count} مهمة خلفية',
   jobsCountRunning: '{count} مهمة خلفية · {running} قيد التشغيل',

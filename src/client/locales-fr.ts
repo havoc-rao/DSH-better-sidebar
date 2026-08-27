@@ -317,6 +317,8 @@ export const fr: Record<string, string> = {
   sideChatClose: 'Fermer le fil',
   sideChatCloseTitle: 'Libérer l’agent du fil (l’historique est conservé)',
   sideChatError: 'Erreur de la discussion latérale : {message}',
+  sideChatCollapse: 'Réduire la discussion latérale',
+  sideChatExpand: 'Développer la discussion latérale',
   jobs: 'Tâches d’arrière-plan',
   jobsCount: '{count} tâche(s) d’arrière-plan',
   jobsCountRunning: '{count} tâche(s) d’arrière-plan · {running} en cours',

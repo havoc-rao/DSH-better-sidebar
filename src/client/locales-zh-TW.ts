@@ -339,6 +339,8 @@ export const zhTW: Record<string, string> = {
   sideChatClose: '關閉執行緒',
   sideChatCloseTitle: '釋放執行緒的 agent（歷史保留）',
   sideChatError: '側邊對話出錯：{message}',
+  sideChatCollapse: '收起側邊對話',
+  sideChatExpand: '展開側邊對話',
   jobs: '背景任務',
   jobsCount: '{count} 個背景任務',
   jobsCountRunning: '{count} 個背景任務 · {running} 執行中',

@@ -326,6 +326,8 @@ export const pl: Record<string, string> = {
   sideChatClose: 'Zamknij wątek',
   sideChatCloseTitle: 'Zwolnij agenta wątku (historia jest zachowana)',
   sideChatError: 'Błąd czatu bocznego: {message}',
+  sideChatCollapse: 'Zwiń czat boczny',
+  sideChatExpand: 'Rozwiń czat boczny',
   jobs: 'Zadania w tle',
   jobsCount: '{count} zadań w tle',
   jobsCountRunning: '{count} zadań w tle · {running} działa',

@@ -429,6 +429,112 @@
   display: flex;
 }
 
+/* ── IDE-FULLSCREEN chat column (⌘⌥⇧B) ───────────────────────────────── */
+
+/* The chat column (the Side Chat section) docks at the panel's RIGHT edge
+   inside IDE fullscreen — the Cursor-style conversation surface of the mode.
+   The editor|chat boundary is its LEFT edge, so the resize handle rides
+   there (dragging right widens the chat, squeezing the editor group). Same
+   surface as the Side Bar (layer-1 + left hairline; skin tokens only). The
+   collapse/expand animates the width — the view stays MOUNTED at width 0
+   (overflow clips it), so a running thread keeps streaming and the
+   transcript never reloads. */
+.chatPane {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-alias-bg-layer-1);
+  border-left: 1px solid var(--dsw-alias-border-l2);
+  position: relative;
+  overflow: hidden;
+  /* Same eased width transition as the explorer drawer. */
+  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/* While the user drags the resize handle the width must track the pointer
+   1:1 — no transition tail on the intermediate frames. */
+.chatPaneDragging {
+  transition: none;
+}
+
+/* Collapsed (chatOpen false): width 0, no left border (a 1px hairline would
+   linger mid-panel), the handle is dropped by the component, and the content
+   is visibility-hidden so the composer/scroll area are truly unreachable —
+   not merely clipped by overflow. */
+.chatPaneCollapsed {
+  border-left: 0;
+  visibility: hidden;
+}
+
+/* The resize handle rides the column's LEFT edge (editor|chat boundary). An
+   8px hit strip straddling the border, like the side bar's handle. */
+.chatResize {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 3;
+  touch-action: none;
+}
+
+.chatResize:hover {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+/* The column header: the small-caps section title + the collapse chevron
+   (same 35px band as the Side Bar's header row). */
+.chatHeader {
+  flex: 0 0 35px;
+  height: 35px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 12px;
+  gap: 4px;
+}
+
+.chatHeaderTitle {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-fg-muted);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatCollapse {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-fg-muted);
+  cursor: pointer;
+  transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.chatCollapse:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-fg-base);
+}
+
+.chatBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 /* ── Bottom panel ──────────────────────────────────────────────────────── */
 
 /* The bottom panel: an independent workbench at the bottom of the CENTER
