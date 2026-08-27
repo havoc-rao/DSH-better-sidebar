@@ -947,6 +947,34 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
   // first-paint fallback.
   const centerRectRef = useRef({ left: 0, right: 0 })
   const [centerMeasured, setCenterMeasured] = useState(false)
+  /**
+   * The IDE-mode dock geometry MIRROR (non-null while the bottom panel is
+   * docked inside IDE FULLSCREEN): `{ left, right }` in viewport coordinates
+   * for the panel's edge strip, i.e. the IDE dock = activity bar + explorer
+   * drawer on the left, chat column on the right. The measure chain
+   * (measureCenter) is a STABLE callback (empty deps — it also runs from the
+   * ResizeObserver and the locate retry interval), so it cannot read the
+   * live `state`; this ref is re-mirrored every render and gives the chain
+   * the exact geometry React is about to render — in IDE mode the bottom
+   * panel must never be re-anchored to the app's center column (which sits
+   * BEHIND the fullscreen cover and expands when the layout push is
+   * released; an IDE-unaware write would stretch the terminal box over the
+   * chat column — z-index 1001 over the panel's 1000 — and React's style
+   * diff would never repair it: unchanged inline values skip the DOM
+   * write). Null outside IDE mode → the center-column measurement applies.
+   */
+  const ideDockRef = useRef<{ left: number; right: number } | null>(null)
+  // Mirror the IDE bottom-panel dock for the stable measure chain (see the
+  // ideDockRef comment): every render re-captures the geometry the React
+  // inline style renders this frame — activity bar + explorer drawer on the
+  // left, chat column on the right. A plain value (not a store reduce)
+  // because it is a DOM-write mirror, not state.
+  ideDockRef.current = ideMode && state !== undefined
+    ? {
+      left: IDE_ACTIVITY_BAR_WIDTH + (state.sideBarOpen ? state.sideBarWidth : 0),
+      right: state.chatOpen ? state.chatWidth : 0,
+    }
+    : null
   // Refs keep the measure step stable across renders and let it skip work
   // mid-drag: during a width/corner drag the layout push resizes the center
   // column every frame, and reacting (setCenterRect → re-render) would
@@ -977,8 +1005,20 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     centerRectRef.current = { left: rect.left, right: rect.right }
     const bottom = bottomRef.current
     if (bottom !== null) {
-      bottom.style.setProperty('left', `${rect.left}px`)
-      bottom.style.setProperty('right', `${window.innerWidth - rect.right}px`)
+      // IDE FULLSCREEN: the bottom panel docks INSIDE the fullscreen panel
+      // (see ideDockRef) — the center column behind the cover is the wrong
+      // anchor (it expands once the layout push is released, and an
+      // IDE-unaware write would stretch the terminal box over the chat
+      // column). Write the mirrored dock values instead of the measured
+      // rect — the same values the React inline style renders.
+      const ideDock = ideDockRef.current
+      if (ideDock !== null) {
+        bottom.style.setProperty('left', `${ideDock.left}px`)
+        bottom.style.setProperty('right', `${ideDock.right}px`)
+      } else {
+        bottom.style.setProperty('left', `${rect.left}px`)
+        bottom.style.setProperty('right', `${window.innerWidth - rect.right}px`)
+      }
     }
     setCenterMeasured(prev => (prev ? prev : true))
   }, [])

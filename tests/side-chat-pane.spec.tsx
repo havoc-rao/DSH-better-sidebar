@@ -299,6 +299,69 @@ describe('Sidebar shell in IDE FULLSCREEN (⌘⌥⇧B) with the chat column', ()
     }
   })
 
+  it('the top-right ✕ exits IDE fullscreen (mouse way out, not only the key combo)', () => {
+    const { container, store, unmount } = mountIde()
+    try {
+      expect(store.getSnapshot().state?.rightMaximized).toBe(true)
+      const exit = [...container.querySelectorAll('button')]
+        .find(button => button.getAttribute('aria-label') === t('ideModeExit'))
+      expect(exit, 'exit-IDE button').toBeDefined()
+      act(() => { exit!.click() })
+      expect(store.getSnapshot().state?.rightMaximized).toBe(false)
+      // Exiting un-docks the chat column (it renders only inside IDE mode).
+      expect(container.querySelector('[data-dsh-ide-chat]')).toBeNull()
+    } finally {
+      unmount()
+    }
+  })
+
+  it('the measure chain (ResizeObserver path) keeps the IDE dock — the bottom panel never slides under the chat column', () => {
+    // Regression: entering IDE fullscreen RELEASES the layout push, the app's
+    // center column (behind the cover) expands, and the ResizeObserver-driven
+    // measureCenter used to overwrite the docked bottom panel's edges with
+    // the column's near-full-width rect — the terminal box then covered the
+    // chat column's transcript/composer (z-index 1001 over the panel's 1000),
+    // and React never re-asserted the inline edges (unchanged values skip
+    // the style diff). The other tests mount without #root, so the locate/
+    // measure chain never runs there; this test engages it for real: the
+    // #root + slot markup gives locate() a column, the stubbed observer
+    // stands in for jsdom's missing ResizeObserver, and the mocked rect
+    // (left 260 / right 824) makes an IDE-unaware write observable
+    // (it would set left:260px / right:200px instead of the IDE dock).
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    })
+    const rootEl = document.createElement('div')
+    rootEl.id = 'root'
+    const frame = document.createElement('div')
+    frame.setAttribute('data-dsh-frame', '')
+    const center = document.createElement('div')
+    center.setAttribute('data-pane', 'conversation')
+    const slot = document.createElement('div')
+    slot.setAttribute('data-slot', 'conversation')
+    center.getBoundingClientRect = () => ({ left: 260, right: 824, top: 0, bottom: 0, width: 564, height: 0, x: 260, y: 0, toJSON: () => ({}) }) as DOMRect
+    center.append(slot)
+    frame.append(center)
+    rootEl.append(frame)
+    document.body.append(rootEl)
+    const { container, unmount } = mountIde()
+    try {
+      const bottom = container.querySelector('[data-dsh-bottom-panel]') as HTMLElement | null
+      expect(bottom, 'bottom panel').not.toBeNull()
+      // measureCenter ran (locate found the column through #root — the
+      // visibility gate clearing proves it) and must have taken the IDE
+      // branch: the docked edges stay at the React inline values.
+      expect(bottom!.style.visibility).not.toBe('hidden')
+      expect(bottom!.style.left).toBe('288px')
+      expect(bottom!.style.right).toBe('360px')
+    } finally {
+      unmount()
+      rootEl.remove()
+    }
+  })
+
   it('opening a new chat tab switches the column\'s mirrored thread (the active sidechat tab)', async () => {
     const { container, store, unmount } = mountIde()
     try {

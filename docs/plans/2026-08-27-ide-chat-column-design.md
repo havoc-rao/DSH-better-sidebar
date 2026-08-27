@@ -30,6 +30,8 @@ IDE 模式（`rightMaximized`）此前只把资源管理器钉到左缘、底部
 
 IDE 模式下底部面板右缘收在聊天列左缘：`right: chatOpen ? chatWidth : 0`（React 内联 + `applyDrag` 直写同步），左缘仍 `48 + sideBarWidth`。聊天列不吃底部 margin（面板不延伸到它下方）。
 
+**⚠️ 直写路径必须同样感知 IDE 模式（2026-08-27 修复）**：`measureCenter`（中心列 ResizeObserver / locate 链的直写出口）原本无条件用**中心列 rect** 写底部面板的 left/right。但进入 IDE 模式会**释放**布局推挤（`--dsh-sidebar-width: 0`，全屏遮罩下无需挤压 app），背后的中心列随之展开 → ResizeObserver 触发 → measureCenter 把面板右缘写成了「几乎全宽」——底部终端（z-index 1001）盖住聊天列（panel z-index 1000）的转录区与输入框；而 React 后续 re-render 的 inline `right: chatWidth` 值不变，style diff 跳过 DOM 写，脏值永久残留。修复：`measureCenter` 增加与 `applyDrag` 同款的 IDE 分支（`ideDockRef` 每渲染镜像当前停靠几何，绕开稳定回调不能闭包 state 的限制），IDE 模式下直写 React inline 同款值（`left = 48 + sideBarWidth`、`right = chatOpen ? chatWidth : 0`）。回归测试 `tests/side-chat-pane.spec.tsx`「the measure chain (ResizeObserver path) keeps the IDE dock」：jsdom 里构造 `#root` + 中心列标记并 stub ResizeObserver，让真实 locate/measure 链跑起来（其余测试不挂 `#root`，measure 链从未运行——这是当初漏测的原因）。
+
 ## 2. 改动面
 
 | 文件 | 改动 |
