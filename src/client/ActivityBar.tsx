@@ -29,10 +29,11 @@ import css from './sidebar.module.css'
 
 /** The platform-aware shortcut hints shown in the icon tooltips (⌘⇧E / ⌘⇧G,
  *  matching the builtin view-switch keybindings). The IDE chat-column toggle
- *  carries ⌘⇧B — its hotkey exists only inside IDE FULLSCREEN. */
+ *  carries ⌘⌥B (the "right panel" muscle memory) AND ⌘⇧B — both hotkeys
+ *  exist only inside IDE FULLSCREEN. */
 const EXPLORER_HINT = keySpecLabel(parseKeySpec('Cmd+Shift+E'))
 const GIT_HINT = keySpecLabel(parseKeySpec('Cmd+Shift+G'))
-const CHAT_HINT = keySpecLabel(parseKeySpec('Cmd+Shift+B'))
+const CHAT_HINT = `${keySpecLabel(parseKeySpec('Cmd+Alt+B'))} / ${keySpecLabel(parseKeySpec('Cmd+Shift+B'))}`
 
 /** One iconized launcher derived from a tab descriptor. */
 interface ActivityIcon {

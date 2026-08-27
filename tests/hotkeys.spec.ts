@@ -310,18 +310,28 @@ describe('registerPanelHotkeys — the native path', () => {
     expect(seen).toEqual(['document:keydown', 'document:keydown'])
   })
 
-  it('⌘⌥B inside IDE FULLSCREEN exits the mode with the panel open; outside it the close toggle applies', () => {
+  it('⌘⌥B inside IDE FULLSCREEN toggles the Side Chat column — the mode and the panel survive', () => {
     dispose = registerPanelHotkeys(store, leftSpy)
     store.reduce(toggleRightMaximized)
     expect(store.getSnapshot().state?.rightMaximized).toBe(true)
+    expect(store.getSnapshot().state?.chatOpen).toBe(true)
 
+    // "The right panel" of the IDE window is its Side Chat column: ⌘⌥B
+    // collapses ONLY that; the fullscreen cover and the mode survive.
     input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
     let state = store.getSnapshot().state!
-    expect(state.rightMaximized).toBe(false)
+    expect(state.chatOpen).toBe(false)
+    expect(state.rightMaximized).toBe(true)
     expect(state.panelOpen).toBe(true)
     expect(seen).toEqual([])
 
-    // A second press (now docked) is the ordinary panel close toggle.
+    // A second press expands the chat column again.
+    input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
+    state = store.getSnapshot().state!
+    expect(state.chatOpen).toBe(true)
+
+    // Exiting the mode restores the ordinary panel open/close toggle.
+    store.reduce(toggleRightMaximized)
     input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
     state = store.getSnapshot().state!
     expect(state.panelOpen).toBe(false)

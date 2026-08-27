@@ -323,22 +323,30 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
     }
   })
 
-  it('⌘⌥B inside IDE FULLSCREEN EXITS the mode (docked layout, panel stays open) — never closes the panel there', () => {
+  it('⌘⌥B inside IDE FULLSCREEN toggles ONLY the Side Chat column — the mode and the panel survive', () => {
     const { store, runtime, dispose } = setup()
     try {
       store.reduce(toggleRightMaximized)
       expect(store.getSnapshot().state?.rightMaximized).toBe(true)
       expect(store.getSnapshot().state?.panelOpen).toBe(true)
+      expect(store.getSnapshot().state?.chatOpen).toBe(true)
 
-      // In the mode, ⌘⌥B exits back to the docked layout with the panel OPEN
-      // ("collapse the right panel" is the way out of the fullscreen cover —
-      // closing the panel out from under the user would be the bug).
+      // "The right panel" of the IDE window IS its Side Chat column: ⌘⌥B
+      // collapses ONLY that ("只收起右侧的 chat 面板") — the fullscreen
+      // cover and the mode itself must survive.
       expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, altKey: true }))).toBe(true)
       let state = store.getSnapshot().state!
-      expect(state.rightMaximized).toBe(false)
+      expect(state.chatOpen).toBe(false)
+      expect(state.rightMaximized).toBe(true)
       expect(state.panelOpen).toBe(true)
 
-      // Outside the mode the plain open/close toggle applies again.
+      // A second press expands the chat column again.
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, altKey: true }))).toBe(true)
+      state = store.getSnapshot().state!
+      expect(state.chatOpen).toBe(true)
+
+      // Outside the mode the plain panel open/close toggle applies again.
+      store.reduce(toggleRightMaximized)
       expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, altKey: true }))).toBe(true)
       state = store.getSnapshot().state!
       expect(state.panelOpen).toBe(false)

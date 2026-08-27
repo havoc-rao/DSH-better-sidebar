@@ -5,7 +5,7 @@
 >
 > **用户确认的方向**：右侧聊天列（Cursor 风格）——IDE 布局变为 `ActivityBar | 资源管理器 | 编辑器 | 聊天列`，聊天常驻可见，编辑器区收窄。
 >
-> **后续实施记录（快捷键，2026-08）**：用户确认 **⌘⌥⇧B 是进入/退出 IDE 模式的唯一 hotkey，模式内其他快捷键保持各自语义**（映射到 IDE 窗口自己的面板）：IDE 模式下 `⌘B` 从「宿主左侧栏」改为切左缘资源管理器抽屉（`state.sideBarOpen`，宿主侧栏在全屏遮罩后不可见）；新增 `⌘⇧B`（`builtin:toggle-ide-chat`，`when: state.rightMaximized`）切右缘聊天列（`state.chatOpen`），模式外无绑定、和弦照旧放行给宿主/页面；`⌘⌥B` 在模式内从「关面板」改为**退出全屏**（`toggleRightMaximized`，面板保持打开——`togglePanel` 会把面板一并关掉，用户报 bug 后修正）；`⌘⇧J` 保留底部 box 最大化/还原（IDE 内向上展开）。聊天列收起钮与 Activity Bar 的 Side Chat 图标 tooltip 均带 ⌘⇧B 提示。改动集中在 `src/client/hotkeys.ts`（`panelToggleBindings`，生产路径与 `registerPanelHotkeys` 原生路径共享同一份定义）；回归见 `tests/builtins-keybindings.spec.tsx` 与 `tests/hotkeys.spec.ts` 的 IDE 用例。
+> **后续实施记录（快捷键，2026-08）**：用户确认 **⌘⌥⇧B 是进入/退出 IDE 模式的唯一 hotkey，模式内其他快捷键保持各自语义**（映射到 IDE 窗口自己的面板）：IDE 模式下 `⌘B` 从「宿主左侧栏」改为切左缘资源管理器抽屉（`state.sideBarOpen`，宿主侧栏在全屏遮罩后不可见）；`⌘⌥B`（`builtin:toggle-right-panel` 的 IDE 分支）与新增的 `⌘⇧B`（`builtin:toggle-ide-chat`，`when: state.rightMaximized`）都只开关右缘聊天列 `state.chatOpen`——「收起右侧」的肌肉记忆在 IDE 模式下落到聊天列，**不退出模式、不关整块面板**（曾误做成「⌘⌥B 退出全屏」与原始 `togglePanel` 的「面板整体关闭」，用户两轮反馈后最终定为仅聊天列）；`⌘⇧J` 保留底部 box 最大化/还原（IDE 内向上展开）。聊天列收起钮与 Activity Bar 的 Side Chat 图标 tooltip 均带 ⌘⌥B / ⌘⇧B 提示。改动集中在 `src/client/hotkeys.ts`（`panelToggleBindings`，生产路径与 `registerPanelHotkeys` 原生路径共享同一份定义）；回归见 `tests/builtins-keybindings.spec.tsx` 与 `tests/hotkeys.spec.ts` 的 IDE 用例。
 
 ## 0. 背景
 

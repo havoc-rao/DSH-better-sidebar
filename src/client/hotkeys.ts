@@ -13,9 +13,9 @@
  *           FULLSCREEN the docked bottom box expands UPWARD the same way;
  *   ⌘⌥B     toggle the right sidebar — the plugin's own panel, Option held
  *           so the plain ⌘B stays the host sidebar's binding. Inside IDE
- *           FULLSCREEN it EXITS the mode instead (back to the docked layout,
- *           the panel stays open) — "collapse the right panel" is the mouse
- *           and keyboard way out of the cover;
+ *           FULLSCREEN "the right panel" is the IDE window's Side Chat
+ *           column, so ⌘⌥B collapses/expands ONLY that (same as ⌘⇧B) — the
+ *           fullscreen cover and the mode itself survive;
  *   ⌘⇧B     INSIDE IDE FULLSCREEN ONLY: toggle the IDE window's right column
  *           (the Side Chat column, `chatOpen`). Outside IDE mode the chord
  *           is unbound and passes through to the page untouched (the shift
@@ -52,7 +52,7 @@ import {
   type KeybindingDescriptor,
   type SidebarKeybindingContext,
 } from './keybindings.ts'
-import { activeTabOf, setChatOpen, setSideBarOpen, toggleBottomMaximized, toggleBottomPanel, togglePanel, toggleRightMaximized, type SidebarStore } from './state.ts'
+import { activeTabOf, setChatOpen, setSideBarOpen, toggleBottomMaximized, toggleBottomPanel, togglePanel, type SidebarStore } from './state.ts'
 import { t } from './locales.ts'
 
 /** The panel a matched shortcut toggles. */
@@ -146,12 +146,14 @@ export function panelToggleBindings(store: SidebarStore, toggleLeftSidebar: () =
       title: () => t('hotkeyToggleRightPanel'),
       key: 'Cmd+Alt+B',
       run: (event, context) => {
-        // IDE FULLSCREEN: ⌘⌥B EXITS the mode (the fullscreen cover restores
-        // to the docked width, the panel stays open) — "toggling the right
-        // panel" inside the mode must never close the panel out from under
-        // the user. Outside the mode the plain open/close toggle applies.
+        // IDE FULLSCREEN: "the right panel" of the IDE window IS its Side
+        // Chat column — ⌘⌥B collapses/expands ONLY that (same toggle as
+        // ⌘⇧B). The fullscreen cover itself never closes and the mode
+        // survives: the user's muscle memory ("collapse the right side")
+        // must not tear the whole IDE panel down. Outside the mode the
+        // plain panel open/close toggle applies.
         if (context.state?.rightMaximized === true) {
-          store.reduce(toggleRightMaximized)
+          store.reduce(s => setChatOpen(s, !s.chatOpen))
           return
         }
         store.reduce(togglePanel)

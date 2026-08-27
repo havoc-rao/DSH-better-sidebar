@@ -132,7 +132,7 @@ export function SideChatPane(props: {
       )}
       <div className={css.chatHeader}>
         <span className={css.chatHeaderTitle}>{t('sideChat')}</span>
-        <Tooltip label={`${t('sideChatCollapse')} (${panelHotkeyHint('chat')})`} side="bottom" delayMs={500}>
+        <Tooltip label={`${t('sideChatCollapse')} (${panelHotkeyHint('right')} / ${panelHotkeyHint('chat')})`} side="bottom" delayMs={500}>
           <button
             type="button"
             className={css.chatCollapse}

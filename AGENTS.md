@@ -641,14 +641,14 @@ interface SidebarKeybindingContext {
 | key | 作用 | when 门 |
 |---|---|---|
 | `Cmd+B` | 切换宿主左侧栏（**IDE 全屏 ⌘⌥⇧B 下例外**：宿主左侧栏被全屏遮罩盖住，此键改切 IDE 窗口自己的左缘资源管理器抽屉 `state.sideBarOpen`） | 恒真 |
-| `Cmd+Alt+B` | 切换右侧栏（**IDE 全屏下例外**：此键退出 IDE 模式回到停靠布局、面板保持打开——「收起右侧面板」就是全屏盖的退出路，绝不把面板从用户脚下关掉） | 恒真 |
+| `Cmd+Alt+B` | 切换右侧栏（**IDE 全屏下例外**：IDE 窗口的「右侧栏」= 右缘聊天列，此键只开关聊天列 `state.chatOpen`（与 ⌘⇧B 同款）——不退出模式、不关整块面板；模式外恢复面板开/关） | 恒真 |
 | `Cmd+J` | 切换底部面板 | `!narrow` |
 | `Cmd+Shift+J` | 最大化/还原底部面板（IDE 全屏下停靠的底部 box 同样向上展开/还原） | `!narrow` |
-| `Cmd+Shift+B` | **仅 IDE 全屏（⌘⌥⇧B）内生效**：切换右缘聊天列 `state.chatOpen`（与 Activity Bar 的 Side Chat 图标同款开关语义）；模式外无绑定，和弦照旧放行给宿主/页面 | `state?.rightMaximized === true` |
+| `Cmd+Shift+B` | **仅 IDE 全屏（⌘⌥⇧B）内生效**：切换右缘聊天列 `state.chatOpen`（与 Activity Bar 的 Side Chat 图标及 `Cmd+Alt+B` 的 IDE 分支同款开关语义）；模式外无绑定，和弦照旧放行给宿主/页面 | `state?.rightMaximized === true` |
 | `Cmd+P` | 快速打开：展开面板 → 保证文件窗口 → 聚焦其搜索框 | `!textEditing && !plusMenuOpen` |
 | `Cmd+Shift+E` | 显示/收起资源管理器（vscode 布局开关 Side Bar 抽屉，面板关闭时视为隐藏、按此键先开面板；**IDE 全屏（⌘⌥⇧B）下同样开关钉在左缘的树列抽屉**；docked 布局：活动 tab 是**带 path 的文件 tab** 时切换其自身 docked 树（`meta.treeOpen`，编辑器头部文件夹按钮的键盘等价，宽度伸缩动画），**无路径的 files home 窗口**正被查看时二次按下关闭它——Activity Bar 图标同款开关语义） | `!plusMenuOpen` |
 | `Cmd+Shift+G` | 打开源代码管理（Git 面板，single 去重） | `!plusMenuOpen` |
-| `Cmd+Alt+Shift+B` | 进入/退出 IDE 模式（右侧面板占满全屏：宽 100vw、z-index 1000 盖住应用壳、释放布局挤压——类 VSCode 独立窗口；进入自动开面板并把**资源管理器钉在左缘**（无视 `sideBarSide` pref，顺带默认展开 explorer 抽屉）、**侧边对话（Side Chat）钉成右缘聊天列**（`state.chatOpen` 默认展开，主会话被全屏盖住后它就是本模式的对话面；镜像活动 pane 的 sidechat tab，无 tab 时显示 hero，Activity Bar 的 Side Chat 图标是它的开关注，左缘拖拽调宽持久化到 `state.chatWidth`）、**底部面板重新停靠到文件 tabs 区域下方**（z-index 1001，左缘对齐活动栏+文件树列、右缘对齐聊天列左缘），退出恢复停靠宽度；右上角 ✕ 或同键退出。**IDE 模式是本案唯一的进入/退出 hotkey，模式内其他快捷键保持各自语义**：⌘B = 左缘树列抽屉、⌘⇧B = 聊天列、⌘⇧J = 底部 box、⌘⇧E = 树列抽屉同款） | `!plusMenuOpen` |
+| `Cmd+Alt+Shift+B` | 进入/退出 IDE 模式（右侧面板占满全屏：宽 100vw、z-index 1000 盖住应用壳、释放布局挤压——类 VSCode 独立窗口；进入自动开面板并把**资源管理器钉在左缘**（无视 `sideBarSide` pref，顺带默认展开 explorer 抽屉）、**侧边对话（Side Chat）钉成右缘聊天列**（`state.chatOpen` 默认展开，主会话被全屏盖住后它就是本模式的对话面；镜像活动 pane 的 sidechat tab，无 tab 时显示 hero，Activity Bar 的 Side Chat 图标是它的开关注，左缘拖拽调宽持久化到 `state.chatWidth`）、**底部面板重新停靠到文件 tabs 区域下方**（z-index 1001，左缘对齐活动栏+文件树列、右缘对齐聊天列左缘），退出恢复停靠宽度；右上角 ✕ 或同键退出。**IDE 模式是本案唯一的进入/退出 hotkey，模式内其他快捷键保持各自语义**：⌘B = 左缘树列抽屉、⌘⌥B = 右缘聊天列、⌘⇧B = 右缘聊天列（同款）、⌘⇧J = 底部 box、⌘⇧E = 树列抽屉同款） | `!plusMenuOpen` |
 | `Cmd+F` | 聚焦文件搜索框 | 活动 tab 是文件窗口，且 `!textEditing && !plusMenuOpen` |
 | `Cmd+Tab` / `Cmd+Shift+Tab` | 当前窗格下/上一个 tab | `focusInSidebar && !plusMenuOpen` |
 | `Cmd+1…Cmd+9` | 跳到当前窗格第 n 个 tab | `focusInSidebar && !plusMenuOpen` |
