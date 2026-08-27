@@ -32,6 +32,7 @@
  *   bare socket drop gets the host's reconnect grace.
  */
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -45,6 +46,17 @@ import { isDarkScheme, subscribeColorScheme, effectiveTokenValue, tokenValue } f
 import { resolveTerminalFont } from './terminal-font.ts'
 import { generatePalette } from './generate-palette.ts'
 import { createThrottledFit } from './throttled-fit.ts'
+import { appendToDraft } from './conversation-draft.ts'
+import {
+  TerminalBlockTracker,
+  blockForSelection,
+  blockOutputText,
+  blockSpanLines,
+  buildTerminalInsert,
+  type TerminalBlock,
+} from './terminal-blocks.ts'
+import { TerminalBlockOverlay } from './TerminalBlockOverlay.tsx'
+import type { Context } from '../context-types.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive unreasoned failures before showing the error banner. */
@@ -57,6 +69,10 @@ const FAILURE_LIMIT = 3
  * full repair details from /sidebar/api/terminal.deps.
  */
 const PTY_DEPS_MISSING = 'pty-deps-missing'
+
+/** The terminal-deps status record reduced to its failure shape (deps.ok ===
+ *  false carries `command`, `profile` and `note` — the banner's content). */
+type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
 
 /**
  * Parse one host-downlink control frame. The `title` frame today carries
@@ -86,9 +102,6 @@ export function parseDownlinkFrame(data: string): { type: 'title'; title: string
   }
 }
 
-/** The degraded-mode payload rendered by {@link TerminalDepsBanner}. */
-type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
-
 /**
  * Curated ANSI palettes for the terminal. The surface colors (background,
  * foreground, cursor, selection) ride the theme tokens so the terminal
@@ -113,7 +126,9 @@ const ANSI_LIGHT: Record<string, string> = {
   brightCyan: '#0997b3', brightWhite: '#fafafa',
 }
 
-/** The xterm theme for the current scheme (surface from tokens, ANSI curated). */
+/**
+ * The xterm theme for the current scheme (surface from tokens, ANSI curated).
+ */
 function xtermTheme(): ITheme {
   const dark = isDarkScheme()
   // Skin systems set --dsw-alias-bg-base to `transparent` or translucent
@@ -141,7 +156,25 @@ function xtermTheme(): ITheme {
   }
 }
 
+/** The floating "add to conversation" action: payload + viewport anchor
+ *  (the selection-mode port of the text viewers' popup — the block mode is
+ *  the hover-driven overlay layer, see {@link TerminalBlockOverlay}). */
+interface SelectionPopup {
+  insert: string
+  left: number
+  top: number
+}
+
+/** The live terminal session handed to the block overlay (state, so the
+ *  overlay re-mounts per session instead of chasing refs). */
+interface TerminalSession {
+  term: Terminal
+  tracker: TerminalBlockTracker
+}
+
 export function TerminalView(props: {
+  /** The client context (the "add to conversation" draft lives on it). */
+  ctx: Context
   scope: SessionScope
   tabId: string
   store: SidebarStore
@@ -159,7 +192,7 @@ export function TerminalView(props: {
    *  the Global Workspace's bottom workbench boxes use it. */
   infoBar?: boolean
 }) {
-  const { scope, tabId, store, onTitleChange, visible = true, infoBar = false } = props
+  const { ctx, scope, tabId, store, onTitleChange, visible = true, infoBar = false } = props
   const hostRef = useRef<HTMLDivElement>(null)
   // onTitleChange is a fresh closure on every parent render (the tab
   // descriptor builds it inline) — it must NEVER ride the effect deps: a
@@ -182,10 +215,63 @@ export function TerminalView(props: {
   // the live refresh closure here so visibility changes never restart the
   // whole terminal effect.
   const refreshRef = useRef<(() => void) | null>(null)
+  /** Live xterm + block tracker handles (set by the mount effect, read by
+   *  the popup commits so the payload is always built at click time). */
+  const termRef = useRef<Terminal | null>(null)
+  const trackerRef = useRef<TerminalBlockTracker | null>(null)
+  /** The mounted terminal session (null until the mount effect ran); the
+   *  block overlay mounts on it. */
+  const [session, setSession] = useState<TerminalSession | null>(null)
+  /** The floating "add to conversation" popup for a selection (null = hidden). */
+  const [selectionPopup, setSelectionPopup] = useState<SelectionPopup | null>(null)
+  /** Live mirror of the popup state for click-time reads (no re-render race). */
+  const selectionPopupRef = useRef<SelectionPopup | null>(null)
+
+  const hideSelectionPopup = (): void => {
+    selectionPopupRef.current = null
+    setSelectionPopup(null)
+  }
+
+  /** Anchor the popup above the selection head; clamp inside the viewport. */
+  const showSelectionPopup = (insert: string, left: number, top: number): void => {
+    const next: SelectionPopup = {
+      insert,
+      left: Math.min(Math.max(left, 80), window.innerWidth - 80),
+      top,
+    }
+    selectionPopupRef.current = next
+    setSelectionPopup(next)
+  }
+
+  /** The selection popup's click: insert the stored payload into the draft. */
+  const commitSelectionPopup = (): void => {
+    const current = selectionPopupRef.current
+    if (current === null) return
+    appendToDraft(ctx, scope.sessionId, current.insert)
+    hideSelectionPopup()
+  }
+
+  /** The block overlay pill's click: build THE hovered block's payload live
+   *  (command + its output rows, marker-resolved boundaries) and insert it
+   *  into the draft. */
+  const commitBlock = (block: TerminalBlock): void => {
+    const tracker = trackerRef.current
+    const term = termRef.current
+    if (tracker === null || term === null) return
+    const buffer = term.buffer.active
+    const span = blockSpanLines(tracker.blocks, block, buffer.length)
+    const output = blockOutputText(buffer, block, tracker.pending, span.end)
+    appendToDraft(ctx, scope.sessionId, buildTerminalInsert(block.command, output))
+  }
 
   useEffect(() => {
     const host = hostRef.current
     if (host === null) return
+    // A (re)mount starts with a clean block model: the replay/resumed
+    // transcript has no input history, and any stale popup from a previous
+    // session must not survive.
+    hideSelectionPopup()
+
     // The custom font prefs (side card settings, terminal card) resolve at
     // mount; store changes re-apply them live below.
     const font = resolveTerminalFont(store.getPrefs(), tokenValue('--ds-font-family-code'))
@@ -198,6 +284,17 @@ export function TerminalView(props: {
       scrollback: 4000,
       theme: xtermTheme(),
     })
+    // The block model: every Enter in the input stream submits a command and
+    // opens a new block anchored at the shell's echo row (terminal-blocks.ts).
+    // Each block pins that row with an xterm marker — markers slide with
+    // scrollback trims and reflows, keeping the bloc UI honest over time.
+    const tracker = new TerminalBlockTracker((block) => {
+      const marker = term.registerMarker(0)
+      if (marker !== undefined) block.marker = marker
+    })
+    termRef.current = term
+    trackerRef.current = tracker
+    setSession({ term, tracker })
     const fit = new FitAddon()
     term.loadAddon(fit)
     // Re-theme in place when the app's scheme flips (tokens + palette).
@@ -234,21 +331,6 @@ export function TerminalView(props: {
     const sendResize = (): void => {
       if (socket !== null && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-      }
-    }
-
-    // The visibility refresh closure (see refreshRef): fit + repaint when the
-    // tab is shown again. Guarded on term.element (set by open) so a
-    // visibility flip before the deferred open is a safe no-op.
-    refreshRef.current = (): void => {
-      try {
-        if (term.element !== undefined) {
-          fit.fit()
-          term.refresh(0, term.rows - 1)
-          sendResize()
-        }
-      } catch {
-        // The terminal may be mid-dispose; ignore.
       }
     }
 
@@ -345,9 +427,62 @@ export function TerminalView(props: {
         // The terminal may be mid-dispose; ignore.
       }
     })
+    // The visibility refresh closure (see refreshRef): fit + repaint when the
+    // tab is shown again. Guarded on term.element (set by open) so a
+    // visibility flip before the deferred open is a safe no-op.
+    refreshRef.current = (): void => {
+      try {
+        if (term.element !== undefined) {
+          fit.fit()
+          term.refresh(0, term.rows - 1)
+          sendResize()
+        }
+      } catch {
+        // The terminal may be mid-dispose; ignore.
+      }
+    }
+
+    // The input stream feeds BOTH the socket and the block model: every
+    // Enter submits the echo-row-anchored command block (terminal-blocks.ts).
     const inputSub = term.onData((data) => {
+      tracker.onData(data, term.buffer.active.length)
       if (socket !== null && socket.readyState === WebSocket.OPEN) socket.send(data)
     })
+    // Selection → the floating "add to conversation" popup (the shared
+    // selectionPopup chrome anchored at the selection head; same contract as
+    // the text viewers' portaled button). The DOM renderer paints the
+    // selection segments when the change lands, so the anchor rects are read
+    // on the next frame. Scrolling hides the popup (same rule as the editors).
+    let selectionFrame: number | undefined
+    const selectionSub = term.onSelectionChange(() => {
+      window.cancelAnimationFrame(selectionFrame ?? 0)
+      const selected = term.getSelection()
+      if (selected === '' || selected.trim() === '') {
+        hideSelectionPopup()
+        return
+      }
+      const range = term.getSelectionPosition()
+      if (range === undefined) {
+        hideSelectionPopup()
+        return
+      }
+      selectionFrame = window.requestAnimationFrame(() => {
+        if (closed) return
+        const firstSegment = host.querySelector('.xterm-selection > div:first-child')
+        if (firstSegment === null) {
+          hideSelectionPopup()
+          return
+        }
+        const rect = firstSegment.getBoundingClientRect()
+        const command = blockForSelection(tracker.blocks, range.start.y - 1)?.command
+        showSelectionPopup(
+          buildTerminalInsert(command, selected),
+          rect.left + rect.width / 2,
+          rect.top,
+        )
+      })
+    })
+    const scrollSub = term.onScroll(() => hideSelectionPopup())
     const observer = new ResizeObserver(() => { reflow.schedule() })
     observer.observe(host)
 
@@ -392,10 +527,13 @@ export function TerminalView(props: {
       reflow.cancel()
       refreshRef.current = null
       window.clearTimeout(retry)
+      window.cancelAnimationFrame(selectionFrame ?? 0)
       observer.disconnect()
       fontSub()
       schemeSub()
       inputSub.dispose()
+      selectionSub.dispose()
+      scrollSub.dispose()
       // Three unmount cases, distinguished by the store's tab/open state and
       // the active session id:
       // 1. The tab was closed by the user (NOT in its session's state): send
@@ -425,6 +563,10 @@ export function TerminalView(props: {
       socket?.close()
       term.dispose()
       connectRef.current = null
+      termRef.current = null
+      trackerRef.current = null
+      setSession(null)
+      hideSelectionPopup()
     }
   }, [scope.sessionId, scope.cwd, tabId, store])
 
@@ -467,7 +609,35 @@ export function TerminalView(props: {
           )}
         </div>
       )}
-      <div ref={hostRef} className={css.terminal} />
+      <div ref={hostRef} className={css.terminal}>
+        {/* The block layer: hairline dividers at every CLI block boundary;
+            hovering a block highlights its span and raises the per-block
+            "add to conversation" pill (see TerminalBlockOverlay). */}
+        {session !== null && (
+          <TerminalBlockOverlay
+            hostRef={hostRef}
+            term={session.term}
+            tracker={session.tracker}
+            visible={connected && fatal === null && depsFatal === null}
+            onAddBlock={commitBlock}
+          />
+        )}
+      </div>
+      {/* Selection mode: portalled to document.body and position:fixed, so
+          the terminal's overflow clips cannot crop it (same as TextEditor). */}
+      {selectionPopup !== null && createPortal(
+        <button
+          type="button"
+          className={css.selectionPopup}
+          style={{ left: selectionPopup.left, top: selectionPopup.top }}
+          // Keep the selection alive until the click commits.
+          onMouseDown={(event) => { event.preventDefault() }}
+          onClick={commitSelectionPopup}
+        >
+          {t('addToConversation')}
+        </button>,
+        document.body,
+      )}
     </div>
   )
 }

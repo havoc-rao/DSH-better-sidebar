@@ -194,7 +194,7 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
               newTabOptions={[]}
               actions={actions}
               onNewTab={() => {}}
-              renderTab={(tab) => renderGlobalTab(tab, store, windows, resolveTab)}
+              renderTab={(tab) => renderGlobalTab(ctx, tab, store, windows, resolveTab)}
               getTabIcon={globalTabIconOf}
               // The page workbench holds ONLY global-window stubs, and its ✕
               // DETACHES (the window stays in the card list — non-destructive):
@@ -214,6 +214,7 @@ export function GlobalPage(props: { ctx: Context; store: SidebarStore; windows?:
 /** The terminal tab body in the page's bottom workbench: the chunk-loaded
  *  TerminalView attaches to the stub's shared `gb:` pty. */
 function renderGlobalTab(
+  ctx: Context,
   tab: SidebarTab,
   store: SidebarStore,
   windows: WorkspaceWindowsStore | undefined,
@@ -223,6 +224,7 @@ function renderGlobalTab(
   if (tab.type === 'terminal' && isGlobalTabId(tab.id)) {
     return (
       <LazyTerminal
+        ctx={ctx}
         scope={{ sessionId: GLOBAL_WORKSPACE_SESSION_ID }}
         store={store}
         tabId={tab.id}
