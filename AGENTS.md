@@ -641,7 +641,7 @@ interface SidebarKeybindingContext {
 | key | 作用 | when 门 |
 |---|---|---|
 | `Cmd+B` | 切换宿主左侧栏（**IDE 全屏 ⌘⌥⇧B 下例外**：宿主左侧栏被全屏遮罩盖住，此键改切 IDE 窗口自己的左缘资源管理器抽屉 `state.sideBarOpen`） | 恒真 |
-| `Cmd+Alt+B` | 切换右侧栏 | 恒真 |
+| `Cmd+Alt+B` | 切换右侧栏（**IDE 全屏下例外**：此键退出 IDE 模式回到停靠布局、面板保持打开——「收起右侧面板」就是全屏盖的退出路，绝不把面板从用户脚下关掉） | 恒真 |
 | `Cmd+J` | 切换底部面板 | `!narrow` |
 | `Cmd+Shift+J` | 最大化/还原底部面板（IDE 全屏下停靠的底部 box 同样向上展开/还原） | `!narrow` |
 | `Cmd+Shift+B` | **仅 IDE 全屏（⌘⌥⇧B）内生效**：切换右缘聊天列 `state.chatOpen`（与 Activity Bar 的 Side Chat 图标同款开关语义）；模式外无绑定，和弦照旧放行给宿主/页面 | `state?.rightMaximized === true` |

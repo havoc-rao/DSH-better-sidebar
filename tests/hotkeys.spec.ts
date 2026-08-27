@@ -310,6 +310,24 @@ describe('registerPanelHotkeys — the native path', () => {
     expect(seen).toEqual(['document:keydown', 'document:keydown'])
   })
 
+  it('⌘⌥B inside IDE FULLSCREEN exits the mode with the panel open; outside it the close toggle applies', () => {
+    dispose = registerPanelHotkeys(store, leftSpy)
+    store.reduce(toggleRightMaximized)
+    expect(store.getSnapshot().state?.rightMaximized).toBe(true)
+
+    input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
+    let state = store.getSnapshot().state!
+    expect(state.rightMaximized).toBe(false)
+    expect(state.panelOpen).toBe(true)
+    expect(seen).toEqual([])
+
+    // A second press (now docked) is the ordinary panel close toggle.
+    input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
+    state = store.getSnapshot().state!
+    expect(state.panelOpen).toBe(false)
+    expect(leftSpy).not.toHaveBeenCalled()
+  })
+
   it('each panel toggles independently (⌘J then ⌘⌥B leaves both flipped)', () => {
     dispose = registerPanelHotkeys(store, leftSpy)
     input.dispatchEvent(keyEvent({ key: 'j', code: 'KeyJ', metaKey: true }))

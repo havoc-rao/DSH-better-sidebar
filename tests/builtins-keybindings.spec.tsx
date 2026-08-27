@@ -323,6 +323,30 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
     }
   })
 
+  it('⌘⌥B inside IDE FULLSCREEN EXITS the mode (docked layout, panel stays open) — never closes the panel there', () => {
+    const { store, runtime, dispose } = setup()
+    try {
+      store.reduce(toggleRightMaximized)
+      expect(store.getSnapshot().state?.rightMaximized).toBe(true)
+      expect(store.getSnapshot().state?.panelOpen).toBe(true)
+
+      // In the mode, ⌘⌥B exits back to the docked layout with the panel OPEN
+      // ("collapse the right panel" is the way out of the fullscreen cover —
+      // closing the panel out from under the user would be the bug).
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, altKey: true }))).toBe(true)
+      let state = store.getSnapshot().state!
+      expect(state.rightMaximized).toBe(false)
+      expect(state.panelOpen).toBe(true)
+
+      // Outside the mode the plain open/close toggle applies again.
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, altKey: true }))).toBe(true)
+      state = store.getSnapshot().state!
+      expect(state.panelOpen).toBe(false)
+    } finally {
+      dispose()
+    }
+  })
+
   it('both view keys yield while a + menu is open', () => {
     const { store, runtime, dispose, setMenuOpen } = setup()
     try {
