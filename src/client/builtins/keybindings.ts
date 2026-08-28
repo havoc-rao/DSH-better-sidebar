@@ -51,7 +51,7 @@
  */
 import type { Context } from '../../context-types.ts'
 import {
-  activeTabOf, allLeaves, firstLeaf, setSideBarOpen, togglePanel, toggleRightMaximized,
+  activeTabOf, allLeaves, firstLeaf, moveTab, paneInArea, setSideBarOpen, togglePanel, toggleRightMaximized,
   type SidebarState, type SidebarTab, type SidebarStore,
 } from '../state.ts'
 import { KeybindingRuntime, focusSidebarSearchInput, sessionScopeOf, workingTabIdOf, type KeybindingDescriptor, type SidebarKeybindingContext } from '../keybindings.ts'
@@ -112,6 +112,37 @@ function findHomeTab(state: SidebarState): SidebarTab | undefined {
     if (home !== undefined) return home
   }
   return undefined
+}
+
+/**
+ * The shortcut's default box: a window a show-view / quick-open key opens
+ * presents in the RIGHT panel, never in a bottom-panel pane the global
+ * `activePane` happened to point at (e.g. ⌘⇧G pressed while a bottom
+ * terminal held the pane focus). Two steps in one reducer:
+ *
+ *  1. PIN — the landing pane becomes the right panel's receiving pane
+ *     (`paneInArea('right')`: the last pane the user touched inside the
+ *     right tree, else its first leaf), so a NEWLY created window lands in
+ *     the right box;
+ *  2. PULL — a matching window already PARKED in the bottom tree (an
+ *     earlier open landed there, or a persisted layout carries it) is
+ *     moved into that pane: the shortcut must not present its window in a
+ *     bottom pane — and since the pulled types are single-instance (git)
+ *     or dedupe by key (the files home), a window that ever got stuck at
+ *     the bottom would otherwise keep being focused there on every press.
+ *
+ * A target already inside the right tree stays where the user arranged it
+ * (splits within the right panel survive); only the pane pin applies then.
+ */
+function pullToRightPanel(store: SidebarStore, matches: (tab: SidebarTab) => boolean): void {
+  store.reduce(state => {
+    const target = paneInArea(state, 'right')
+    for (const leaf of allLeaves(state.bottomSplits)) {
+      const parked = leaf.tabs.find(matches)
+      if (parked !== undefined) return moveTab(state, leaf.id, parked.id, target)
+    }
+    return state.activePane === target ? state : { ...state, activePane: target }
+  })
 }
 
 /** Focus the files search with a short retry ladder: after an expansion the
@@ -192,7 +223,11 @@ export function registerBuiltinKeybindings(
    */
   const revealFilesHome = (ctx: Context, store: SidebarStore): string | undefined => {
     store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
+    // The shortcut's default box for the opened window is the RIGHT panel:
+    // pin the landing pane there and pull a files home parked in the bottom
+    // tree into it — the reveal must never present the window at the bottom
+    // (findHomeTab below then finds it in the right tree and activates it).
+    pullToRightPanel(store, isHomeTab)
     const state = store.getSnapshot().state
     if (state === undefined) return undefined
     const home = findHomeTab(state)
@@ -279,10 +314,17 @@ export function registerBuiltinKeybindings(
         // VSCode's "Show Source Control": the git tab is single (dedupe by
         // id), so an existing one focuses; a type-only open does not
         // auto-expand the panel, hence the explicit expand above. The
+        // shortcut's window presents in the RIGHT panel by default (the
+        // right box — never a bottom pane the activePane happened to point
+        // at): pullToRightPanel pins the landing pane there AND pulls a git
+        // tab parked in the bottom tree into it, so a git window stuck at
+        // the bottom (an earlier open that landed in the active pane, or a
+        // persisted layout) is not focused in place on every press. The
         // created/activated window then gets the REAL focus (its strip tab)
         // — a ⌘⇧G from the conversation leaves the user IN the sidebar, so
         // the next ⌘W targets the git tab, not the shell's close flow.
         store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
+        pullToRightPanel(store, tab => tab.type === 'git')
         const scope = sessionScopeOf(ctx, store)
         if (scope === undefined) return
         ctx.betterSidebar?.openTab({ type: 'git' }, scope)

@@ -645,9 +645,9 @@ interface SidebarKeybindingContext {
 | `Cmd+J` | 切换底部面板 | `!narrow` |
 | `Cmd+Shift+J` | 最大化/还原底部面板（IDE 全屏下停靠的底部 box 同样向上展开/还原） | `!narrow` |
 | `Cmd+Shift+B` | **仅 IDE 全屏（⌘⌥⇧B）内生效**：切换右缘聊天列 `state.chatOpen`（与 Activity Bar 的 Side Chat 图标及 `Cmd+Alt+B` 的 IDE 分支同款开关语义）；模式外无绑定，和弦照旧放行给宿主/页面 | `state?.rightMaximized === true` |
-| `Cmd+P` | 快速打开：展开面板 → 保证文件窗口 → 聚焦其搜索框 | `!textEditing && !plusMenuOpen` |
+| `Cmd+P` | 快速打开：展开面板 → 保证文件窗口 → 聚焦其搜索框（**快捷键打开的窗口默认落在右侧 box**：着陆 pane 钉到右侧树，files home 若停靠在底部树会被移回右侧——见 ⌘⇧G 行） | `!textEditing && !plusMenuOpen` |
 | `Cmd+Shift+E` | 显示/收起资源管理器（vscode 布局开关 Side Bar 抽屉，面板关闭时视为隐藏、按此键先开面板；**IDE 全屏（⌘⌥⇧B）下同样开关钉在左缘的树列抽屉**；docked 布局：活动 tab 是**带 path 的文件 tab** 时切换其自身 docked 树（`meta.treeOpen`，编辑器头部文件夹按钮的键盘等价，宽度伸缩动画），**无路径的 files home 窗口**正被查看时二次按下关闭它——Activity Bar 图标同款开关语义） | `!plusMenuOpen` |
-| `Cmd+Shift+G` | 打开源代码管理（Git 面板，single 去重） | `!plusMenuOpen` |
+| `Cmd+Shift+G` | 打开源代码管理（Git 面板，single 去重）。**快捷键打开的窗口默认都在右侧 box 展示**（`pullToRightPanel`，见 `builtins/keybindings.ts`）：打开前把 `activePane` 钉到右侧树的接收 pane（`paneInArea('right')`——用户在右侧树最后碰过的 pane，否则其第一个 leaf），并检查底部树——git tab / files home 若停靠在底部（曾落在活动 pane 的旧打开、或持久化布局），先 `moveTab` 移回右侧树再聚焦/新建；已开在右侧树内的窗口保持原位（右侧面板内部的分割不受影响）。⌘P / docked ⌘⇧E 的 reveal 共用同一规则 | `!plusMenuOpen` |
 | `Cmd+Alt+Shift+B` | 进入/退出 IDE 模式（右侧面板占满全屏：宽 100vw、z-index 1000 盖住应用壳、释放布局挤压——类 VSCode 独立窗口；进入自动开面板并把**资源管理器钉在左缘**（无视 `sideBarSide` pref，顺带默认展开 explorer 抽屉）、**侧边对话（Side Chat）钉成右缘聊天列**（`state.chatOpen` 默认展开，主会话被全屏盖住后它就是本模式的对话面；镜像活动 pane 的 sidechat tab，无 tab 时显示 hero，Activity Bar 的 Side Chat 图标是它的开关注，左缘拖拽调宽持久化到 `state.chatWidth`）、**底部面板重新停靠到文件 tabs 区域下方**（z-index 1001，左缘对齐活动栏+文件树列、右缘对齐聊天列左缘），退出恢复停靠宽度；右上角 ✕ 或同键退出。**IDE 模式是本案唯一的进入/退出 hotkey，模式内其他快捷键保持各自语义**：⌘B = 左缘树列抽屉、⌘⌥B = 右缘聊天列、⌘⇧B = 右缘聊天列（同款）、⌘⇧J = 底部 box、⌘⇧E = 树列抽屉同款） | `!plusMenuOpen` |
 | `Cmd+F` | 聚焦文件搜索框 | 活动 tab 是文件窗口，且 `!textEditing && !plusMenuOpen` |
 | `Cmd+Tab` / `Cmd+Shift+Tab` | 当前窗格下/上一个 tab | `focusInSidebar && !plusMenuOpen` |

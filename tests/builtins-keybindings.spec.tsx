@@ -23,7 +23,7 @@ import {
 } from '../src/client/keybindings.ts'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import {
-  activePaneTabsOf, activeTabOf, allLeaves, createSidebarStore, toggleRightMaximized,
+  activePaneTabsOf, activeTabOf, allLeaves, createSidebarStore, firstLeaf, moveTab, toggleRightMaximized,
   type SidebarStore, type SidebarTab,
 } from '../src/client/state.ts'
 import type { Context } from '../src/context-types.ts'
@@ -249,6 +249,86 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
       // A second press dedupes onto the existing tab.
       expect(runtime.dispatch(like({ code: 'KeyG', metaKey: true, shiftKey: true }))).toBe(true)
       expect(allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs).filter(tab => tab.type === 'git')).toHaveLength(1)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘⇧G opens the git window in the RIGHT panel even when the active pane is the bottom panel', () => {
+    const { store, runtime, dispose } = setup()
+    try {
+      // The user's last interaction was a bottom-panel pane (e.g. a
+      // terminal): the shortcut's window must default to the RIGHT box.
+      const bottomPane = firstLeaf(store.getSnapshot().state!.bottomSplits).id
+      store.reduce(state => ({ ...state, activePane: bottomPane, bottomOpen: true, panelOpen: false }))
+      expect(activeTabOf(store.getSnapshot().state!)).toBeUndefined()
+
+      expect(runtime.dispatch(like({ code: 'KeyG', metaKey: true, shiftKey: true }))).toBe(true)
+
+      const state = store.getSnapshot().state!
+      // The git window was created in the RIGHT tree — never in a bottom pane.
+      expect(allLeaves(state.splits).flatMap(leaf => leaf.tabs).filter(tab => tab.type === 'git')).toHaveLength(1)
+      expect(allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(tab => tab.type === 'git')).toHaveLength(0)
+      // …and the landing pane now points into the right tree.
+      expect(state.activePane).toBe(firstLeaf(state.splits).id)
+      expect(state.activePane).not.toBe(bottomPane)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘⇧G pulls a git tab parked in the bottom panel into the right panel', () => {
+    const { store, runtime, dispose, ctx } = setup()
+    try {
+      // Park the single git tab at the bottom (an earlier open that landed
+      // in the active pane, or a persisted layout).
+      const bottomPane = firstLeaf(store.getSnapshot().state!.bottomSplits).id
+      store.reduce(state => ({ ...state, activePane: bottomPane }))
+      ctx.betterSidebar?.openTab({ type: 'git' })
+      expect(allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs).filter(tab => tab.type === 'git')).toHaveLength(1)
+
+      // The show-view press must not focus it IN PLACE at the bottom: the
+      // shortcut's window presents in the right box.
+      expect(runtime.dispatch(like({ code: 'KeyG', metaKey: true, shiftKey: true }))).toBe(true)
+
+      const state = store.getSnapshot().state!
+      const gitTabs = allLeaves(state.splits).concat(allLeaves(state.bottomSplits))
+        .flatMap(leaf => leaf.tabs)
+        .filter(tab => tab.type === 'git')
+      // Still one instance — the move REPLACED the park, never duplicated.
+      expect(gitTabs).toHaveLength(1)
+      expect(allLeaves(state.splits).flatMap(leaf => leaf.tabs).some(tab => tab.type === 'git')).toBe(true)
+      expect(allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).some(tab => tab.type === 'git')).toBe(false)
+      expect(state.activePane).toBe(firstLeaf(state.splits).id)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘P reveals the files home in the RIGHT panel — a home parked in the bottom panel is pulled into the right tree', () => {
+    const { store, runtime, dispose } = setup()
+    try {
+      const isHome = (tab: SidebarTab): boolean =>
+        tab.type === 'editor' && (tab.path === undefined || tab.path === '')
+      // Park the seeded files home in the bottom tree (a bottom-parked
+      // files window); moveTab also points the active pane at the bottom.
+      store.reduce(state => {
+        const home = allLeaves(state.splits).flatMap(leaf => leaf.tabs).find(isHome)!
+        const source = allLeaves(state.splits).find(leaf => leaf.tabs.some(tab => tab.id === home.id))!
+        return moveTab(state, source.id, home.id, firstLeaf(state.bottomSplits).id)
+      })
+      let state = store.getSnapshot().state!
+      expect(allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).some(isHome)).toBe(true)
+      expect(allLeaves(state.splits).flatMap(leaf => leaf.tabs).some(isHome)).toBe(false)
+
+      expect(runtime.dispatch(like({ code: 'KeyP', metaKey: true }))).toBe(true)
+
+      state = store.getSnapshot().state!
+      // The quick-open window presents in the RIGHT tree, the active pane
+      // left the bottom panel.
+      expect(allLeaves(state.splits).flatMap(leaf => leaf.tabs).some(isHome)).toBe(true)
+      expect(allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).some(isHome)).toBe(false)
+      expect(state.activePane).toBe(firstLeaf(state.splits).id)
     } finally {
       dispose()
     }
