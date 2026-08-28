@@ -66,6 +66,7 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
+import { CmdWChannel, registerDesktopShortcutClaim, type CmdWSocketFace } from './desktop-cmdw.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { createPtyBackpressure, type PtyBackpressure } from './backpressure.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
@@ -1133,6 +1134,39 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   }), 'dsh-better-sidebar: agent-opens push WebSocket')
 
+  // ── ⌘W desktop-shortcut claim WebSocket ────────────────────────────────
+  // Request/reply channel for the shell's ⌘W accelerator (see
+  // desktop-cmdw.ts): DSH Desktop's main process routes the menu's ⌘W
+  // through `ctx.desktopShortcuts` BEFORE the renderer sees the keydown, so
+  // the builtin ⌘W binding can never fire there. The claimer broadcasts a
+  // request frame to every connected view; the VIEW decides (focus in the
+  // sidebar + a closeable active tab — the builtin binding's exact
+  // when-clause) and answers, and the host resolves the shell's route from
+  // the verdict: claimed = window stays + tab closes, unclaimed = the
+  // shell keeps its existing confirm dialog. The channel is page-global and
+  // session-agnostic (each view evaluates against its current snapshot at
+  // request time).
+  const cmdWChannel = new CmdWChannel()
+  const cmdWss = new WebSocketServer({ noServer: true })
+  ctx.effect(() => ctx.webServer.registerUpgrade({
+    path: '/sidebar/ws/cmd-w',
+    handler: (req, socket, head) => {
+      if (!fence(req)) {
+        socket.destroy()
+        return
+      }
+      cmdWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
+        cmdWChannel.attach(ws as unknown as CmdWSocketFace)
+      })
+    },
+  }), 'dsh-better-sidebar: ⌘W claim WebSocket')
+
+  // The claimer on the shell's ShortcutRouter: feature-detected — a plain
+  // browser or a shell without the desktop service never intercepts ⌘W
+  // (the renderer's own binding handles it there), so this is a strict
+  // no-op in those deployments.
+  ctx.effect(() => registerDesktopShortcutClaim(ctx, cmdWChannel), 'dsh-better-sidebar: ⌘W desktop-shortcut claimer')
+
   ctx.effect(() => () => {
     toolsDisposers?.()
     openToolsDisposers?.()
@@ -1142,6 +1176,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     wss.close()
     agentListWss.close()
     agentOpenWss.close()
+    cmdWss.close()
   }, 'dsh-better-sidebar: teardown')
 }
 

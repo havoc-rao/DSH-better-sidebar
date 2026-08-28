@@ -31,7 +31,7 @@ import type { WorkspaceWindowsStore } from './workspace-windows.ts'
 import { isNarrowWidth } from './breakpoints.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
-import { KeybindingRuntime, type KeybindingDescriptor } from './keybindings.ts'
+import { KeybindingRuntime, setFocusedTabId, type KeybindingDescriptor } from './keybindings.ts'
 import {
   buildIconThemeIndex, injectThemeFonts,
   matchFileIcon as matchFileIconOf,
@@ -986,6 +986,16 @@ export function createBetterSidebarService(
     }
     if (created !== undefined) safeCall(() => descriptor.onOpen?.(created!, callbackScope))
     else if (activated !== undefined) safeCall(() => descriptor.onActivate?.(activated!, callbackScope))
+    // A tab the user just opened / focused IS the working surface: pin it
+    // so a W-close targets it even before any click lands in its content
+    // body (the focusin tracker then overrides the pin once a tab's content
+    // actually takes focus — e.g. the user reaches into another pane).
+    // Opens targeted at an INACTIVE session never pin (the pin is page-wide
+    // and would wrongly claim a tab the user cannot see).
+    if (!targetsInactiveSession) {
+      const landed = created ?? activated
+      if (landed !== undefined) setFocusedTabId(landed.id)
+    }
   }
 
   const closeTab = (tabId: string, scope?: SessionScope): void => {
@@ -1061,6 +1071,13 @@ export function createBetterSidebarService(
         const descriptor = tabs.get(activated.type)
         // An explicit scope (with its optional cwd) rides to the callback.
         safeCall(() => descriptor?.onActivate?.(activated!, scope ?? { sessionId }))
+      }
+      // Activation = the working surface (strip clicks, dedupe focuses,
+      // quick-open jumps): pin it exactly like an open does. Only the
+      // current session's activations pin (a targeted activate of another
+      // session's tab must not claim the page-wide pin).
+      if (scope === undefined || scope.sessionId === store.getSnapshot().sessionId) {
+        setFocusedTabId(activated.id)
       }
     }
   }

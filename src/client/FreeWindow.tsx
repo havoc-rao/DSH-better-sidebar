@@ -195,6 +195,7 @@ export function FreeWindow(props: {
       className={clsx(css.floatWindow, dragging !== null && css.floatWindowDragging)}
       data-dsh-float-window
       data-dsh-float-id={float.id}
+      data-dsh-tab-id={float.tab.id}
       style={{ left: float.x, top: float.y, width: float.w, height: float.h }}
       onPointerDown={() => { onRaise() }}
     >

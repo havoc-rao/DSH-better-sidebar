@@ -14,17 +14,17 @@
  * - both yield while a + menu is open (no stealing inside the menu).
  */
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { registerBuiltinKeybindings } from '../src/client/builtins/keybindings.ts'
 import {
-  KeybindingRuntime,
+  KeybindingRuntime, getFocusedTabId, setFocusedTabId,
   type KeybindingEventLike,
   type SidebarKeybindingContext,
 } from '../src/client/keybindings.ts'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import {
-  activeTabOf, allLeaves, createSidebarStore, toggleRightMaximized,
-  type SidebarStore,
+  activePaneTabsOf, activeTabOf, allLeaves, createSidebarStore, toggleRightMaximized,
+  type SidebarStore, type SidebarTab,
 } from '../src/client/state.ts'
 import type { Context } from '../src/context-types.ts'
 
@@ -44,8 +44,17 @@ function like(overrides: Partial<KeybindingEventLike>): KeybindingEventLike {
   }
 }
 
-/** Wire the builtin bindings exactly like the client apply does. */
-function setup(layout: 'docked' | 'vscode' = 'docked'): {
+afterEach(() => {
+  setFocusedTabId(null)
+})
+
+/** Wire the builtin bindings exactly like the client apply does. The
+ *  context's tab fields resolve live from the store (like the real apply's
+ *  context builder); `overrides` pins the rest (focusInSidebar etc.). */
+function setup(
+  layout: 'docked' | 'vscode' = 'docked',
+  overrides: Partial<SidebarKeybindingContext> = {},
+): {
   store: SidebarStore
   runtime: KeybindingRuntime
   dispose: () => void
@@ -65,17 +74,22 @@ function setup(layout: 'docked' | 'vscode' = 'docked'): {
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
   } as unknown as Context
   let menuOpen = false
-  const runtime = new KeybindingRuntime((): SidebarKeybindingContext => ({
-    state: store.getSnapshot().state ?? null,
-    narrow: false,
-    focusInSidebar: false,
-    textEditing: false,
-    plusMenuOpen: menuOpen,
-    searchActive: false,
-    activeTab: null,
-    activeTabType: '',
-    activePaneTabs: [],
-  }))
+  const runtime = new KeybindingRuntime((): SidebarKeybindingContext => {
+    const state = store.getSnapshot().state ?? null
+    const activeTab = state === null ? undefined : activeTabOf(state)
+    return {
+      state,
+      narrow: false,
+      focusInSidebar: false,
+      textEditing: false,
+      plusMenuOpen: menuOpen,
+      searchActive: false,
+      activeTab: activeTab ?? null,
+      activeTabType: activeTab?.type ?? '',
+      activePaneTabs: state === null ? [] : activePaneTabsOf(state),
+      ...overrides,
+    }
+  })
   const dispose = registerBuiltinKeybindings(runtime, ctx, store)
   return { store, runtime, dispose, setMenuOpen: open => { menuOpen = open }, ctx }
 }
@@ -363,6 +377,134 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
       expect(runtime.dispatch(like({ code: 'KeyE', metaKey: true, shiftKey: true }))).toBe(false)
       expect(runtime.dispatch(like({ code: 'KeyG', metaKey: true, shiftKey: true }))).toBe(false)
       expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘W closes the active tab while the sidebar is focused — ⌘⇧W / ⌥W are the fallback aliases (shells/browsers swallow the ⌘ chords)', () => {
+    const { store, runtime, dispose, ctx } = setup('docked', { focusInSidebar: true })
+    try {
+      const tabs = (): SidebarTab[] => activePaneTabsOf(store.getSnapshot().state!)
+      const active = (): SidebarTab | undefined => activeTabOf(store.getSnapshot().state!)
+      // Three file tabs side by side (distinct ids — a bare `type:'editor'`
+      // seed would collapse onto the id safety net, since the openTab
+      // default id is the TYPE).
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'a.ts', path: '/a.ts', id: 'editor:/a.ts' })
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'b.ts', path: '/b.ts', id: 'editor:/b.ts' })
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'c.ts', path: '/c.ts', id: 'editor:/c.ts' })
+      expect(tabs().length).toBeGreaterThanOrEqual(3)
+      const first = active()!
+
+      // ⌘W consumes the chord and closes ONLY the active tab.
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
+      expect(tabs().some(tab => tab.id === first.id)).toBe(false)
+
+      // ⌘⇧W — the alias for Electron shells whose menu claims ⌘W at the
+      // main process — closes the active tab exactly the same way.
+      const second = active()!
+      expect(second.id).not.toBe(first.id)
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true, shiftKey: true }))).toBe(true)
+      expect(tabs().some(tab => tab.id === second.id)).toBe(false)
+
+      // ⌘⇧W again closes the next one (the third file tab).
+      const third = active()!
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true, shiftKey: true }))).toBe(true)
+      expect(tabs().some(tab => tab.id === third.id)).toBe(false)
+
+      // The remaining tab (the seeded files home, path-less) closes too —
+      // ⌘W keeps working while ANY tab is active.
+      const fourth = active()
+      if (fourth !== undefined) {
+        expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
+      }
+      expect(active()).toBeUndefined()
+
+      // With NOTHING active left, both chords yield to the host — never
+      // swallowing the chord blindly.
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(false)
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true, shiftKey: true }))).toBe(false)
+      // ⌥W is PARKED (the desktop ⌘W claim channel is live) — the alias
+      // binding must NOT consume the chord anymore.
+      expect(runtime.dispatch(like({ code: 'KeyW', altKey: true }))).toBe(false)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘W / ⌘⇧W pass through untouched when the focus is outside the sidebar; parked ⌥W is never consumed', () => {
+    const { store, runtime, dispose, ctx } = setup('docked', { focusInSidebar: false })
+    try {
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'a.ts', path: '/a.ts', id: 'editor:/a.ts' })
+      expect(activeTabOf(store.getSnapshot().state!)?.path).toBe('/a.ts')
+
+      // Sidebar focus is the whole gate: outside it the chords are the
+      // host's business (Electron's Close Window / the browser's own keys).
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(false)
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true, shiftKey: true }))).toBe(false)
+      // ⌥W parked: not registered at all, so it is inert in every context.
+      expect(runtime.dispatch(like({ code: 'KeyW', altKey: true }))).toBe(false)
+      expect(activeTabOf(store.getSnapshot().state!)?.path).toBe('/a.ts')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('⌘W closes the tab the user is actually working in — the focus-pinned tab, not the state-active highlight', () => {
+    const { store, runtime, dispose, ctx } = setup('docked', { focusInSidebar: true })
+    try {
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'a.ts', path: '/a.ts', id: 'editor:/a.ts' })
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'b.ts', path: '/b.ts', id: 'editor:/b.ts' })
+      const tabs = (): SidebarTab[] => activePaneTabsOf(store.getSnapshot().state!)
+      const stateActive = activeTabOf(store.getSnapshot().state!)!
+      // The user's focus sits in ANOTHER tab's content (e.g. the bottom
+      // pane's terminal while `activePane` still points at this pane).
+      const working = tabs().find(tab => tab.id !== stateActive.id)!
+      setFocusedTabId(working.id)
+      try {
+        expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
+        expect(tabs().some(tab => tab.id === working.id)).toBe(false)
+        // The state-active tab SURVIVES — only the working surface closed.
+        expect(activeTabOf(store.getSnapshot().state!)?.id).toBe(stateActive.id)
+      } finally {
+        setFocusedTabId(null)
+      }
+
+      // A stale pin (tab already closed / another session's tab) falls back
+      // to the state-active tab.
+      const next = activeTabOf(store.getSnapshot().state!)!
+      setFocusedTabId('editor:/ghost')
+      try {
+        expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
+        expect(activeTabOf(store.getSnapshot().state!)?.id).not.toBe(next.id)
+      } finally {
+        setFocusedTabId(null)
+      }
+    } finally {
+      dispose()
+    }
+  })
+
+  it('a freshly opened / activated tab is the W-close target WITHOUT any click into its body', () => {
+    const { store, runtime, dispose, ctx } = setup('docked', { focusInSidebar: true })
+    try {
+      // Opening a tab pins it via the service — no content focus needed:
+      // the opened tab IS the user's working surface (browser semantics).
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'b.ts', path: '/b.ts', id: 'editor:/b.ts' })
+      expect(getFocusedTabId()).toBe('editor:/b.ts')
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
+      expect(activePaneTabsOf(store.getSnapshot().state!).some(tab => tab.id === 'editor:/b.ts')).toBe(false)
+
+      // Re-opening the same file creates it again AND pins it (create path).
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'b.ts', path: '/b.ts', id: 'editor:/b.ts' })
+      expect(getFocusedTabId()).toBe('editor:/b.ts')
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
+      expect(activePaneTabsOf(store.getSnapshot().state!).some(tab => tab.id === 'editor:/b.ts')).toBe(false)
+
+      // Activation (activateTab) pins too — the strip-click / quick-open path.
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'a.ts', path: '/a.ts', id: 'editor:/a.ts' })
+      ctx.betterSidebar?.activateTab('editor:/a.ts')
+      expect(getFocusedTabId()).toBe('editor:/a.ts')
     } finally {
       dispose()
     }

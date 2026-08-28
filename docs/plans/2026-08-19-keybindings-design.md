@@ -38,7 +38,11 @@
 | `Cmd+J` / `Cmd+Shift+J` | 底部面板 / 最大化 | `!narrow` |
 | `Cmd+P` | 快速打开：展开面板 → 保证文件窗口 → 聚焦搜索 | `!textEditing && !plusMenuOpen` |
 | `Cmd+F` | 聚焦文件搜索 | 活动 tab 是文件窗口，且 `!textEditing && !plusMenuOpen` |
-| `Cmd+Tab` / `Cmd+Shift+Tab` / `Cmd+1…9` / `Cmd+W` | 标签切换 / 跳转 / 关闭 | `focusInSidebar && !plusMenuOpen` |
+| `Cmd+Tab` / `Cmd+Shift+Tab` / `Cmd+1…9` / `Cmd+W` / `Cmd+Shift+W` | 标签切换 / 跳转 / 关闭 | `focusInSidebar && !plusMenuOpen` |
+
+`Cmd+Shift+W` 与 `Alt+W` 是 `Cmd+W` 的 `builtin:tab-close-active-alt` 别名（同一 `closeActiveTab` 动作，键位集合 `['Cmd+Shift+W', 'Alt+W']`）：桌面壳的应用菜单若在**主进程**注册了 `Close Window`（⌘W）accelerator，macOS 菜单 key equivalent / Electron accelerator 会在 keydown 到达页面之前消费掉和弦——渲染层任何监听都收不到，`Cmd+W` 绑定自然无法命中。别名给「焦点在侧边栏时 ⌘W 关闭当前 tab」提供壳不占用的和弦；壳侧去掉该 accelerator（或 `before-input-event` 转发给页面）后 ⌘W 即恢复同一语义，两者共享 `focusInSidebar && !plusMenuOpen` 门与「无活动 tab 时放行」的语义。**⌘⇧W 只覆盖 Electron 壳；`Alt+W`（浏览器端唯一能到页面的成员——Edge/Chrome/Safari 把 ⌘W 与 ⌘⇧W 都保留在浏览器层）已暂停**：桌面 ⌘W 认领通道上线后键位数组中 `'Alt+W'` 被注释（2026-08-28），纯浏览器部署需要关 tab 快捷键时取消注释即可。
+
+**桌面壳的主进程认领路径（v0.17.0+，与绑定互斥共存）**：DSH Desktop 壳侧已交付 `ctx.desktopShortcuts` ShortcutRouter（`window.ts` 拦截 ⌘W 先 `route('cmd-w')`，无人认领才走确认关窗）。插件 host 半经 `registerDesktopShortcutClaim`（`src/desktop-cmdw.ts`）注册认领，经 `/sidebar/ws/cmd-w` 问渲染层：视图用与绑定**同一份** `buildKeybindingContext`（自 `index.tsx` 抽出至 `keybindings.ts`，本设计「单一 context 源」原则的延伸）判定 `focusInSidebar && !plusMenuOpen && 有活动 tab`，另加 `document.hasFocus()` 焦点窗口守卫；认领即按同路径 `sessionScopeOf` + `closeTab` 关当前 tab，窗口不关。壳拦截时渲染层收不到 keydown（只有认领路径生效），壳不拦截时 host 路由从不触发（只有绑定路径生效）——两条路径天然互斥，不会双关。详见 `docs/plans/2026-08-28-desktop-cmdw-shortcut-design.md`。
 
 `focusInSidebar` 门是有意为之：避免在会话编辑区吞掉 Ctrl+Tab / Ctrl+W 等宿主键。面板开关从 `hotkeys.ts` 迁入注册表（`panelToggleBindings` 工厂，`registerPanelHotkeys` 作为兼容包装保留，纯 `matchPanelHotkey` 与既有测试原样）。
 

@@ -44,7 +44,10 @@
  * Ties break by `priority` (descending, registration order among equals).
  */
 import { isImeComposition } from './ime-guard.ts'
+import { isNarrowWidth } from './breakpoints.ts'
+import { activePaneTabsOf, activeTabOf, tabOpenIn, type SidebarStore } from './state.ts'
 import type { SidebarState, SidebarTab } from './state.ts'
+import type { Context } from '../context-types.ts'
 
 /** The subset of KeyboardEvent the matcher reads (pure: testable without DOM). */
 export interface KeybindingEventLike {
@@ -86,6 +89,62 @@ export interface SidebarKeybindingContext {
   activeTabType: string
   /** All tabs of the active pane, in strip order. */
   activePaneTabs: readonly SidebarTab[]
+}
+
+/**
+ * Assemble the keybinding context from the live store snapshot and the DOM
+ * focus. THE single context source: the runtime's per-event builder AND the
+ * ⌘W desktop-shortcut claim evaluator (client/cmd-w.ts) both call this, so
+ * the claim decision can never drift from what the bindings themselves
+ * would see at the same moment.
+ */
+export function buildKeybindingContext(store: SidebarStore): SidebarKeybindingContext {
+  const snapshot = store.getSnapshot()
+  const state = snapshot.state ?? null
+  const activeTab = state === null ? undefined : activeTabOf(state)
+  let focusInSidebar = false
+  let textEditing = false
+  try {
+    const activeElement = document.activeElement as HTMLElement | null
+    if (activeElement !== null) {
+      focusInSidebar = activeElement.closest?.('[data-dsh-better-sidebar]') !== null
+      textEditing = !focusInSidebar
+        && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)
+    }
+  } catch {
+    // Degraded focus context: bindings fall back to their other gates.
+  }
+  return {
+    state,
+    narrow: isNarrowWidth(window.innerWidth),
+    focusInSidebar,
+    textEditing,
+    plusMenuOpen: isPlusMenuOpen(),
+    searchActive: isSearchActive(),
+    activeTab: activeTab ?? null,
+    activeTabType: activeTab?.type ?? '',
+    activePaneTabs: state === null ? [] : activePaneTabsOf(state),
+  }
+}
+
+/**
+ * The session scope the close action rides with ({ sessionId, cwd? }).
+ * Shared by the ⌘W binding and the ⌘W desktop-shortcut claimer — the closed
+ * tab's onClose callback sees the same scope either way (parity).
+ */
+export function sessionScopeOf(
+  ctx: Context,
+  store: SidebarStore,
+): { sessionId: string; cwd: string | undefined } | undefined {
+  const sessionId = store.getSnapshot().sessionId
+  if (sessionId === undefined) return undefined
+  let cwd: string | undefined
+  try {
+    cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
+  } catch {
+    cwd = undefined
+  }
+  return { sessionId, cwd }
 }
 
 /** One registered keybinding. */
@@ -409,4 +468,47 @@ export function focusSidebarSearchInput(): boolean {
   searchInputElement.focus()
   searchInputElement.select()
   return true
+}
+
+// ── Focus-pinned tab tracking ────────────────────────────────────────────
+// The state's `active` pointer is a UI HIGHLIGHT, not the user's working
+// surface: typing in the bottom pane's terminal does not move `activePane`,
+// so a W-close resolved from the state would kill the OTHER pane's tab. The
+// W-close target is therefore the tab whose CONTENT actually holds the DOM
+// focus, tracked here via a document-level focusin listener, and re-validated
+// against the current state at close time (a pinned tab that was closed or
+// belongs to another session falls back to the state's active tab).
+
+/** The tab the user is actually working in (id), or null when the focus is
+ *  not inside any tab surface (panel chrome, portaled menus, the host
+ *  page). Published by {@link registerFocusedTabTracking}. */
+let focusedTabIdFlag: string | null = null
+/** Pin / clear the working-tab id (the focusin tracker publishes it; tests
+ *  may set it directly). */
+export function setFocusedTabId(id: string | null): void { focusedTabIdFlag = id }
+/** Read the pinned working-tab id (runtime resolution, tests). */
+export function getFocusedTabId(): string | null { return focusedTabIdFlag }
+
+/** Document-level focusin tracker: maps the focused element to its tab via
+ *  the `data-dsh-tab-id` attribute (pane tab content wrappers, float
+ *  windows, and the tab strip all carry it). Focus anywhere else clears the
+ *  pin — the W-close then falls back to the state's active tab. Returns the
+ *  disposer (call through `ctx.effect`). */
+export function registerFocusedTabTracking(): () => void {
+  const onFocusIn = (event: FocusEvent): void => {
+    const target = event.target instanceof Element ? event.target : null
+    setFocusedTabId(target?.closest('[data-dsh-tab-id]')?.getAttribute('data-dsh-tab-id') ?? null)
+  }
+  document.addEventListener('focusin', onFocusIn, true)
+  return () => document.removeEventListener('focusin', onFocusIn, true)
+}
+
+/** The tab a W-close should target: the focus-pinned tab while it still
+ *  exists in the given state (it may have been closed, or belong to another
+ *  session), else the state's active tab. Shared by the builtin binding and
+ *  the desktop ⌘W claim — the two must never close different tabs. */
+export function workingTabIdOf(state: SidebarState | null): string | undefined {
+  const pinned = focusedTabIdFlag
+  if (pinned !== null && state !== null && tabOpenIn(state, pinned)) return pinned
+  return state === null ? undefined : activeTabOf(state)?.id
 }

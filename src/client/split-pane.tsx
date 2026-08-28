@@ -259,6 +259,7 @@ function LeafView(props: {
           {tabs.map(tab => (
             <div
               key={tab.id}
+              data-dsh-tab-id={tab.id}
               className={clsx(css.paneTab, tab.id !== activeTab?.id && css.paneTabHidden)}
             >
               {renderTab(tab, tab.id === activeTab?.id, leaf.id)}

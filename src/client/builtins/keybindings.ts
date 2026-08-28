@@ -31,7 +31,16 @@
  *   files window (yields to the host otherwise — no blanket stealing);
  * - ⌘Tab / ⌘Shift+Tab — cycle next / previous tab of the active pane;
  * - ⌘1…⌘9 — jump to the nth tab of the active pane;
- * - ⌘W — close the active tab.
+ * - ⌘W — close the active tab (⌘⇧W is a fallback alias: desktop shells
+ *   whose Electron menu claims ⌘W ("Close Window") consume the chord at the
+ *   MAIN PROCESS before the page ever sees the keydown — no renderer
+ *   listener can intercept it — so the alias offers the same
+ *   close-active-tab action on a chord the shell leaves alone. ⌥W was the
+ *   browser-safe member of the set (browsers reserve BOTH ⌘W and ⌘⇧W, so a
+ *   page never sees either) but is PARKED (commented out below) while the
+ *   desktop ⌘W claim channel is live — re-enable it only if a plain-browser
+ *   deployment needs the close chord again. Once the shell drops the ⌘W
+ *   accelerator, the ⌘W binding takes over with identical semantics).
  *
  * All tab-strip keys are gated on `focusInSidebar` (the user is actually
  * interacting with the panel) and free of the + menu; the fetch-style keys
@@ -45,26 +54,33 @@ import {
   activeTabOf, allLeaves, firstLeaf, setSideBarOpen, togglePanel, toggleRightMaximized,
   type SidebarState, type SidebarTab, type SidebarStore,
 } from '../state.ts'
-import { KeybindingRuntime, focusSidebarSearchInput, type KeybindingDescriptor, type SidebarKeybindingContext } from '../keybindings.ts'
+import { KeybindingRuntime, focusSidebarSearchInput, sessionScopeOf, workingTabIdOf, type KeybindingDescriptor, type SidebarKeybindingContext } from '../keybindings.ts'
 import { panelToggleBindings } from '../hotkeys.ts'
 import { t } from '../locales.ts'
-
-/** The session scope the callbacks ride with ({ sessionId, cwd? }). */
-function scopeOf(ctx: Context, store: SidebarStore): { sessionId: string; cwd: string | undefined } | undefined {
-  const sessionId = store.getSnapshot().sessionId
-  if (sessionId === undefined) return undefined
-  let cwd: string | undefined
-  try {
-    cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
-  } catch {
-    cwd = undefined
-  }
-  return { sessionId, cwd }
-}
 
 /** A path-less editor tab = the files HOME window (the search + tree). */
 function isHomeTab(tab: SidebarTab): boolean {
   return tab.type === 'editor' && (tab.path === undefined || tab.path === '')
+}
+
+/**
+ * The close-active-tab action shared by ⌘W / ⌘⇧W / ⌥W and the desktop ⌘W
+ * claim. The target is the tab the user is actually WORKING in — the
+ * focus-pinned tab (the one whose content holds the DOM focus), falling
+ * back to the state's active tab (see `workingTabIdOf`): the state's active
+ * pointer is a UI highlight that does not follow the focus across panes
+ * (typing in the bottom pane's terminal while `activePane` points at the
+ * right pane must close the BOTTOM tab).
+ * Nothing to close (no target / no session) returns false — the chord is
+ * explicitly handed back to the next binding / the host.
+ */
+function closeActiveTab(ctx: Context, store: SidebarStore, context: SidebarKeybindingContext): boolean {
+  const tabId = workingTabIdOf(context.state)
+  if (tabId === undefined) return false
+  const scope = sessionScopeOf(ctx, store)
+  if (scope === undefined) return false
+  ctx.betterSidebar?.closeTab(tabId, scope)
+  return true
 }
 
 /** The tab's persisted meta object (a malformed meta reads as empty) — the
@@ -136,7 +152,7 @@ export function registerBuiltinKeybindings(
 
   /** Activate any open tab by id (the service path — fires onActivate). */
   const activateTabById = (tabId: string): void => {
-    const scope = scopeOf(ctx, store)
+    const scope = sessionScopeOf(ctx, store)
     if (scope === undefined) return
     ctx.betterSidebar?.activateTab(tabId, scope)
   }
@@ -157,7 +173,7 @@ export function registerBuiltinKeybindings(
     if (home !== undefined) {
       activateTabById(home.id)
     } else {
-      const scope = scopeOf(ctx, store)
+      const scope = sessionScopeOf(ctx, store)
       if (scope !== undefined) {
         // A fresh files home (tree docked) — the search box is ready as
         // soon as the tab renders.
@@ -216,7 +232,7 @@ export function registerBuiltinKeybindings(
           return
         }
         if (before?.panelOpen === true && active !== undefined && isHomeTab(active)) {
-          const scope = scopeOf(ctx, store)
+          const scope = sessionScopeOf(ctx, store)
           if (scope !== undefined) ctx.betterSidebar?.closeTab(active.id, scope)
           return
         }
@@ -233,7 +249,7 @@ export function registerBuiltinKeybindings(
         // id), so an existing one focuses; a type-only open does not
         // auto-expand the panel, hence the explicit expand above.
         store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
-        const scope = scopeOf(ctx, store)
+        const scope = sessionScopeOf(ctx, store)
         if (scope === undefined) return
         ctx.betterSidebar?.openTab({ type: 'git' }, scope)
       },
@@ -295,13 +311,24 @@ export function registerBuiltinKeybindings(
       title: () => t('hotkeyCloseTab'),
       key: 'Cmd+W',
       when: context => context.focusInSidebar && !context.plusMenuOpen,
-      run: (_event, context) => {
-        const tabId = context.activeTab?.id
-        if (tabId === undefined) return false
-        const scope = scopeOf(ctx, store)
-        if (scope === undefined) return false
-        ctx.betterSidebar?.closeTab(tabId, scope)
-      },
+      run: (_event, context) => closeActiveTab(ctx, store, context),
+    },
+    {
+      // The ⌘W fallback alias — shells whose Electron menu claims ⌘W never
+      // deliver the chord to the page (see the header), so ⌘⇧W offers the
+      // same action on a chord the shell leaves to the web contents. The
+      // browser-only ⌥W member is PARKED while the desktop ⌘W claim channel
+      // is live; uncomment to restore a close chord in plain browsers
+      // (Edge/Chrome/Safari reserve BOTH ⌘W and ⌘⇧W at the browser layer).
+      id: 'builtin:tab-close-active-alt',
+      title: () => t('hotkeyCloseTab'),
+      key: [
+        'Cmd+Shift+W',
+        // 'Alt+W', // parked 2026-08-28: desktop ⌘W claim is live; browsers
+        // have no W-close chord while this stays disabled.
+      ],
+      when: context => context.focusInSidebar && !context.plusMenuOpen,
+      run: (_event, context) => closeActiveTab(ctx, store, context),
     },
   ]
 

@@ -451,7 +451,24 @@ paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, o
       key={tab.id}
       className={clsx(css.tab, active === tab.id && css.tabActive, bound && css.tabBound, pinned && css.pinnedTab)}
       title={renaming === tab.id ? undefined : tab.title}
+      data-dsh-tab-id={tab.id}
       draggable={renaming !== tab.id && !isPinnedVirtualTab(tab)}
+      // Tabs are (keyboard-)focusable: clicking a tab must bring REAL focus
+      // into the sidebar host — the tab-strip keys (⌘W / ⌘⇧W / ⌥W close,
+      // ⌘Tab cycling, ⌘1…9 jumps) are gated on `focusInSidebar`, and a
+      // non-focusable div would leave document.activeElement on body, so a
+      // mouse-only user could never satisfy the gate.
+      tabIndex={0}
+      onKeyDown={(event) => {
+        // Enter / Space activate the tab like a click (a focusable div has
+        // no native click-on-key behavior). IME composition keys are left
+        // to the input method (the rename input is its own element).
+        if ((event.key === 'Enter' || event.key === ' ') && !event.nativeEvent.isComposing) {
+          event.preventDefault()
+          disarmClose()
+          onActivate(tab.id)
+        }
+      }}
       onMouseDown={(event) => {
         if (event.button === 1) {
           // Record the press target and disarm Chrome's middle-click
@@ -460,6 +477,11 @@ paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, o
           // mouseup over this same tab (window-level handler above).
           event.preventDefault()
           middlePressedRef.current = { id: tab.id, node: event.currentTarget, bound }
+        } else if (event.button === 0) {
+          // Primary click brings focus to the tab itself: mousedown focus is
+          // the only path that works on plain divs, and it is exactly what
+          // makes "clicked the sidebar" mean "focus is in the sidebar".
+          event.currentTarget.focus()
         }
       }}
       onDragStart={(event) => {

@@ -11,24 +11,24 @@
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Context, SidebarLayoutService } from '../context-types.ts'
-import { createSidebarStore, activeTabOf, activePaneTabsOf } from './state.ts'
+import { createSidebarStore } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { createWorkspaceWindowsStore } from './workspace-windows.ts'
 import { revalidateChunksOnReactivate, resetChunks, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { registerBuiltinKeybindings } from './builtins/keybindings.ts'
+import { attachCmdWClaim } from './cmd-w.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
-import { KeybindingRuntime, isPlusMenuOpen, isSearchActive, type SidebarKeybindingContext } from './keybindings.ts'
+import { KeybindingRuntime, buildKeybindingContext, registerFocusedTabTracking, type SidebarKeybindingContext } from './keybindings.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { registerOfficialSidebarEntry } from './official-sidebar.tsx'
 import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
-import { isNarrowWidth } from './breakpoints.ts'
 import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en,
   ja, de, fr, pt, ko, ar, hi, id, tr, vi, th, ru, it, nl, sv, pl,
   zhHK, zhTW, zhMO,
@@ -132,34 +132,7 @@ export function apply(ctx: Context): void {
   // this document-capture dispatcher. Its context is rebuilt per key event
   // from the store snapshot, the DOM focus, and the transient UI markers
   // (the + menu / search states published by the components).
-  const keybindingRuntime = new KeybindingRuntime((): SidebarKeybindingContext => {
-    const snapshot = sidebarStore.getSnapshot()
-    const state = snapshot.state ?? null
-    const activeTab = state === null ? undefined : activeTabOf(state)
-    let focusInSidebar = false
-    let textEditing = false
-    try {
-      const activeElement = document.activeElement as HTMLElement | null
-      if (activeElement !== null) {
-        focusInSidebar = activeElement.closest?.('[data-dsh-better-sidebar]') !== null
-        textEditing = !focusInSidebar
-          && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)
-      }
-    } catch {
-      // Degraded focus context: bindings fall back to their other gates.
-    }
-    return {
-      state,
-      narrow: isNarrowWidth(window.innerWidth),
-      focusInSidebar,
-      textEditing,
-      plusMenuOpen: isPlusMenuOpen(),
-      searchActive: isSearchActive(),
-      activeTab: activeTab ?? null,
-      activeTabType: activeTab?.type ?? '',
-      activePaneTabs: state === null ? [] : activePaneTabsOf(state),
-    }
-  })
+  const keybindingRuntime = new KeybindingRuntime((): SidebarKeybindingContext => buildKeybindingContext(sidebarStore))
   // The sidebar registry service: external plugins register tab types and
   // file previewers through `ctx.betterSidebar.registerTab/registerFileViewer`,
   // and keybindings through `registerKeybinding` — all landing on the shared
@@ -457,6 +430,46 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: keybindings',
+    )
+
+    // The focus-pinned tab tracker: keeps the id of the tab whose CONTENT
+    // holds the DOM focus (via the `data-dsh-tab-id` attribute on tab
+    // wrappers / float windows / the tab strip). The W-close keys and the
+    // desktop ⌘W claim target THAT tab, not the state's `active` highlight
+    // — typing in the bottom pane's terminal while `activePane` points at
+    // the right pane must close the BOTTOM tab.
+    ctx.effect(
+      () => {
+        try {
+          return registerFocusedTabTracking()
+        } catch (error) {
+          fail('focus tab tracking', error)
+          return () => { /* the W keys fall back to the state-active tab */ }
+        }
+      },
+      'dsh-better-sidebar: focus-pinned tab tracking',
+    )
+
+    // The ⌘W desktop-shortcut claim link: DSH Desktop intercepts the menu's
+    // ⌘W at the main process BEFORE the renderer sees the keydown, so the
+    // builtin ⌘W binding can never fire there. The host (registers on
+    // `ctx.desktopShortcuts`) asks this link over `/sidebar/ws/cmd-w`
+    // whether the sidebar would have consumed the chord; a claim closes the
+    // active tab and keeps the shell window open. The link is page-global
+    // and session-agnostic (the verdict is evaluated against the current
+    // snapshot at request time). A strict no-op in plain-browser
+    // deployments: no desktop service → the host never routes ⌘W, the
+    // endpoint just sits unused.
+    ctx.effect(
+      () => {
+        try {
+          return attachCmdWClaim(ctx, sidebarStore, service)
+        } catch (error) {
+          fail('cmd-w claim link', error)
+          return () => { /* the builtin binding still covers browsers */ }
+        }
+      },
+      'dsh-better-sidebar: ⌘W desktop-shortcut claim link',
     )
 
     // DSH 0.1.x does not yet carry an icon through the settings.section
