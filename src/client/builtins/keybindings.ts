@@ -122,6 +122,31 @@ function focusSearchSoon(): void {
 }
 
 /**
+ * Focus the tab's strip element when mounted. The SHOW-VIEW keys (⌘⇧E home
+ * reveal / ⌘⇧G git) work from the conversation area, so a window they
+ * create/activate must become the user's ACTUAL working surface — this moves
+ * the DOM focus to the new window's strip tab (focusable via tabIndex), which
+ * carries the focusInSidebar gates AND the working-tab pin with it: the very
+ * next ⌘W/⌘⇧W/⌥W (and the desktop ⌘W claim) targets the created window.
+ * Content wrappers carry data-dsh-tab-id WITHOUT tabindex and are skipped.
+ * No-op when the strip is not (yet) mounted — the activation pin from the
+ * open still targets the window for in-sidebar chords.
+ */
+function focusTabStrip(tabId: string): void {
+  try {
+    const nodes = document.querySelectorAll<HTMLElement>('[data-dsh-tab-id]')
+    for (const node of nodes) {
+      if (node.getAttribute('data-dsh-tab-id') === tabId && node.hasAttribute('tabindex')) {
+        node.focus()
+        return
+      }
+    }
+  } catch {
+    // Focus chrome unavailable (degraded DOM): nothing to do.
+  }
+}
+
+/**
  * Register every built-in keybinding on the shared runtime. Returns the
  * disposer (call through `ctx.effect` — HMR-safe). The panel toggles share
  * one definition with the historical registerPanelHotkeys (no behavioral
@@ -162,13 +187,14 @@ export function registerBuiltinKeybindings(
    * panel, point the active pane at the right panel's first leaf, and
    * activate an existing path-less files window — or mint a fresh one (tree
    * docked, the search box ready). Shared by quick-open (⌘P — which then
-   * focuses the search) and show-explorer (⌘⇧E).
+   * focuses the search) and show-explorer (⌘⇧E). Returns the home tab id
+   * after the reveal (undefined when no session is current).
    */
-  const revealFilesHome = (ctx: Context, store: SidebarStore): void => {
+  const revealFilesHome = (ctx: Context, store: SidebarStore): string | undefined => {
     store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
     store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
     const state = store.getSnapshot().state
-    if (state === undefined) return
+    if (state === undefined) return undefined
     const home = findHomeTab(state)
     if (home !== undefined) {
       activateTabById(home.id)
@@ -180,6 +206,7 @@ export function registerBuiltinKeybindings(
         ctx.betterSidebar?.openTab({ type: 'editor', title: t('files'), meta: { treeOpen: true } }, scope)
       }
     }
+    return findHomeTab(store.getSnapshot().state!)?.id
   }
 
   const bindings: KeybindingDescriptor[] = [
@@ -236,7 +263,11 @@ export function registerBuiltinKeybindings(
           if (scope !== undefined) ctx.betterSidebar?.closeTab(active.id, scope)
           return
         }
-        revealFilesHome(ctx, store)
+        // The reveal CREATED/ACTIVATED a window: bring the REAL focus to its
+        // strip tab so the created window is the working surface even when
+        // ⌘⇧E came from the conversation area (VSCode view-switch parity).
+        const homeId = revealFilesHome(ctx, store)
+        if (homeId !== undefined) focusTabStrip(homeId)
       },
     },
     {
@@ -247,11 +278,15 @@ export function registerBuiltinKeybindings(
       run: () => {
         // VSCode's "Show Source Control": the git tab is single (dedupe by
         // id), so an existing one focuses; a type-only open does not
-        // auto-expand the panel, hence the explicit expand above.
+        // auto-expand the panel, hence the explicit expand above. The
+        // created/activated window then gets the REAL focus (its strip tab)
+        // — a ⌘⇧G from the conversation leaves the user IN the sidebar, so
+        // the next ⌘W targets the git tab, not the shell's close flow.
         store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
         const scope = sessionScopeOf(ctx, store)
         if (scope === undefined) return
         ctx.betterSidebar?.openTab({ type: 'git' }, scope)
+        focusTabStrip('git')
       },
     },
     {

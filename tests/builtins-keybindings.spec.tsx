@@ -77,7 +77,7 @@ function setup(
   const runtime = new KeybindingRuntime((): SidebarKeybindingContext => {
     const state = store.getSnapshot().state ?? null
     const activeTab = state === null ? undefined : activeTabOf(state)
-    return {
+    const base: SidebarKeybindingContext = {
       state,
       narrow: false,
       focusInSidebar: false,
@@ -87,8 +87,25 @@ function setup(
       activeTab: activeTab ?? null,
       activeTabType: activeTab?.type ?? '',
       activePaneTabs: state === null ? [] : activePaneTabsOf(state),
-      ...overrides,
     }
+    // Live focus resolution (like the real apply's context builder) unless a
+    // test pins the flags via overrides.
+    if (overrides.focusInSidebar === undefined || overrides.textEditing === undefined) {
+      try {
+        const activeElement = document.activeElement as HTMLElement | null
+        if (activeElement !== null) {
+          const inside = activeElement.closest?.('[data-dsh-better-sidebar]') !== null
+          if (overrides.focusInSidebar === undefined) base.focusInSidebar = inside
+          if (overrides.textEditing === undefined) {
+            base.textEditing = !inside
+              && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)
+          }
+        }
+      } catch {
+        // Degraded focus context: keep the defaults.
+      }
+    }
+    return { ...base, ...overrides }
   })
   const dispose = registerBuiltinKeybindings(runtime, ctx, store)
   return { store, runtime, dispose, setMenuOpen: open => { menuOpen = open }, ctx }
@@ -507,6 +524,37 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
       expect(getFocusedTabId()).toBe('editor:/a.ts')
     } finally {
       dispose()
+    }
+  })
+
+  it('a window created by a SHOW-VIEW key from the conversation becomes the focused working surface', () => {
+    const { store, runtime, dispose } = setup('docked')
+    try {
+      // Mount a strip tab for the focus helper to target (the window ⌘⇧G
+      // is about to create). The DOM focus is OUTSIDE the sidebar first.
+      const host = document.createElement('div')
+      host.setAttribute('data-dsh-better-sidebar', '')
+      const strip = document.createElement('div')
+      strip.setAttribute('data-dsh-tab-id', 'git')
+      strip.setAttribute('tabindex', '0')
+      host.appendChild(strip)
+      document.body.appendChild(host)
+      expect(document.activeElement).not.toBe(strip)
+
+      // ⌘⇧G works globally (its when-clause has no focus gate), and the
+      // created window gains the REAL focus…
+      expect(runtime.dispatch(like({ code: 'KeyG', metaKey: true, shiftKey: true }))).toBe(true)
+      expect(document.activeElement).toBe(strip)
+      // …is pinned as the working surface…
+      expect(getFocusedTabId()).toBe('git')
+
+      // …so the very next ⌘W targets the created window (the strip lives
+      // inside the host, so focusInSidebar resolves true live).
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
+      expect(activePaneTabsOf(store.getSnapshot().state!).some(tab => tab.id === 'git')).toBe(false)
+    } finally {
+      dispose()
+      document.body.innerHTML = ''
     }
   })
 })
