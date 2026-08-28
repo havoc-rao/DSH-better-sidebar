@@ -19,6 +19,7 @@ import clsx from 'clsx'
 import { IconCloseFill14, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { FloatWindow, SidebarTab } from './state.ts'
 import { FLOAT_MIN_H, FLOAT_MIN_W } from './state.ts'
+import { tabSurfaceProps } from './tab-surface.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
@@ -290,7 +291,7 @@ export function FreeWindow(props: {
           gives the component a definite width via align-stretch — the exact
           sizing contract a tab gets inside a pane. */}
       <div className={css.floatContent}>
-        <div className={css.paneTab}>{renderTab(float.tab, true, float.id)}</div>
+        <div className={css.paneTab} {...tabSurfaceProps(float.tab.id)}>{renderTab(float.tab, true, float.id)}</div>
       </div>
       <div
         className={css.floatResize}

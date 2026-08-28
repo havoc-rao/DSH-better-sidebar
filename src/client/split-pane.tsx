@@ -16,6 +16,7 @@ import type { SidebarState, SidebarTab, SplitNode } from './state.ts'
 import type { DropZone } from './state.ts'
 import { TabBar, type NewTabOption, parseDrag, type TabDragPayload } from './TabBar.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
+import { tabSurfaceProps } from './tab-surface.ts'
 import css from './sidebar.module.css'
 
 /** Actions the workbench needs (bound to the store by the sidebar shell). */
@@ -259,7 +260,7 @@ function LeafView(props: {
           {tabs.map(tab => (
             <div
               key={tab.id}
-              data-dsh-tab-id={tab.id}
+              {...tabSurfaceProps(tab.id)}
               className={clsx(css.paneTab, tab.id !== activeTab?.id && css.paneTabHidden)}
             >
               {renderTab(tab, tab.id === activeTab?.id, leaf.id)}

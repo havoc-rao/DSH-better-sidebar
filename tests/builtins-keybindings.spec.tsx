@@ -16,6 +16,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { registerBuiltinKeybindings } from '../src/client/builtins/keybindings.ts'
+import { focusTabSurface, hasInteractiveAncestor, tabSurfaceProps } from '../src/client/tab-surface.ts'
 import {
   KeybindingRuntime, getFocusedTabId, setFocusedTabId,
   type KeybindingEventLike,
@@ -632,6 +633,48 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
       // inside the host, so focusInSidebar resolves true live).
       expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
       expect(activePaneTabsOf(store.getSnapshot().state!).some(tab => tab.id === 'git')).toBe(false)
+    } finally {
+      dispose()
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('clicking a NO-FEEDBACK spot inside a tab activates that tab — interactive spots keep their own focus', () => {
+    const { store, runtime, dispose, ctx } = setup('docked')
+    try {
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'a.ts', path: '/a.ts', id: 'editor:/a.ts' })
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'b.ts', path: '/b.ts', id: 'editor:/b.ts' })
+      const bId = 'editor:/b.ts'
+      const host = document.createElement('div')
+      host.setAttribute('data-dsh-better-sidebar', '')
+      const wrapper = document.createElement('div')
+      wrapper.setAttribute('data-dsh-tab-id', bId)
+      wrapper.setAttribute('tabindex', '-1')
+      const blank = document.createElement('div') // a spot with no feedback
+      wrapper.appendChild(blank)
+      host.appendChild(wrapper)
+      document.body.appendChild(host)
+
+      // A click on the blank area (no interactive ancestor up to the wrapper)
+      // focuses the wrapper — the click activates this tab.
+      const props = tabSurfaceProps(bId)
+      focusTabSurface({ button: 0, target: blank, currentTarget: wrapper })
+      expect(document.activeElement).toBe(wrapper)
+      // The tab is now the pinned working surface — ⌘W closes IT, not the
+      // previously active tab.
+      expect(getFocusedTabId()).toBe(bId)
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
+      expect(activePaneTabsOf(store.getSnapshot().state!).some(tab => tab.id === bId)).toBe(false)
+
+      // Clicking an INTERACTIVE spot (an input) must NOT steal its focus:
+      // the input keeps native focus, which still pins the same tab.
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+      const input = document.createElement('input')
+      wrapper.appendChild(input)
+      focusTabSurface({ button: 0, target: input, currentTarget: wrapper })
+      expect(document.activeElement).not.toBe(wrapper)
+      // The interactive carve-out is threshold-tested directly.
+      expect(hasInteractiveAncestor(input, wrapper)).toBe(true)
     } finally {
       dispose()
       document.body.innerHTML = ''
