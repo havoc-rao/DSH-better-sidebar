@@ -23,7 +23,7 @@ import { act } from 'react-dom/test-utils'
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
-import { allLeaves, createSidebarStore, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
+import { allLeaves, createSidebarStore, toggleBottomMaximized, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
 
@@ -139,6 +139,36 @@ describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', ()
     expect(container.querySelector(`[aria-label="${t('collapseBottomPanel')}"]`)).not.toBeNull()
     expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe(
       `${state.bottomHeight}px`,
+    )
+  })
+
+  it('⌘⇧J maximize covers the whole center column (full viewport height, push released)', () => {
+    const { container, store } = mountSidebar()
+
+    act(() => { store.reduce(toggleBottomPanel) })
+    const opened = store.getSnapshot().state!
+    const panel = container.querySelector('[data-dsh-bottom-panel]') as HTMLElement
+    expect(panel).not.toBeNull()
+    // Normal: the drag height, and the layout push squeezes the conversation.
+    expect(panel.style.height).toBe(`${opened.bottomHeight}px`)
+    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe(
+      `${opened.bottomHeight}px`,
+    )
+
+    // MAXIMIZED (⌘⇧J): the panel covers the WHOLE center column at the full
+    // viewport height and the push is released (0) — the conversation sits
+    // behind the panel instead of being squeezed to nothing.
+    act(() => { store.reduce(toggleBottomMaximized) })
+    expect(panel.style.height).toBe(`${window.innerHeight}px`)
+    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe('0px')
+
+    // The same key restores the drag height (the panel stays open).
+    act(() => { store.reduce(toggleBottomMaximized) })
+    const restored = store.getSnapshot().state!
+    expect(restored.bottomMaximized).toBe(false)
+    expect(panel.style.height).toBe(`${restored.bottomHeight}px`)
+    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe(
+      `${restored.bottomHeight}px`,
     )
   })
 

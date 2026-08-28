@@ -18,8 +18,18 @@ describe('Sidebar layout-push integration', () => {
 
   it('adds the keyboard inset to the conversation push, not the panel height', () => {
     expect(source.match(/height \+ keyboardInset/g)).toHaveLength(2)
-    expect(source).toContain('height: bottomPanelHeight')
+    // Normal panels render at the shared-capped drag height; the MAXIMIZED
+    // branch (⌘⇧J) alone escapes to the full keyboard-aware layout viewport
+    // height — and the push is released in lockstep (see the next test), so
+    // the conversation sits behind the panel instead of being squeezed.
+    expect(source).toContain('height: bottomDisplayHeight')
+    expect(source).toContain('bottomDisplayHeight = state.bottomMaximized ? layoutViewportHeight : bottomPanelHeight')
     expect(source).not.toContain('height: bottomPanelHeight + keyboardInset')
+  })
+
+  it('releases the layout push while the bottom panel is maximized', () => {
+    expect(source).toContain('snapshot.state?.bottomMaximized !== true')
+    expect(source).toContain('const height = !narrow && snapshot.state?.bottomOpen === true && snapshot.state?.bottomMaximized !== true')
   })
 
   it('reapplies the visible-height cap to every vertical drag result', () => {

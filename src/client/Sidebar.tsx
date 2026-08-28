@@ -1871,6 +1871,13 @@ useEffect(() => {
     viewportHeight: layoutViewportHeight,
   }).height
 
+  // The MAXIMIZED bottom panel (⌘⇧J) COVERS the whole center column at the
+  // full keyboard-aware layout viewport height instead of the drag height —
+  // the layout-push effect above releases the push in lockstep (0), so the
+  // conversation sits BEHIND the panel instead of being squeezed to
+  // nothing. Restoring returns to the capped drag height (bottomPanelHeight).
+  const bottomDisplayHeight = state.bottomMaximized ? layoutViewportHeight : bottomPanelHeight
+
   const onNewTab = (optionId: string): void => {
     const service = ctx.get?.('betterSidebar') ?? ctx.betterSidebar
     const descriptor = service?.getTab(optionId)
@@ -2183,9 +2190,13 @@ className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaxim
             className={css.editorSlot}
             // IDE FULLSCREEN: the slot's bottom margin reserves the docked
             // bottom panel's height so the editor tabs sit fully above it
-            // (the shared bottom-height cap still applies).
+            // (the shared bottom-height cap still applies). MAXIMIZED
+            // (⌘⇧J): the margin reserves the FULL viewport height — the
+            // docked box expands upward over the whole IDE window and its
+            // own tab strip takes the top edge (VSCode maximized-panel
+            // semantics).
             style={ideMode && state.bottomOpen
-              ? { marginBottom: bottomPanelHeight }
+              ? { marginBottom: bottomDisplayHeight }
               : undefined}
           >
             <Workbench
@@ -2335,11 +2346,15 @@ className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaxim
         data-dsh-panel
         data-dsh-bottom-panel
         style={{
-// Maximized: cover the whole center column (bottom:0 + full
-          // viewport height); normal: the drag height. Both stay inside the
-          // shared push cap (bottomPanelHeight), so a maximized panel can
-          // never exceed the viewport visible above the keyboard.
-          height: bottomPanelHeight,
+          // MAXIMIZED (⌘⇧J): the panel covers the whole center column at
+          // the full keyboard-aware layout viewport height (bottom:0
+          // anchored; the layout push is released, so the conversation sits
+          // behind the panel instead of being squeezed). Normal: the drag
+          // height, capped so the conversation keeps at least PANEL_MIN
+          // (bottomPanelHeight). The height transition slides the top edge
+          // up; the resize strip and the shared corner are hidden while
+          // fullscreen — nothing to drag.
+          height: bottomDisplayHeight,
           // IDE FULLSCREEN: the bottom workbench docks INSIDE the fullscreen
           // panel, BELOW the editor tabs — flush to the panel's right edge
           // minus the chat column (it starts after the activity bar (48px)
