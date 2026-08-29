@@ -32,6 +32,7 @@ import { isNarrowWidth } from './breakpoints.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { KeybindingRuntime, setFocusedTabId, type KeybindingDescriptor } from './keybindings.ts'
+import { focusTabStripElement } from './tab-surface.ts'
 import {
   buildIconThemeIndex, injectThemeFonts,
   matchFileIcon as matchFileIconOf,
@@ -1000,6 +1001,17 @@ export function createBetterSidebarService(
 
   const closeTab = (tabId: string, scope?: SessionScope): void => {
     let closed: SidebarTab | undefined
+    // The tab that takes over the closed tab's pane (its `active` pointer
+    // AFTER the close — the strip's "next landed" tab). Only for pane tabs:
+    // a float IS its own pane, so closing one has no landing tab.
+    let landingTabId: string | undefined
+    // Whether the DOM focus was inside the sidebar when the close happened:
+    // only a close from a focused sidebar should move the real focus (the
+    // user is "in the sidebar"); programmatic closes (model/agent-triggered)
+    // must never steal focus from the conversation.
+    const focusInSidebar = typeof document !== 'undefined'
+      && document.activeElement instanceof Element
+      && document.activeElement.closest?.('[data-dsh-better-sidebar]') !== null
     store.reduce((state) => {
       // Unknown tab ids are a strict no-op: no state churn, no notify, no
       // pointless localStorage rewrite (mirrors updateTab's short-circuit).
@@ -1013,7 +1025,13 @@ export function createBetterSidebarService(
       const paneId = findPaneIdOf(state, tabId)
       const leaf = leafWithTab(state[treeOf(state, paneId)], tabId)
       closed = leaf?.tabs.find(tab => tab.id === tabId)
-      return closeTabReducer(state, paneId, tabId)
+      const next = closeTabReducer(state, paneId, tabId)
+      // The pane's post-close active pointer is the landing tab. An emptied
+      // pane is REMOVED (removeLeafAt) and has no landing tab to focus.
+      const nextLeaf = allLeaves(next.splits).concat(allLeaves(next.bottomSplits))
+        .find(candidate => candidate.id === paneId)
+      if (nextLeaf !== undefined) landingTabId = nextLeaf.active ?? undefined
+      return next
     })
     if (closed !== undefined) {
       const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
@@ -1021,6 +1039,15 @@ export function createBetterSidebarService(
         const descriptor = tabs.get(closed.type)
         // An explicit scope (with its optional cwd) rides to the callback.
         safeCall(() => descriptor?.onClose?.(closed!, scope ?? { sessionId }))
+      }
+      // Land the working surface on the tab that takes over: pin it AND move
+      // the real DOM focus to its strip tab (only when the close happened
+      // from a focused sidebar and targets the current session) — closing one
+      // tab then immediately pressing ⌘W closes the NEXT one, in sequence.
+      if (landingTabId !== undefined && focusInSidebar
+          && (scope === undefined || scope.sessionId === store.getSnapshot().sessionId)) {
+        setFocusedTabId(landingTabId)
+        focusTabStripElement(landingTabId)
       }
     }
   }

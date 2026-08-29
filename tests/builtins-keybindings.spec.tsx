@@ -680,4 +680,66 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
       document.body.innerHTML = ''
     }
   })
+
+  it('closing a tab from a focused sidebar lands the focus on the NEXT tab that takes over', () => {
+    const { store, runtime, dispose, ctx } = setup('docked')
+    try {
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'a.ts', path: '/a.ts', id: 'editor:/a.ts' })
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'b.ts', path: '/b.ts', id: 'editor:/b.ts' })
+      const host = document.createElement('div')
+      host.setAttribute('data-dsh-better-sidebar', '')
+      const mkStrip = (id: string): HTMLDivElement => {
+        const el = document.createElement('div')
+        el.setAttribute('data-dsh-tab-id', id)
+        el.setAttribute('tabindex', '0')
+        host.appendChild(el)
+        return el
+      }
+      const stripA = mkStrip('editor:/a.ts')
+      const stripB = mkStrip('editor:/b.ts')
+      document.body.appendChild(host)
+      // The user is "in the sidebar", working on b (jsdom does not fire
+      // focusin, so the pin is set explicitly — real browsers do this via
+      // the strip focus).
+      stripB.focus()
+      setFocusedTabId('editor:/b.ts')
+      expect(getFocusedTabId()).toBe('editor:/b.ts')
+
+      // Close the ACTIVE tab (b — the last opened). The pane's post-close
+      // active pointer is a, so the focus + pin must land on a's strip.
+      ctx.betterSidebar?.closeTab('editor:/b.ts')
+      expect(document.activeElement).toBe(stripA)
+      expect(getFocusedTabId()).toBe('editor:/a.ts')
+      // The very next ⌘W closes THAT tab — closing in sequence works.
+      expect(runtime.dispatch(like({ code: 'KeyW', metaKey: true }))).toBe(true)
+      expect(activePaneTabsOf(store.getSnapshot().state!).some(tab => tab.id === 'editor:/a.ts')).toBe(false)
+    } finally {
+      dispose()
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('closing a tab from OUTSIDE the sidebar never steals the focus', () => {
+    const { store, ctx, dispose } = setup('docked')
+    try {
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'a.ts', path: '/a.ts', id: 'editor:/a.ts' })
+      ctx.betterSidebar?.openTab({ type: 'editor', title: 'b.ts', path: '/b.ts', id: 'editor:/b.ts' })
+      const host = document.createElement('div')
+      host.setAttribute('data-dsh-better-sidebar', '')
+      const strip = document.createElement('div')
+      strip.setAttribute('data-dsh-tab-id', 'editor:/a.ts')
+      strip.setAttribute('tabindex', '0')
+      host.appendChild(strip)
+      document.body.appendChild(host)
+      const outside = document.createElement('button')
+      document.body.appendChild(outside)
+      outside.focus() // the user is typing in the conversation
+
+      ctx.betterSidebar?.closeTab('editor:/b.ts')
+      expect(document.activeElement).toBe(outside)
+    } finally {
+      dispose()
+      document.body.innerHTML = ''
+    }
+  })
 })

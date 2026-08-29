@@ -55,6 +55,7 @@ import {
   type SidebarState, type SidebarTab, type SidebarStore,
 } from '../state.ts'
 import { KeybindingRuntime, focusSidebarSearchInput, sessionScopeOf, workingTabIdOf, type KeybindingDescriptor, type SidebarKeybindingContext } from '../keybindings.ts'
+import { focusTabStripElement } from '../tab-surface.ts'
 import { panelToggleBindings } from '../hotkeys.ts'
 import { t } from '../locales.ts'
 
@@ -150,31 +151,6 @@ function pullToRightPanel(store: SidebarStore, matches: (tab: SidebarTab) => boo
 function focusSearchSoon(): void {
   window.setTimeout(() => { focusSidebarSearchInput() }, 0)
   window.setTimeout(() => { focusSidebarSearchInput() }, 60)
-}
-
-/**
- * Focus the tab's strip element when mounted. The SHOW-VIEW keys (⌘⇧E home
- * reveal / ⌘⇧G git) work from the conversation area, so a window they
- * create/activate must become the user's ACTUAL working surface — this moves
- * the DOM focus to the new window's strip tab (focusable via tabIndex), which
- * carries the focusInSidebar gates AND the working-tab pin with it: the very
- * next ⌘W/⌘⇧W/⌥W (and the desktop ⌘W claim) targets the created window.
- * Content wrappers carry data-dsh-tab-id WITHOUT tabindex and are skipped.
- * No-op when the strip is not (yet) mounted — the activation pin from the
- * open still targets the window for in-sidebar chords.
- */
-function focusTabStrip(tabId: string): void {
-  try {
-    const nodes = document.querySelectorAll<HTMLElement>('[data-dsh-tab-id]')
-    for (const node of nodes) {
-      if (node.getAttribute('data-dsh-tab-id') === tabId && node.hasAttribute('tabindex')) {
-        node.focus()
-        return
-      }
-    }
-  } catch {
-    // Focus chrome unavailable (degraded DOM): nothing to do.
-  }
 }
 
 /**
@@ -302,7 +278,7 @@ export function registerBuiltinKeybindings(
         // strip tab so the created window is the working surface even when
         // ⌘⇧E came from the conversation area (VSCode view-switch parity).
         const homeId = revealFilesHome(ctx, store)
-        if (homeId !== undefined) focusTabStrip(homeId)
+        if (homeId !== undefined) focusTabStripElement(homeId)
       },
     },
     {
@@ -328,7 +304,7 @@ export function registerBuiltinKeybindings(
         const scope = sessionScopeOf(ctx, store)
         if (scope === undefined) return
         ctx.betterSidebar?.openTab({ type: 'git' }, scope)
-        focusTabStrip('git')
+        focusTabStripElement('git')
       },
     },
     {

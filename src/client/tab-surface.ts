@@ -52,6 +52,28 @@ export function focusTabSurface(event: TabSurfacePointerDown): void {
   event.currentTarget.focus()
 }
 
+/**
+ * Focus the tab's STRIP element when mounted (focusable via tabIndex; content
+ * wrappers carry data-dsh-tab-id WITHOUT tabindex and are skipped). Moves the
+ * REAL DOM focus — and with it the focusInSidebar gates and the focusin-based
+ * working-tab pin — to that tab. Used by the SHOW-VIEW keys to activate a
+ * window created from the conversation area, and by closeTab to land on the
+ * tab that takes over after a close. No-op when the strip is not mounted.
+ */
+export function focusTabStripElement(tabId: string): void {
+  try {
+    const nodes = document.querySelectorAll<HTMLElement>('[data-dsh-tab-id]')
+    for (const node of nodes) {
+      if (node.getAttribute('data-dsh-tab-id') === tabId && node.hasAttribute('tabindex')) {
+        node.focus()
+        return
+      }
+    }
+  } catch {
+    // Focus chrome unavailable (degraded DOM): nothing to do.
+  }
+}
+
 /** The props every tab content wrapper spreads: the tab's id for the focus
  *  tracker, programmatic focusability, and the surface pointerdown handler. */
 export function tabSurfaceProps(tabId: string): {
