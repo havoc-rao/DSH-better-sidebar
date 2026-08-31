@@ -28,6 +28,18 @@ export interface ShellPreset {
    */
   readonly stripFor?: (env: DesktopEnv) => number | undefined
   /**
+   * The LEFT inset (px) this shell reserves at the window's top-left
+   * corner, per environment — the horizontal sibling of `stripFor`
+   * (macOS traffic lights in frameless shells, ~78px in DSH Desktop).
+   * Consumed ONLY by the plugin's own IDE FULLSCREEN surface (⌘⌥⇧B,
+   * `.panelMaximized`): the fullscreen panel covers the whole viewport,
+   * so the HEADER tab strip's start point would land under the caption
+   * buttons.
+   * Return undefined when the shell needs no left reservation in that
+   * environment. MUST be pure (called during render).
+   */
+  readonly leftFor?: (env: DesktopEnv) => number | undefined
+  /**
    * Extra CSS applied while the preset is enabled (injected last, after the
    * plugin's own styles). Targets the plugin's stable data attributes and
    * shell-declared body/URL markers only — never other shells' class names.
@@ -45,19 +57,32 @@ export interface ShellPreset {
 /**
  * DeepSeek Harness Desktop (anywhere-labs, Electron, 16k+ stars — the most
  * reported shell in this repo's issues/PRs). Advanced mode: macOS reserves
- * a 20px caption row (traffic lights top-left), win32 draws the native
- * window controls in a ~32px overlay (WCO reports the real height when
- * available, which the auto scheme already consumes; the 32 is the
- * no-WCO fallback). Compatibility mode keeps the native frame — nothing.
+ * a 20px caption row (traffic lights top-left) plus an ~78px left
+ * traffic-light zone that the IDE FULLSCREEN tab strip must yield (see
+ * leftFor), win32 draws the native window controls in a ~32px overlay (WCO
+ * reports the real height when available, which the auto scheme already
+ * consumes; the 32 is the no-WCO fallback). Compatibility mode keeps the
+ * native frame — nothing.
  */
 const DSH_DESKTOP: ShellPreset = {
   id: 'dsh-desktop',
   title: 'DeepSeek Harness Desktop',
-  desc: 'Electron 高级模式（无边框）：macOS 顶栏 20px、Windows 无 WCO 时 32px 标题栏让位',
+  desc: 'Electron 高级模式（无边框）：macOS 顶栏 20px、IDE 模式左上 90px 红绿灯区、Windows 无 WCO 时 32px 标题栏让位',
   stripFor: (env) => {
     if (env.mode !== 'advanced') return undefined
     if (env.platform === 'darwin') return 20
     if (env.platform === 'win32') return 32
+    return undefined
+  },
+  leftFor: (env) => {
+    // macOS traffic lights drawn over web content (`titleBarStyle:
+    // "hiddenInset"` + `trafficLightPosition(16,16)`): the ~90px zone —
+    // 78px measured in docs/plans/2026-08-19-sidebar-injection-unified-host-
+    // design.md §3.3 plus a little air so the tabs never crowd the caption
+    // buttons. The reservation only affects the plugin's own IDE fullscreen
+    // surface (the CSS consumer is `.panelMaximized .tabBar`).
+    if (env.mode !== 'advanced') return undefined
+    if (env.platform === 'darwin') return 90
     return undefined
   },
   detect: (env) => env.mode === 'advanced',
@@ -80,4 +105,9 @@ export function getShellPreset(id: string): ShellPreset | undefined {
 /** The strip the active preset contributes for the given environment. */
 export function presetStripFor(preset: ShellPreset | undefined, env: DesktopEnv): number | undefined {
   return preset?.stripFor?.(env)
+}
+
+/** The left inset the active preset contributes for the given environment. */
+export function presetLeftFor(preset: ShellPreset | undefined, env: DesktopEnv): number | undefined {
+  return preset?.leftFor?.(env)
 }

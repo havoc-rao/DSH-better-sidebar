@@ -56,7 +56,7 @@ import { layoutPushSize } from './layout-push.ts'
 import { parseDesktopEnv } from './desktop-env.ts'
 import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
-import { computeTitleBarStrip } from './titlebar-strip.ts'
+import { computeIdeTrafficInset, computeTitleBarStrip } from './titlebar-strip.ts'
 import type { NewTabOption } from './TabBar.tsx'
 import { TabBar, TAB_DRAG_TYPE, parseDrag, type TabDragPayload } from './TabBar.tsx'
 import { FreeWindow } from './FreeWindow.tsx'
@@ -581,6 +581,23 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
       root.style.removeProperty('--dsh-title-bar-strip')
     }
   }, [titleBarCompat, titleBarStrip])
+
+  // IDE FULLSCREEN (⌘⌥⇧B) traffic-light reservation: the panel covers the
+  // whole viewport, so every right-panel tab strip's start point lands
+  // under the macOS caption buttons of frameless shells. The inset only
+  // comes from the opt-in preset scheme (computeIdeTrafficInset — see
+  // titlebar-strip.ts); the CSS consumer is `.panelMaximized .tabBar`'s
+  // padding-left.
+  const ideTrafficInset = computeIdeTrafficInset(desktopEnv, scheme, preset)
+  useEffect(() => {
+    const root = document.documentElement
+    if (ideTrafficInset > 0) {
+      root.style.setProperty('--dsh-ide-traffic-inset', `${ideTrafficInset}px`)
+    } else {
+      root.style.removeProperty('--dsh-ide-traffic-inset')
+    }
+    return () => { root.style.removeProperty('--dsh-ide-traffic-inset') }
+  }, [ideTrafficInset])
 
   // User-space CSS injection (the escape hatch): preset CSS (scheme
   // `preset`) and free-form custom CSS (scheme `custom`) are appended AFTER

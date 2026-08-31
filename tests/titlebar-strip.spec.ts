@@ -5,10 +5,11 @@
  * nothing modified) otherwise. No per-shell branch lives in the core.
  */
 import { describe, expect, it } from 'vitest'
-import { computeTitleBarStrip } from '../src/client/titlebar-strip.ts'
+import { computeIdeTrafficInset, computeTitleBarStrip } from '../src/client/titlebar-strip.ts'
 import type { DesktopEnv } from '../src/client/desktop-env.ts'
 import type { WcoSnapshot } from '../src/client/wco.ts'
 import type { ShellPreset } from '../src/client/shell-presets.ts'
+import { getShellPreset } from '../src/client/shell-presets.ts'
 
 const env = (partial: Partial<DesktopEnv>): DesktopEnv => ({
   desktop: false,
@@ -71,5 +72,39 @@ describe('computeTitleBarStrip', () => {
     expect(computeTitleBarStrip(env({}), wco(false), 'custom', noPreset, 56)).toBe(56)
     expect(computeTitleBarStrip(env({}), wco(false), 'auto', noPreset, 56)).toBe(0)
     expect(computeTitleBarStrip(env({}), wco(false), 'preset', noPreset, 56)).toBe(0)
+  })
+})
+
+describe('computeIdeTrafficInset (the IDE FULLSCREEN left reservation)', () => {
+  const darwin = env({ desktop: true, mode: 'advanced', platform: 'darwin' })
+  const dshDesktop = getShellPreset('dsh-desktop')
+
+  it('reserves the preset left value under the preset scheme only', () => {
+    expect(computeIdeTrafficInset(darwin, 'preset', dshDesktop)).toBe(90)
+    // A preset without a leftFor contributes nothing.
+    const noLeft: ShellPreset = { id: 't', title: 't', desc: '', stripFor: () => 20 }
+    expect(computeIdeTrafficInset(darwin, 'preset', noLeft)).toBe(0)
+  })
+
+  it('reserves the native traffic-light zone in the default auto scheme', () => {
+    expect(computeIdeTrafficInset(darwin, 'auto', dshDesktop)).toBe(90)
+  })
+
+  it('keeps custom untouched — the user CSS owns the geometry', () => {
+    expect(computeIdeTrafficInset(darwin, 'custom', dshDesktop)).toBe(0)
+  })
+
+  it('forces 0 under the explicit WEB scheme, even with an active preset', () => {
+    expect(computeIdeTrafficInset(darwin, 'web', dshDesktop)).toBe(0)
+  })
+
+  it('reserves nothing outside darwin advanced (win32 / compat / plain web)', () => {
+    const win32 = env({ desktop: true, mode: 'advanced', platform: 'win32' })
+    expect(computeIdeTrafficInset(win32, 'preset', dshDesktop)).toBe(0)
+    const compat = env({ desktop: true, mode: 'compatibility', platform: 'darwin' })
+    expect(computeIdeTrafficInset(compat, 'preset', dshDesktop)).toBe(0)
+    expect(computeIdeTrafficInset(env({}), 'preset', dshDesktop)).toBe(0)
+    // Unknown/absent preset id → no reservation either.
+    expect(computeIdeTrafficInset(darwin, 'preset', noPreset)).toBe(0)
   })
 })

@@ -216,9 +216,22 @@
 }
 
 /* The IDE-fullscreen tab strips reserve the exit control's width at their
-   right end, so the + menu never hides under it. */
+   right end, so the + menu never hides under it. Their tab list ALSO
+   yields the native traffic-light zone in frameless macOS shells: the
+   fullscreen panel covers the whole viewport, so
+   every right-panel tab strip begins at the window's top-left corner — the
+   vscode layout's header strip AND the docked layout's first pane strip
+   alike — where the shell draws the caption buttons over web content. Keep
+   a fixed 90px reservation because some desktop shells do not expose a
+   reliable platform/title-bar signal. The docked BOTTOM workbench's strip
+   is a sibling panel, never matched here, and sits at the window's bottom —
+   never under the traffic lights. */
 .panelMaximized .tabBar {
   padding-right: 40px;
+}
+
+.panelMaximized .tabList {
+  padding-left: 90px;
 }
 
 .panelResize {
