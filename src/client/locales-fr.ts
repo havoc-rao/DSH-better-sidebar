@@ -153,6 +153,10 @@ export const fr: Record<string, string> = {
   loadMore: 'Charger plus',
   historyLoadError: 'Échec du chargement de davantage d’historique',
   produced: 'Produits de cette exécution',
+  review: 'Examiner',
+  producedWrapOn: 'Retour à la ligne',
+  producedWrapOff: 'Une seule ligne, défilement horizontal',
+
   producedOpen: 'Ouvrir dans la barre latérale',
   disconnected: 'Connexion du terminal perdue, reconnexion…',
   exited: 'Le processus du terminal s’est terminé',

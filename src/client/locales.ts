@@ -244,6 +244,10 @@ export const zh = {
   loadMore: '加载更多',
   historyLoadError: '加载更多历史失败',
   produced: '本次产出',
+  review: '审查',
+  producedWrapOn: '自动换行',
+  producedWrapOff: '单行横向滚动',
+
   producedOpen: '在侧边栏中打开',
   showInFolder: '在文件夹中显示',
   disconnected: '终端连接断开，重连中…',
@@ -692,6 +696,10 @@ export const en: Record<keyof typeof zh, string> = {
   loadMore: 'Load more',
   historyLoadError: 'Failed to load more history',
   produced: 'Produced',
+  review: 'Review',
+  producedWrapOn: 'Wrap lines',
+  producedWrapOff: 'One line, scroll horizontally',
+
   producedOpen: 'Open in sidebar',
   showInFolder: 'Show in folder',
   disconnected: 'Terminal disconnected, reconnecting…',

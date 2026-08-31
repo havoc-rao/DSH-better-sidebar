@@ -158,6 +158,10 @@ export const nl: Record<string, string> = {
   loadMore: 'Meer laden',
   historyLoadError: 'Meer geschiedenis laden mislukt',
   produced: 'Geproduceerd',
+  review: 'Beoordelen',
+  producedWrapOn: 'Regels omslaan',
+  producedWrapOff: 'Enkele regel, horizontaal scrollen',
+
   producedOpen: 'Openen in zijbalk',
   disconnected: 'Terminalverbinding verbroken, opnieuw verbinden…',
   exited: 'Terminalproces beëindigd',

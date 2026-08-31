@@ -146,6 +146,10 @@ export const de: Record<string, string> = {
   loadMore: 'Mehr laden',
   historyLoadError: 'Laden weiterer Verlaufseinträge fehlgeschlagen',
   produced: 'Erstellt',
+  review: 'Prüfen',
+  producedWrapOn: 'Zeilenumbruch',
+  producedWrapOff: 'Einzeilig, horizontal scrollen',
+
   producedOpen: 'In der Seitenleiste öffnen',
   disconnected: 'Terminalverbindung getrennt, Verbindung wird wiederhergestellt…',
   exited: 'Terminalprozess beendet',

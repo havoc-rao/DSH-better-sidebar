@@ -11,7 +11,8 @@
  * and disposes any active registration; the register disposer is idempotent.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { createSidebarStore } from '../src/client/state.ts'
+import './browser-globals.ts'
+import { firstLeaf, createSidebarStore } from '../src/client/state.ts'
 import { registerTurnTailInterception } from '../src/client/intercept.tsx'
 import { api } from '../src/client/api.ts'
 import type { Context } from '../src/context-types.ts'
@@ -175,6 +176,9 @@ it('wires the openInSidebar and onShowInFolder seats', async () => {
     const inject = fake.registered[0]!.options.inject as (sessionId: string) => {
       openInSidebar: (path: string) => void
       onShowInFolder: (files: readonly string[]) => void
+      onReview: (files: readonly string[]) => void
+      onToggleWrap: () => void
+      store: ReturnType<typeof createSidebarStore>
     }
 
     // openSidebarFile probes the target (fs.tree directory guard): a file
@@ -199,6 +203,74 @@ it('wires the openInSidebar and onShowInFolder seats', async () => {
     expect(ctx.betterSidebar.openTab).toHaveBeenLastCalledWith(expect.objectContaining({
       type: 'editor',
     }))
+
+    restore()
+  })
+
+  it('wires the review seat to a combined produced-files diff tab', () => {
+    const fake = fakeSlots(true)
+    const ctx = clientCtx(fake.slots)
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const restore = registerTurnTailInterception(ctx, store)
+    const inject = fake.registered[0]!.options.inject as (sessionId: string) => {
+      openInSidebar: (path: string) => void
+      onShowInFolder: (files: readonly string[]) => void
+      onReview: (files: readonly string[]) => void
+      onToggleWrap: () => void
+      store: ReturnType<typeof createSidebarStore>
+    }
+    const seat = inject('s1')
+    expect(seat.onReview).toBeTypeOf('function')
+
+    // Produce two files (one relative, one absolute) → the review opens ONE
+    // diff tab whose ref carries the resolved absolute paths, and whose id
+    // derives from them (the same produced set re-focuses, a new set opens
+    // a fresh review tab).
+    seat.onReview(['src/a.ts', '/w/src/b.ts'])
+    expect(ctx.betterSidebar.openTab).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'diff',
+      id: expect.stringMatching(/^diff:review:/),
+      diff: { kind: 'review', paths: ['/w/src/a.ts', '/w/src/b.ts'] },
+    }))
+    // A content surface must land in sight: the panel expands and the landing
+    // pane pins to the right tree's first leaf.
+    const state = store.getSnapshot().state!
+    expect(state.panelOpen).toBe(true)
+    expect(state.activePane).toBe(firstLeaf(state.splits).id)
+
+    // The same produced set reuses the SAME id (dedupe focuses the tab).
+    seat.onReview(['src/a.ts', '/w/src/b.ts'])
+    const calls = vi.mocked(ctx.betterSidebar.openTab).mock.calls
+    expect(calls[calls.length - 1]![0].id).toBe(calls[calls.length - 2]![0].id)
+
+    restore()
+  })
+
+  it('wires the row layout toggle seat (optimistic pref flip + settings persist)', async () => {
+    const fake = fakeSlots(true)
+    const ctx = clientCtx(fake.slots)
+    const store = createSidebarStore()
+    const restore = registerTurnTailInterception(ctx, store)
+    const inject = fake.registered[0]!.options.inject as (sessionId: string) => {
+      onToggleWrap: () => void
+      store: ReturnType<typeof createSidebarStore>
+    }
+    const seat = inject('s1')
+    expect(seat.onToggleWrap).toBeTypeOf('function')
+
+    // Default is auto-wrap; the flip switches to single-line and persists.
+    expect(store.getPrefs().producedFilesWrap).toBe(true)
+    vi.spyOn(api, 'settingsUpdate').mockResolvedValue({
+      value: { ...store.getPrefs(), producedFilesWrap: false },
+      revision: 2,
+    })
+    seat.onToggleWrap()
+    // Optimistic: the row re-renders immediately from the store.
+    expect(store.getPrefs().producedFilesWrap).toBe(false)
+    await vi.waitFor(() => expect(api.settingsUpdate).toHaveBeenCalledWith({ producedFilesWrap: false }))
+    // The persisted (resolved) value is adopted back into the store.
+    await vi.waitFor(() => expect(store.getPrefs().producedFilesWrap).toBe(false))
 
     restore()
   })

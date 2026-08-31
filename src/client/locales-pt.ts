@@ -143,6 +143,10 @@ export const pt: Record<string, string> = {
   loadMore: 'Carregar mais',
   historyLoadError: 'Falha ao carregar mais histórico',
   produced: 'Produzidos',
+  review: 'Revisar',
+  producedWrapOn: 'Quebrar linhas',
+  producedWrapOff: 'Linha única, rolagem horizontal',
+
   producedOpen: 'Abrir na barra lateral',
   disconnected: 'Terminal desconectado, reconectando…',
   exited: 'O processo do terminal saiu',

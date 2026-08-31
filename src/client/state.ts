@@ -20,10 +20,14 @@ import { isNarrowWidth } from './breakpoints.ts'
  */
 export type TabType = string
 
-/** What a diff tab shows: a worktree/index change of one path, or one commit's full patch. */
+/** What a diff tab shows: a worktree/index change of one path, one commit's
+ *  full patch, or a review of the produced files' uncommitted changes (the
+ *  combined diff of exactly the paths a turn produced — the "review" surface
+ *  opened from the intercepted produced-files row). */
 export type SidebarDiffRef =
   | { kind: 'worktree'; path: string; staged: boolean; untracked?: boolean; worktree?: string; repoRoot?: string }
   | { kind: 'commit'; hash: string; hashFull: string; subject: string; worktree?: string; repoRoot?: string }
+  | { kind: 'review'; paths: string[]; worktree?: string; repoRoot?: string }
 
 /** One open tab. `path` carries the file (editor) or is absent (git/terminal);
  *  `diff` carries the change a diff tab shows; `meta` (v0.12.0+) carries

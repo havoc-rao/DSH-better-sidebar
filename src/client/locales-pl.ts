@@ -162,6 +162,10 @@ export const pl: Record<string, string> = {
   loadMore: 'Wczytaj więcej',
   historyLoadError: 'Ładowanie dalszej historii nie powiodło się',
   produced: 'Wyprodukowane',
+  review: 'Przejrzyj',
+  producedWrapOn: 'Zawijaj wiersze',
+  producedWrapOff: 'Pojedyncza linia, przewijanie poziome',
+
   producedOpen: 'Otwórz w panelu bocznym',
   disconnected: 'Terminal odłączony, ponowne łączenie…',
   exited: 'Proces terminala zakończony',

@@ -161,6 +161,10 @@ export const ar: Record<string, string> = {
   loadMore: 'تحميل المزيد',
   historyLoadError: 'فشل تحميل المزيد من السجل',
   produced: 'النواتج',
+  review: 'مراجعة',
+  producedWrapOn: 'التفاف الأسطر',
+  producedWrapOff: 'سطر واحد مع تمرير أفقي',
+
   producedOpen: 'فتح في الشريط الجانبي',
   disconnected: 'انقطع اتصال الطرفية، جارٍ إعادة الاتصال…',
   exited: 'خرجت عملية الطرفية',

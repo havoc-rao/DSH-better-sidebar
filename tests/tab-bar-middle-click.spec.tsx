@@ -51,7 +51,10 @@ function mountBar(): {
       onDropTab: () => {},
     }))
   })
-  const tabEls = [...container.querySelectorAll('[class*="tabList"] > [class*="tab"]')] as HTMLElement[]
+  // Tab elements carry data-dsh-tab-id; a bare [class*="tab"] match would
+  // also grab the strip's right-end control group (tabBarEnd) added by the
+  // wrap-toggle feature.
+  const tabEls = [...container.querySelectorAll('[class*="tabList"] > [data-dsh-tab-id]')] as HTMLElement[]
   expect(tabEls.length).toBe(2)
   // noUncheckedIndexedAccess: the length assertion above is the guard, but
   // the compiler still sees `HTMLElement | undefined` through indexing.

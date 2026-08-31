@@ -175,6 +175,10 @@ export const zhTW: Record<string, string> = {
   loadMore: '載入更多',
   historyLoadError: '載入更多歷史失敗',
   produced: '本次產出',
+  review: '審查',
+  producedWrapOn: '自動換行',
+  producedWrapOff: '單行橫向滾動',
+
   producedOpen: '在側邊欄中開啟',
   disconnected: '終端連線斷開，重新連線中…',
   exited: '終端程序已退出',

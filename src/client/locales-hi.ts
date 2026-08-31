@@ -160,6 +160,10 @@ export const hi: Record<string, string> = {
   loadMore: 'और लोड करें',
   historyLoadError: 'और इतिहास लोड विफल',
   produced: 'उत्पादित',
+  review: 'समीक्षा',
+  producedWrapOn: 'लाइनें लपेटें',
+  producedWrapOff: 'एक पंक्ति, क्षैतिज स्क्रॉल',
+
   producedOpen: 'साइडबार में खोलें',
   disconnected: 'टर्मिनल डिस्कनेक्ट हो गया, पुनः कनेक्ट हो रहा…',
   exited: 'टर्मिनल प्रक्रिया बाहर निकली',

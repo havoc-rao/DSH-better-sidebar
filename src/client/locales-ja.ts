@@ -160,6 +160,10 @@ export const ja: Record<string, string> = {
   loadMore: 'もっと読み込む',
   historyLoadError: '履歴の追加読み込みに失敗',
   produced: '今回の産物',
+  review: 'レビュー',
+  producedWrapOn: '自動改行',
+  producedWrapOff: '折り返さず横スクロール',
+
   producedOpen: 'サイドバーで開く',
   disconnected: 'ターミナル接続が切れました、再接続中…',
   exited: 'ターミナルプロセスが終了しました',

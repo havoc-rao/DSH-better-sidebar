@@ -152,6 +152,10 @@ export const ko: Record<string, string> = {
   loadMore: '더 불러오기',
   historyLoadError: '더 많은 기록 불러오기 실패',
   produced: '이번 산출물',
+  review: '검토',
+  producedWrapOn: '자동 줄바꿈',
+  producedWrapOff: '한 줄, 가로 스크롤',
+
   producedOpen: '사이드바에서 열기',
   disconnected: '터미널 연결이 끊겨 다시 연결하는 중…',
   exited: '터미널 프로세스가 종료되었습니다',

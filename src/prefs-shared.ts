@@ -69,6 +69,21 @@ export interface SidebarPrefs {
    */
   interceptOpenPath: boolean
   /**
+   * Whether the intercepted produced-files row WRAPS its chips onto multiple
+   * lines (on, the default — the original behavior). Off renders the row as
+   * a single line that scrolls horizontally when the chips overflow, with
+   * the row's inline toggle flipping between the two modes.
+   */
+  producedFilesWrap: boolean
+  /**
+   * Whether the editor tab STRIP (the file tabs of every workbench pane)
+   * wraps onto multiple rows when the tabs overflow (off by default — the
+   * original single-line strip that scrolls horizontally). The strip's
+   * inline toggle flips between the two modes; off keeps the sticky + menu
+   * pinned to the right edge of the scrollport.
+   */
+  tabStripWrap: boolean
+  /**
    * Whether the editor tab runs in merged mode: a path input replaces the
    * plain header and a toggleable file-tree panel (with a global name
    * search) docks at the tab's right edge. On by default; also makes brand
@@ -294,6 +309,8 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
+  producedFilesWrap: true,
+  tabStripWrap: false,
   editorExplorer: false,
   sidebarLayout: 'docked',
   sideBarSide: 'right',

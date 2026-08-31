@@ -135,7 +135,7 @@ function normKey(path: string): string {
 }
 
 /** Forward-slash form with no trailing separator (the walk/join form). */
-function toPosix(path: string): string {
+export function toPosix(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
@@ -148,7 +148,7 @@ function isWithin(base: string, target: string): boolean {
 }
 
 /** Join an absolute root (native separators) with a repo-relative '/'-path. */
-function joinRoot(root: string, rel: string): string {
+export function joinRoot(root: string, rel: string): string {
   const base = root.replace(/[\\/]+$/, '')
   return `${base}/${rel}`
 }

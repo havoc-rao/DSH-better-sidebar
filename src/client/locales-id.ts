@@ -158,6 +158,10 @@ export const id: Record<string, string> = {
   loadMore: 'Muat lebih banyak',
   historyLoadError: 'Gagal memuat lebih banyak riwayat',
   produced: 'Dihasilkan',
+  review: 'Tinjau',
+  producedWrapOn: 'Bungkus baris',
+  producedWrapOff: 'Satu baris, gulir horizontal',
+
   producedOpen: 'Buka di sidebar',
   disconnected: 'Terminal terputus, menyambung ulang…',
   exited: 'Proses terminal keluar',

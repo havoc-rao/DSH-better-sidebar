@@ -1291,6 +1291,68 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
+/* Wrap mode (the strip's layout toggle on): the tab rows wrap instead of
+   scrolling horizontally, so the strip grows to fit every tab. */
+.tabBarWrap {
+  height: auto;
+}
+
+.tabListWrap {
+  flex-wrap: wrap;
+  overflow-x: visible;
+}
+
+/* A wrapped row keeps the single-line strip's row height instead of
+   collapsing to the tabs' ~18px content height (icon + label line): each
+   wrapped row must look exactly like the scrolling row it split from. The
+   strip is 34px tall including its 1px bottom hairline, so the inner row is
+   33px. */
+.tabListWrap .tab {
+  height: 33px;
+}
+
+/* The strip's right-end control group (wrap toggle + the + menu button):
+   sticky at the right edge of the scrollport in single-line mode, so both
+   stay reachable no matter how many tabs are open; static in wrap mode
+   where every tab is already visible. */
+.tabBarEnd {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  position: sticky;
+  right: 0;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.tabBarEnd .tabBarPlus {
+  position: static;
+}
+
+.tabBarWrap .tabBarEnd {
+  position: static;
+}
+
+.tabBarWrapToggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: 0 0 0 4px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.tabBarWrapToggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
 /* The hairline before the workspace-bound (pinned) tab group. */
 .tabBarDivider {
   flex: none;
@@ -3385,9 +3447,43 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 4px 0;
 }
 
+/* Single-line mode (the row's layout toggle off): chips stay on one line;
+   overflow scrolls horizontally instead of wrapping. Children never shrink
+   so the scroll region is the row itself. */
+.producedRowNowrap {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.producedRowNowrap > * {
+  flex-shrink: 0;
+}
+
 .producedLabel {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
+}
+
+/* The row's layout toggle: auto-wrap / single-line horizontal scroll. A
+   quiet ghost button (icon-only); the two glyphs mirror the current mode. */
+.producedWrapToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.producedWrapToggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
 }
 
 .producedChip {
@@ -3421,6 +3517,34 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* The row's primary action: the diff review of the produced files. Accent
+   treatment distinct from the open-file chips (brand text + accent border). */
+.producedReview {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-brand-primary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.producedReview:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.producedReview span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Shared interaction rules ──────────────────────────────────────────── */
 
 /* Keyboard focus stays visible on every interactive control (the styling
@@ -3441,6 +3565,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .gitLogMore:focus-visible,
 .gitDiffFile:focus-visible,
 .gitDiffExpand:focus-visible,
+.producedChip:focus-visible,
+.producedReview:focus-visible,
+.producedWrapToggle:focus-visible,
+.tabBarWrapToggle:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,
 .editorDownloadLink:focus-visible,

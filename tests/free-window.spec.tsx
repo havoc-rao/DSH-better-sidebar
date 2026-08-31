@@ -217,7 +217,10 @@ describe('free windows: the window', () => {
     try {
       act(() => { service.openTab({ type: 'notes', title: 'Notes' }) })
       // The strip holds the seeded home tab first; Notes is the LAST tab.
-      const tabs = [...container.querySelectorAll<HTMLElement>('[class*="tabList"] > [class*="tab"]')]
+      // Tab elements carry data-dsh-tab-id; a bare [class*="tab"] match would
+      // also grab the strip's right-end control group (tabBarEnd) added by the
+      // wrap-toggle feature.
+      const tabs = [...container.querySelectorAll<HTMLElement>('[class*="tabList"] > [data-dsh-tab-id]')]
       const tab = tabs.at(-1)!
       act(() => { tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })) })
       // The float entry is the FIRST menu row.

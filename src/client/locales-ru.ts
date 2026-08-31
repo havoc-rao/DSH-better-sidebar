@@ -156,6 +156,10 @@ export const ru: Record<string, string> = {
   loadMore: 'Загрузить ещё',
   historyLoadError: 'Не удалось загрузить ещё историю',
   produced: 'Результаты',
+  review: 'Просмотреть',
+  producedWrapOn: 'Перенос строк',
+  producedWrapOff: 'Одна строка, горизонтальная прокрутка',
+
   producedOpen: 'Открыть в боковой панели',
   disconnected: 'Терминал отключён, переподключение…',
   exited: 'Процесс терминала завершился',

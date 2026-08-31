@@ -250,3 +250,34 @@ export const IconVscode16 = ({ size = 16, className }: IconProps) => (
     <path d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z" />
   </svg>
 )
+
+/**
+ * Auto-wrap glyph for the produced-files row's layout toggle: three text
+ * lines, the last one SHORT and hooking down-left — "the chips wrap onto
+ * the next line instead of overflowing". App outline style (1.5px stroke,
+ * currentColor).
+ */
+export const IconWrapOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M1.5 3.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M1.5 6.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M1.5 9.5h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M7.5 9.5v2.5H4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/**
+ * Single-line / horizontal-scroll glyph for the produced-files row's layout
+ * toggle: three full-width lines with left/right chevrons beneath — "the
+ * chips stay on one line and the row scrolls sideways when they overflow".
+ * App outline style (1.5px stroke, currentColor).
+ */
+export const IconScrollHOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M1.5 3.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M1.5 6.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M1.5 9.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M5.6 12.75L3.35 14.4l2.25 1.65" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M10.4 12.75l2.25 1.65-2.25 1.65" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)

@@ -160,6 +160,10 @@ export const th: Record<string, string> = {
   loadMore: 'โหลดเพิ่มเติม',
   historyLoadError: 'โหลดประวัติเพิ่มเติมล้มเหลว',
   produced: 'ผลลัพธ์ที่สร้าง',
+  review: 'ตรวจสอบ',
+  producedWrapOn: 'ตัดบรรทัด',
+  producedWrapOff: 'บรรทัดเดียว เลื่อนแนวนอน',
+
   producedOpen: 'เปิดในแถบด้านข้าง',
   disconnected: 'เทอร์มินัลถูกตัดการเชื่อมต่อ กำลังเชื่อมต่อใหม่…',
   exited: 'กระบวนการเทอร์มินัลออกแล้ว',

@@ -800,11 +800,11 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
   }
 }
 
-/** Loose shape check for a persisted diff ref (both kinds are plain data). */
+/** Loose shape check for a persisted diff ref (all three kinds are plain data). */
 function isDiffRef(value: unknown): value is SidebarDiffRef {
   if (value === null || typeof value !== 'object') return false
   const record = value as Record<string, unknown>
-  return record.kind === 'worktree' || record.kind === 'commit'
+  return record.kind === 'worktree' || record.kind === 'commit' || record.kind === 'review'
 }
 
 /** Drop local tabs matching a just-bound window (same type + path) from one

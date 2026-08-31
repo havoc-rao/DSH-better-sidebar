@@ -143,6 +143,10 @@ export const sv: Record<string, string> = {
   loadMore: 'Ladda fler',
   historyLoadError: 'Kunde inte ladda mer historik',
   produced: 'Producerat',
+  review: 'Granska',
+  producedWrapOn: 'Radbrytning',
+  producedWrapOff: 'En rad, horisontell rullning',
+
   producedOpen: 'Öppna i sidopanelen',
   disconnected: 'Terminalen frånkopplad, ansluter igen…',
   exited: 'Terminalprocess avslutad',

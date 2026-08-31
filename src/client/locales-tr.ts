@@ -160,6 +160,10 @@ export const tr: Record<string, string> = {
   loadMore: 'Daha fazla yükle',
   historyLoadError: 'Daha fazla geçmiş yüklenemedi',
   produced: 'Üretilenler',
+  review: 'İncele',
+  producedWrapOn: 'Satırları sar',
+  producedWrapOff: 'Tek satır, yatay kaydırma',
+
   producedOpen: 'Kenar çubuğunda aç',
   disconnected: 'Terminal bağlantısı kesildi, yeniden bağlanılıyor…',
   exited: 'Terminal süreci sonlandı',

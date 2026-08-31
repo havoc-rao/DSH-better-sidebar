@@ -160,6 +160,10 @@ export const vi: Record<string, string> = {
   loadMore: 'Tải thêm',
   historyLoadError: 'Tải thêm lịch sử thất bại',
   produced: 'Đã tạo',
+  review: 'Xem xét',
+  producedWrapOn: 'Ngắt dòng',
+  producedWrapOff: 'Một dòng, cuộn ngang',
+
   producedOpen: 'Mở trong thanh bên',
   disconnected: 'Terminal mất kết nối, đang kết nối lại…',
   exited: 'Tiến trình terminal đã thoát',

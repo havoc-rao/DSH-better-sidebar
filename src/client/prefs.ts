@@ -8,7 +8,7 @@
  * of the contract range) falls back to the schema defaults — the side card
  * must keep working exactly as composed when the settings surface is missing.
  */
-import type { api } from './api.ts'
+import { api } from './api.ts'
 import {
   clampTerminalFontSize,
   clampTitleBarStrip,
@@ -32,6 +32,36 @@ export type { SidebarPrefs, TitleBarScheme }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
 export type SidebarSettingsClient = Pick<typeof api, 'settingsGet' | 'settingsUpdate'>
+
+/** The store face {@link flipBooleanPref} needs (the SidebarStore prefs API;
+ *  kept structural here so prefs.ts stays free of a state.ts import). */
+export interface PrefsStore {
+  getPrefs(): SidebarPrefs
+  setPrefs(prefs: SidebarPrefs): void
+}
+
+/** The boolean prefs the layout toggles (the produced-files row wrap and the
+ *  tab-strip wrap) — the two surfaces sharing one flip contract. */
+export type WrapPrefKey = 'producedFilesWrap' | 'tabStripWrap'
+
+/**
+ * Optimistically flip one boolean layout pref and persist it — the same
+ * contract as the Side Bar side toggle: the store updates first so
+ * store-subscribing UI (the produced row, the tab strips) re-renders
+ * immediately, then the settings route persists (best-effort — a failed
+ * write keeps the in-memory value; a reload reverts to whatever the server
+ * holds).
+ */
+export function flipBooleanPref(store: PrefsStore, key: WrapPrefKey): void {
+  const current = store.getPrefs()
+  const next = !(current[key] as boolean)
+  store.setPrefs({ ...current, [key]: next })
+  void api.settingsUpdate({ [key]: next }).then((view) => {
+    store.setPrefs(parsePrefs(view.value))
+  }).catch(() => {
+    // The optimistic value stays; a reload falls back to the persisted one.
+  })
+}
 
 /** Validate one raw resolved value into {@link SidebarPrefs}. Used for the
  * settings.get payload AND the settings.update response (both carry the
@@ -79,6 +109,12 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     interceptOpenPath: typeof record.interceptOpenPath === 'boolean'
       ? record.interceptOpenPath
       : SIDEBAR_PREFS_DEFAULTS.interceptOpenPath,
+    producedFilesWrap: typeof record.producedFilesWrap === 'boolean'
+      ? record.producedFilesWrap
+      : SIDEBAR_PREFS_DEFAULTS.producedFilesWrap,
+    tabStripWrap: typeof record.tabStripWrap === 'boolean'
+      ? record.tabStripWrap
+      : SIDEBAR_PREFS_DEFAULTS.tabStripWrap,
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,

@@ -151,6 +151,10 @@ export const it: Record<string, string> = {
   loadMore: 'Carica altro',
   historyLoadError: 'Caricamento di altra cronologia non riuscito',
   produced: 'Prodotti',
+  review: 'Rivedi',
+  producedWrapOn: 'A capo automatico',
+  producedWrapOff: 'Riga singola, scorrimento orizzontale',
+
   producedOpen: 'Apri nella barra laterale',
   disconnected: 'Terminale disconnesso, riconnessione…',
   exited: 'Il processo del terminale è terminato',
