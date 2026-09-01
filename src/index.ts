@@ -421,6 +421,29 @@ function buildApi(
       const { cwd } = await gitCwdOf(payload)
       return git.branches(cwd, selectedRepoOf(payload))
     },
+    // The current branch's upstream relationship (ahead/behind + gone) for
+    // the header pill. Runs in the same worktree-resolved cwd as git.status,
+    // so the pill always describes the SAME checkout the rows show.
+    'git.branch-status': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      return git.branchStatus(cwd, selectedRepoOf(payload))
+    },
+    // Fetch remote refs (optionally --prune). A repository without any
+    // remote carries its own wire code — the panel maps it to friendly copy
+    // instead of the raw git fatal line.
+    'git.fetch': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      const record = payload as { prune?: unknown } | null
+      try {
+        await git.fetch(cwd, record?.prune === true, selectedRepoOf(payload))
+        return { ok: true }
+      } catch (error) {
+        if (error instanceof git.GitCommandError && error.code === 'git-no-remote') {
+          throw new SidebarError('git-no-remote', error.message)
+        }
+        throw error
+      }
+    },
     'git.checkout': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       await git.checkout(cwd, requireString(payload, 'branch'), selectedRepoOf(payload))

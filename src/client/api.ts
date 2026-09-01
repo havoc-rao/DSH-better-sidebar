@@ -61,6 +61,20 @@ export interface GitWorktree {
   changes: number
 }
 
+/** The current branch's upstream relationship (the git header pill). */
+export interface GitBranchStatus {
+  /** The upstream's short name ('origin/main'); absent when the branch has
+   *  no upstream configured. */
+  upstream?: string
+  /** Commits in HEAD the upstream does not have. */
+  ahead: number
+  /** Commits in the upstream that HEAD does not have. */
+  behind: number
+  /** The configured upstream ref no longer exists (the remote branch was
+   *  deleted and a prune fetch dropped the tracking ref). */
+  gone: boolean
+}
+
 /** One git log row. */
 export interface GitLogEntry {
   /** Short hash (7+ chars, display). */
@@ -239,6 +253,15 @@ export const api = {
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
+  /** The current branch's upstream relationship (ahead/behind counts + gone)
+   *  for the git header pill. Failures (no git config etc.) never hide the
+   *  rest of the panel — the view catches the rejection itself. */
+  gitBranchStatus: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
+    call<GitBranchStatus>('git.branch-status', gitPayload(scope, worktree, {}), signal),
+  /** Fetch remote refs (optionally `--prune`); 'git-no-remote' wire code
+   *  when the repository has no remote. */
+  gitFetch: (scope: SessionScope, worktree?: string, prune?: boolean, signal?: AbortSignal) =>
+    call<{ ok: true }>('git.fetch', gitPayload(scope, worktree, { prune: prune === true }), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
     call<{ ok: true }>('git.checkout', gitPayload(scope, worktree, { branch })),
   /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */

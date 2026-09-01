@@ -50,6 +50,21 @@ export interface GitWorktree {
   changes: number
 }
 
+/** The current branch's upstream relationship (the git header pill). */
+export interface GitBranchStatus {
+  /** The upstream's short name ('origin/main'); absent when the branch has
+   *  no upstream configured. */
+  upstream?: string
+  /** Commits in HEAD the upstream does not have. */
+  ahead: number
+  /** Commits in the upstream that HEAD does not have. */
+  behind: number
+  /** The configured upstream ref no longer exists (the remote branch was
+   *  deleted and a prune fetch dropped the tracking ref) — the "gone"
+   *  state VS Code paints amber. */
+  gone: boolean
+}
+
 /** One `git log` row. */
 export interface GitLogEntry {
   /** Short hash (7+ chars, display). */
@@ -479,6 +494,82 @@ export async function branches(cwd: string, selected?: string): Promise<{ curren
   ])
   const names = raw.split('\n').filter(line => line !== '')
   return { current, names: names.includes(current) ? names : [current, ...names] }
+}
+
+/** Whether a ref resolves to a commit (`rev-parse --verify`, quiet). */
+async function refExists(root: string, ref: string): Promise<boolean> {
+  try {
+    const out = await runGit(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+    return out.trim() !== ''
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The current branch's upstream relationship (ahead/behind counts + gone
+ * detection) — the data behind the git header pill. Resolved from plumbing
+ * config reads (`branch.<name>.remote` / `.merge`), never from localized
+ * human output, so every outcome is deterministic:
+ * - detached HEAD or no upstream configured (fresh branch) → `upstream`
+ *   absent, counts zero;
+ * - configured upstream ref missing (remote branch deleted + pruned) →
+ *   `gone: true` with the upstream name still shown;
+ * - otherwise `ahead`/`behind` via `rev-list --left-right --count`
+ *   (`<upstream>...HEAD`: left = upstream-only commits = behind, right =
+ *   HEAD-only commits = ahead).
+ */
+export async function branchStatus(cwd: string, selected?: string): Promise<GitBranchStatus> {
+  const root = await repoRoot(cwd, selected)
+  const branch = await currentBranch(root).catch(() => 'HEAD')
+  if (branch === '' || branch === 'HEAD') return { ahead: 0, behind: 0, gone: false }
+  const [remote, merge] = await Promise.all([
+    runGit(root, ['config', '--get', `branch.${branch}.remote`]).catch(() => ''),
+    runGit(root, ['config', '--get', `branch.${branch}.merge`]).catch(() => ''),
+  ])
+  const remoteName = remote.trim()
+  const mergeRef = merge.trim()
+  if (remoteName === '' || mergeRef === '') return { ahead: 0, behind: 0, gone: false }
+  // branch.<name>.merge names the upstream's ref AT THE REMOTE
+  // (refs/heads/x); map it onto the local remote-tracking ref representing
+  // it. Non-standard merge refs pass through verbatim.
+  const tracking = mergeRef.startsWith('refs/heads/')
+    ? `refs/remotes/${remoteName}/${mergeRef.slice('refs/heads/'.length)}`
+    : mergeRef
+  const upstream = tracking.startsWith('refs/remotes/') ? tracking.slice('refs/remotes/'.length) : tracking
+  const exists = await refExists(root, tracking)
+  if (!exists) return { upstream, ahead: 0, behind: 0, gone: true }
+  try {
+    const [behindRaw, aheadRaw] = (await runGit(root, ['rev-list', '--left-right', '--count', `${tracking}...HEAD`]))
+      .trim().split('\t')
+    const behind = Number(behindRaw ?? 0)
+    const ahead = Number(aheadRaw ?? 0)
+    return {
+      upstream,
+      ahead: Number.isFinite(ahead) ? ahead : 0,
+      behind: Number.isFinite(behind) ? behind : 0,
+      gone: false,
+    }
+  } catch {
+    // Undecodable revision graph (mid-rebase / unborn edge): show the
+    // upstream ref without counts instead of failing the whole panel.
+    return { upstream, ahead: 0, behind: 0, gone: false }
+  }
+}
+
+/**
+ * Fetch remote refs (optionally pruning deleted remote branches). A
+ * repository without any remote fails with the typed `git-no-remote` code —
+ * the panel maps that to its own copy — while network and other failures
+ * keep the generic `git-error`.
+ */
+export async function fetch(cwd: string, prune: boolean, selected?: string): Promise<void> {
+  const root = await repoRoot(cwd, selected)
+  const remotes = (await runGit(root, ['remote'])).trim()
+  if (remotes === '') {
+    throw new GitCommandError('no remote configured for this repository', 'git-no-remote', 'remote')
+  }
+  await runGit(root, prune ? ['fetch', '--prune'] : ['fetch'])
 }
 
 /** Switch to an existing branch. */

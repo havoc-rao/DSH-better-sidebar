@@ -15,6 +15,7 @@ export type SidebarErrorCode =
   | 'too-large'
   | 'fs-error'
   | 'git-error'
+  | 'git-no-remote'
   | 'pty-error'
   | 'pty-deps-missing'
   | 'job-error'
