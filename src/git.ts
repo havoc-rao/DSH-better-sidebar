@@ -50,18 +50,17 @@ export interface GitWorktree {
   changes: number
 }
 
-/** The current branch's upstream relationship (the git header pill). */
+/** One branch's relationship to its upstream (remote-tracking) ref. */
 export interface GitBranchStatus {
-  /** The upstream's short name ('origin/main'); absent when the branch has
-   *  no upstream configured. */
+  /** Short upstream ref name (e.g. `origin/main`); undefined when the branch tracks nothing. */
   upstream?: string
-  /** Commits in HEAD the upstream does not have. */
+  /** Commits the local branch is ahead of the upstream (0 when it has no upstream). */
   ahead: number
-  /** Commits in the upstream that HEAD does not have. */
+  /** Commits the local branch is behind the upstream (0 when it has no upstream). */
   behind: number
-  /** The configured upstream ref no longer exists (the remote branch was
-   *  deleted and a prune fetch dropped the tracking ref) — the "gone"
-   *  state VS Code paints amber. */
+  /** True when the upstream is CONFIGURED but its remote-tracking ref no longer
+   *  exists locally — the branch was deleted on the remote and pruned (or never
+   *  fetched). The user must decide to push (re-create) or abandon the branch. */
   gone: boolean
 }
 
@@ -187,6 +186,12 @@ export function parseLogLines(output: string): GitLogEntry[] {
  * separated, first-parent first. A root commit has an empty parent field →
  * `parents: []`. The row's own hash is `%H` (full); the short hash for
  * display is derived as the first 7 chars (git's default short length).
+ *
+ * The refs field is `%D` with `--decorate=full`: FULL ref names
+ * (`HEAD -> refs/heads/main, refs/remotes/origin/main, tag: refs/tags/v1`)
+ * so the client can classify local vs remote vs tag without ambiguity —
+ * short decorations cannot tell a local branch `feature/foo` from a
+ * remote-tracking ref of a remote named `feature`.
  */
 export function parseGraphLines(output: string): GitGraphEntry[] {
   const rows: GitGraphEntry[] = []
@@ -496,80 +501,64 @@ export async function branches(cwd: string, selected?: string): Promise<{ curren
   return { current, names: names.includes(current) ? names : [current, ...names] }
 }
 
-/** Whether a ref resolves to a commit (`rev-parse --verify`, quiet). */
-async function refExists(root: string, ref: string): Promise<boolean> {
-  try {
-    const out = await runGit(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
-    return out.trim() !== ''
-  } catch {
-    return false
-  }
-}
-
 /**
- * The current branch's upstream relationship (ahead/behind counts + gone
- * detection) — the data behind the git header pill. Resolved from plumbing
- * config reads (`branch.<name>.remote` / `.merge`), never from localized
- * human output, so every outcome is deterministic:
- * - detached HEAD or no upstream configured (fresh branch) → `upstream`
- *   absent, counts zero;
- * - configured upstream ref missing (remote branch deleted + pruned) →
- *   `gone: true` with the upstream name still shown;
- * - otherwise `ahead`/`behind` via `rev-list --left-right --count`
- *   (`<upstream>...HEAD`: left = upstream-only commits = behind, right =
- *   HEAD-only commits = ahead).
+ * The current branch's upstream relationship. `git rev-parse
+ * --symbolic-full-name @{upstream}` RESOLVES the tracking ref, so it fails
+ * both when the branch has no upstream AND when the tracking ref is gone
+ * (pruned). The two cases are told apart by reading the branch's configured
+ * upstream (`%(upstream:short)` survives a missing tracking ref): an absent
+ * config means the branch tracks nothing; a surviving name means the
+ * upstream was deleted on the remote.
+ *
+ * Counts: `rev-list --left-right --count HEAD...<upstream>` — left = HEAD
+ * side = ahead, right = upstream side = behind.
  */
 export async function branchStatus(cwd: string, selected?: string): Promise<GitBranchStatus> {
   const root = await repoRoot(cwd, selected)
-  const branch = await currentBranch(root).catch(() => 'HEAD')
-  if (branch === '' || branch === 'HEAD') return { ahead: 0, behind: 0, gone: false }
-  const [remote, merge] = await Promise.all([
-    runGit(root, ['config', '--get', `branch.${branch}.remote`]).catch(() => ''),
-    runGit(root, ['config', '--get', `branch.${branch}.merge`]).catch(() => ''),
-  ])
-  const remoteName = remote.trim()
-  const mergeRef = merge.trim()
-  if (remoteName === '' || mergeRef === '') return { ahead: 0, behind: 0, gone: false }
-  // branch.<name>.merge names the upstream's ref AT THE REMOTE
-  // (refs/heads/x); map it onto the local remote-tracking ref representing
-  // it. Non-standard merge refs pass through verbatim.
-  const tracking = mergeRef.startsWith('refs/heads/')
-    ? `refs/remotes/${remoteName}/${mergeRef.slice('refs/heads/'.length)}`
-    : mergeRef
-  const upstream = tracking.startsWith('refs/remotes/') ? tracking.slice('refs/remotes/'.length) : tracking
-  const exists = await refExists(root, tracking)
-  if (!exists) return { upstream, ahead: 0, behind: 0, gone: true }
-  try {
-    const [behindRaw, aheadRaw] = (await runGit(root, ['rev-list', '--left-right', '--count', `${tracking}...HEAD`]))
-      .trim().split('\t')
-    const behind = Number(behindRaw ?? 0)
-    const ahead = Number(aheadRaw ?? 0)
-    return {
-      upstream,
-      ahead: Number.isFinite(ahead) ? ahead : 0,
-      behind: Number.isFinite(behind) ? behind : 0,
-      gone: false,
-    }
-  } catch {
-    // Undecodable revision graph (mid-rebase / unborn edge): show the
-    // upstream ref without counts instead of failing the whole panel.
-    return { upstream, ahead: 0, behind: 0, gone: false }
+  const live = await runGit(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+    .then(out => out.trim(), () => '')
+  const name = live !== '' && live !== '@{upstream}' ? live : await configuredUpstream(root)
+  if (name === undefined) return { upstream: undefined, ahead: 0, behind: 0, gone: false }
+  const counts = await runGit(root, ['rev-list', '--left-right', '--count', `HEAD...${name}`])
+    .then(out => out.trim(), () => null)
+  if (counts === null) {
+    // Upstream configured, but its tracking ref does not exist here (deleted
+    // on the remote / never fetched since) — the dashboard calls this `gone`.
+    return { upstream: name, ahead: 0, behind: 0, gone: true }
   }
+  const [left, right] = counts.split(/\s+/)
+  return { upstream: name, ahead: Number(left ?? 0), behind: Number(right ?? 0), gone: false }
 }
 
+/** The branch's configured upstream name (`%(upstream:short)`), or undefined.
+ *  The config entry outlives the tracking ref, which is exactly what lets
+ *  {@link branchStatus} distinguish "no upstream" from "upstream gone". */
+async function configuredUpstream(root: string): Promise<string | undefined> {
+  const branch = await runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']).then(out => out.trim(), () => '')
+  if (branch === '' || branch === 'HEAD') return undefined
+  const raw = await runGit(root, ['for-each-ref', '--format=%(upstream:short)', `refs/heads/${branch}`])
+    .then(out => out.trim(), () => '')
+  return raw === '' ? undefined : raw
+}
+
+/** Fetch budget: network I/O needs far more than the local-command default. */
+const FETCH_TIMEOUT_MS = 120_000
+
 /**
- * Fetch remote refs (optionally pruning deleted remote branches). A
- * repository without any remote fails with the typed `git-no-remote` code —
- * the panel maps that to its own copy — while network and other failures
- * keep the generic `git-error`.
+ * Fetch remote refs into the local remote-tracking refs (the worktree is
+ * untouched). `prune` additionally deletes locally tracked refs whose remote
+ * branch disappeared — without it `git fetch` never surfaces deletions, so
+ * the panel's `gone` state would stay stale. A repository without any
+ * configured remote fails with the typed `git-no-remote` code — the panel
+ * maps that to its own copy.
  */
-export async function fetch(cwd: string, prune: boolean, selected?: string): Promise<void> {
+export async function fetch(cwd: string, selected?: string, prune = false): Promise<void> {
   const root = await repoRoot(cwd, selected)
-  const remotes = (await runGit(root, ['remote'])).trim()
-  if (remotes === '') {
-    throw new GitCommandError('no remote configured for this repository', 'git-no-remote', 'remote')
+  const remotes = await runGit(root, ['remote']).then(out => out.split('\n'), () => [''])
+  if (remotes.every(name => name.trim() === '')) {
+    throw new GitCommandError('no remote configured', 'git-no-remote', 'fetch')
   }
-  await runGit(root, prune ? ['fetch', '--prune'] : ['fetch'])
+  await runGit(root, prune ? ['fetch', '--prune'] : ['fetch'], FETCH_TIMEOUT_MS)
 }
 
 /** Switch to an existing branch. */
@@ -600,11 +589,14 @@ export async function log(cwd: string, count = 30, skip = 0, selected?: string):
  * column because the plain `git.log` route has no parent info; the host now
  * supports `git.log-graph` for every checkout so the panel keeps its lane
  * structure even when an MR review toggles the worktree selector.
+ *
+ * `--decorate=full` keeps the ref field self-describing (full ref names —
+ * see {@link parseGraphLines}) so the client can color local vs remote refs.
  */
 export async function graphLog(cwd: string, count = 30, skip = 0, worktree?: string): Promise<GitGraphEntry[]> {
   const targetCwd = await resolveWorktree(cwd, worktree)
   const raw = await runGit(targetCwd, [
-    'log', '-n', String(count), '--skip', String(skip), '--topo-order', '--decorate=short',
+    'log', '-n', String(count), '--skip', String(skip), '--topo-order', '--decorate=full',
     '--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ai%x1f%D',
   ])
   return parseGraphLines(raw)

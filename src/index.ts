@@ -435,7 +435,7 @@ function buildApi(
       const { cwd } = await gitCwdOf(payload)
       const record = payload as { prune?: unknown } | null
       try {
-        await git.fetch(cwd, record?.prune === true, selectedRepoOf(payload))
+        await git.fetch(cwd, selectedRepoOf(payload), record?.prune === true)
         return { ok: true }
       } catch (error) {
         if (error instanceof git.GitCommandError && error.code === 'git-no-remote') {

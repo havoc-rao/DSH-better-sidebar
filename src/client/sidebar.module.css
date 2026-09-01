@@ -2854,6 +2854,23 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xxs-12);
 }
 
+/* The current branch's upstream relationship pill (e.g. `origin/main ↑1 ↓2`):
+   compact, truncating, and never pushing the branch select off the header. */
+.gitUpstream {
+  flex: none;
+  max-width: 168px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  cursor: default;
+}
+
 .gitSection {
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
@@ -3364,6 +3381,25 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xxxs-strong-11);
   color: var(--dsw-alias-brand-primary);
   white-space: nowrap;
+}
+
+/* Local vs remote branch chips: green = this checkout's own branches, blue =
+   remote-tracking refs (`origin/main`) — the split is derived from FULL ref
+   names (see GitView.refChips), so a local branch named `feature/foo` can
+   never be mistaken for a remote. Tags and odd refs keep the neutral base. */
+.gitLogRefLocal {
+  color: var(--dsw-alias-state-success-primary);
+  border-color: var(--dsw-alias-state-success-primary);
+}
+
+.gitLogRefRemote {
+  color: var(--dsw-alias-state-business-primary);
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+/* The upstream pill's remote ref name rides the same blue as remote chips. */
+.gitUpstreamRef {
+  color: var(--dsw-alias-state-business-primary);
 }
 
 .gitLogSubject {

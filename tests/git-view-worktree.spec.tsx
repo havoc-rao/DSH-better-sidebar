@@ -38,7 +38,7 @@ function logFor(target?: string, index = 0): GitGraphEntry[] {
     subject: agent ? `Agent checkout commit ${index}` : `Main checkout commit ${index}`,
     author: 'Test',
     date: '2026-08-20 00:00:00 +0800',
-    refs: agent ? 'HEAD -> agent' : 'HEAD -> main',
+    refs: agent ? 'HEAD -> refs/heads/agent' : 'HEAD -> refs/heads/main',
     // GitGraphEntry requires parents; the lane algorithm treats the empty
     // list as a single-column chain (every commit on col 0). The graph
     // controller is therefore happy with [] and the assertions below stay
@@ -71,6 +71,7 @@ describe('GitView linked-worktree consistency', () => {
       current: target === AGENT ? 'agent' : 'main',
       names: target === AGENT ? ['agent'] : ['main'],
     }))
+    vi.spyOn(api, 'gitBranchStatus').mockResolvedValue({ upstream: undefined, ahead: 0, behind: 0, gone: false })
     const log = vi.spyOn(api, 'gitLogGraph').mockImplementation(
       async (_scope, _count, _skip, worktree) => logFor(worktree),
     )
@@ -128,6 +129,7 @@ describe('GitView linked-worktree consistency', () => {
       current: target === AGENT ? 'agent' : 'main',
       names: target === AGENT ? ['agent'] : ['main'],
     }))
+    vi.spyOn(api, 'gitBranchStatus').mockResolvedValue({ upstream: undefined, ahead: 0, behind: 0, gone: false })
     vi.spyOn(api, 'gitLogGraph').mockImplementation(async (_scope, _count, skip, worktree) => {
       if (worktree === AGENT && skip === 20) return lateAgentPage.promise
       if (worktree === AGENT) return Array.from({ length: 20 }, (_value, index) => logFor(AGENT, index)[0]!)
