@@ -102,11 +102,27 @@ function bottomTabs(store: SidebarStore): Array<{ type: string; title: string }>
   return allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
 }
 
-/** The stub terminal tab: counts renders so the test can see it actually mount. */
+/**
+ * The stub terminal tab: counts renders so the test can see it actually
+ * mount. Mirrors the REAL terminal descriptor's `createTab` (mints a fresh
+ * unique id per open — the id safety-net's same-id focus therefore never
+ * collapses two opens into one, exactly like production): a duplicate
+ * openTab call in the auto-open effect would mint a SECOND tab and fail the
+ * `toEqual(['terminal'])` assertions below.
+ */
 function registerStubTerminal(service: BetterSidebarService, renders: { count: number }): void {
+  let minted = 0
   service.registerTab({
     id: 'terminal',
     title: () => 'Terminal',
+    createTab: () => ({
+      tab: {
+        id: `terminal:${++minted}`,
+        type: 'terminal',
+        title: 'Terminal',
+      },
+      patch: { nextTerminal: minted + 1 },
+    }),
     component: () => {
       renders.count += 1
       return createElement('div', null, 'terminal-stub-content')

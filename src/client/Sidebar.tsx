@@ -1314,11 +1314,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; windows?: Wo
     // Land the tab in the bottom panel's first pane; the once-flag is set
     // atomically so later expansions never repeat the auto-open.
     store.reduce(s => ({ ...s, activePane: firstLeaf(s.bottomSplits).id, bottomOpenedOnce: true }))
-    try {
-      ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({ type: 'terminal' })
-    } catch (error) {
-      console.error('[PROBE3]', (error as Error).message)
-    }
     ;(ctx.get?.('betterSidebar') ?? ctx.betterSidebar)?.openTab({ type: 'terminal' })
   }, [state, store, ctx, narrow])
 
