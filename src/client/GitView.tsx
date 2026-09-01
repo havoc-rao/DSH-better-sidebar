@@ -11,12 +11,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, useState, type MouseEvent, type ReactNode } from 'react'
 import {
-  Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
+  Button, IconBranchOutline16, IconChevronDownOutline14, IconCodeOutline16, IconCopyOutline16,
+  IconDownloadOutline16, IconLoadingOutline16, IconRefreshOutline16,
   IconSparkle16, IconTrashOutline16, Input, Menu, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
+import type { GitBranchStatus, GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api, SidebarApiError } from './api.ts'
-import { notifyGitStatusChanged } from './git-status.ts'
+import { notifyGitStatusChanged, subscribeGitStatusChanged } from './git-status.ts'
 import { GitGraphSvg } from './GitGraph.tsx'
 import { computeGraphRows } from './git-graph.ts'
 import { isWithinWorkspace, relativeTo } from './paths.ts'
@@ -69,16 +70,38 @@ function baseName(path: string): string {
   return at === -1 ? path : path.slice(at + 1)
 }
 
-/** The ref names of one log row's decorations (`HEAD -> main` → `main`), deduped. */
-function refNames(refs: string): string[] {
-  return [...new Set(
-    refs
-      .split(',')
-      .map(ref => ref.trim())
-      .filter(ref => ref !== '')
-      .map(ref => (ref.includes(' -> ') ? ref.slice(ref.indexOf(' -> ') + 4) : ref))
-      .map(ref => (ref.startsWith('tag: ') ? ref.slice(5) : ref)),
-  )]
+/** One history-row ref chip: display name + kind (drives the local/remote colors). */
+export interface GitRefChip {
+  name: string
+  kind: 'branch' | 'remote' | 'tag' | 'other'
+}
+
+/**
+ * Parse one log row's full `%D` decorations (`--decorate=full`) into display
+ * chips. Full names make the classification unambiguous: short decorations
+ * cannot tell a local branch `feature/foo` from a remote-tracking ref of a
+ * remote named `feature`. Detached `HEAD` (no arrow target) renders nothing.
+ */
+export function refChips(refs: string): GitRefChip[] {
+  const chips: GitRefChip[] = []
+  for (const raw of refs.split(',')) {
+    const ref = raw.trim()
+    if (ref === '' || ref === 'HEAD') continue
+    if (ref.startsWith('HEAD -> ')) {
+      chips.push(chipOf(ref.slice('HEAD -> '.length)))
+    } else {
+      chips.push(chipOf(ref.startsWith('tag: ') ? ref.slice('tag: '.length) : ref))
+    }
+  }
+  return chips
+}
+
+/** One full ref name → its display name + kind (by the refs/* prefix). */
+function chipOf(full: string): GitRefChip {
+  if (full.startsWith('refs/heads/')) return { name: full.slice('refs/heads/'.length), kind: 'branch' }
+  if (full.startsWith('refs/remotes/')) return { name: full.slice('refs/remotes/'.length), kind: 'remote' }
+  if (full.startsWith('refs/tags/')) return { name: full.slice('refs/tags/'.length), kind: 'tag' }
+  return { name: full, kind: 'other' }
 }
 
 /** The pending destructive action (discard / revert / cherry-pick), gated by a confirm modal. */
@@ -125,6 +148,10 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [branchNames, setBranchNames] = useState<string[]>([])
+  /** The current branch's upstream relationship (ahead/behind/gone/no upstream). */
+  const [branchStatus, setBranchStatus] = useState<GitBranchStatus | null>(null)
+  /** Whether a fetch is in flight (the button shows a spinner + disables). */
+  const [fetching, setFetching] = useState(false)
   const [logEntries, setLogEntries] = useState<GitGraphEntry[]>([])
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
@@ -148,9 +175,23 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
   /** The open history-row context menu. */
   const [historyMenu, setHistoryMenu] = useState<{ entry: GitGraphEntry; x: number; y: number } | null>(null)
+  /** The open fetch menu (the "fetch --prune" option, anchored at the chevron). */
+  const [fetchMenu, setFetchMenu] = useState<{ x: number; y: number } | null>(null)
   /** The pending destructive action awaiting confirmation. */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
   const refreshInFlight = useRef(false)
+  /** A refresh issued while another is still resolving is QUEUED and replayed
+   *  from the settled state instead of being dropped. Without this, a
+   *  stage/commit/discard/checkout dispatched during a slow poll would
+   *  silently never repaint — the mutation lands on disk, but the panel keeps
+   *  the pre-mutation rows until the NEXT poll cycle. */
+  const pendingRefreshRef = useRef<{ silent: boolean } | null>(null)
+  /** Suppresses the panel's OWN bus broadcast: refreshTarget notifies the
+   *  explorer only after committing this panel's state, so the GitView bus
+   *  subscription below must not re-refresh on that same notification (the
+   *  broadcast is synchronous — the flag is consumed by the very listener
+   *  run it guards). */
+  const ownBroadcastRef = useRef(false)
   /** Monotonic request id: a manual worktree switch invalidates any older poll
    *  before it can publish state from the previous checkout. */
   const refreshGeneration = useRef(0)
@@ -173,22 +214,28 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
     if (options.loading) setLoading(true)
     setError(null)
     try {
-      const [statusResult, branchResult, logResult] = await Promise.all([
-api.gitStatus(gitScope, target),
+      const [statusResult, branchResult, logResult, upstreamResult] = await Promise.all([
+        api.gitStatus(gitScope, target),
         api.gitBranch(gitScope, target).catch(() => ({ current: '', names: [] as string[] })),
         // The first history page only; the rest arrives via "load more". The
         // graph flavor carries parent hashes (topo-ordered) for the lane layout.
         historyPage(gitScope, LOG_BATCH, 0, target),
+        // The upstream/ahead-behind relationship; a failure (e.g. no git
+        // branch config) never hides the rest of the panel.
+        api.gitBranchStatus(gitScope, target).catch(() => null),
       ])
       if (options.generation !== refreshGeneration.current) return
       setStatus(statusResult)
       if (statusResult.root !== undefined && statusResult.root !== repoRoot) setRepoRoot(statusResult.root)
       setBranchNames(branchResult.names)
       setLogEntries(logResult)
+      setBranchStatus(upstreamResult)
       setLogEnded(logResult.length < LOG_BATCH)
       // The explorer's tree decorations ride the same status snapshot —
       // every successful refresh (mount, focus, stage, commit, discard…)
-      // recolors the tree rows too.
+      // recolors the tree rows too. This panel's own subscription consumes
+      // the broadcast (ownBroadcastRef) so it never re-refreshes itself.
+      ownBroadcastRef.current = true
       notifyGitStatusChanged()
     } catch (reason) {
       if (options.generation === refreshGeneration.current) {
@@ -200,7 +247,14 @@ api.gitStatus(gitScope, target),
   }, [scope.sessionId, scope.cwd, repoRoot])
 
   const refresh = useCallback(async (silent = false): Promise<void> => {
-    if (refreshInFlight.current) return
+    if (refreshInFlight.current) {
+      // A poll or mutation refresh is still resolving — queue this request
+      // instead of swallowing it; the settled refresh replays it (see
+      // pendingRefreshRef). Multiple requests collapse into one replay, which
+      // is fine: a refresh is an idempotent fresh pull of git status.
+      pendingRefreshRef.current = { silent }
+      return
+    }
     refreshInFlight.current = true
     let generation = refreshGeneration.current
     try {
@@ -237,9 +291,18 @@ api.gitStatus(gitScope, target),
       }
       // A poll may update status alone only while staying on the same checkout.
       // Any automatic selection change refreshes the complete derived view.
+      // The upstream relationship rides the same cheap poll: a commit made
+      // outside the panel (model-authored) must flip the ahead count without
+      // a manual refresh, and the cost is two sub-second ref lookups.
       if (silent && !targetChanged) {
-        const statusResult = await api.gitStatus(gitScope, target)
-        if (generation === refreshGeneration.current) setStatus(statusResult)
+        const [statusResult, upstreamResult] = await Promise.all([
+          api.gitStatus(gitScope, target),
+          api.gitBranchStatus(gitScope, target).catch(() => null),
+        ])
+        if (generation === refreshGeneration.current) {
+          setStatus(statusResult)
+          if (upstreamResult !== null) setBranchStatus(upstreamResult)
+        }
         return
       }
       await refreshTarget(target, { loading: !silent, generation })
@@ -250,6 +313,11 @@ api.gitStatus(gitScope, target),
       }
     } finally {
       refreshInFlight.current = false
+      const pending = pendingRefreshRef.current
+      if (pending !== null) {
+        pendingRefreshRef.current = null
+        void refresh(pending.silent)
+      }
     }
   }, [scope.sessionId, scope.cwd, refreshTarget])
 
@@ -271,6 +339,7 @@ api.gitStatus(gitScope, target),
     setStatus(null)
     setBranchNames([])
     setLogEntries([])
+    setBranchStatus(null)
     setLogEnded(false)
     setLogLoadingMore(false)
     const generation = refreshGeneration.current += 1
@@ -285,6 +354,7 @@ api.gitStatus(gitScope, target),
     setStatus(null)
     setBranchNames([])
     setLogEntries([])
+    setBranchStatus(null)
     setLogEnded(false)
     setLogLoadingMore(false)
     // Re-list worktrees for the selected child (a workspace container's
@@ -297,6 +367,35 @@ api.gitStatus(gitScope, target),
     if (visible === false) return
     const timer = window.setInterval(() => { void refresh(true) }, 2_000)
     return () => { window.clearInterval(timer) }
+  }, [visible, refresh])
+
+  /** External git-status changes reach this panel through the shared change
+   *  bus: the tree's move-to-trash bumps it (a trashed entry IS a real
+   *  working-tree change), and so does any future mutating surface. The
+   *  subscription turns the one-way GitView→explorer channel into a loop —
+   *  any surface that bumps the bus repaints every surface, this panel
+   *  included (without it, real status changes made outside the panel never
+   *  appear in the changed-file lists while the tab is hidden, and even when
+   *  visible they only arrive on the next poll tick). The panel's own
+   *  broadcast is suppressed via ownBroadcastRef (see refreshTarget).
+   *  Idempotent by construction: a refresh is a fresh pull of git status. */
+  useEffect(() => subscribeGitStatusChanged(() => {
+    if (ownBroadcastRef.current) {
+      ownBroadcastRef.current = false
+      return
+    }
+    void refresh(true)
+  }), [refresh])
+
+  /** The poll pauses while the tab is hidden (`visible` gate above); the
+   *  moment it becomes visible again the panel pulls a FRESH snapshot
+   *  immediately — changes made while hidden must appear the instant the
+   *  panel is (re)opened, not two seconds later on the first poll tick. */
+  const visibleRef = useRef<boolean | undefined>(undefined)
+  useEffect(() => {
+    const was = visibleRef.current
+    visibleRef.current = visible
+    if (was === false && visible === true) void refresh(true)
   }, [visible, refresh])
 
   /** Append the next history page (lazy: only when the user asks for more). */
@@ -428,6 +527,31 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
     }
   }
 
+  /** Fetch remote refs (optionally pruning deleted ones), then recompute every
+   *  derived surface: fetch moves only remote-tracking refs, so status rows,
+   *  history decorations (`origin/main`) and the upstream pill all refresh
+   *  together — the same atomic unit as any other mutation. */
+  const fetchRemote = async (prune: boolean): Promise<void> => {
+    if (busy || fetching) return
+    setFetching(true)
+    setBusy(true)
+    setCommitError(null)
+    try {
+      await api.gitFetch(gitScope, selectedWorktree, prune)
+      await refresh()
+    } catch (reason) {
+      const code = reason instanceof SidebarApiError ? reason.code : undefined
+      // A repository without any remote gets its own copy instead of the
+      // host's raw "no remote configured" line.
+      setCommitError(code === 'git-no-remote'
+        ? t('noRemote')
+        : `${t('fetchError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      setFetching(false)
+      setBusy(false)
+    }
+  }
+
   /** Run one destructive operation after the confirm modal, then refresh. */
   const runConfirmed = (confirmState: ConfirmState): void => {
     setConfirm({ ...confirmState, onConfirm: async () => {
@@ -466,6 +590,24 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
 
   /** The lane layout over the accumulated log pages (recomputed on append). */
   const graph = useMemo(() => computeGraphRows(logEntries), [logEntries])
+
+  /** The current branch's upstream pill: the ref name (tinted, since it is a
+   *  REMOTE ref) + a state suffix, plus the hover title. Absent upstream and
+   *  pruned (gone) upstream get explicit copy; otherwise arrows for the
+   *  ahead/behind counts (VS Code-style `↑1 ↓2`). */
+  const upstreamPill = (() => {
+    if (branchStatus === null) return null
+    const { upstream, ahead, behind, gone } = branchStatus
+    if (upstream === undefined) return { ref: undefined, suffix: t('noUpstream'), title: t('noUpstream') }
+    if (gone) return { ref: upstream, suffix: ` · ${t('upstreamGone')}`, title: t('upstreamGone') }
+    if (ahead === 0 && behind === 0) return { ref: upstream, suffix: '', title: t('branchStatusUpToDate') }
+    const arrows = `${ahead > 0 ? ` ↑${ahead}` : ''}${behind > 0 ? ` ↓${behind}` : ''}`
+    return {
+      ref: upstream,
+      suffix: arrows,
+      title: t('branchStatusTooltip', { upstream, ahead, behind }),
+    }
+  })()
 
   const renderEntry = (entry: GitStatusEntry, staged: boolean): ReactNode => {
     return (
@@ -535,6 +677,42 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
           {(status?.branch ?? '') !== '' && <option value={status!.branch}>{status!.branch}</option>}
           {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
         </select>
+        {status?.isRepo === true && upstreamPill !== null && (
+          <span className={css.gitUpstream} title={upstreamPill.title} aria-label={upstreamPill.title}>
+            {upstreamPill.ref !== undefined && <span className={css.gitUpstreamRef}>{upstreamPill.ref}</span>}
+            {upstreamPill.suffix}
+          </span>
+        )}
+        {status?.isRepo === true && (
+          <>
+            <Tooltip label={fetching ? t('fetching') : t('fetch')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={fetching ? t('fetching') : t('fetch')}
+                disabled={busy || fetching}
+                onClick={() => { void fetchRemote(false) }}
+              >
+                {fetching ? <IconLoadingOutline16 size={14} /> : <IconDownloadOutline16 size={14} />}
+              </button>
+            </Tooltip>
+            <Tooltip label={t('fetchPrune')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('fetchPrune')}
+                disabled={busy || fetching}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setFetchMenu({ x: rect.right - 8, y: rect.bottom + 4 })
+                }}
+              >
+                <IconChevronDownOutline14 size={14} />
+              </button>
+            </Tooltip>
+          </>
+        )}
         <Tooltip label={t('refresh')} side="bottom" delayMs={500}>
           <button
             type="button"
@@ -570,7 +748,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
             {stagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
             {stagedEntries.map(entry => renderEntry(entry, true))}
           </div>
-          <div className={css.gitSection}>
+          <div className={`${css.gitSection}${unstagedEntries.length > 0 ? ` ${css.gitChangesScrolled}` : ''}`}>
             <div className={css.gitSectionHeader}>
               <span>{t('unstaged')} ({unstagedEntries.length})</span>
               {unstagedEntries.length > 0 && (
@@ -649,8 +827,18 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                       <span className={css.gitLogSubject}>{entry.subject}</span>
                     </span>
                     <span className={css.gitLogLine2}>
-                      {refNames(entry.refs).map(name => (
-                        <span key={name} className={css.gitLogRef}>{name}</span>
+                      {refChips(entry.refs).map(chip => (
+                        <span
+                          key={`${chip.kind}:${chip.name}`}
+                          className={[
+                            css.gitLogRef,
+                            chip.kind === 'branch' ? css.gitLogRefLocal
+                              : chip.kind === 'remote' ? css.gitLogRefRemote
+                              : '',
+                          ].join(' ').trim()}
+                        >
+                          {chip.name}
+                        </span>
                       ))}
                       <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
                     </span>
@@ -788,6 +976,25 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
             portal
             align="start"
             getAnchorRect={() => (historyMenu === null ? null : new DOMRect(historyMenu.x, historyMenu.y, 0, 0))}
+            anchor={<span />}
+          />
+
+          {/* The fetch menu (chevron): the plain-fetch button is the common path; the
+            prune variant lives here because it also drops locally tracked refs
+            whose remote branch disappeared — the one way `gone` ever appears. */}
+          <Menu
+            open={fetchMenu !== null}
+            onClose={() => { setFetchMenu(null) }}
+            items={[
+              { id: 'prune', label: t('fetchPrune'), icon: <IconDownloadOutline16 size={14} /> },
+            ]}
+            onSelect={(id) => {
+              setFetchMenu(null)
+              if (id === 'prune') void fetchRemote(true)
+            }}
+            portal
+            align="start"
+            getAnchorRect={() => (fetchMenu === null ? null : new DOMRect(fetchMenu.x, fetchMenu.y, 0, 0))}
             anchor={<span />}
           />
 
