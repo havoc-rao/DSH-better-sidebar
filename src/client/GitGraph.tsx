@@ -50,8 +50,11 @@ export function GitGraphSvg(props: {
   prev?: GitGraphRow
   /** Total graph width in px (shared across rows of one page). */
   graphWidth: number
+  /** A watched (重点关注) branch points AT this commit: the dot gets a
+   *  highlight ring (`var(--gg-watched)`) in addition to its color. */
+  watched?: boolean
 }): ReactNode {
-  const { row, prev, graphWidth } = props
+  const { row, prev, graphWidth, watched } = props
   const mid = ROW_H / 2
   const dotX = colX(row.dotCol)
   const mergeCols = new Set(row.merges.map(m => m.col))
@@ -96,6 +99,9 @@ export function GitGraphSvg(props: {
   const dotStyle: CSSProperties = {
     left: dotX - 5.2,
     background: colorOf(laneColor(row.dotCol)),
+    ...(watched === true
+      ? { boxShadow: '0 0 0 3px var(--gg-watched)' }
+      : {}),
   }
 
   return (

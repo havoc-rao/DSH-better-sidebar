@@ -15,7 +15,8 @@ import {
   IconDownloadOutline16, IconLoadingOutline16, IconRefreshOutline16,
   IconSparkle16, IconTrashOutline16, Input, Menu, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitBranchStatus, GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
+import { VscStarEmpty, VscStarFull } from 'react-icons/vsc'
+import type { GitBranchStatus, GitBranchTip, GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api, SidebarApiError } from './api.ts'
 import { notifyGitStatusChanged, subscribeGitStatusChanged } from './git-status.ts'
 import { GitGraphSvg } from './GitGraph.tsx'
@@ -24,14 +25,18 @@ import { isWithinWorkspace, relativeTo } from './paths.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../prefs-shared.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import { relativeTime, t } from './locales.ts'
+import { updatePluginSettings } from './plugin-settings.ts'
 import type { SidebarStore, SidebarTab } from './state.ts'
 import {
   GIT_COMMIT_SETTING_KEYS,
+  WATCHED_BRANCHES_KEY,
+  WATCHED_BRANCHES_MAX,
   commitCustomTemplateOf,
   commitHistoryRefsOf,
   commitLlmModelOf,
   commitLlmProviderOf,
   commitTemplateOf,
+  watchedBranchesOf,
 } from '../commit-draft-shared.ts'
 import css from './sidebar.module.css'
 
@@ -116,6 +121,10 @@ interface ConfirmState {
  *  floods the panel at once (the end of the log is reached by paging). */
 const LOG_BATCH = 20
 
+/** Reveal cap for a watched tip below the loaded page: page down up to this
+ *  many batches (160 commits) before giving up and leaving the bubble. */
+const REVEAL_PAGE_CAP = 8
+
 /** One history page for the given scope. The graph route now also
  *  accepts the selected linked worktree (resolveWorktree enforces the
  *  allowlist on the host), so we route BOTH branches through it and keep
@@ -171,6 +180,24 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
     useCallback(() => store?.getSnapshot().prefs ?? SIDEBAR_PREFS_DEFAULTS, [store]),
   )
 
+  /** The watched (重点关注) branches — user-picked local branches whose tips
+   *  get divergence markers in the history (row rings + top/bottom bubbles).
+   *  Persisted in the git tab's own pluginSettings blob; the local state is
+   *  the optimistic mirror, re-synced whenever the persisted blob changes. */
+  const [watched, setWatched] = useState<string[]>(() => watchedBranchesOf(prefs.pluginSettings['git']))
+  useEffect(() => {
+    setWatched(next => {
+      const synced = watchedBranchesOf(prefs.pluginSettings['git'])
+      return next.join('\u0000') === synced.join('\u0000') ? next : synced
+    })
+  }, [prefs])
+  /** Each watched branch's tip relative to the checkout HEAD. */
+  const [tips, setTips] = useState<GitBranchTip[]>([])
+  /** The open watched-branch picker (anchored at the header star button). */
+  const [watchMenu, setWatchMenu] = useState<{ x: number; y: number } | null>(null)
+  /** A bottom-bubble reveal (page down to a watched tip) is in flight. */
+  const [revealing, setRevealing] = useState(false)
+
   /** The open file-row context menu (cursor position for the portaled Menu). */
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
   /** The open history-row context menu. */
@@ -202,8 +229,22 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
    *  callback and re-trigger the mount effect — an N→N+1 fetch loop). */
   const selectedRef = useRef<string | undefined>(undefined)
   useEffect(() => { selectedRef.current = selectedWorktree }, [selectedWorktree])
+  /** The watch list read inside refreshTarget's stable callback (a stale
+   *  closure would keep fetching tips for a removed watch entry). */
+  const watchedRef = useRef(watched)
+  useEffect(() => { watchedRef.current = watched }, [watched])
 
   const gitScope: SessionScope = repoRoot === undefined ? scope : { ...scope, repoRoot }
+
+  /** The watched branches' tips for one checkout ([] when nothing is
+   *  watched — no network round-trip). Failures degrade to []: markers are
+   *  decoration, never an error surface. */
+  const fetchTipsFor = async (target: string | undefined): Promise<GitBranchTip[]> => {
+    const names = watchedRef.current
+    if (names.length === 0) return []
+    return api.gitBranchTips(gitScope, names, target)
+      .then(result => result.tips, () => [])
+  }
 
   /** Publish a complete checkout-derived view. Status, branch choices and
    *  history are one consistency unit: never mix rows from two worktrees. */
@@ -214,7 +255,7 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
     if (options.loading) setLoading(true)
     setError(null)
     try {
-      const [statusResult, branchResult, logResult, upstreamResult] = await Promise.all([
+      const [statusResult, branchResult, logResult, upstreamResult, tipsResult] = await Promise.all([
         api.gitStatus(gitScope, target),
         api.gitBranch(gitScope, target).catch(() => ({ current: '', names: [] as string[] })),
         // The first history page only; the rest arrives via "load more". The
@@ -223,6 +264,9 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
         // The upstream/ahead-behind relationship; a failure (e.g. no git
         // branch config) never hides the rest of the panel.
         api.gitBranchStatus(gitScope, target).catch(() => null),
+        // The watched tips ride the same consistency unit as the rows they
+        // mark: never mix markers from one checkout into another's graph.
+        fetchTipsFor(target),
       ])
       if (options.generation !== refreshGeneration.current) return
       setStatus(statusResult)
@@ -230,6 +274,7 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
       setBranchNames(branchResult.names)
       setLogEntries(logResult)
       setBranchStatus(upstreamResult)
+      setTips(tipsResult)
       setLogEnded(logResult.length < LOG_BATCH)
       // The explorer's tree decorations ride the same status snapshot —
       // every successful refresh (mount, focus, stage, commit, discard…)
@@ -295,13 +340,15 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
       // outside the panel (model-authored) must flip the ahead count without
       // a manual refresh, and the cost is two sub-second ref lookups.
       if (silent && !targetChanged) {
-        const [statusResult, upstreamResult] = await Promise.all([
+        const [statusResult, upstreamResult, tipsResult] = await Promise.all([
           api.gitStatus(gitScope, target),
           api.gitBranchStatus(gitScope, target).catch(() => null),
+          fetchTipsFor(target),
         ])
         if (generation === refreshGeneration.current) {
           setStatus(statusResult)
           if (upstreamResult !== null) setBranchStatus(upstreamResult)
+          setTips(tipsResult)
         }
         return
       }
@@ -573,6 +620,53 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
     void writeClipboard(text)
   }
 
+  /** Toggle one branch in the watch list (optimistic; persisted through the
+   *  git tab's pluginSettings blob when a store is present) and refresh the
+   *  tips immediately so the markers move without waiting for the poll. */
+  const toggleWatched = (name: string): void => {
+    if (watched.includes(name)) {
+      const next = watched.filter(item => item !== name)
+      setWatched(next)
+      if (store !== undefined) updatePluginSettings(store, 'git', blob => ({ ...blob, [WATCHED_BRANCHES_KEY]: next }))
+      void api.gitBranchTips(gitScope, next, selectedWorktree).then(result => setTips(result.tips), () => {})
+      return
+    }
+    if (watched.length >= WATCHED_BRANCHES_MAX) return
+    const next = [...watched, name]
+    setWatched(next)
+    if (store !== undefined) updatePluginSettings(store, 'git', blob => ({ ...blob, [WATCHED_BRANCHES_KEY]: next }))
+    void api.gitBranchTips(gitScope, next, selectedWorktree).then(result => setTips(result.tips), () => {})
+  }
+
+  /** Page the history down until a watched tip's commit row is loaded (the
+   *  bottom bubble's reveal; capped so a very deep tip cannot page forever). */
+  const revealTip = async (hash: string): Promise<void> => {
+    if (revealing || logEnded) return
+    setRevealing(true)
+    const generation = refreshGeneration.current
+    const target = selectedRef.current
+    try {
+      let skip = logEntries.length
+      for (let i = 0; i < REVEAL_PAGE_CAP; i += 1) {
+        const page = await historyPage(gitScope, LOG_BATCH, skip, target)
+        if (generation !== refreshGeneration.current || target !== selectedRef.current) return
+        if (page.length === 0) return
+        skip += page.length
+        setLogEntries(entries => [...entries, ...page])
+        if (page.some(entry => entry.hashFull === hash) || page.length < LOG_BATCH) {
+          if (page.length < LOG_BATCH) setLogEnded(true)
+          return
+        }
+      }
+    } catch (reason) {
+      if (generation === refreshGeneration.current && target === selectedRef.current) {
+        setCommitError(`${t('historyLoadError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+      }
+    } finally {
+      if (generation === refreshGeneration.current && target === selectedRef.current) setRevealing(false)
+    }
+  }
+
   const openFileMenu = (event: MouseEvent, entry: GitStatusEntry, staged: boolean): void => {
     event.preventDefault()
     event.stopPropagation()
@@ -590,6 +684,24 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
 
   /** The lane layout over the accumulated log pages (recomputed on append). */
   const graph = useMemo(() => computeGraphRows(logEntries), [logEntries])
+
+  /* ── watched-branch markers ─────────────────────────────────────────────
+   * A watched tip that is AHEAD of HEAD has no row in the graph (its
+   * commits are not in HEAD's history): the TOP bubble shows the count. A
+   * tip BEHIND HEAD lives inside the history — its row gets the dot ring;
+   * while the row is outside the loaded page the BOTTOM bubble shows the
+   * count (click to page down to it). */
+  const visibleHashMap = useMemo(() => {
+    const setOfHashes = new Set<string>()
+    for (const entry of logEntries) setOfHashes.add(entry.hashFull)
+    return setOfHashes
+  }, [logEntries])
+  const tipByHash = useMemo(() => new Map(tips.map(tip => [tip.hash, tip])), [tips])
+  const topTips = useMemo(() => tips.filter(tip => tip.ahead > 0), [tips])
+  const bottomTips = useMemo(
+    () => tips.filter(tip => tip.ahead === 0 && tip.behind > 0 && !visibleHashMap.has(tip.hash)),
+    [tips, visibleHashMap],
+  )
 
   /** The current branch's upstream pill: the ref name (tinted, since it is a
    *  REMOTE ref) + a state suffix, plus the hover title. Absent upstream and
@@ -713,6 +825,24 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
             </Tooltip>
           </>
         )}
+        {status?.isRepo === true && (
+          <Tooltip label={t('watchBranches')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={`${css.iconButton}${watched.length > 0 ? ` ${css.gitWatchActive}` : ''}`}
+              aria-label={t('watchBranches')}
+              title={t('watchBranches')}
+              disabled={busy}
+              onClick={(event) => {
+                event.stopPropagation()
+                const rect = event.currentTarget.getBoundingClientRect()
+                setWatchMenu(watchMenu === null ? { x: rect.right - 8, y: rect.bottom + 4 } : null)
+              }}
+            >
+              {watched.length > 0 ? <VscStarFull size={14} /> : <VscStarEmpty size={14} />}
+            </button>
+          </Tooltip>
+        )}
         <Tooltip label={t('refresh')} side="bottom" delayMs={500}>
           <button
             type="button"
@@ -798,8 +928,24 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
 
           <div className={css.gitSection}>
             <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
+            {/* Watched branch ahead of HEAD: no row exists in this graph (its
+                commits are not in HEAD's history) — the sticky top bubble
+                pins below the header and shows the gap. */}
+            {topTips.length > 0 && (
+              <div className={`${css.gitLogWatchBubble} ${css.gitLogWatchTop}`}>
+                {topTips.map(tip => (
+                  <span key={tip.name} className={css.gitLogWatchRow}>
+                    <VscStarFull size={12} />
+                    <span className={css.gitLogWatchBranch}>{tip.name}</span>
+                    <span className={css.gitLogWatchCount}>{t('watchedAhead', { count: tip.ahead })}</span>
+                  </span>
+                ))}
+              </div>
+            )}
             {graph.rows.map((row, index) => {
               const entry = row.entry
+              // A watched tip pointing AT this commit gets the dot ring.
+              const isWatchedTip = tipByHash.has(entry.hashFull)
               return (
                 <div
                   key={row.rowKey}
@@ -820,10 +966,12 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                     row={row}
                     prev={index > 0 ? graph.rows[index - 1] : undefined}
                     graphWidth={graph.graphWidth}
+                    watched={isWatchedTip}
                   />
                   <div className={css.gitLogBody} style={{ marginLeft: graph.graphWidth + 8 }}>
                     <span className={css.gitLogLine1}>
                       <span className={css.gitLogHash}>{entry.hash}</span>
+                      {isWatchedTip && <VscStarFull size={12} className={css.gitLogWatchRowMark} />}
                       <span className={css.gitLogSubject}>{entry.subject}</span>
                     </span>
                     <span className={css.gitLogLine2}>
@@ -850,11 +998,31 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
               <button
                 type="button"
                 className={css.gitLogMore}
-                disabled={logLoadingMore || busy}
+                disabled={logLoadingMore || busy || revealing}
                 onClick={() => { void loadMoreLog() }}
               >
                 {logLoadingMore ? t('loading') : t('loadMore')}
               </button>
+            )}
+            {/* Watched branch behind HEAD whose tip row is below the loaded
+                page — the sticky bottom bubble shows the gap; clicking pages
+                down to the tip (single tip) or is inert (multiple tips). */}
+            {bottomTips.length > 0 && (
+              <div
+                className={`${css.gitLogWatchBubble} ${css.gitLogWatchBottom}${bottomTips.length === 1 ? ` ${css.gitLogWatchClickable}` : ''}`}
+                title={bottomTips.length === 1 ? t('watchedBehind', { count: bottomTips[0]!.behind }) : undefined}
+                onClick={() => {
+                  if (bottomTips.length === 1 && !revealing) void revealTip(bottomTips[0]!.hash)
+                }}
+              >
+                {bottomTips.map(tip => (
+                  <span key={tip.name} className={css.gitLogWatchRow}>
+                    {revealing ? <IconLoadingOutline16 size={12} /> : <VscStarFull size={12} />}
+                    <span className={css.gitLogWatchBranch}>{tip.name}</span>
+                    <span className={css.gitLogWatchCount}>{t('watchedBehind', { count: tip.behind })}</span>
+                  </span>
+                ))}
+              </div>
             )}
           </div>
 
@@ -995,6 +1163,45 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
             portal
             align="start"
             getAnchorRect={() => (fetchMenu === null ? null : new DOMRect(fetchMenu.x, fetchMenu.y, 0, 0))}
+            anchor={<span />}
+          />
+
+          {/* The watched-branch (重点关注) picker: the star button toggles it;
+            every local branch except the current one is a row; clicking a row
+            toggles the watch flag WITHOUT closing the menu (multi-select). */}
+          <Menu
+            open={watchMenu !== null}
+            onClose={() => { setWatchMenu(null) }}
+            selectedIds={watched}
+            items={[
+              ...(status === null ? [] : branchNames
+                .filter(name => name !== status.branch)
+                .map(name => ({
+                  id: name,
+                  label: name,
+                  icon: watched.includes(name)
+                    ? <VscStarFull size={14} />
+                    : <IconBranchOutline16 size={14} />,
+                }))),
+              ...(watched.length > 0
+                ? [
+                  { type: 'separator', id: 'watch-sep' } as const,
+                  { id: 'watch-clear', label: t('watchClear'), danger: true },
+                ]
+                : []),
+            ]}
+            onSelect={(id) => {
+              if (id === 'watch-clear') {
+                setWatched([])
+                if (store !== undefined) updatePluginSettings(store, 'git', blob => ({ ...blob, [WATCHED_BRANCHES_KEY]: [] }))
+                setTips([])
+                return
+              }
+              toggleWatched(id)
+            }}
+            portal
+            align="start"
+            getAnchorRect={() => (watchMenu === null ? null : new DOMRect(watchMenu.x, watchMenu.y, 0, 0))}
             anchor={<span />}
           />
 

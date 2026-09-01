@@ -44,6 +44,30 @@ export const COMMIT_HISTORY_REFS_MAX = 30
 /** Cap of the user-written custom template instructions (prompt hygiene). */
 export const COMMIT_CUSTOM_TEMPLATE_MAX = 2000
 
+/**
+ * The watched-branches (重点关注) setting: a list of local branch names whose
+ * tips get divergence markers in the history graph (row rings + top/bottom
+ * bubbles). Lives in the `git` descriptor's pluginSettings blob, same as the
+ * commit-draft rows.
+ */
+export const WATCHED_BRANCHES_KEY = 'watchedBranches'
+/** Upper bound on the watch list (polls fetch one tip per entry). */
+export const WATCHED_BRANCHES_MAX = 8
+
+/** The watched branch names of one `git` pluginSettings blob (deduped, capped). */
+export function watchedBranchesOf(blob: Record<string, unknown> | undefined): string[] {
+  const raw = blob?.[WATCHED_BRANCHES_KEY]
+  if (!Array.isArray(raw)) return []
+  const names: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string' || item === '') continue
+    if (names.includes(item)) continue
+    names.push(item)
+    if (names.length >= WATCHED_BRANCHES_MAX) break
+  }
+  return names
+}
+
 /** PluginSettings keys under the `git` descriptor (the gear panel rows). */
 export const GIT_COMMIT_SETTING_KEYS = {
   provider: 'commitLlmProvider',

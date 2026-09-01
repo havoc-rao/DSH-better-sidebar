@@ -75,6 +75,21 @@ export interface GitBranchStatus {
   gone: boolean
 }
 
+/** One watched (重点关注) branch's tip position relative to the checkout HEAD. */
+export interface GitBranchTip {
+  /** The local branch's short name. */
+  name: string
+  /** The branch tip's full 40-char hash. */
+  hash: string
+  /** Commits in the branch that HEAD does not have (tip above the graph →
+   *  the history's TOP bubble shows this count). */
+  ahead: number
+  /** Commits in HEAD that the branch does not have (tip inside HEAD's history
+   *  → the row ring marks the tip row; the BOTTOM bubble shows this count
+   *  while the tip is outside the loaded page). */
+  behind: number
+}
+
 /** One git log row. */
 export interface GitLogEntry {
   /** Short hash (7+ chars, display). */
@@ -262,6 +277,11 @@ export const api = {
    *  when the repository has no remote. */
   gitFetch: (scope: SessionScope, worktree?: string, prune?: boolean, signal?: AbortSignal) =>
     call<{ ok: true }>('git.fetch', gitPayload(scope, worktree, { prune: prune === true }), signal),
+  /** The watched (重点关注) local branches' tips relative to the checkout
+   *  HEAD — the divergence markers (top/bottom bubbles + row rings) data.
+   *  Stale names (deleted branches) are silently filtered host-side. */
+  gitBranchTips: (scope: SessionScope, branches: readonly string[], worktree?: string, signal?: AbortSignal) =>
+    call<{ tips: GitBranchTip[] }>('git.branch-tips', gitPayload(scope, worktree, { branches }), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
     call<{ ok: true }>('git.checkout', gitPayload(scope, worktree, { branch })),
   /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */

@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
 import {
-  branchStatus, fetch, graphLog, parseGraphLines, parseLogLines, parsePorcelainZ, repoRoots, status,
+  branchStatus, branchTips, fetch, graphLog, parseGraphLines, parseLogLines, parsePorcelainZ, repoRoots, status,
 } from '../src/git.ts'
 
 const execFileAsync = promisify(execFile)
@@ -378,6 +378,38 @@ describe('git fetch and branch status', () => {
       expect(rows[0]!.refs).toContain('HEAD -> refs/heads/main')
       expect(rows[0]!.refs).toContain('refs/remotes/origin/main')
       expect(rows[0]!.refs).toContain('tag: refs/tags/v1')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('git watched-branch tips (branchTips)', () => {
+  it('reports the tips relative to the checkout HEAD (ahead, behind, current 0/0)', async () => {
+    const { root, local } = remoteClonePair()
+    try {
+      // feature forks off main with two commits; main then moves on alone.
+      execFileSync('git', ['-C', local, 'checkout', '-q', '-b', 'feature'])
+      execFileSync('git', ['-C', local, 'commit', '-q', '--allow-empty', '-m', 'f1'])
+      execFileSync('git', ['-C', local, 'commit', '-q', '--allow-empty', '-m', 'f2'])
+      execFileSync('git', ['-C', local, 'checkout', '-q', 'main'])
+      execFileSync('git', ['-C', local, 'commit', '-q', '--allow-empty', '-m', 'm1'])
+
+      const tips = await branchTips(local, ['feature', 'main', 'ghost-branch'])
+      expect(tips.find(tip => tip.name === 'feature')).toMatchObject({ ahead: 2, behind: 1 })
+      expect(tips.find(tip => tip.name === 'main')).toMatchObject({ ahead: 0, behind: 0 })
+      // Stale watch entries (deleted / renamed branches) are silently dropped.
+      expect(tips.some(tip => tip.name === 'ghost-branch')).toBe(false)
+      for (const tip of tips) expect(tip.hash).toMatch(/^[0-9a-f]{40}$/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('is a strict [] for an empty watch list', async () => {
+    const { root, local } = remoteClonePair()
+    try {
+      await expect(branchTips(local, [])).resolves.toEqual([])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

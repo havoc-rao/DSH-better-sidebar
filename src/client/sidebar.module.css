@@ -2817,6 +2817,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   /* Tab pages never scroll horizontally: content wraps or truncates to the
      panel width instead of panning sideways. */
   overflow-x: hidden;
+  /* The watched-branch (重点关注) accent: the dot ring, the bubbles' star
+     and counts, and the header watch button's lit state. Panel-rooted so
+     every git surface can reference it. */
+  --gg-watched: var(--dsw-alias-state-warn-primary);
 }
 
 .gitHeader {
@@ -3439,6 +3443,76 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .gitLogMore:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
+}
+
+/* The watched-branch (重点关注) divergence bubbles: sticky inside the
+   scrolling panel — the TOP one (a watched branch AHEAD of HEAD, no row in
+   the graph) pins below the header while the history scrolls; the BOTTOM
+   one (a watched branch BEHIND HEAD whose tip row is below the loaded
+   page) pins above the panel's bottom edge, showing the gap and revealing
+   the tip on click. */
+.gitLogWatchBubble {
+  position: sticky;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 12px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.gitLogWatchTop {
+  top: 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.gitLogWatchBottom {
+  bottom: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.gitLogWatchClickable {
+  cursor: pointer;
+}
+
+.gitLogWatchClickable:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitLogWatchRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--gg-watched);
+}
+
+.gitLogWatchBranch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.gitLogWatchCount {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The star next to a watched tip row's subject (the dot ring is in the
+   graph; this is the row-level echo). */
+.gitLogWatchRowMark {
+  flex: none;
+  color: var(--gg-watched);
+}
+
+/* The header watch button lights up while any branch is being watched. */
+.gitWatchActive {
+  color: var(--gg-watched);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .gitLogMore:disabled {

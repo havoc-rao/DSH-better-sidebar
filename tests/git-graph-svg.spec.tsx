@@ -32,9 +32,10 @@ function commit(hash: string, parents: string[], refs = ''): GitGraphEntry {
 
 /** Render one row (with its previous row above, when given) and return the
  *  stroke colors of every SVG edge plus the dot's inline background. */
-function renderRow(entry: GitGraphEntry, prevEntry?: GitGraphEntry): {
+function renderRow(entry: GitGraphEntry, prevEntry?: GitGraphEntry, watched = false): {
   strokes: string[]
   dotBackground: string
+  dotBoxShadow: string
 } {
   const entries = prevEntry === undefined ? [entry] : [prevEntry, entry]
   const layout = computeGraphRows(entries)
@@ -45,7 +46,7 @@ function renderRow(entry: GitGraphEntry, prevEntry?: GitGraphEntry): {
   const root: Root = createRoot(container)
   try {
     act(() => {
-      root.render(createElement(GitGraphSvg, { row, prev, graphWidth: layout.graphWidth }))
+      root.render(createElement(GitGraphSvg, { row, prev, graphWidth: layout.graphWidth, watched }))
     })
     // Every lane path carries an explicit stroke (the SVG is aria-hidden and
     // never inherits one), so null would mean a rendering regression.
@@ -53,7 +54,7 @@ function renderRow(entry: GitGraphEntry, prevEntry?: GitGraphEntry): {
       .map(path => path.getAttribute('stroke') ?? '')
     const dot = container.querySelector<HTMLElement>('[class*="gitLogDot"]')
     if (dot === null) throw new Error('git log dot not rendered')
-    return { strokes, dotBackground: dot.style.background }
+    return { strokes, dotBackground: dot.style.background, dotBoxShadow: dot.style.boxShadow }
   } finally {
     act(() => { root.unmount() })
     container.remove()
@@ -87,5 +88,13 @@ describe('GitGraphSvg local/remote coloring', () => {
     const { strokes, dotBackground } = renderRow(shared)
     expect(strokes).toEqual(['var(--gg-lane-0)'])
     expect(dotBackground).toBe('var(--gg-lane-0)')
+  })
+
+  it('rings the dot when a watched (重点关注) branch points at the commit', () => {
+    const { dotBoxShadow } = renderRow(localTip, shared, true)
+    expect(dotBoxShadow).toContain('var(--gg-watched)')
+    // No ring without the watched flag.
+    const plain = renderRow(localTip, shared)
+    expect(plain.dotBoxShadow).toBe('')
   })
 })

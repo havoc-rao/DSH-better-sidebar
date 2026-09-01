@@ -55,6 +55,7 @@ import {
   COMMIT_HISTORY_REFS_DEFAULT,
   COMMIT_HISTORY_REFS_MAX,
   COMMIT_HISTORY_REFS_MIN,
+  WATCHED_BRANCHES_MAX,
 } from './commit-draft-shared.ts'
 import { defaultShell, digestCommandInput, ensureSpawnHelper, isSharedTabId, PtyManager, ptyKeyOf, shellDisplayName } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
@@ -427,6 +428,20 @@ function buildApi(
     'git.branch-status': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       return git.branchStatus(cwd, selectedRepoOf(payload))
+    },
+    // The watched (重点关注) branches' tips relative to the checkout HEAD —
+    // the divergence data behind the graph's top/bottom bubbles and row
+    // rings. Names are allowlisted host-side against refs/heads (git.branchTips).
+    'git.branch-tips': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      const record = payload as { branches?: unknown } | null
+      const branches = Array.isArray(record?.branches)
+        ? record.branches.filter((item): item is string => typeof item === 'string' && item !== '')
+        : []
+      if (branches.length > WATCHED_BRANCHES_MAX) {
+        throw new SidebarError('bad-request', 'too many watched branches', 400)
+      }
+      return { tips: await git.branchTips(cwd, branches, selectedRepoOf(payload)) }
     },
     // Fetch remote refs (optionally --prune). A repository without any
     // remote carries its own wire code — the panel maps it to friendly copy

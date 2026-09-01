@@ -566,6 +566,61 @@ export async function checkout(cwd: string, branch: string, selected?: string): 
   await runGit(await repoRoot(cwd, selected), ['checkout', branch])
 }
 
+/** One watched branch's tip position relative to the current checkout HEAD. */
+export interface GitBranchTip {
+  /** The local branch's short name. */
+  name: string
+  /** The branch tip's full 40-char hash. */
+  hash: string
+  /** Commits in the branch that HEAD does not have (the target is AHEAD —
+   *  its tip is above the graph; the top bubble shows this count). */
+  ahead: number
+  /** Commits in HEAD that the branch does not have (the target is BEHIND —
+   *  its tip sits somewhere below in HEAD's history; the bottom bubble shows
+   *  this count when the tip is outside the loaded page). */
+  behind: number
+}
+
+/**
+ * The tips of the watched (重点关注) local branches — the divergence marker
+ * data behind the graph's top/bottom bubbles and row rings. Names are
+ * allowlisted against the repository's own `refs/heads` inventory (a stale
+ * watch entry — branch deleted, workspace switched — is silently dropped,
+ * never an error). `ahead`/`behind` are `rev-list --count` both ways against
+ * the resolved checkout's HEAD; the current branch itself reports 0/0.
+ */
+export async function branchTips(
+  cwd: string,
+  branches: readonly string[],
+  selected?: string,
+): Promise<GitBranchTip[]> {
+  const root = await repoRoot(cwd, selected)
+  if (branches.length === 0) return []
+  const raw = await runGit(root, ['for-each-ref', '--format=%(refname:short)%00%(objectname)', 'refs/heads'])
+  const byName = new Map<string, string>()
+  for (const line of raw.split('\n')) {
+    const [name, hash] = line.split('\0')
+    if (name !== undefined && hash !== undefined) byName.set(name, hash)
+  }
+  const current = await currentBranch(root).catch(() => 'HEAD')
+  const tips: GitBranchTip[] = []
+  for (const name of branches) {
+    const hash = byName.get(name)
+    if (hash === undefined) continue
+    if (name === current) {
+      tips.push({ name, hash, ahead: 0, behind: 0 })
+      continue
+    }
+    const ref = `refs/heads/${name}`
+    const [ahead, behind] = await Promise.all([
+      runGit(root, ['rev-list', '--count', `HEAD..${ref}`]).then(out => Number(out.trim()) || 0, () => 0),
+      runGit(root, ['rev-list', '--count', `${ref}..HEAD`]).then(out => Number(out.trim()) || 0, () => 0),
+    ])
+    tips.push({ name, hash, ahead, behind })
+  }
+  return tips
+}
+
 /** Recent commit history (newest first), lazily pageable via skip/count. */
 export async function log(cwd: string, count = 30, skip = 0, selected?: string): Promise<GitLogEntry[]> {
   const raw = await runGit(await repoRoot(cwd, selected), [
