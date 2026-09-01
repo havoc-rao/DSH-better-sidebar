@@ -3323,6 +3323,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   --gg-lane-3: var(--dsw-alias-state-error-primary);
   --gg-lane-4: var(--dsw-alias-state-business-primary);
   --gg-lane-5: var(--dsw-alias-label-secondary);
+  /* Ref-classified commit colors (see git-graph.ts refKindOf): local-branch
+     rows and fetch-only (remote-tracking) rows render their node + edges in
+     these instead of the per-column lane palette — green vs blue mirrors the
+     history-row ref chips. */
+  --gg-local: var(--dsw-alias-state-success-primary);
+  --gg-remote: var(--dsw-alias-state-business-primary);
 }
 
 .gitLogGraph svg {

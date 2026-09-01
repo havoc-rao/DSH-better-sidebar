@@ -61,6 +61,35 @@ export function laneColor(col: number): string {
   return `var(${LANE_VARS[col % LANE_VARS.length]})`
 }
 
+/** Where a commit sits relative to LOCAL vs remote-tracking refs — the
+ *  graph's counterpart of the ref-chip coloring (see GitView.refChips).
+ *  Local branches render green, fetch-only remote refs blue; everything
+ *  else (tags, undecorated ancestors) keeps the per-column palette. */
+export type GitRowRefKind = 'local' | 'remote' | 'neutral'
+
+/** Classify a row's commit from its FULL ref decorations (`--decorate=full`):
+ *  any `refs/heads/` decoration (incl. `HEAD -> refs/heads/x`) makes the
+ *  commit local — local wins when refs of both kinds point here (the in-sync
+ *  tip). A `refs/remotes/`-only decoration means the commit exists only
+ *  because a fetch brought it in (diverged ahead of the local branch). */
+export function refKindOf(refs: string): GitRowRefKind {
+  if (refs.includes('refs/heads/')) return 'local'
+  if (refs.includes('refs/remotes/')) return 'remote'
+  return 'neutral'
+}
+
+/** Local-branch commit color reference (`--gg-local`, DSH success token). */
+export const LOCAL_REF_COLOR = 'var(--gg-local)'
+/** Fetch/remote-only commit color reference (`--gg-remote`, DSH business token). */
+export const REMOTE_REF_COLOR = 'var(--gg-remote)'
+
+/** The color override for one classified row ('' → the column palette). */
+export function refColorOf(kind: GitRowRefKind): string {
+  if (kind === 'local') return LOCAL_REF_COLOR
+  if (kind === 'remote') return REMOTE_REF_COLOR
+  return ''
+}
+
 /** Column index → the dot's x coordinate. */
 export function colX(col: number): number {
   return col * CELL_W + CELL_W / 2
@@ -104,6 +133,8 @@ export interface GitGraphRow {
   merges: { col: number; color: string }[]
   /** Fork arcs: dot → lane column (the lane starts / is fed here). */
   forks: { col: number; color: string }[]
+  /** Local / remote-only / neutral (from the entry's full ref decorations). */
+  kind: GitRowRefKind
 }
 
 export interface GitGraphLayout {
@@ -192,7 +223,7 @@ export function computeGraphRows(entries: readonly GitGraphEntry[]): GitGraphLay
       if (c > maxCol) maxCol = c
     }
 
-    rows.push({ entry, rowKey: hash, dotCol, lanes: rowLanes, below, merges, forks })
+    rows.push({ entry, rowKey: hash, dotCol, lanes: rowLanes, below, merges, forks, kind: refKindOf(entry.refs) })
   }
 
   return { rows, graphWidth: (maxCol + 1) * CELL_W + 6 }

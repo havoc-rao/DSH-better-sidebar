@@ -26,7 +26,7 @@
  *   vertically centered regardless of the row height.
  */
 import type { CSSProperties, ReactNode } from 'react'
-import { colX, laneColor, pathForkOut, pathMergeIn, pathV, ROW_H, type GitGraphRow } from './git-graph.ts'
+import { colX, laneColor, pathForkOut, pathMergeIn, pathV, refColorOf, ROW_H, type GitGraphRow } from './git-graph.ts'
 import css from './sidebar.module.css'
 
 /** A stroke path in one lane color (non-scaling stroke: the y stretch of the
@@ -56,6 +56,14 @@ export function GitGraphSvg(props: {
   const dotX = colX(row.dotCol)
   const mergeCols = new Set(row.merges.map(m => m.col))
   const forkCols = new Set(row.forks.map(f => f.col))
+  // A local-branch row renders its node AND every edge of the row in the
+  // local color; a fetch-only (remote-tracking) row in the remote color.
+  // Neutral rows keep the per-column lane palette. The override travels
+  // with the row, so a lane's vertical segments re-tint where the ref
+  // classification changes (the divergence shows as color change on the
+  // lane, not just at the tips).
+  const rowColor = refColorOf(row.kind)
+  const colorOf = (color: string): string => rowColor === '' ? color : rowColor
   const paths: ReactNode[] = []
 
   row.lanes.forEach((color, col) => {
@@ -65,29 +73,29 @@ export function GitGraphSvg(props: {
     const isMerge = mergeCols.has(col)
     const isFork = forkCols.has(col)
     if (col === row.dotCol) {
-      if (above) paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, mid)} color={color} />)
-      if (below) paths.push(<LanePath key={`v:${col}:b`} d={pathV(x, mid, ROW_H)} color={color} />)
+      if (above) paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, mid)} color={colorOf(color)} />)
+      if (below) paths.push(<LanePath key={`v:${col}:b`} d={pathV(x, mid, ROW_H)} color={colorOf(color)} />)
     } else if (isMerge) {
       // The merge path already covers the vertical descent + the corner into
       // the dot (identical to the prototype's pathMergeIn).
-      paths.push(<LanePath key={`m:${col}`} d={pathMergeIn(x, dotX, mid)} color={color} />)
+      paths.push(<LanePath key={`m:${col}`} d={pathMergeIn(x, dotX, mid)} color={colorOf(color)} />)
     } else if (isFork) {
       // An existing lane the fork joins also had a vertical above the dot row.
-      if (above) paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, mid)} color={color} />)
-      paths.push(<LanePath key={`f:${col}`} d={pathForkOut(dotX, x, mid)} color={color} />)
+      if (above) paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, mid)} color={colorOf(color)} />)
+      paths.push(<LanePath key={`f:${col}`} d={pathForkOut(dotX, x, mid)} color={colorOf(color)} />)
     } else if (above && below) {
-      paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, ROW_H)} color={color} />)
+      paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, ROW_H)} color={colorOf(color)} />)
     } else if (above) {
-      paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, mid)} color={color} />)
+      paths.push(<LanePath key={`v:${col}`} d={pathV(x, 0, mid)} color={colorOf(color)} />)
     } else if (below) {
-      paths.push(<LanePath key={`v:${col}`} d={pathV(x, mid, ROW_H)} color={color} />)
+      paths.push(<LanePath key={`v:${col}`} d={pathV(x, mid, ROW_H)} color={colorOf(color)} />)
     }
   })
 
   // The dot is a CSS circle so it never distorts under the viewBox y-stretch.
   const dotStyle: CSSProperties = {
     left: dotX - 5.2,
-    background: laneColor(row.dotCol),
+    background: colorOf(laneColor(row.dotCol)),
   }
 
   return (
