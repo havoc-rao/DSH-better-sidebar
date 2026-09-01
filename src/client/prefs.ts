@@ -40,9 +40,8 @@ export interface PrefsStore {
   setPrefs(prefs: SidebarPrefs): void
 }
 
-/** The boolean prefs the layout toggles (the produced-files row wrap and the
- *  tab-strip wrap) — the two surfaces sharing one flip contract. */
-export type WrapPrefKey = 'producedFilesWrap' | 'tabStripWrap'
+/** The boolean pref the layout toggle flips (the produced-files row wrap). */
+export type WrapPrefKey = 'producedFilesWrap'
 
 /**
  * Optimistically flip one boolean layout pref and persist it — the same
@@ -112,9 +111,6 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     producedFilesWrap: typeof record.producedFilesWrap === 'boolean'
       ? record.producedFilesWrap
       : SIDEBAR_PREFS_DEFAULTS.producedFilesWrap,
-    tabStripWrap: typeof record.tabStripWrap === 'boolean'
-      ? record.tabStripWrap
-      : SIDEBAR_PREFS_DEFAULTS.tabStripWrap,
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,

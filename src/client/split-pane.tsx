@@ -12,7 +12,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import clsx from 'clsx'
-import type { SidebarState, SidebarStore, SidebarTab, SplitNode } from './state.ts'
+import type { SidebarState, SidebarTab, SplitNode } from './state.ts'
 import type { DropZone } from './state.ts'
 import { TabBar, type NewTabOption, parseDrag, type TabDragPayload } from './TabBar.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
@@ -171,12 +171,10 @@ function LeafView(props: {
   hideTabBar?: boolean
   /** Which tabs may be renamed inline (double-click their label). */
   canRenameTab?: (tab: SidebarTab) => boolean
-  /** The sidebar store (threaded to the tab strip: drives the wrap pref + toggle). */
-  store?: SidebarStore
 }) {
   const {
     leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab, store,
+    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab,
   } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const resolve = (tab: SidebarTab): SidebarTab => resolveTab?.(tab) ?? tab
@@ -248,7 +246,6 @@ function LeafView(props: {
           }}
           onFloatTab={actions.floatTab}
           onPinTab={actions.pinTab}
-          store={store}
         />
       )}
       {tabs.length > 0 ? (
@@ -292,12 +289,10 @@ function NodeView(props: {
   onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
   hideTabBar?: boolean
   canRenameTab?: (tab: SidebarTab) => boolean
-  /** The sidebar store (threaded to the tab strip: drives the wrap pref + toggle). */
-  store?: SidebarStore
 }) {
   const {
     node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab, store,
+    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab,
   } = props
   if (node.kind === 'leaf') {
     return (
@@ -314,7 +309,6 @@ function NodeView(props: {
         onTabContextMenu={onTabContextMenu}
         hideTabBar={hideTabBar}
         canRenameTab={canRenameTab}
-          store={store}
       />
     )
   }
@@ -347,7 +341,6 @@ function NodeView(props: {
               onTabContextMenu={onTabContextMenu}
               hideTabBar={hideTabBar}
               canRenameTab={canRenameTab}
-          store={store}
             />
           </div>
         </Fragment>
@@ -376,12 +369,10 @@ export function Workbench(props: {
    *  tabs in the panel header — see Sidebar's vscodeHeader). */
   hideTabBar?: boolean
   canRenameTab?: (tab: SidebarTab) => boolean
-  /** The sidebar store (threaded to the tab strip: drives the wrap pref + toggle). */
-  store?: SidebarStore
 }) {
   const {
     state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab, store,
+    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab,
   } = props
   return (
     <div className={css.workbench}>
@@ -399,7 +390,6 @@ export function Workbench(props: {
         onTabContextMenu={onTabContextMenu}
         hideTabBar={hideTabBar}
         canRenameTab={canRenameTab}
-          store={store}
       />
     </div>
   )

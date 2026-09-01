@@ -247,10 +247,8 @@ function HeaderTabStrip(props: {
   onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
   /** Which tabs may be renamed inline (double-click their label). */
   canRenameTab?: (tab: SidebarTab) => boolean
-  /** The sidebar store (drives the tab-strip wrap pref + toggle). */
-  store?: SidebarStore
 }) {
-  const { state, actions, onNewTab, newTabOptions, getTabIcon, getTabBadge, isBoundTabId, resolveTab, onTabContextMenu, canRenameTab, store } = props
+  const { state, actions, onNewTab, newTabOptions, getTabIcon, getTabBadge, isBoundTabId, resolveTab, onTabContextMenu, canRenameTab } = props
   // The active pane of the RIGHT tree only (state.activePane may point into
   // the bottom panel's tree — the header must keep showing the editor tabs).
   const paneId = state.activePane !== null && treeOf(state, state.activePane) === 'splits'
@@ -277,7 +275,6 @@ function HeaderTabStrip(props: {
         if (before === null) actions.moveTabToEdge(payload, paneId, 'center')
         else actions.moveTabBefore(payload, paneId, before)
       }}
-      store={store}
     />
   )
 }
@@ -2135,7 +2132,6 @@ className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaxim
               resolveTab={resolveTab}
               onTabContextMenu={openTabMenu}
               canRenameTab={canRenameTab}
-              store={store}
             />
           </div>
         )}
@@ -2230,7 +2226,6 @@ className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaxim
               getTabIcon={tabIconOf}
               getTabBadge={tabBadgeOf}
               canRenameTab={canRenameTab}
-              store={store}
               isBoundTabId={isBoundTabId}
               resolveTab={resolveTab}
               onTabContextMenu={openTabMenu}
@@ -2482,7 +2477,6 @@ right: ideMode
             resolveTab={resolveTab}
             onTabContextMenu={openTabMenu}
             canRenameTab={canRenameTab}
-              store={store}
           />
         </div>
       </div>

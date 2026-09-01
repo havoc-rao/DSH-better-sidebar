@@ -1304,30 +1304,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
-/* Wrap mode (the strip's layout toggle on): the tab rows wrap instead of
-   scrolling horizontally, so the strip grows to fit every tab. */
-.tabBarWrap {
-  height: auto;
-}
-
-.tabListWrap {
-  flex-wrap: wrap;
-  overflow-x: visible;
-}
-
-/* A wrapped row keeps the single-line strip's row height instead of
-   collapsing to the tabs' ~18px content height (icon + label line): each
-   wrapped row must look exactly like the scrolling row it split from. The
-   strip is 34px tall including its 1px bottom hairline, so the inner row is
-   33px. */
-.tabListWrap .tab {
-  height: 33px;
-}
-
-/* The strip's right-end control group (wrap toggle + the + menu button):
-   sticky at the right edge of the scrollport in single-line mode, so both
-   stay reachable no matter how many tabs are open; static in wrap mode
-   where every tab is already visible. */
+/* The strip's right-end control group (the + menu button): sticky at the
+   right edge of the scrollport, so the + menu stays reachable no matter how
+   many tabs are open. */
 .tabBarEnd {
   flex: none;
   display: inline-flex;
@@ -1339,31 +1318,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .tabBarEnd .tabBarPlus {
   position: static;
-}
-
-.tabBarWrap .tabBarEnd {
-  position: static;
-}
-
-.tabBarWrapToggle {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  margin: 0 0 0 4px;
-  padding: 0;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-}
-
-.tabBarWrapToggle:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
 }
 
 /* The hairline before the workspace-bound (pinned) tab group. */
@@ -3581,7 +3535,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .producedChip:focus-visible,
 .producedReview:focus-visible,
 .producedWrapToggle:focus-visible,
-.tabBarWrapToggle:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,
 .editorDownloadLink:focus-visible,

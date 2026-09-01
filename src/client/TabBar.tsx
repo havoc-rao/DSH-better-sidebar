@@ -15,15 +15,14 @@
  * window as workspace-shared, not as immovable — and their close button
  * routes to the shell's unbind path like any other close.
  */
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, IconPlusOutline16, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SidebarStore, SidebarTab } from './state.ts'
+import type { SidebarTab } from './state.ts'
 import { isAgentTabId } from './state.ts'
 import { isPinnedVirtualTab } from './pinned.ts'
-import { IconPinOutline16, IconScrollHOutline16, IconWrapOutline16 } from './icons.tsx'
+import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
-import { flipBooleanPref, SIDEBAR_PREFS_DEFAULTS } from './prefs.ts'
 import {
   enabledMenuIndices, isMenuImeComposition, menuAnchorIndex, menuDigitIndex, menuLetterMatches, menuMoveIndex,
   plusMenuDigit, plusMenuLetterOf,
@@ -103,27 +102,11 @@ export function TabBar(props: {
   canRenameTab?: (tab: SidebarTab) => boolean
   /** Commit a tab's renamed label (the store persists it with the layout). */
   onRename?: (tabId: string, title: string) => void
-  /** The sidebar store (optional): when present the strip subscribes for the
-   *  live tab-strip wrap pref and renders the wrap/scroll toggle at its right
-   *  end (absent → plain single-line scroll, the legacy behavior). */
-  store?: SidebarStore
 }) {
   const {
     paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onFloatTab, onPinTab, getTabIcon, getTabBadge,
-    isBoundTabId, onTabContextMenu, canRenameTab, onRename, store,
+    isBoundTabId, onTabContextMenu, canRenameTab, onRename,
   } = props
-  // The strip re-renders itself when the tab-wrap pref changes (a store write
-  // from this toggle or the settings page), exactly like the produced row.
-  // getSnapshot MUST return a stable reference (useSyncExternalStore compares
-  // with Object.is; getPrefs() copies every call and would re-render forever).
-  const prefs = useSyncExternalStore(
-    useCallback((callback: () => void) => store?.subscribe(callback) ?? (() => { /* no store: static */ }), [store]),
-    useCallback(() => store?.getSnapshot().prefs ?? SIDEBAR_PREFS_DEFAULTS, [store]),
-  )
-  const wrapTabs = prefs.tabStripWrap === true
-  const toggleWrap = useCallback((): void => {
-    if (store !== undefined) flipBooleanPref(store, 'tabStripWrap')
-  }, [store])
   const [menuOpen, setMenuOpen] = useState(false)
   // The tab right-click context menu: the target tab plus the cursor
   // position (the portaled Menu anchors there, following GitView/FileTree).
@@ -611,7 +594,7 @@ export function TabBar(props: {
 
   return (
     <div
-      className={clsx(css.tabBar, dragOver && css.tabBarDrop, wrapTabs && css.tabBarWrap)}
+      className={clsx(css.tabBar, dragOver && css.tabBarDrop)}
       onDragOver={(event) => {
         // The strip owns drops on itself (merge into this pane); stopping
         // propagation keeps the pane root from also running its edge-zone
@@ -631,32 +614,16 @@ export function TabBar(props: {
         if (payload !== null) onDropTab(payload, null)
       }}
     >
-      <div ref={listRef} className={clsx(css.tabList, wrapTabs && css.tabListWrap)}>
+      <div ref={listRef} className={css.tabList}>
 {sessionTabs.map(tab => renderTabEl(tab, false))}
         {pinnedTabs.length > 0 && <div className={css.tabBarDivider} role="separator" />}
         {pinnedTabs.map(tab => renderTabEl(tab, true))}
         {/*
-          The strip's right-end group (wrap toggle + the + menu button),
-          sticky at the right edge of the scrollport when the tabs overflow
-          in single-line mode, so both stay reachable no matter how many tabs
-          are open. In WRAP mode the group is static — the tabs wrap onto
-          visible rows, so nothing needs pinning.
+          The strip's right-end group (the + menu button), sticky at the
+          right edge of the scrollport when the tabs overflow so it stays
+          reachable no matter how many tabs are open.
         */}
         <div className={css.tabBarEnd}>
-          {store !== undefined && (
-            <Tooltip label={wrapTabs ? t('producedWrapOff') : t('producedWrapOn')} side="bottom" delayMs={500}>
-              <button
-                type="button"
-                className={css.tabBarWrapToggle}
-                aria-pressed={wrapTabs}
-                aria-label={wrapTabs ? t('producedWrapOff') : t('producedWrapOn')}
-                title={wrapTabs ? t('producedWrapOff') : t('producedWrapOn')}
-                onClick={toggleWrap}
-              >
-                {wrapTabs ? <IconWrapOutline16 size={12} /> : <IconScrollHOutline16 size={12} />}
-              </button>
-            </Tooltip>
-          )}
           <Menu
             open={menuOpen}
             onClose={closeMenu}
