@@ -15,7 +15,7 @@ import {
   IconDownloadOutline16, IconLoadingOutline16, IconRefreshOutline16,
   IconSparkle16, IconTrashOutline16, Input, Menu, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { VscStarEmpty, VscStarFull } from 'react-icons/vsc'
+import { VscStarFull } from 'react-icons/vsc'
 import type { GitBranchStatus, GitBranchTip, GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api, SidebarApiError } from './api.ts'
 import { notifyGitStatusChanged, subscribeGitStatusChanged } from './git-status.ts'
@@ -193,8 +193,6 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
   }, [prefs])
   /** Each watched branch's tip relative to the checkout HEAD. */
   const [tips, setTips] = useState<GitBranchTip[]>([])
-  /** The open watched-branch picker (anchored at the header star button). */
-  const [watchMenu, setWatchMenu] = useState<{ x: number; y: number } | null>(null)
   /** A bottom-bubble reveal (page down to a watched tip) is in flight. */
   const [revealing, setRevealing] = useState(false)
 
@@ -811,37 +809,19 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
             <Tooltip label={t('fetchPrune')} side="bottom" delayMs={500}>
               <button
                 type="button"
-                className={css.iconButton}
+                className={`${css.iconButton}${watched.length > 0 ? ` ${css.gitWatchActive}` : ''}`}
                 aria-label={t('fetchPrune')}
                 disabled={busy || fetching}
                 onClick={(event) => {
                   event.stopPropagation()
                   const rect = event.currentTarget.getBoundingClientRect()
-                  setFetchMenu({ x: rect.right - 8, y: rect.bottom + 4 })
+                  setFetchMenu(fetchMenu === null ? { x: rect.right - 8, y: rect.bottom + 4 } : null)
                 }}
               >
                 <IconChevronDownOutline14 size={14} />
               </button>
             </Tooltip>
           </>
-        )}
-        {status?.isRepo === true && (
-          <Tooltip label={t('watchBranches')} side="bottom" delayMs={500}>
-            <button
-              type="button"
-              className={`${css.iconButton}${watched.length > 0 ? ` ${css.gitWatchActive}` : ''}`}
-              aria-label={t('watchBranches')}
-              title={t('watchBranches')}
-              disabled={busy}
-              onClick={(event) => {
-                event.stopPropagation()
-                const rect = event.currentTarget.getBoundingClientRect()
-                setWatchMenu(watchMenu === null ? { x: rect.right - 8, y: rect.bottom + 4 } : null)
-              }}
-            >
-              {watched.length > 0 ? <VscStarFull size={14} /> : <VscStarEmpty size={14} />}
-            </button>
-          </Tooltip>
         )}
         <Tooltip label={t('refresh')} side="bottom" delayMs={500}>
           <button
@@ -1147,37 +1127,25 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
             anchor={<span />}
           />
 
-          {/* The fetch menu (chevron): the plain-fetch button is the common path; the
-            prune variant lives here because it also drops locally tracked refs
-            whose remote branch disappeared — the one way `gone` ever appears. */}
+          {/* The more menu (chevron): the plain-fetch button is the common path;
+            this menu carries the prune variant (drops locally tracked refs whose
+            remote branch disappeared — the one way `gone` ever appears) and the
+            watched-branch (重点关注) picker: every local branch except the current
+            one is a row; clicking a row toggles the watch flag WITHOUT closing
+            the menu (multi-select; the chevron lights up while anything is
+            watched). */}
           <Menu
             open={fetchMenu !== null}
             onClose={() => { setFetchMenu(null) }}
+            selectedIds={watched.map(name => `watch:${name}`)}
             items={[
               { id: 'prune', label: t('fetchPrune'), icon: <IconDownloadOutline16 size={14} /> },
-            ]}
-            onSelect={(id) => {
-              setFetchMenu(null)
-              if (id === 'prune') void fetchRemote(true)
-            }}
-            portal
-            align="start"
-            getAnchorRect={() => (fetchMenu === null ? null : new DOMRect(fetchMenu.x, fetchMenu.y, 0, 0))}
-            anchor={<span />}
-          />
-
-          {/* The watched-branch (重点关注) picker: the star button toggles it;
-            every local branch except the current one is a row; clicking a row
-            toggles the watch flag WITHOUT closing the menu (multi-select). */}
-          <Menu
-            open={watchMenu !== null}
-            onClose={() => { setWatchMenu(null) }}
-            selectedIds={watched}
-            items={[
+              { type: 'separator', id: 'watch-sep' },
+              { type: 'label', id: 'watch-label', text: t('watchBranches') },
               ...(status === null ? [] : branchNames
                 .filter(name => name !== status.branch)
                 .map(name => ({
-                  id: name,
+                  id: `watch:${name}`,
                   label: name,
                   icon: watched.includes(name)
                     ? <VscStarFull size={14} />
@@ -1185,23 +1153,31 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                 }))),
               ...(watched.length > 0
                 ? [
-                  { type: 'separator', id: 'watch-sep' } as const,
+                  { type: 'separator', id: 'watch-clear-sep' } as const,
                   { id: 'watch-clear', label: t('watchClear'), danger: true },
                 ]
                 : []),
             ]}
             onSelect={(id) => {
+              if (id === 'prune') {
+                setFetchMenu(null)
+                void fetchRemote(true)
+                return
+              }
               if (id === 'watch-clear') {
                 setWatched([])
                 if (store !== undefined) updatePluginSettings(store, 'git', blob => ({ ...blob, [WATCHED_BRANCHES_KEY]: [] }))
                 setTips([])
                 return
               }
-              toggleWatched(id)
+              if (id.startsWith('watch:')) {
+                // Multi-select: keep the menu open after each toggle.
+                toggleWatched(id.slice('watch:'.length))
+              }
             }}
             portal
             align="start"
-            getAnchorRect={() => (watchMenu === null ? null : new DOMRect(watchMenu.x, watchMenu.y, 0, 0))}
+            getAnchorRect={() => (fetchMenu === null ? null : new DOMRect(fetchMenu.x, fetchMenu.y, 0, 0))}
             anchor={<span />}
           />
 
