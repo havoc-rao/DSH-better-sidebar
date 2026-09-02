@@ -20,7 +20,7 @@ better-sidebar 的资源管理器（`FileTree`）目前只显示文件/目录行
 
 - **字母映射**（`getStatusLetter`）：INDEX_MODIFIED/MODIFIED→`M`，INDEX_ADDED/INTENT_TO_ADD→`A`，INDEX_DELETED/DELETED→`D`，INDEX_RENAMED/INTENT_TO_RENAME→`R`，INDEX_COPIED→`C`，TYPE_CHANGED→`T`，UNTRACKED→`U`，IGNORED→`I`，冲突（DD/AU/UD/UA/DU/AA/UU）→`!`。
 - **双侧状态**：porcelain XY 同时有 index 与 worktree 字母时（如 `AM`），**worktree 字母胜出**——装饰 provider 的 bucket 先写 indexGroup 再写 workingTreeGroup（后写覆盖），故 `AM` 显示 `M`。
-- **颜色**（`getStatusColor`）：modified/type-changed 琥珀、added 绿、deleted/conflict 红、renamed/copied 绿、untracked 灰、ignored 灰。本项目映射到 DSH 语义令牌：warn / success / error / label-tertiary。
+- **颜色**（`getStatusColor`）：modified/type-changed 琥珀、added 绿、deleted/conflict 红、renamed/copied 绿、untracked 绿、ignored 灰。本项目映射到 DSH 语义令牌：warn / success / error / label-tertiary。（修订：untracked 由灰改为绿，与 added/renamed 同族——未跟踪新文件与「增」同义，统一 success 绿。）
 - **优先级**（`get priority()`）：冲突 4 > 忽略 3 > modified/copied/type-changed 2 > 其余（added/deleted/renamed/untracked）1——目录聚合取最高优先级子孙。
 - **删除不传播**：`resourceDecoration.propagate = type !== DELETED && type !== INDEX_DELETED`——删除文件的装饰不上传给父目录（只有删除文件的目录在 VSCode 里无徽标）。
 
@@ -45,7 +45,7 @@ better-sidebar 的资源管理器（`FileTree`）目前只显示文件/目录行
 ### 2.3 组件接线
 
 - `TreePanel`：挂载 / session·cwd 变化 / refreshTick / 总线通知时调 `api.gitStatus`（失败静默降级为空树——错误由 Git 面板负责呈现）；`useMemo` 构建 overlay 传给 `FileTree`；底部渲染计数条（仅仓库且有变更时）。
-- `FileTree`：新 `gitStatus?: ReadonlyMap` prop；文件/目录行的**名称文本按状态族着色**（VSCode 的主信号——修改琥珀、增/重命名绿、删除红、未跟踪灰），并在名称与 @ 按钮之间渲染徽标 `<span class=explorerGitBadge + kind 色类>`（title 为状态文案，VSCode 同款 tooltip）；删除文件行加 `explorerDeleted`（名称划线；红色由同一色类承担，不额外置灰——"更明显"优先于 VSCode 的淡化处理）；根行（cwd）不渲染徽标（VSCode 的 workspace root 也无徽标，聚合信息由计数条承载）。
+- `FileTree`：新 `gitStatus?: ReadonlyMap` prop；文件/目录行的**名称文本按状态族着色**（VSCode 的主信号——修改琥珀、增/重命名绿、删除红、未跟踪绿），并在名称与 @ 按钮之间渲染徽标 `<span class=explorerGitBadge + kind 色类>`（title 为状态文案，VSCode 同款 tooltip）；删除文件行加 `explorerDeleted`（名称划线；红色由同一色类承担，不额外置灰——"更明显"优先于 VSCode 的淡化处理）；根行（cwd）不渲染徽标（VSCode 的 workspace root 也无徽标，聚合信息由计数条承载）。
 - `GitView`：每次成功 `refresh()`（挂载/聚焦/暂存/提交/放弃/切分支/回滚都走它）后 `notifyGitStatusChanged()`——一处挂钩覆盖全部变更路径。
 
 ### 2.4 视觉（令牌驱动，无硬编码色）
@@ -53,9 +53,9 @@ better-sidebar 的资源管理器（`FileTree`）目前只显示文件/目录行
 | kind | 令牌 | 对应 VSCode 色 |
 |---|---|---|
 | modified / type | `--dsw-alias-state-warn-primary` | 琥珀 |
-| added / renamed / copied | `--dsw-alias-state-success-primary` | 绿 |
+| added / renamed / copied / untracked | `--dsw-alias-state-success-primary` | 绿 |
 | deleted / conflict | `--dsw-alias-state-error-primary` | 红 |
-| untracked / ignored | `--dsw-alias-label-tertiary` | 灰 |
+| ignored | `--dsw-alias-label-tertiary` | 灰 |
 
 徽标为纯色字母（VSCode 风格，无底色 pill；Git 面板自己的 `.gitBadge` 保持原样不受影响）；**名称色 = 同一色类**（`explorerGitWarn/Success/Error/Muted` 同时作用于徽标与名称文本），删除行只保留划线、去掉透明度置灰。
 

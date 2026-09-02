@@ -1503,11 +1503,11 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* VSCode-style git status decorations: the row NAME is tinted by the status
    family (the primary VSCode signal — modified amber, added/renamed green,
-   deleted red, untracked gray) with a colored letter badge beside it (files
-   carry their own status, folders the descendant aggregate). The color
-   families map the VSCode git-decoration palette onto DSH semantic tokens:
-   modified/type → warn, added/renamed/copied → success, deleted/conflict →
-   error, untracked/ignored → muted. */
+   deleted red, untracked green, ignored gray) with a colored letter badge
+   beside it (files carry their own status, folders the descendant
+   aggregate). The color families map the VSCode git-decoration palette onto
+   DSH semantic tokens: modified/type → warn, added/renamed/copied/untracked
+   → success, deleted/conflict → error, ignored → muted. */
 .explorerGitBadge {
   flex: none;
   min-width: 18px;

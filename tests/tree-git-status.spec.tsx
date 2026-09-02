@@ -100,13 +100,13 @@ describe('TreePanel git decorations', () => {
       expect(deletedName.className).toContain('explorerGitError')
 
       // The src FOLDER aggregates the untracked new.ts → U badge + a
-      // muted-tinted folder name.
+      // success-tinted (green) folder name.
       const untracked = container.querySelector<HTMLElement>('[title="Untracked"]')!
       expect(untracked.textContent).toBe('U')
       const srcRow = untracked.parentElement!
       expect(srcRow.className).toContain('explorerDir')
       const srcName = srcRow.querySelector<HTMLElement>('[class*="explorerName"]')!
-      expect(srcName.className).toContain('explorerGitMuted')
+      expect(srcName.className).toContain('explorerGitSuccess')
 
       // Expanding src reveals new.ts with its own U badge (now two: the
       // folder row + the file row).

@@ -145,7 +145,7 @@ export const gitKindCss = {
   copied: css.explorerGitSuccess,
   deleted: css.explorerGitError,
   conflict: css.explorerGitError,
-  untracked: css.explorerGitMuted,
+  untracked: css.explorerGitSuccess,
   ignored: css.explorerGitMuted,
 } satisfies Record<GitStatusKind, string | undefined>
 
