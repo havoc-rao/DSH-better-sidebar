@@ -419,10 +419,13 @@ export async function resolveWorktree(cwd: string, requested?: string): Promise<
   return match.path
 }
 
-/** Diff text of the worktree (unstaged) or the index (staged). */
-export async function diff(cwd: string, path: string | undefined, staged: boolean, selected?: string): Promise<string> {
+/** Diff text of the worktree (unstaged) or the index (staged). `context`
+ *  selects the unified-context window: the 3-line default suits the diff-tab
+ *  preview, while machine consumers like the commit-draft agent pass 0 so a
+ *  patch carries the changed lines alone. */
+export async function diff(cwd: string, path: string | undefined, staged: boolean, selected?: string, context = 3): Promise<string> {
   const root = await repoRoot(cwd, selected)
-  const args = ['diff', '--no-ext-diff', '--no-color', '-U3']
+  const args = ['diff', '--no-ext-diff', '--no-color', `-U${context}`]
   if (staged) args.push('--cached')
   if (path !== undefined) args.push('--', path)
   return runGit(root, args)

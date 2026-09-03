@@ -7,6 +7,12 @@
  * the agent falls back to the working tree: tracked changes contribute their
  * diff/stat, while every modified or untracked path is retained in the compact
  * porcelain summary. It never stages or commits anything itself.
+ *
+ * The diff payload is deliberately compact: hunks carry the changed lines
+ * alone (-U0 — a commit-message task needs no surrounding context), the text
+ * is capped at {@link STAGED_DIFF_CAP}, and the --stat summary plus the
+ * changed-path list keep covering the whole change set even when the patch
+ * tail is truncated.
  */
 import { randomUUID } from 'node:crypto'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
@@ -27,8 +33,16 @@ import {
   type LlmProbeResult,
 } from './commit-draft-shared.ts'
 
-/** Cap of repository patch text forwarded to the agent. */
-export const STAGED_DIFF_CAP = 24_000
+/** Cap of repository patch text forwarded to the agent. Patches are gathered
+ *  at -U0 (changed lines only, no context scaffolding), so this budget carries
+ *  far denser change content than the same cap would on a context-bearing
+ *  diff; the --stat summary still covers the tail when the cap triggers. */
+export const STAGED_DIFF_CAP = 12_000
+
+/** Unified-context window of the forwarded patch: 0 keeps each hunk down to
+ *  the changed lines alone — the commit-message task needs no surrounding
+ *  context (per-file magnitudes live in the stat and numstat rows). */
+export const PATCH_CONTEXT_LINES = 0
 
 /** Cap of porcelain status text forwarded alongside an unstaged fallback. */
 export const WORKTREE_STATUS_CAP = 8_000
@@ -135,7 +149,7 @@ export async function buildCommitContext(cwd: string, historyRefs: number): Prom
     const [branch, stat, rawPatch, refs] = await Promise.all([
       git.currentBranch(cwd).catch(() => 'HEAD'),
       git.stagedStat(cwd),
-      git.diff(cwd, undefined, true),
+      git.diff(cwd, undefined, true, undefined, PATCH_CONTEXT_LINES),
       refsPromise,
     ])
     const patch = capText(rawPatch, STAGED_DIFF_CAP, 'diff')
@@ -160,7 +174,7 @@ export async function buildCommitContext(cwd: string, historyRefs: number): Prom
     git.currentBranch(cwd).catch(() => 'HEAD'),
     git.unstagedNumstat(cwd),
     git.unstagedStat(cwd),
-    git.diff(cwd, undefined, false),
+    git.diff(cwd, undefined, false, undefined, PATCH_CONTEXT_LINES),
     refsPromise,
   ])
   const rawStatus = snapshot.entries.map(entry => `${entry.xy} ${entry.path}`).join('\n')
