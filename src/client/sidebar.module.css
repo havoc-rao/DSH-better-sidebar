@@ -3172,63 +3172,86 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: pre-wrap;
 }
 
+/* The commit row: a wrapping multi-line message box (auto-grows from one line
+   up to the four-line cap below, then scrolls internally) plus two icon-only
+   action buttons — AI draft + commit — each with a hover tooltip. */
 .gitCommit {
   display: flex;
   gap: 6px;
   padding: 8px 12px;
   border-top: 1px solid var(--dsw-alias-border-l1);
-  align-items: center;
+  align-items: flex-start;
+}
+
+.gitCommitActions {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  /* 2px optical nudge: the 28px icon buttons sit beside a 32px single-line
+     box, so half the height difference centers them against the first line. */
+  margin-top: 2px;
 }
 
 .gitCommitInput {
   flex: 1;
   min-width: 0;
+  /* The commit message wraps freely (pre-wrap + break-word). The box grows
+     from one line (32px = 22px line-height + 8px vertical padding + 2px
+     border) up to four lines (98px), then scrolls internally instead of
+     growing further. GitView's auto-grow effect reads this max-height back,
+     so the cap stays single-sourced here. */
+  box-sizing: border-box;
+  min-height: 32px;
+  max-height: 98px;
+  resize: none;
+  overflow-y: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-14);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
+.gitCommitInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.gitCommitInput:disabled {
+  opacity: 0.6;
+}
+
+.gitCommitInput::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+/* The commit action: an icon-only primary circle — the same 28px shape as
+   .iconButton, filled so the primary action stays visually distinct. */
 .gitCommitButton {
   flex: none;
-  height: 26px;
-  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 50%;
   background: var(--dsw-alias-button-primary-fill);
   color: var(--dsw-alias-label-primary-inverted);
-  font: var(--dsw-font-xxs-strong-12);
   cursor: pointer;
 }
 
+/* Sits later in the file than .iconButton:hover:not(:disabled), so the
+   primary fill wins for an element carrying both classes. */
 .gitCommitButton:hover:not(:disabled) {
   background: var(--dsw-alias-button-primary-hover);
 }
 
 .gitCommitButton:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-/* The AI commit-draft button (left of the commit button): an outline chip
-   with a sparkle glyph, brand-tinted like the .gitLink actions. */
-.gitDraftButton {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-brand-primary);
-  font: var(--dsw-font-xxs-12);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.gitDraftButton:hover:not(:disabled) {
-  border-color: var(--dsw-alias-brand-primary);
-}
-
-.gitDraftButton:disabled {
   opacity: 0.45;
   cursor: default;
 }

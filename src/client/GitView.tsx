@@ -9,11 +9,11 @@
  * focus. While visible it polls lightweight porcelain state so model-authored
  * file changes appear without a manual refresh.
  */
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, useState, type MouseEvent, type ReactNode } from 'react'
 import {
-  Button, IconBranchOutline16, IconChevronDownOutline14, IconCodeOutline16, IconCopyOutline16,
+  Button, IconBranchOutline16, IconCheckOutline16, IconChevronDownOutline14, IconCodeOutline16, IconCopyOutline16,
   IconDownloadOutline16, IconLoadingOutline16, IconRefreshOutline16,
-  IconSparkle16, IconTrashOutline16, Input, Menu, Modal, Tooltip, writeClipboard,
+  IconSparkle16, IconTrashOutline16, Menu, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { VscStarFull } from 'react-icons/vsc'
 import type { GitBranchStatus, GitBranchTip, GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
@@ -163,6 +163,9 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
   const [fetching, setFetching] = useState(false)
   const [logEntries, setLogEntries] = useState<GitGraphEntry[]>([])
   const [commitMsg, setCommitMsg] = useState('')
+  /** The commit box's <textarea> (auto-grows up to the CSS max-height, then
+   *  scrolls internally instead of growing further). */
+  const commitMsgRef = useRef<HTMLTextAreaElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
@@ -506,6 +509,20 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
       setBusy(false)
     }
   }
+
+  /** Keep the commit box's height synced with its content: the message wraps
+   *  (pre-wrap) and the box grows from one line up to the four-line cap in CSS
+   *  (.gitCommitInput max-height), then scrolls internally. The effect resets
+   *  to `auto` first so shrinking text shrinks the box, then clamps the
+   *  content height to the CSS cap — read back from the computed style so the
+   *  limit stays single-sourced in the stylesheet. */
+  useLayoutEffect(() => {
+    const el = commitMsgRef.current
+    if (el === null) return
+    el.style.height = 'auto'
+    const max = parseFloat(getComputedStyle(el).maxHeight)
+    if (Number.isFinite(max) && max > 0) el.style.height = `${Math.min(el.scrollHeight, max)}px`
+  }, [commitMsg])
 
   const commit = async (): Promise<void> => {
     const message = commitMsg.trim()
@@ -873,37 +890,42 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
           </div>
 
           <div className={css.gitCommit}>
-            <Input
+            <textarea
+              ref={commitMsgRef}
               className={css.gitCommitInput}
               placeholder={t('commitPlaceholder')}
               value={commitMsg}
               disabled={busy || drafting}
+              rows={1}
               onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
               onKeyDown={(event) => {
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
               }}
             />
-            <Tooltip label={t('commitDraftTooltip')} side="bottom" delayMs={500}>
-              <button
-                type="button"
-                className={css.gitDraftButton}
-                aria-label={t('commitDraft')}
-                title={t('commitDraft')}
-                disabled={busy || drafting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
-                onClick={() => { void draftCommit() }}
-              >
-                <IconSparkle16 size={14} />
-                <span>{drafting ? t('commitDraftBusy') : t('commitDraft')}</span>
-              </button>
-            </Tooltip>
-            <button
-              type="button"
-              className={css.gitCommitButton}
-              disabled={busy || drafting || commitMsg.trim() === '' || stagedEntries.length === 0}
-              onClick={() => { void commit() }}
-            >
-              {t('commit')}
-            </button>
+            <div className={css.gitCommitActions}>
+              <Tooltip label={drafting ? t('commitDraftBusy') : t('commitDraftTooltip')} side="top" delayMs={500}>
+                <button
+                  type="button"
+                  className={css.iconButton}
+                  aria-label={drafting ? t('commitDraftBusy') : t('commitDraftTooltip')}
+                  disabled={busy || drafting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
+                  onClick={() => { void draftCommit() }}
+                >
+                  {drafting ? <IconLoadingOutline16 size={14} /> : <IconSparkle16 size={14} />}
+                </button>
+              </Tooltip>
+              <Tooltip label={t('commit')} side="top" delayMs={500}>
+                <button
+                  type="button"
+                  className={`${css.iconButton} ${css.gitCommitButton}`}
+                  aria-label={t('commit')}
+                  disabled={busy || drafting || commitMsg.trim() === '' || stagedEntries.length === 0}
+                  onClick={() => { void commit() }}
+                >
+                  <IconCheckOutline16 size={14} />
+                </button>
+              </Tooltip>
+            </div>
           </div>
           {commitError !== null && <div className={css.gitError}>{commitError}</div>}
 
