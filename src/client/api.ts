@@ -10,7 +10,7 @@ import { encodeHtmlUrl } from '../html-route.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatThreadInfo } from '../sidechat-core.ts'
 import type { BrowserProbeResult } from './browser.ts'
-import type { CommitDraftRequest, CommitDraftResult, LlmCatalog } from '../commit-draft-shared.ts'
+import type { CommitDraftRequest, CommitDraftResult, LlmCatalog, LlmProbeRequest, LlmProbeResult } from '../agents/commit-draft-shared.ts'
 
 /** One wire failure. */
 export class SidebarApiError extends Error {
@@ -316,8 +316,11 @@ gitCherryPick: (scope: SessionScope, hash: string, worktree?: string) =>
   /** The live LLM provider/model catalog (the AI commit-draft settings). */
   llmCatalog: (signal?: AbortSignal) =>
     call<LlmCatalog>('llm.catalog', {}, signal),
-  /** Draft a commit message for the STAGED changes through the harness LLM
-   *  service, following the selected provider/model and reference template. */
+  /** Make one minimal real call through a selected provider/model route. */
+  llmProbe: (request: LlmProbeRequest, signal?: AbortSignal) =>
+    call<LlmProbeResult>('llm.probe', { ...request }, signal),
+  /** Draft through the host's one-shot Git agent. A non-empty index wins;
+   *  otherwise it summarizes the current working tree. */
   gitCommitDraft: (scope: SessionScope, request: CommitDraftRequest) =>
     call<CommitDraftResult>('git.commit-draft', scopePayload(scope, { ...request })),
   /** Release a terminal's process immediately (tab closed; the WS close frame

@@ -80,6 +80,8 @@ export interface SidebarWebServer {
 /** A published session's header slice the sidebar reads (authoritative cwd). */
 export interface SidebarSessionHeader {
   cwd?: string
+  /** Persisted subagent nesting depth (used when minting a Git helper child). */
+  delegationDepth?: number
 }
 
 /** The host session store face (`ctx.sessions.get(id)` returns the live session). */

@@ -1,12 +1,23 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { CreateAgentOptions } from '@deepseek-ai/dsh-agent'
+import type { Context as CordisContext } from '@deepseek-ai/cordis'
+import type { LlmRuntime } from '@deepseek-ai/dsh-llm'
+import type { Context } from '../src/context-types.ts'
 import { parseNumstat } from '../src/git.ts'
 import {
   COMMIT_TEMPLATES,
+  buildCommitContext,
   composeCommitDraftPrompt,
+  draftCommitMessage,
+  probeLlmConnection,
   resolveCommitTemplate,
   STAGED_DIFF_CAP,
   type CommitDraftContext,
-} from '../src/commit-draft.ts'
+} from '../src/agents/git-commit-agent.ts'
 import {
   COMMIT_CUSTOM_TEMPLATE_MAX,
   COMMIT_HISTORY_REFS_MAX,
@@ -18,7 +29,7 @@ import {
   commitLlmModelOf,
   commitLlmProviderOf,
   commitTemplateOf,
-} from '../src/commit-draft-shared.ts'
+} from '../src/agents/commit-draft-shared.ts'
 
 describe('staged numstat parsing', () => {
   it('parses added/deleted counts and paths with spaces', () => {
@@ -74,11 +85,14 @@ describe('commit template resolution', () => {
 
 describe('commit draft prompt composition', () => {
   const context: CommitDraftContext = {
+    source: 'staged',
     branch: 'feat/sidebar',
     refs: ['feat: add git panel', 'fix: correct layout width'],
+    status: 'src/a.ts\nsrc/b.ts',
     stat: ' 2 files changed, 12 insertions(+), 3 deletions(-)',
     patch: 'diff --git a/src/a.ts b/src/a.ts\n+new line\n-old line',
     patchTruncated: false,
+    statusTruncated: false,
     fileCount: 2,
     insertions: 12,
     deletions: 3,
@@ -105,6 +119,183 @@ describe('commit draft prompt composition', () => {
     const prompt = composeCommitDraftPrompt({ ...context, patch: capped, patchTruncated: true, refs: [] }, 'plain rules')
     expect(prompt.user).toContain('(diff truncated)')
     expect(prompt.user).toContain('(no history yet)')
+  })
+
+  it('tells an empty-index agent to summarize the working tree conservatively', () => {
+    const prompt = composeCommitDraftPrompt({
+      ...context,
+      source: 'working-tree',
+      status: ' M src/a.ts\n?? src/new.ts',
+      stat: '',
+      patch: '',
+    }, 'plain rules')
+    expect(prompt.system).toContain('index is empty')
+    expect(prompt.system).toContain('tentative commit-message-style summary')
+    expect(prompt.user).toContain('?? src/new.ts')
+    expect(prompt.user).toContain('summarize conservatively')
+  })
+})
+
+describe('commit context collection', () => {
+  it('falls back to porcelain status when the index is empty, then prefers the index after git add', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'better-sidebar-commit-agent-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd })
+      writeFileSync(join(cwd, 'new-file.ts'), 'export const answer = 42\n')
+
+      const working = await buildCommitContext(cwd, 0)
+      expect(working).toMatchObject({ source: 'working-tree', fileCount: 1 })
+      expect(working?.status).toContain('?? new-file.ts')
+      expect(working?.patch).toBe('')
+
+      execFileSync('git', ['add', 'new-file.ts'], { cwd })
+      const staged = await buildCommitContext(cwd, 0)
+      expect(staged).toMatchObject({ source: 'staged', fileCount: 1, insertions: 1, deletions: 0 })
+      expect(staged?.patch).toContain('+export const answer = 42')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('uses tracked unstaged file contents when the index is empty', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'better-sidebar-commit-agent-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd })
+      writeFileSync(join(cwd, 'tracked.ts'), 'export const answer = 41\n')
+      execFileSync('git', ['add', 'tracked.ts'], { cwd })
+      execFileSync('git', [
+        '-c', 'user.name=Commit Agent Test',
+        '-c', 'user.email=commit-agent@example.test',
+        'commit', '-qm', 'test: seed repository',
+      ], { cwd })
+      writeFileSync(join(cwd, 'tracked.ts'), 'export const answer = 42\n')
+
+      const context = await buildCommitContext(cwd, 0)
+      expect(context).toMatchObject({
+        source: 'working-tree',
+        fileCount: 1,
+        insertions: 1,
+        deletions: 1,
+      })
+      expect(context?.status).toContain(' M tracked.ts')
+      expect(context?.stat).toContain('1 insertion(+), 1 deletion(-)')
+      expect(context?.patch).toContain('-export const answer = 41')
+      expect(context?.patch).toContain('+export const answer = 42')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('commit agent-loop runner', () => {
+  it('creates a hidden tool-free one-shot child and reads its final assistant message', async () => {
+    const section = vi.fn()
+    const suppressRuntimeContext = vi.fn()
+    const restrict = vi.fn()
+    const on = vi.fn(() => vi.fn())
+    const resolveModelInfo = vi.fn(async () => ({
+      provider: 'provider',
+      id: 'model',
+      name: 'Model',
+      reasoning: { efforts: [{ id: 'off', name: 'Off' }] },
+    }))
+    const followup = vi.fn()
+    const dispose = vi.fn(async () => {})
+    const agent = {
+      session: {
+        events: [{
+          type: 'assistant/message',
+          seq: 1,
+          time: 1,
+          data: {
+            turn: 1,
+            step: 1,
+            message: { role: 'assistant', content: [{ type: 'text', text: 'feat(git): summarize changes' }] },
+          },
+        }],
+      },
+      followup,
+      whenIdle: vi.fn(async () => {}),
+      cancel: vi.fn(),
+    }
+    let options: CreateAgentOptions | undefined
+    const create = vi.fn(async (input: CreateAgentOptions) => {
+      options = input
+      await input.setup?.({
+        systemPrompt: { section, suppressRuntimeContext },
+        tools: { restrict },
+        on,
+      } as unknown as CordisContext)
+      return { agent, dispose }
+    })
+    const ctx = {
+      get: (name: string) => name === 'agents' ? { create }
+        : name === 'llm' ? { resolveModelInfo }
+          : undefined,
+      sessions: { get: () => ({ header: { delegationDepth: 2 } }) },
+    } as unknown as Context
+
+    await expect(draftCommitMessage(
+      ctx,
+      'parent-session',
+      '/repo',
+      { provider: 'provider', model: 'model' },
+      { system: 'exact system', user: 'repository data' },
+    )).resolves.toBe('feat(git): summarize changes')
+
+    expect(options?.meta).toMatchObject({
+      cwd: '/repo',
+      parentSession: 'parent-session',
+      origin: 'subagent',
+      delegationDepth: 3,
+    })
+    expect(options?.agentOptions).toEqual({ provider: 'provider', model: 'model' })
+    expect(resolveModelInfo).toHaveBeenCalledWith('provider', 'model', expect.any(AbortSignal))
+    expect(section).toHaveBeenCalledWith(expect.objectContaining({ text: 'exact system', complete: true }))
+    expect(suppressRuntimeContext).toHaveBeenCalledOnce()
+    expect(restrict).toHaveBeenCalledWith({ allow: [] })
+    expect(on).toHaveBeenCalledWith('agent/request', expect.any(Function))
+    expect(followup).toHaveBeenCalledOnce()
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+})
+
+describe('LLM connectivity probe', () => {
+  it('accepts a provider route only after it returns visible text', async () => {
+    let request: Record<string, unknown> | undefined
+    const llm = {
+      resolveModelInfo: vi.fn(async () => ({
+        provider: 'p', id: 'm', name: 'M',
+        reasoning: { efforts: [{ id: 'off', name: 'Off' }] },
+      })),
+      stream: async function* (options: Record<string, unknown>) {
+        request = options
+        yield { type: 'text-delta', index: 0, text: 'OK' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    } as unknown as LlmRuntime
+    await expect(probeLlmConnection(llm, { provider: 'p', model: 'm' }))
+      .resolves.toMatchObject({ message: 'OK' })
+    expect(request).toMatchObject({ provider: 'p', model: 'm', reasoningEffort: 'off' })
+    expect(request).not.toHaveProperty('temperature')
+    expect(request).not.toHaveProperty('maxTokens')
+  })
+
+  it('preserves the adapter failure code for an empty response', async () => {
+    const llm = {
+      resolveModelInfo: vi.fn(async () => ({ provider: 'p', id: 'm', name: 'M' })),
+      stream: async function* () {
+        yield {
+          type: 'finish',
+          reason: {
+            kind: 'error',
+            failure: { code: 'EMPTY_RESPONSE', message: 'model returned a completed response with no content' },
+          },
+        }
+      },
+    } as unknown as LlmRuntime
+    await expect(probeLlmConnection(llm, { provider: 'p', model: 'm' }))
+      .rejects.toThrow('[EMPTY_RESPONSE] model returned a completed response with no content')
   })
 })
 

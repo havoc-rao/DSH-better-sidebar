@@ -1,5 +1,5 @@
 /**
- * Shared pure vocabulary of the AI commit-message draft feature (consumed by
+ * Shared pure vocabulary of the Git commit agent (consumed by
  * both halves and the tests): the selectable reference templates, the plugin
  * setting keys under the `git` descriptor, the value accessors, and the wire
  * payload types. This file MUST stay dependency-free — it enters the client
@@ -96,6 +96,18 @@ export interface LlmCatalog {
   providers: LlmCatalogProvider[]
 }
 
+/** A minimal provider/model call used by the settings-page connectivity test. */
+export interface LlmProbeRequest {
+  provider: string
+  model: string
+}
+
+/** A successful probe proves the route produced visible assistant text. */
+export interface LlmProbeResult {
+  message: string
+  latencyMs: number
+}
+
 /** The `git.commit-draft` request (session scope is added by the api layer). */
 export interface CommitDraftRequest {
   /** Reference template id; missing/unknown falls back to `conventional`. */
@@ -106,12 +118,16 @@ export interface CommitDraftRequest {
   model: string
   /** Style-reference window (clamped host-side to 0..30). */
   historyRefs?: number
+  /** Optional linked-worktree target selected in the Git panel. */
+  worktree?: string
 }
 
 /** The `git.commit-draft` response. */
 export interface CommitDraftResult {
   /** The drafted commit message (subject + body), trimmed. */
   message: string
+  /** Whether the agent summarized the index or an empty-index working tree. */
+  source: 'staged' | 'working-tree'
   fileCount: number
   insertions: number
   deletions: number

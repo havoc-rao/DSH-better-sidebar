@@ -37,7 +37,7 @@ import {
   commitLlmProviderOf,
   commitTemplateOf,
   watchedBranchesOf,
-} from '../commit-draft-shared.ts'
+} from '../agents/commit-draft-shared.ts'
 import css from './sidebar.module.css'
 
 /** The XY status letters a row badge shows (X = index, Y = worktree). */
@@ -168,7 +168,7 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
-  /** Whether an AI commit draft is streaming right now. */
+  /** Whether the one-shot Git agent is producing a draft right now. */
   const [drafting, setDrafting] = useState(false)
   /** The live side-card prefs (the AI draft reads the git tab's own blob).
    *  `store.subscribe` is an unbound class method — React calls the
@@ -523,9 +523,9 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
     }
   }
 
-  /** Draft a commit message for the STAGED changes through the LLM chosen in
-   *  the Side card settings (git card gear). The draft fills the message box
-   *  as editable text — it never commits. */
+  /** Draft a commit message through the one-shot Git agent. A non-empty index
+   *  is authoritative; with an empty index it summarizes the current working
+   *  tree. The result stays editable and is never committed automatically. */
   const draftCommit = async (): Promise<void> => {
     if (busy || drafting) return
     const blob = prefs.pluginSettings['git']
@@ -544,11 +544,12 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
         provider,
         model,
         historyRefs: commitHistoryRefsOf(blob),
+        worktree: selectedWorktree,
       })
       setCommitMsg(result.message)
     } catch (reason) {
       const code = reason instanceof SidebarApiError ? reason.code : undefined
-      const message = code === 'no-staged-changes' ? t('commitDraftNoStaged')
+      const message = code === 'no-changes' || code === 'no-staged-changes' ? t('commitDraftNoStaged')
         : code === 'llm-unavailable' ? `${t('commitDraftNoLlm')} — ${t('commitDraftNoLlmDesc')}`
         : code === 'llm-error' ? `${t('commitDraftFailed')}: ${reason instanceof Error ? reason.message : String(reason)}`
         : reason instanceof Error ? reason.message : String(reason)
@@ -888,7 +889,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                 className={css.gitDraftButton}
                 aria-label={t('commitDraft')}
                 title={t('commitDraft')}
-                disabled={busy || drafting || stagedEntries.length === 0}
+                disabled={busy || drafting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
                 onClick={() => { void draftCommit() }}
               >
                 <IconSparkle16 size={14} />

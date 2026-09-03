@@ -14,7 +14,6 @@ import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
 import { GlobalView } from '../GlobalView.tsx'
-import { GitCommitSettings } from '../GitCommitSettings.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { GitView } from '../GitView.tsx'
@@ -221,14 +220,6 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
       icon: (size: number) => <IconBranchOutline16 size={size} />,
       order: 20,
       single: true,
-// Declarative settings: a custom panel (settings.render) that picks the
-      // LLM provider/model and the commit reference template the AI commit
-      // draft uses — the provider/model rows are fed by the live llm catalog
-      // route, so they can't be static options; values persist in
-      // pluginSettings['git'] (GitView reads them at draft time).
-      settings: {
-        render: (props) => <GitCommitSettings {...props} />,
-      },
       component: ({ ctx, store, scope, tab, visible, onOpenDiff }) => {
         // The panel the git tab lives in: a context-menu "open file" must
         // land in the SAME panel — the menu is portaled outside the pane, so

@@ -65,6 +65,7 @@ import {
 import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
+import { GitCommitSettings } from './GitCommitSettings.tsx'
 import { t } from './locales.ts'
 import type { Context } from '../context-types.ts'
 import { parseDesktopEnv } from './desktop-env.ts'
@@ -911,6 +912,19 @@ export function SideCardSection({ store, service, ctx }: SideCardSectionProps) {
       <div className={css.versionBadge}>
         <span className={css.versionBadgeName}>DSH-better-sidebar</span>
         <span className={css.versionBadgeTag}>v{service.version}</span>
+      </div>
+
+      {/* Git commit agent is a first-class plugin setting rather than a
+          secondary Source Control tab setting: keep provider/model/template
+          visible at the top of the Side card settings page. Values still
+          live in pluginSettings.git, the same blob GitView reads at draft
+          time, and every edit rides the normal optimistic settings writer. */}
+      <div className={css.group} data-git-commit-settings>
+        <div className={css.groupHeading}>{t('gitCommitSettingsTitle')}</div>
+        <GitCommitSettings
+          pluginSettings={prefs.pluginSettings.git ?? {}}
+          updatePluginSetting={(key, value) => { applyPluginSetting('git', key, value) }}
+        />
       </div>
 
       {/* 常规: the DSH settings-row recipe — title/desc left, control right. */}

@@ -23,6 +23,8 @@ export type SidebarErrorCode =
   | 'subagents-unavailable'
   | 'settings-rejected'
   | 'settings-conflict'
+  | 'no-changes'
+  /** Legacy client compatibility; new commit-draft routes use no-changes. */
   | 'no-staged-changes'
   | 'llm-unavailable'
   | 'llm-error'

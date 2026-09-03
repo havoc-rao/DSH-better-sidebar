@@ -462,9 +462,23 @@ export async function stagedNumstat(cwd: string): Promise<StagedNumstatRow[]> {
   return parseNumstat(raw)
 }
 
+/** Per-file unstaged line counts for tracked working-tree changes. Untracked
+ * files are represented by {@link status}; Git has no diff for them until
+ * they enter the index. */
+export async function unstagedNumstat(cwd: string): Promise<StagedNumstatRow[]> {
+  const raw = await runGit(cwd, ['diff', '--numstat'])
+  return parseNumstat(raw)
+}
+
 /** The `--stat` summary of the staged changes ('' when nothing is staged). */
 export async function stagedStat(cwd: string): Promise<string> {
   return runGit(cwd, ['diff', '--cached', '--stat'])
+}
+
+/** `--stat` summary of tracked unstaged changes. Untracked paths are carried
+ * separately by {@link status}. */
+export async function unstagedStat(cwd: string): Promise<string> {
+  return runGit(cwd, ['diff', '--stat'])
 }
 
 /** The subjects of the most recent commits, newest first — the style

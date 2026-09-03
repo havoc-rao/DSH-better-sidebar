@@ -48,15 +48,14 @@ import {
   catalogOf,
   composeCommitDraftPrompt,
   draftCommitMessage,
+  probeLlmConnection,
   resolveCommitTemplate,
-} from './commit-draft.ts'
-import {
   COMMIT_CUSTOM_TEMPLATE_MAX,
   COMMIT_HISTORY_REFS_DEFAULT,
   COMMIT_HISTORY_REFS_MAX,
   COMMIT_HISTORY_REFS_MIN,
   WATCHED_BRANCHES_MAX,
-} from './commit-draft-shared.ts'
+} from './agents/index.ts'
 import { defaultShell, digestCommandInput, ensureSpawnHelper, isSharedTabId, PtyManager, ptyKeyOf, shellDisplayName } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
 import {
@@ -525,12 +524,26 @@ function buildApi(
     // not listed still route fine). `available: false` when the deployment
     // lacks the llm service — the panel then shows guidance instead of rows.
     'llm.catalog': async () => catalogOf(ctx.get('llm') as LlmRuntime | undefined),
-    // Draft a commit message for the STAGED changes: the host formats the
-    // staged diff (stat + capped patch + recent subjects as style reference,
-    // see src/commit-draft.ts) and streams one completion through the
-    // user-selected provider/model, following the user-selected template.
+    // A real, minimal provider call for the settings-page "test connection"
+    // action. Catalog presence only proves registration; this proves the
+    // selected endpoint returns visible assistant text and preserves adapter
+    // failure codes such as AUTH / RATE_LIMIT / EMPTY_RESPONSE.
+    'llm.probe': async (payload) => {
+      const llm = ctx.get('llm') as LlmRuntime | undefined
+      if (llm === undefined) {
+        throw new SidebarError('llm-unavailable', 'the LLM service is not mounted in this deployment', 503)
+      }
+      return probeLlmConnection(llm, {
+        provider: requireString(payload, 'provider'),
+        model: requireString(payload, 'model'),
+      })
+    },
+    // Draft a commit message through a private one-shot DSH agent. The index
+    // wins when non-empty; otherwise the bounded working-tree status + tracked
+    // diff become a tentative summary. The agent has an exact prompt and no
+    // tools, and its hidden child session is disposed after the final message.
     'git.commit-draft': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { sessionId, cwd } = await gitCwdOf(payload)
       const record = payload as {
         template?: unknown
         customTemplate?: unknown
@@ -553,13 +566,14 @@ function buildApi(
       }
       const context = await buildCommitContext(cwd, historyRefs)
       if (context === null) {
-        throw new SidebarError('no-staged-changes', 'nothing is staged — stage changes first', 400)
+        throw new SidebarError('no-changes', 'the index and working tree are both clean', 400)
       }
       const resolved = resolveCommitTemplate(template, customTemplate)
       const prompt = composeCommitDraftPrompt(context, resolved.instructions)
-      const message = await draftCommitMessage(llm, { provider, model }, prompt)
+      const message = await draftCommitMessage(ctx, sessionId, cwd, { provider, model }, prompt)
       return {
         message,
+        source: context.source,
         fileCount: context.fileCount,
         insertions: context.insertions,
         deletions: context.deletions,
