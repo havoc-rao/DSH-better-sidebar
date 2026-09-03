@@ -931,7 +931,12 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                   key={row.rowKey}
                   role="button"
                   tabIndex={0}
-                  className={css.gitLogRow}
+                  className={[
+                    css.gitLogRow,
+                    row.kind === 'local' ? css.gitLogRowLocal
+                      : row.kind === 'remote' ? css.gitLogRowRemote
+                      : '',
+                  ].join(' ').trim()}
                   title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
                   onClick={() => { openCommitDiff(entry) }}
                   onKeyDown={(event) => {

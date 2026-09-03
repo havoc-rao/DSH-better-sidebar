@@ -1,11 +1,10 @@
 /**
- * GitGraphSvg coloring: a ref-classified row (see git-graph.ts refKindOf)
- * renders its commit DOT and every EDGE of the row in the local/remote
- * color instead of the per-column lane palette — local-branch rows green
- * (`var(--gg-local)`), fetch-only remote-tracking rows blue
- * (`var(--gg-remote)`), neutral rows (tags / undecorated ancestors) keep
- * the lane palette. The divergence shows on the lane itself: the vertical
- * segments re-tint where the classification changes.
+ * GitGraphSvg rendering: the graph geometry NEVER re-tints for local/remote
+ * refs — every edge and the dot keep the per-column lane palette
+ * (`var(--gg-lane-N)`). The local/remote story lives on the history ROW
+ * itself (left border + faint background, applied by GitView from
+ * `GitGraphRow.kind`), because tinting lanes drowns in multi-branch
+ * histories. The watched (重点关注) ring is the only per-row SVG accent.
  */
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
@@ -36,6 +35,7 @@ function renderRow(entry: GitGraphEntry, prevEntry?: GitGraphEntry, watched = fa
   strokes: string[]
   dotBackground: string
   dotBoxShadow: string
+  kind: GitGraphRow['kind']
 } {
   const entries = prevEntry === undefined ? [entry] : [prevEntry, entry]
   const layout = computeGraphRows(entries)
@@ -54,7 +54,7 @@ function renderRow(entry: GitGraphEntry, prevEntry?: GitGraphEntry, watched = fa
       .map(path => path.getAttribute('stroke') ?? '')
     const dot = container.querySelector<HTMLElement>('[class*="gitLogDot"]')
     if (dot === null) throw new Error('git log dot not rendered')
-    return { strokes, dotBackground: dot.style.background, dotBoxShadow: dot.style.boxShadow }
+    return { strokes, dotBackground: dot.style.background, dotBoxShadow: dot.style.boxShadow, kind: row.kind }
   } finally {
     act(() => { root.unmount() })
     container.remove()
@@ -65,29 +65,36 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('GitGraphSvg local/remote coloring', () => {
+describe('GitGraphSvg row-kind behavior', () => {
   const localTip = commit('c1', ['c2'], 'HEAD -> refs/heads/main')
   const remoteTip = commit('c2', ['c3'], 'refs/remotes/origin/main')
   // A neutral row WITH a parent: the lane below it is what keeps the palette.
   const shared = commit('c3', ['c4'], 'tag: refs/tags/v1')
 
-  it('renders a local-branch row (dot + edges) in the local green', () => {
-    const { strokes, dotBackground } = renderRow(localTip, shared)
-    expect(strokes).toEqual(['var(--gg-local)', 'var(--gg-local)'])
-    expect(dotBackground).toBe('var(--gg-local)')
+  it('classifies each row (local/remote/neutral) for the GitView row marking', () => {
+    expect(renderRow(localTip, shared).kind).toBe('local')
+    expect(renderRow(remoteTip, localTip).kind).toBe('remote')
+    expect(renderRow(shared).kind).toBe('neutral')
   })
 
-  it('renders a fetch-only remote row in the remote blue', () => {
+  it('keeps the lane palette on a local-branch row (no graph re-tinting)', () => {
+    const { strokes, dotBackground } = renderRow(localTip, shared)
+    expect(strokes.every(stroke => stroke.startsWith('var(--gg-lane-'))).toBe(true)
+    expect(dotBackground.startsWith('var(--gg-lane-')).toBe(true)
+  })
+
+  it('keeps the lane palette on a fetch-only remote row', () => {
     const { strokes, dotBackground } = renderRow(remoteTip, localTip)
     expect(strokes.length).toBeGreaterThan(0)
-    expect(strokes.every(stroke => stroke === 'var(--gg-remote)')).toBe(true)
-    expect(dotBackground).toBe('var(--gg-remote)')
+    expect(strokes.some(stroke => stroke.startsWith('var(--gg-lane-'))).toBe(true)
+    expect(strokes.some(stroke => stroke === 'var(--gg-local)' || stroke === 'var(--gg-remote)')).toBe(false)
+    expect(dotBackground.startsWith('var(--gg-lane-')).toBe(true)
   })
 
   it('keeps neutral rows (tag-only / undecorated) on the column palette', () => {
     const { strokes, dotBackground } = renderRow(shared)
-    expect(strokes).toEqual(['var(--gg-lane-0)'])
-    expect(dotBackground).toBe('var(--gg-lane-0)')
+    expect(strokes.every(stroke => stroke.startsWith('var(--gg-lane-'))).toBe(true)
+    expect(dotBackground.startsWith('var(--gg-lane-')).toBe(true)
   })
 
   it('rings the dot when a watched (重点关注) branch points at the commit', () => {

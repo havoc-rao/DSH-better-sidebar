@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 import type { GitGraphEntry } from '../src/client/api.ts'
 import {
   CELL_W, ROW_H, colX, computeGraphRows, laneColor, pathForkOut, pathMergeIn, pathV,
-  refColorOf, refKindOf,
+  refKindOf,
 } from '../src/client/git-graph.ts'
 
 /** A minimal graph log entry; hashes double as the full hashes. */
@@ -139,7 +139,7 @@ describe('computeGraphRows', () => {
   })
 })
 
-describe('ref-kind classification (local vs fetch/remote graph coloring)', () => {
+describe('ref-kind classification (local vs fetch/remote history-row marking)', () => {
   it('classifies by full ref decorations: local branch wins, tags/undecorated are neutral', () => {
     expect(refKindOf('HEAD -> refs/heads/main')).toBe('local')
     // A commit both ref kinds point at (the in-sync tip) is still LOCAL.
@@ -149,12 +149,6 @@ describe('ref-kind classification (local vs fetch/remote graph coloring)', () =>
     expect(refKindOf('refs/remotes/origin/main, tag: refs/tags/v1')).toBe('remote')
     expect(refKindOf('tag: refs/tags/v1')).toBe('neutral')
     expect(refKindOf('')).toBe('neutral')
-  })
-
-  it('maps kinds to color references (local green / remote blue / neutral = column palette)', () => {
-    expect(refColorOf('local')).toBe('var(--gg-local)')
-    expect(refColorOf('remote')).toBe('var(--gg-remote)')
-    expect(refColorOf('neutral')).toBe('')
   })
 
   it('carries the ref kind on every laid-out row (diverged local vs fetch tips)', () => {

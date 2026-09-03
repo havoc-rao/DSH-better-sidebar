@@ -3304,10 +3304,27 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 2px 12px 2px 6px;
   cursor: pointer;
   border-radius: 8px;
+  /* A 3px left accent slot for the local/remote marking; transparent on
+     unmarked rows so marked/unmarked rows keep identical geometry. */
+  border-left: 3px solid transparent;
 }
 
 .gitLogRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Local/remote history-row marking (kind from git-graph.ts refKindOf): the
+   local/remote story lives on the ROW — a left accent border + a faint box
+   tint — not on the graph node/edges (tinted lanes drown in multi-branch
+   histories). Mirrors the ref-chip colors (gitLogRefLocal/Remote). */
+.gitLogRowLocal {
+  border-left-color: var(--dsw-alias-state-success-primary);
+  background: var(--dsw-alias-state-success-tertiary);
+}
+
+.gitLogRowRemote {
+  border-left-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-tertiary);
 }
 
 /* The commit-graph lane (see src/client/git-graph.ts for the geometry):
@@ -3327,12 +3344,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   --gg-lane-3: var(--dsw-alias-state-error-primary);
   --gg-lane-4: var(--dsw-alias-state-business-primary);
   --gg-lane-5: var(--dsw-alias-label-secondary);
-  /* Ref-classified commit colors (see git-graph.ts refKindOf): local-branch
-     rows and fetch-only (remote-tracking) rows render their node + edges in
-     these instead of the per-column lane palette — green vs blue mirrors the
-     history-row ref chips. */
-  --gg-local: var(--dsw-alias-state-success-primary);
-  --gg-remote: var(--dsw-alias-state-business-primary);
 }
 
 .gitLogGraph svg {
