@@ -3256,6 +3256,26 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   cursor: default;
 }
 
+/* Git loading glyphs actually spin — the AI-draft / fetch / reveal spinners
+   are outline icons, and a frozen static outline reads as a bug rather than
+   as "working" (dsh-row-in has no counterpart for rotation). */
+@keyframes git-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.gitSpin {
+  animation: git-spin 900ms linear infinite;
+}
+
+/* The AI draft button while the agent is working: the spinner gets the brand
+   tint so the in-flight state reads at a glance (the idle iconButton is
+   secondary gray). */
+.gitDrafting {
+  color: var(--dsw-alias-brand-primary);
+}
+
 /* The Side card page's AI commit-draft settings section: stacked
    rows of label + control, mirroring the popup row chrome (l2 hairline,
    12px radius, layer-3 fill) used by the declarative settings rows. */
@@ -3919,6 +3939,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   .paneCard,
   .explorerRow,
   .gitRow,
+  .gitSpin,
   .divider,
   .dividerRow::after,
   .dividerCol::after {

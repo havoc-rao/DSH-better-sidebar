@@ -821,7 +821,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                 disabled={busy || fetching}
                 onClick={() => { void fetchRemote(false) }}
               >
-                {fetching ? <IconLoadingOutline16 size={14} /> : <IconDownloadOutline16 size={14} />}
+                {fetching ? <IconLoadingOutline16 size={14} className={css.gitSpin} /> : <IconDownloadOutline16 size={14} />}
               </button>
             </Tooltip>
             <Tooltip label={t('fetchPrune')} side="bottom" delayMs={500}>
@@ -906,12 +906,12 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
               <Tooltip label={drafting ? t('commitDraftBusy') : t('commitDraftTooltip')} side="top" delayMs={500}>
                 <button
                   type="button"
-                  className={css.iconButton}
+                  className={`${css.iconButton}${drafting ? ` ${css.gitDrafting}` : ''}`}
                   aria-label={drafting ? t('commitDraftBusy') : t('commitDraftTooltip')}
                   disabled={busy || drafting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
                   onClick={() => { void draftCommit() }}
                 >
-                  {drafting ? <IconLoadingOutline16 size={14} /> : <IconSparkle16 size={14} />}
+                  {drafting ? <IconLoadingOutline16 size={14} className={css.gitSpin} /> : <IconSparkle16 size={14} />}
                 </button>
               </Tooltip>
               <Tooltip label={t('commit')} side="top" delayMs={500}>
@@ -1025,7 +1025,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
               >
                 {bottomTips.map(tip => (
                   <span key={tip.name} className={css.gitLogWatchRow}>
-                    {revealing ? <IconLoadingOutline16 size={12} /> : <VscStarFull size={12} />}
+                    {revealing ? <IconLoadingOutline16 size={12} className={css.gitSpin} /> : <VscStarFull size={12} />}
                     <span className={css.gitLogWatchBranch}>{tip.name}</span>
                     <span className={css.gitLogWatchCount}>{t('watchedBehind', { count: tip.behind })}</span>
                   </span>
