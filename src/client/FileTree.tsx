@@ -10,7 +10,13 @@
  * Indent guides: rows paint VSCode-style vertical guide lines under each
  * expanded ancestor (via inline background gradients — see
  * `treeGuideBackground`), with a horizontal corner on expanded directory
- * rows, so the sibling structure reads at a glance.
+ * rows, so the sibling structure reads at a glance. Each ancestor stroke is
+ * also a CLICK TARGET (`guideHitBands`): hovering a row reveals a small
+ * band over every ancestor column, the band under the pointer lights up,
+ * and clicking it collapses that ancestor directory — from any descendant
+ * row, so a folder full of expanded subdirs folds one level (or all the
+ * way up to the workspace root's children) without scrolling to find the
+ * directory rows (the VSCode indent-guide affordance).
  *
  * Row actions: hovering a row reveals an @-reference button on the far
  * right (appends `@<relative path>` to the composer draft), and right-click
@@ -122,6 +128,50 @@ export function baseName(path: string): string {
 function parentOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return at <= 0 ? path : path.slice(0, at)
+}
+
+/** The ancestor directory at tree depth `k` of the row `path` (whose own
+ *  depth is `rowDepth`): the directory that owns the guide stroke drawn at
+ *  column k under this row. Column 0 is the workspace root; callers only
+ *  ever pass k >= 1, so the result is a real (collapsible) directory path. */
+function ancestorAtDepth(path: string, rowDepth: number, k: number): string {
+  let p = path
+  for (let i = rowDepth; i > k; i--) p = parentOf(p)
+  return p
+}
+
+/** Half-width of the clickable band around each guide stroke, in px. The
+ *  stroke itself is 1px; the band (2 × this) is the hover-highlighted,
+ *  clickable "region" under it — wide enough to hit comfortably, narrow
+ *  enough to never touch the row content (the deepest band's outside edge
+ *  stays `INDENT_STEP / 2 + 5.5px` short of the row's padding edge). */
+const GUIDE_HIT_HALF = 5
+
+/** The clickable indent-guide bands on one row: one per expanded-ancestor
+ *  column k in [1, rowDepth), absolutely positioned exactly over that
+ *  ancestor's stroke. Invisible until the row is hovered; the band under
+ *  the pointer lights up (`.explorerGuideHit:hover`) and is the click
+ *  target — clicking collapses the ancestor directory `ancestorAtDepth`
+ *  resolves, i.e. the directory whose vertical line was clicked. Clicks
+ *  stop propagation so the row's own open/toggle action never fires.
+ *  Depth-1 rows (children of the workspace root) get no bands: their only
+ *  stroke is the root's, and the root never collapses. */
+function guideHitBands(path: string, rowDepth: number, onToggle: (path: string) => void): ReactNode[] {
+  const bands: ReactNode[] = []
+  for (let k = 1; k < rowDepth; k++) {
+    bands.push(
+      <span
+        key={k}
+        className={css.explorerGuideHit}
+        style={{ left: k * INDENT_STEP + INDENT_BASE - (GUIDE_HIT_HALF - 0.5) }}
+        onClick={(event) => {
+          event.stopPropagation()
+          onToggle(ancestorAtDepth(path, rowDepth, k))
+        }}
+      />,
+    )
+  }
+  return bands
 }
 
 /** Only OS file drags belong to the upload surface; in-app drags (tab reorder,
@@ -592,6 +642,7 @@ className={clsx(
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
+              {guideHitBands(entry.path, depth, onToggle)}
 {fileIcon({ name: entry.name, isDir: true, expanded: isOpen }) ?? (isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />)}
               <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
@@ -632,6 +683,7 @@ css.explorerRow,
           onDrop={(event) => { handleFileDrop(event, entry.path) }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
+          {guideHitBands(entry.path, depth, onToggle)}
 {fileIcon({ name: entry.name, isDir: false }) ?? <IconCodeOutline16 size={14} />}
           <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
