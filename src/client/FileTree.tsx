@@ -12,11 +12,12 @@
  * `treeGuideBackground`), with a horizontal corner on expanded directory
  * rows, so the sibling structure reads at a glance. Each ancestor stroke is
  * also a CLICK TARGET (`guideHitBands`): hovering a row reveals a small
- * band over every ancestor column, the band under the pointer lights up,
- * and clicking it collapses that ancestor directory — from any descendant
- * row, so a folder full of expanded subdirs folds one level (or all the
- * way up to the workspace root's children) without scrolling to find the
- * directory rows (the VSCode indent-guide affordance).
+ * band over every ancestor column, the band under the pointer lights up
+ * together with the ancestor's WHOLE vertical line across its visible
+ * subtree, and clicking it collapses that ancestor directory — from any
+ * descendant row, so a folder full of expanded subdirs folds one level (or
+ * all the way up to the workspace root's children) without scrolling to
+ * find the directory rows (the VSCode indent-guide affordance).
  *
  * Row actions: hovering a row reveals an @-reference button on the far
  * right (appends `@<relative path>` to the composer draft), and right-click
@@ -69,25 +70,35 @@ const INDENT_BASE = 6
  *  clearly visible but quieter than the row dividers. */
 const GUIDE_STROKE = 'color-mix(in srgb, var(--dsw-alias-border-l1) 70%, transparent)'
 
-/** VSCode-style indent guides for one row, as a CSS background layer set
- *  (zero extra DOM, drops out entirely at depth 0 — the root row): a 1px
- *  vertical stroke under every expanded ancestor at that ancestor's icon
- *  column (the root is always expanded, so depth-1 rows draw one stroke at
- *  x=6), plus — on expanded DIRECTORY rows only — the horizontal corner
- *  segment joining the deepest ancestor stroke to the folder icon (the "├─"
- *  joint). Files and collapsed dirs keep just the verticals, so sibling
- *  structure reads at a glance exactly like the VSCode explorer.
+/** The guide stroke while its column is hovered: the ancestor's WHOLE
+ *  vertical line lights up (every row in its visible subtree paints this
+ *  stroke at the same column — see `highlightCol` below). A strong accent
+ *  so the full "collapse target" line reads at a glance. The band's ::before
+ *  stroke in sidebar.module.css mirrors this look — keep the two in sync. */
+const GUIDE_STROKE_HOVER = 'color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 80%, transparent)'
+
+/** One row's indent-guide background layer set: a 1px vertical stroke under
+ *  every expanded ancestor at that ancestor's icon column (the root is
+ *  always expanded, so depth-1 rows draw one stroke at x=6), plus — on
+ *  expanded DIRECTORY rows only — the horizontal corner segment joining the
+ *  deepest ancestor stroke to the folder icon (the "├─" joint). Files and
+ *  collapsed dirs keep just the verticals, so sibling structure reads at a
+ *  glance exactly like the VSCode explorer.
  *
  *  Neighboring rows decide where strokes stop: a row at depth D draws only
  *  the D ancestor columns, so the first shallower sibling below a subtree
  *  simply has no stroke for it — each guide ends flush at its subtree's last
  *  row, never dangling into empty space.
  *
+ *  `highlightCol`: when a guide band is hovered, the ancestor's whole line
+ *  lights up — every row carrying that column's stroke paints it in the
+ *  hover stroke instead (2px, centered on the 1px guide).
+ *
  *  The style is applied inline as background longhands (never the `background`
  *  shorthand): the shorthand would claim `background-color`, which the
  *  stylesheet's row fill and hover fill own.
  */
-export function treeGuideBackground(depth: number, isOpenDir: boolean): CSSProperties {
+export function treeGuideBackground(depth: number, isOpenDir: boolean, highlightCol?: number): CSSProperties {
   if (depth <= 0) return {}
   const image: string[] = []
   const size: string[] = []
@@ -104,7 +115,12 @@ export function treeGuideBackground(depth: number, isOpenDir: boolean): CSSPrope
   }
   for (let k = 0; k < depth; k++) {
     const x = k * INDENT_STEP + INDENT_BASE
-    image.push(`linear-gradient(90deg, transparent ${x}px, ${GUIDE_STROKE} ${x}px, ${GUIDE_STROKE} ${x + 1}px, transparent ${x + 1}px)`)
+    if (k === highlightCol) {
+      // The hovered column: the full line, 2px and brighter.
+      image.push(`linear-gradient(90deg, transparent ${x - 0.5}px, ${GUIDE_STROKE_HOVER} ${x - 0.5}px, ${GUIDE_STROKE_HOVER} ${x + 1.5}px, transparent ${x + 1.5}px)`)
+    } else {
+      image.push(`linear-gradient(90deg, transparent ${x}px, ${GUIDE_STROKE} ${x}px, ${GUIDE_STROKE} ${x + 1}px, transparent ${x + 1}px)`)
+    }
     size.push('100% 100%')
     position.push('0px 0px')
     repeat.push('no-repeat')
@@ -144,19 +160,35 @@ function ancestorAtDepth(path: string, rowDepth: number, k: number): string {
  *  stroke itself is 1px; the band (2 × this) is the hover-highlighted,
  *  clickable "region" under it — wide enough to hit comfortably, narrow
  *  enough to never touch the row content (the deepest band's outside edge
- *  stays `INDENT_STEP / 2 + 5.5px` short of the row's padding edge). */
-const GUIDE_HIT_HALF = 5
+ *  stays `INDENT_STEP / 2 + 6.5px` short of the row's padding edge). */
+const GUIDE_HIT_HALF = 6
+
+/** The hovered guide band: the row owning it, its column, and the ancestor
+ *  directory that owns the stroke — the whole vertical line of that
+ *  directory lights up across its visible subtree while the band is hovered
+ *  (see `treeGuideBackground`'s highlightCol). */
+interface GuideHover {
+  row: string
+  col: number
+  ancestor: string
+}
 
 /** The clickable indent-guide bands on one row: one per expanded-ancestor
  *  column k in [1, rowDepth), absolutely positioned exactly over that
  *  ancestor's stroke. Invisible until the row is hovered; the band under
- *  the pointer lights up (`.explorerGuideHit:hover`) and is the click
- *  target — clicking collapses the ancestor directory `ancestorAtDepth`
- *  resolves, i.e. the directory whose vertical line was clicked. Clicks
- *  stop propagation so the row's own open/toggle action never fires.
- *  Depth-1 rows (children of the workspace root) get no bands: their only
- *  stroke is the root's, and the root never collapses. */
-function guideHitBands(path: string, rowDepth: number, onToggle: (path: string) => void): ReactNode[] {
+ *  the pointer lights up (`.explorerGuideHit:hover`) and — while hovered —
+ *  the ancestor's whole vertical line lights up across its subtree;
+ *  clicking the band collapses that ancestor directory (the directory
+ *  whose vertical line was clicked). Clicks stop propagation so the row's
+ *  own open/toggle action never fires. Depth-1 rows (children of the
+ *  workspace root) get no bands: their only stroke is the root's, and the
+ *  root never collapses. */
+function guideHitBands(
+  path: string,
+  rowDepth: number,
+  onToggle: (path: string) => void,
+  setHoverGuide: (setter: (prev: GuideHover | null) => GuideHover | null) => void,
+): ReactNode[] {
   const bands: ReactNode[] = []
   for (let k = 1; k < rowDepth; k++) {
     bands.push(
@@ -164,6 +196,14 @@ function guideHitBands(path: string, rowDepth: number, onToggle: (path: string) 
         key={k}
         className={css.explorerGuideHit}
         style={{ left: k * INDENT_STEP + INDENT_BASE - (GUIDE_HIT_HALF - 0.5) }}
+        onMouseEnter={() => {
+          setHoverGuide(prev => prev !== null && prev.row === path && prev.col === k
+            ? prev
+            : { row: path, col: k, ancestor: ancestorAtDepth(path, rowDepth, k) })
+        }}
+        onMouseLeave={() => {
+          setHoverGuide(prev => prev !== null && prev.row === path && prev.col === k ? null : prev)
+        }}
         onClick={(event) => {
           event.stopPropagation()
           onToggle(ancestorAtDepth(path, rowDepth, k))
@@ -314,6 +354,10 @@ export function FileTree(props: {
   const [dropOver, setDropOver] = useState(false)
   /** The directory a drag is hovering right now (null = body, drop to root). */
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  /** The indent-guide band under the pointer (null = none): while set, the
+   *  whole vertical line of the hovered ancestor lights up across its
+   *  visible subtree — the "click collapses this whole directory" signal. */
+  const [hoverGuide, setHoverGuide] = useState<GuideHover | null>(null)
   /**
    * Enter/leave depth under the tree body. dragenter/dragleave fire per
    * element along the drag path (and bubble), so a counter — DSH InputBar's
@@ -614,6 +658,15 @@ export function FileTree(props: {
     const entries = level.entries ?? []
     return entries.map(entry => {
       const status = gitStatusAt(gitStatus, entry.path)
+      // While a guide band is hovered, the ancestor's whole line lights up:
+      // every row whose stroke at the hovered column belongs to the same
+      // ancestor renders that stroke highlighted — the hovered row included
+      // (its band sits on that column), so the full line from the ancestor's
+      // corner down through its visible subtree reads as the collapse target.
+      const highlightCol = hoverGuide !== null && hoverGuide.col < depth
+        && ancestorAtDepth(entry.path, depth, hoverGuide.col) === hoverGuide.ancestor
+        ? hoverGuide.col
+        : undefined
       if (entry.isDir) {
         const isOpen = expanded.includes(entry.path)
         return (
@@ -629,7 +682,7 @@ className={clsx(
               data-dsh-revealed={(revealed ?? []).includes(entry.path) ? 'true' : undefined}
               style={{
                 paddingLeft: depth * INDENT_STEP + INDENT_BASE,
-                ...treeGuideBackground(depth, isOpen),
+                ...treeGuideBackground(depth, isOpen, highlightCol),
               }}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
@@ -642,7 +695,7 @@ className={clsx(
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
-              {guideHitBands(entry.path, depth, onToggle)}
+              {guideHitBands(entry.path, depth, onToggle, setHoverGuide)}
 {fileIcon({ name: entry.name, isDir: true, expanded: isOpen }) ?? (isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />)}
               <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
@@ -669,7 +722,7 @@ css.explorerRow,
           data-dsh-revealed={(revealed ?? []).includes(entry.path) ? 'true' : undefined}
           style={{
             paddingLeft: depth * INDENT_STEP + INDENT_BASE,
-            ...treeGuideBackground(depth, false),
+            ...treeGuideBackground(depth, false, highlightCol),
           }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
           onClick={() => { onOpenFile(entry.path) }}
@@ -683,7 +736,7 @@ css.explorerRow,
           onDrop={(event) => { handleFileDrop(event, entry.path) }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
-          {guideHitBands(entry.path, depth, onToggle)}
+          {guideHitBands(entry.path, depth, onToggle, setHoverGuide)}
 {fileIcon({ name: entry.name, isDir: false }) ?? <IconCodeOutline16 size={14} />}
           <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}

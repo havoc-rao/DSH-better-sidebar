@@ -1441,26 +1441,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    The VSCode indent-guide affordance — invisible at rest, hovering the ROW
    faintly reveals every band (discoverability: the guide columns are
    interactive), the band under the pointer lights up full with a bright
-   2px stroke (::before) and is the click target: clicking collapses the
-   ancestor directory that owns that stroke, from any descendant row.
-   Bands sit left of the row content (the deepest band's outside edge stops
-   INDENT_STEP/2 px short of the padding edge), so they never overlap the
-   icon or name. */
+   2px stroke (::before) while the ancestor's WHOLE vertical line lights up
+   across its subtree (the row background painter, `treeGuideBackground`'s
+   highlightCol) — the full line reads as "click collapses this whole
+   directory". Bands sit left of the row content (the deepest band's
+   outside edge stops INDENT_STEP/2 px short of the padding edge), so they
+   never overlap the icon or name. */
 .explorerGuideHit {
   position: absolute;
-  top: 5px;
-  bottom: 5px;
+  top: 4px;
+  bottom: 4px;
   /* 2 × GUIDE_HIT_HALF (FileTree.tsx) — keep in sync. */
-  width: 10px;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 22%, transparent);
+  width: 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 26%, transparent);
   opacity: 0;
   cursor: pointer;
   transition: opacity 120ms var(--ds-ease-in-out);
 }
 
 /* The bright guide stroke that replaces the faint 1px background line
-   while its band is hovered. */
+   while its band is hovered — the same look as the full-line highlight
+   (GUIDE_STROKE_HOVER, FileTree.tsx) — keep in sync. */
 .explorerGuideHit::before {
   content: '';
   position: absolute;
@@ -1469,13 +1471,13 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   left: 50%;
   width: 2px;
   border-radius: 1px;
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 65%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 80%, transparent);
   opacity: 0;
   transition: opacity 120ms var(--ds-ease-in-out);
 }
 
 .explorerRow:hover > .explorerGuideHit {
-  opacity: 0.45;
+  opacity: 0.5;
 }
 
 .explorerRow:hover > .explorerGuideHit:hover {
