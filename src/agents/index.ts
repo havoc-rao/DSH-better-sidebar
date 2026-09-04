@@ -6,9 +6,11 @@ export {
   COMMIT_TEMPLATES as COMMIT_AGENT_TEMPLATES,
   STAGED_DIFF_CAP,
   WORKTREE_STATUS_CAP,
+  LANGUAGE_SAMPLE,
   buildCommitContext,
   catalogOf,
   composeCommitDraftPrompt,
+  dominantLanguageOf,
   draftCommitMessage,
   probeLlmConnection,
   resolveCommitTemplate,
@@ -17,5 +19,6 @@ export type {
   CommitDraftContext,
   CommitDraftPrompt,
   CommitDraftSource,
+  CommitLanguage,
   CommitTemplate,
 } from './git-commit-agent.ts'

@@ -12,6 +12,7 @@ import {
   COMMIT_TEMPLATES,
   buildCommitContext,
   composeCommitDraftPrompt,
+  dominantLanguageOf,
   draftCommitMessage,
   probeLlmConnection,
   resolveCommitTemplate,
@@ -83,11 +84,31 @@ describe('commit template resolution', () => {
   })
 })
 
+describe('dominant commit language detection', () => {
+  it('returns the strict-majority script family of the history', () => {
+    expect(dominantLanguageOf([])).toBeUndefined()
+    expect(dominantLanguageOf(['feat: add panel', 'refactor: cleanup', 'fix: typo'])).toBe('en')
+    expect(dominantLanguageOf(['feat: 添加面板', 'fix: 修正布局', 'docs: 更新说明', 'chore: 清理'])).toBe('zh')
+    // Kana wins over Han: Japanese is Han + kana, Han alone reads as Chinese.
+    expect(dominantLanguageOf(['feat: 日本語の対応を追加', 'fix: 表示崩れを修正'])).toBe('ja')
+    expect(dominantLanguageOf(['feat: 한국어 지원', 'fix: 오타 수정'])).toBe('ko')
+    expect(dominantLanguageOf(['feat: исправить баг', 'fix: правка'])).toBe('ru')
+  })
+
+  it('returns undefined for ties, weak pluralities and unclassifiable subjects', () => {
+    expect(dominantLanguageOf(['feat: a', 'feat: 中'])).toBeUndefined()
+    expect(dominantLanguageOf(['feat: a', 'feat: 中', 'テスト追加'])).toBeUndefined()
+    expect(dominantLanguageOf(['🚀', '🎉'])).toBeUndefined()
+    expect(dominantLanguageOf(['', '   '])).toBeUndefined()
+  })
+})
+
 describe('commit draft prompt composition', () => {
   const context: CommitDraftContext = {
     source: 'staged',
     branch: 'feat/sidebar',
     refs: ['feat: add git panel', 'fix: correct layout width'],
+    language: undefined,
     status: 'src/a.ts\nsrc/b.ts',
     stat: ' 2 files changed, 12 insertions(+), 3 deletions(-)',
     patch: 'diff --git a/src/a.ts b/src/a.ts\n+new line\n-old line',
@@ -109,6 +130,19 @@ describe('commit draft prompt composition', () => {
     expect(prompt.user).toContain('Use Conventional Commits.')
     expect(prompt.user).toContain('- feat: add git panel')
     expect(prompt.user).toContain('- fix: correct layout width')
+  })
+
+  it('carries the detected dominant language as an explicit instruction', () => {
+    const zh = composeCommitDraftPrompt({ ...context, language: 'zh' }, 'plain rules')
+    expect(zh.system).toContain('Chinese (Simplified)')
+    expect(zh.system).toContain('past commits')
+    const en = composeCommitDraftPrompt({ ...context, language: 'en' }, 'plain rules')
+    expect(en.system).toContain('English')
+    // No confident majority: the model follows a clearly dominant history or
+    // falls back to concise English (the default that always applied before).
+    const ambiguous = composeCommitDraftPrompt({ ...context, language: undefined }, 'plain rules')
+    expect(ambiguous.system).toContain('clearly dominant')
+    expect(ambiguous.system).toContain('concise English')
   })
 
   it('marks the patch as truncated at the cap and falls back without refs', () => {
@@ -152,6 +186,8 @@ describe('commit context collection', () => {
       const staged = await buildCommitContext(cwd, 0)
       expect(staged).toMatchObject({ source: 'staged', fileCount: 1, insertions: 1, deletions: 0 })
       expect(staged?.patch).toContain('+export const answer = 42')
+      // No past commits exist yet — nothing to infer a language from.
+      expect(staged?.language).toBeUndefined()
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
@@ -181,6 +217,38 @@ describe('commit context collection', () => {
       expect(context?.stat).toContain('1 insertion(+), 1 deletion(-)')
       expect(context?.patch).toContain('-export const answer = 41')
       expect(context?.patch).toContain('+export const answer = 42')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('auto-adapts to the dominant language of the user\'s past commits', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'better-sidebar-commit-agent-lang-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd })
+      const commit = (subject: string): void => {
+        execFileSync('git', [
+          '-c', 'user.name=Commit Agent Test',
+          '-c', 'user.email=commit-agent@example.test',
+          'commit', '-qm', subject,
+        ], { cwd })
+      }
+      writeFileSync(join(cwd, 'tracked.ts'), 'export const answer = 1\n')
+      execFileSync('git', ['add', 'tracked.ts'], { cwd })
+      commit('feat: 初始化项目导航')
+      writeFileSync(join(cwd, 'tracked.ts'), 'export const answer = 2\n')
+      execFileSync('git', ['add', 'tracked.ts'], { cwd })
+      commit('fix: 修正头部布局偏移')
+      writeFileSync(join(cwd, 'tracked.ts'), 'export const answer = 3\n')
+
+      // historyRefs = 0 disables the style-refs import, but the wider language
+      // sample still sees both Chinese subjects → the prompt gets the zh line.
+      const context = await buildCommitContext(cwd, 0)
+      expect(context?.refs).toEqual([])
+      expect(context?.language).toBe('zh')
+      const prompt = composeCommitDraftPrompt(context!, 'plain rules')
+      expect(prompt.system).toContain('Chinese (Simplified)')
+      expect(prompt.user).toContain('(no history yet)')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
