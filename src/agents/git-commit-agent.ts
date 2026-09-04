@@ -28,7 +28,7 @@ import type { LlmCallConfig, LlmRuntime, ReasoningEffortId } from '@deepseek-ai/
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
-import type { Context } from '../context-types.ts'
+import type { Context, SidebarSessionTitleService } from '../context-types.ts'
 import * as git from '../git.ts'
 import { SidebarError } from '../wire.ts'
 import {
@@ -387,6 +387,12 @@ export async function draftCommitMessage(
   }
 
   const parentHeader = ctx.sessions.get(parentSessionId)?.header as { delegationDepth?: number } | undefined
+  // The 'Side: ' prefix marks this one-shot helper as non-topology: the
+  // Subagent (任务管理) page filters catalog rows by it, and pinning the SAME
+  // label as the durable session title below keeps the sessions-list surface
+  // (auto-open trigger + row fallbacks) on the same page — without the pin
+  // the row's displayTitle is the cwd basename and the client misreads the
+  // helper as a genuine new subagent, auto-opening the Subagent page.
   const label = 'Side: Git commit draft'
   const descriptor = snapshotSubagentDescriptor({
     mode: 'one-shot',
@@ -438,6 +444,20 @@ export async function draftCommitMessage(
       },
     })
     clearTimeout(creationTimer)
+    // Pin the helper label as the durable session title (same pattern as Side
+    // Chat threads). The client's subagent auto-open and topology rows filter
+    // on the 'Side: ' displayTitle prefix, so the title frame makes this
+    // one-shot helper invisible to them instead of tripping the Subagent
+    // (任务管理) page. The auto-open debounce (AUTO_OPEN_DEBOUNCE_MS) absorbs
+    // the frame in which the row still shows its fallback title.
+    const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined
+    if (titles !== undefined) {
+      try {
+        titles.rename(handle.agent.session, label)
+      } catch {
+        // Keep the auto-generated title; the draft still works.
+      }
+    }
     handle.agent.followup(createUserMessage({
       content: [{ type: 'text', text: prompt.user }],
       source: { kind: 'user' },

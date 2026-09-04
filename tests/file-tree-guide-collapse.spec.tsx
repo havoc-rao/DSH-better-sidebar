@@ -138,10 +138,11 @@ describe('FileTree clickable indent guides', () => {
     // Depth-3 rows: two bands (columns 1 and 2).
     expect(bandsOf(rowByName(harness.container, 'Button.tsx'))).toHaveLength(2)
     // Inline left edges come from the same geometry constants as the guide
-    // painter: k * INDENT_STEP + INDENT_BASE − (half-band − 0.5) = k·22 + 0.5.
+    // painter: k·INDENT_STEP + INDENT_BASE − (half-band − 0.5) = k·22 − 1.5,
+    // keeping the 16px band centered on the 1px stroke (center = k·22 + 6.5).
     const [col1, col2] = bandsOf(rowByName(harness.container, 'Button.tsx'))
-    expect(col1!.style.left).toBe('22.5px')
-    expect(col2!.style.left).toBe('44.5px')
+    expect(col1!.style.left).toBe('20.5px')
+    expect(col2!.style.left).toBe('42.5px')
   })
 
   it('hovering a band lights up the ancestor\'s whole vertical line across its subtree', async () => {

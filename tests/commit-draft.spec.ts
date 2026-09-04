@@ -296,10 +296,12 @@ describe('commit agent-loop runner', () => {
       } as unknown as CordisContext)
       return { agent, dispose }
     })
+    const rename = vi.fn(() => ({ title: '', eventSeq: 1 }))
     const ctx = {
       get: (name: string) => name === 'agents' ? { create }
         : name === 'llm' ? { resolveModelInfo }
-          : undefined,
+          : name === 'sessionTitle' ? { rename }
+            : undefined,
       sessions: { get: () => ({ header: { delegationDepth: 2 } }) },
     } as unknown as Context
 
@@ -318,6 +320,11 @@ describe('commit agent-loop runner', () => {
       delegationDepth: 3,
     })
     expect(options?.agentOptions).toEqual({ provider: 'provider', model: 'model' })
+    // The helper pins its 'Side: ' label as the durable session title, so the
+    // client's list-row filter (isSideThreadSummary) never misreads the
+    // one-shot helper as a genuine new subagent and auto-opens the Subagent
+    // (任务管理) page. Regression for GitView's AI-draft jump.
+    expect(rename).toHaveBeenCalledWith(agent.session, 'Side: Git commit draft')
     expect(resolveModelInfo).toHaveBeenCalledWith('provider', 'model', expect.any(AbortSignal))
     expect(section).toHaveBeenCalledWith(expect.objectContaining({ text: 'exact system', complete: true }))
     expect(suppressRuntimeContext).toHaveBeenCalledOnce()

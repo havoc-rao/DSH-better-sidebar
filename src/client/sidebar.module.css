@@ -1452,8 +1452,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   top: 4px;
   bottom: 4px;
   /* 2 × GUIDE_HIT_HALF (FileTree.tsx) — keep in sync. */
-  width: 12px;
-  border-radius: 6px;
+  width: 16px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 26%, transparent);
   opacity: 0;
   cursor: pointer;

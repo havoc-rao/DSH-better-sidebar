@@ -158,10 +158,12 @@ function ancestorAtDepth(path: string, rowDepth: number, k: number): string {
 
 /** Half-width of the clickable band around each guide stroke, in px. The
  *  stroke itself is 1px; the band (2 × this) is the hover-highlighted,
- *  clickable "region" under it — wide enough to hit comfortably, narrow
- *  enough to never touch the row content (the deepest band's outside edge
- *  stays `INDENT_STEP / 2 + 6.5px` short of the row's padding edge). */
-const GUIDE_HIT_HALF = 6
+ *  clickable "region" under it — wide enough to hit comfortably (16px per
+ *  band), narrow enough to never touch the row content (the deepest band's
+ *  outside edge stays 13.5px = INDENT_STEP − HALF − 0.5 short of the row's
+ *  content start) and to keep a clean 6px gap between neighbor columns
+ *  (INDENT_STEP − 2 × HALF, so hovering one band never brushes the next). */
+const GUIDE_HIT_HALF = 8
 
 /** The hovered guide band: the row owning it, its column, and the ancestor
  *  directory that owns the stroke — the whole vertical line of that
