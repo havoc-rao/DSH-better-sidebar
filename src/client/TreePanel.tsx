@@ -28,6 +28,7 @@ import { IconFolderOpen16, IconRefreshOutline16, Tooltip } from '@deepseek-ai/ds
 import { api, type GitStatusResult } from './api.ts'
 import { FileTree, gitKindCss } from './FileTree.tsx'
 import { fileTreeCapabilityOn, useFileTreeRoots, useFileTreeSource } from './file-tree-source.ts'
+import { useFileTreeSection } from './file-tree-section.ts'
 import type { Context } from '../context-types.ts'
 import { buildGitStatusMap, subscribeGitStatusChanged } from './git-status.ts'
 import { IconUploadOutline16 } from './icons.tsx'
@@ -113,6 +114,14 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
   const gitOn = localMode || fileTreeCapabilityOn(fileSource, 'git')
   const searchOn = localMode
     || (fileSource.capabilities.search === true && fileSource.source.search !== undefined)
+
+  // ── Upper-module slot (v0.19.0+): the FIRST section whose `match`
+  //    accepts this session renders in an independent region ABOVE the
+  //    local tree; no match → undefined, and the tree renders exactly as
+  //    before (no wrapper, no extra DOM). Live: re-resolves on registry
+  //    ticks (a plugin activating/deactivating shows/hides the section
+  //    immediately) and on session/cwd changes.
+  const section = useFileTreeSection(ctx, sessionId, cwd)
 
   // ── Git status decorations (VSCode-style) ───────────────────────────────
   // Fetched per panel on mount / session change / the refresh button, plus
@@ -320,6 +329,39 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
 
   const busy = upload !== null
 
+  // The LOCAL tree (the lower module — every panel-level capability above
+  // keeps serving only this surface). Hoisted so the no-match path renders
+  // it DIRECTLY (byte-for-byte the pre-slot DOM); a matched section wraps
+  // it in the dual-module stack instead.
+  const localTree = (
+    <FileTree
+      sessionId={sessionId}
+      cwd={cwd}
+      expanded={expanded}
+      /* Multi-root (v0.18.0+): the panel's own resolution — the tree's
+         row-level gates (per-root capability faces) must stay in step
+         with the panel-level gates above. Passed down so `roots` is
+         consulted exactly once per registry change. */
+      roots={resolvedRoots}
+      ctx={ctx}
+      revealed={revealed}
+      onToggle={onToggle}
+      onOpenFile={onOpenFile}
+      onOpenFileNewTab={onOpenFileNewTab}
+      onOpenFileSide={onOpenFileSide}
+      openWithTargets={openWithTargets}
+      openWithPinned={openWithPinned}
+      openWithSsh={openWithSsh}
+      onOpenWith={onOpenWith}
+      onToggleOpenWithPin={onToggleOpenWithPin}
+      onReferenceFile={onReferenceFile}
+      refreshTick={refreshTick}
+      gitStatus={overlay.map}
+      onUploadRequest={startUpload}
+      busy={busy}
+    />
+  )
+
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
       <div className={css.editorTreeSearch}>
@@ -402,32 +444,28 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
         <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
       )}
       {needle === '' ? (
-        <FileTree
-          sessionId={sessionId}
-          cwd={cwd}
-          expanded={expanded}
-          /* Multi-root (v0.18.0+): the panel's own resolution — the tree's
-             row-level gates (per-root capability faces) must stay in step
-             with the panel-level gates above. Passed down so `roots` is
-             consulted exactly once per registry change. */
-          roots={resolvedRoots}
-ctx={ctx}
-          revealed={revealed}
-          onToggle={onToggle}
-          onOpenFile={onOpenFile}
-          onOpenFileNewTab={onOpenFileNewTab}
-          onOpenFileSide={onOpenFileSide}
-          openWithTargets={openWithTargets}
-          openWithPinned={openWithPinned}
-          openWithSsh={openWithSsh}
-          onOpenWith={onOpenWith}
-          onToggleOpenWithPin={onToggleOpenWithPin}
-          onReferenceFile={onReferenceFile}
-          refreshTick={refreshTick}
-gitStatus={overlay.map}
-          onUploadRequest={startUpload}
-          busy={busy}
-        />
+        /* Dual-module (v0.19.0+): with a matched section the tree area is a
+           vertical stack — the injected upper module (independent scroll
+           region, content-driven height capped at half the panel, separated
+           from the tree by a hairline) over the LOCAL tree, which keeps its
+           own scroll context and every existing capability. The wrapper
+           exists ONLY on the matched path; sectionless renders the local
+           tree directly (byte-for-byte the pre-slot DOM). While the local
+           search box is active the results list REPLACES the whole tree
+           area (both modules), so the section renders exclusively in tree
+           mode. The section is only ever the match winner's —
+           `section.render` receives the session scope; better-sidebar
+           applies no panel capability to it. */
+        section === undefined
+          ? localTree
+          : (
+            <div className={css.explorerDual}>
+              <div className={css.explorerSection} data-dsh-file-tree-section={section.id}>
+                {section.render({ sessionId, cwd, ctx: ctx! })}
+              </div>
+              {localTree}
+            </div>
+          )
       ) : (
         <div className={css.explorerBody}>
           {error !== null && <div className={clsx(css.editorSearchHint, css.editorError)}>{error}</div>}

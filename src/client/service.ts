@@ -41,6 +41,7 @@ import {
 } from './icon-theme.ts'
 import type { CommandDescriptor, CommandRunPayload } from './commands.ts'
 import type { FileTreeProviderDescriptor } from './file-tree-source.ts'
+import type { FileTreeSectionDescriptor } from './file-tree-section.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -72,6 +73,7 @@ export type {
   FileTreeProviderDescriptor, FileTreeProviderRoot, FileTreeSearchResult,
   ResolvedFileTreeRoot, ResolvedFileTreeSource,
 } from './file-tree-source.ts'
+export type { FileTreeSectionDescriptor, FileTreeSectionScope } from './file-tree-section.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -492,6 +494,22 @@ export interface BetterSidebarService {
   /** The registered file-tree providers (registration order). */
   getFileTreeProviders(): readonly FileTreeProviderDescriptor[]
   /**
+   * Register a file-tree SECTION (v0.19.0+): the UPPER-MODULE slot of the
+   * Files panel's tree area. A section is an independent component region
+   * rendered ABOVE the local tree (the lower module keeps every existing
+   * capability and the v0.17/v0.18 provider/multi-root logic untouched);
+   * the section's component owns its whole surface — toolbar, remote tree
+   * rows, context menus, opening remote files — and better-sidebar applies
+   * no panel-level capability (search / upload / git stay local-tree-only).
+   * Resolution is registration-order, FIRST match wins; a throwing `match`
+   * skips that section. No match → the upper region is not rendered (the
+   * exact pre-slot render path). A duplicate id throws; the disposer
+   * unregisters (HMR-safe through `ctx.effect`). See `file-tree-section.ts`.
+   */
+  registerFileTreeSection(descriptor: FileTreeSectionDescriptor): () => void
+  /** The registered file-tree sections (registration order). */
+  getFileTreeSections(): readonly FileTreeSectionDescriptor[]
+  /**
    * Open a tab (used by external tabs and the + menu). `title` overrides
    * the descriptor's title when given (the editor tab shows the file name);
    * when the descriptor provides `createTab` it mints the tab itself and
@@ -551,8 +569,8 @@ export interface BetterSidebarService {
   /**
    * Monotonic capability list (v0.12.0+): 'badge' | 'tabLifecycle' |
    * 'updateTab' | 'openFile' | 'targetedOpen' | 'stateSubscription' |
-   * 'tabMeta' | 'pluginSettings'. Features are never removed — consumers
-   * gate new API usage on membership.
+   * 'tabMeta' | 'pluginSettings' | 'fileTreeSection'. Features are never
+   * removed — consumers gate new API usage on membership.
    */
   readonly features: readonly string[]
   /**
@@ -620,7 +638,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.18.0'
+export const SIDEBAR_SERVICE_VERSION = '0.19.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -643,6 +661,10 @@ export const SIDEBAR_SERVICE_VERSION = '0.18.0'
  *   getFileTreeProviders — the explorer's data-source injection slot
  *   (v0.18.0+ adds provider `roots` — multi-root sessions: local root +
  *   per-provider remote roots)
+ * - 'fileTreeSection' (v0.19.0): registerFileTreeSection /
+ *   getFileTreeSections — the UPPER-module slot of the Files panel's tree
+ *   area: an independently-scrolling component region rendered above the
+ *   local tree, owned entirely by the injecting plugin
  * - 'floatWindows' (v0.16.0): tabs float as free windows — openTab's dedupe/
  *   id focus targets RAISE the floating window (never duplicate the tab or
  *   expand panels), closeTab on a floating tab closes it with its window.
@@ -662,6 +684,7 @@ export const SIDEBAR_FEATURES = [
   'iconTheme',
   'commands',
   'fileTreeSource',
+  'fileTreeSection',
   'floatWindows',
 ] as const
 
@@ -696,6 +719,7 @@ export function createBetterSidebarService(
   const iconThemeIndexes = new Map<string, IconThemeIndex>()
   const commands = new Map<string, CommandDescriptor>()
   const fileTreeProviders = new Map<string, FileTreeProviderDescriptor>()
+  const fileTreeSections = new Map<string, FileTreeSectionDescriptor>()
   const listeners = new Set<() => void>()
   // A private runtime when none is shared (standalone/tests): the registry
   // semantics (dup ids, disposal, listing) work the same either way, only
@@ -831,6 +855,22 @@ export function createBetterSidebarService(
   }
 
   const getFileTreeProviders = (): readonly FileTreeProviderDescriptor[] => Array.from(fileTreeProviders.values())
+
+  const registerFileTreeSection = (descriptor: FileTreeSectionDescriptor): (() => void) => {
+    if (fileTreeSections.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] file tree section "${descriptor.id}" already registered`)
+    }
+    fileTreeSections.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (fileTreeSections.get(descriptor.id) === descriptor) {
+        fileTreeSections.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  const getFileTreeSections = (): readonly FileTreeSectionDescriptor[] => Array.from(fileTreeSections.values())
 
   const executeCommand = (id: string, payload?: CommandRunPayload): boolean => {
     const descriptor = commands.get(id)
@@ -1187,6 +1227,8 @@ export function createBetterSidebarService(
     executeCommand,
     registerFileTreeProvider,
     getFileTreeProviders,
+    registerFileTreeSection,
+    getFileTreeSections,
     openTab,
     closeTab,
     subscribe,
