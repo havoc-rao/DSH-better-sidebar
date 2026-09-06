@@ -131,6 +131,8 @@ export const de: Record<string, string> = {
   changes: 'Änderungen',
   staged: 'Gestaged',
   unstaged: 'Nicht gestaged',
+  flatView: 'Flache Liste',
+  treeView: 'Baumansicht',
   cancel: 'Abbrechen',
   diffEmpty: 'Keine Textunterschiede',
   diffLoadError: 'Diff konnte nicht geladen werden',

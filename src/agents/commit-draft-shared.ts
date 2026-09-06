@@ -77,6 +77,20 @@ export function watchedBranchesOf(blob: Record<string, unknown> | undefined): st
   return names
 }
 
+/**
+ * The changed-file list layout of the Git panel: 'tree' groups entries
+ * under collapsible directory rows (subtree counts, indent guides;
+ * the default), 'flat' keeps one row per file with its full path.
+ * Lives in the `git` descriptor's pluginSettings blob, same as the
+ * watched-branches and commit-draft rows.
+ */
+export const GIT_FILE_LIST_KEY = 'fileList'
+
+/** The list layout of one `git` pluginSettings blob ('flat' or the 'tree' default). */
+export function gitFileListOf(blob: Record<string, unknown> | undefined): 'tree' | 'flat' {
+  return blob?.[GIT_FILE_LIST_KEY] === 'flat' ? 'flat' : 'tree'
+}
+
 /** PluginSettings keys under the `git` descriptor (the gear panel rows). */
 export const GIT_COMMIT_SETTING_KEYS = {
   provider: 'commitLlmProvider',

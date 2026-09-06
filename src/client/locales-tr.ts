@@ -145,6 +145,8 @@ export const tr: Record<string, string> = {
   changes: 'Değişiklikler',
   staged: 'Sahnelendi',
   unstaged: 'Sahnelenmedi',
+  flatView: 'Düz liste',
+  treeView: 'Ağaç görünümü',
   cancel: 'İptal',
   diffEmpty: 'Metin değişikliği yok',
   diffLoadError: 'Diff yüklenemedi',

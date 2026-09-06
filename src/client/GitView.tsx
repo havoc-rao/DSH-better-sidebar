@@ -9,18 +9,20 @@
  * focus. While visible it polls lightweight porcelain state so model-authored
  * file changes appear without a manual refresh.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCheckOutline16, IconChevronDownOutline14, IconCodeOutline16, IconCopyOutline16,
-  IconDownloadOutline16, IconLoadingOutline16, IconRefreshOutline16,
+  IconDownloadOutline16, IconFolderClose16, IconFolderOpen16, IconLoadingOutline16, IconRefreshOutline16,
   IconSparkle16, IconTrashOutline16, Menu, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { VscStarFull } from 'react-icons/vsc'
+import { VscChevronRight, VscListFlat, VscListTree, VscStarFull } from 'react-icons/vsc'
 import type { GitBranchStatus, GitBranchTip, GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api, SidebarApiError } from './api.ts'
 import { notifyGitStatusChanged, subscribeGitStatusChanged } from './git-status.ts'
 import { GitGraphSvg } from './GitGraph.tsx'
 import { computeGraphRows } from './git-graph.ts'
+import { INDENT_BASE, INDENT_STEP, treeGuideBackground } from './FileTree.tsx'
+import { buildGitTree, type GitTreeNode } from './git-tree.ts'
 import { isWithinWorkspace, relativeTo } from './paths.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../prefs-shared.ts'
 import { resolveSidebarPath } from './produced-files.ts'
@@ -29,6 +31,7 @@ import { updatePluginSettings } from './plugin-settings.ts'
 import type { SidebarStore, SidebarTab } from './state.ts'
 import {
   GIT_COMMIT_SETTING_KEYS,
+  GIT_FILE_LIST_KEY,
   WATCHED_BRANCHES_KEY,
   WATCHED_BRANCHES_MAX,
   commitCustomTemplateOf,
@@ -36,6 +39,7 @@ import {
   commitLlmModelOf,
   commitLlmProviderOf,
   commitTemplateOf,
+  gitFileListOf,
   watchedBranchesOf,
 } from '../agents/commit-draft-shared.ts'
 import css from './sidebar.module.css'
@@ -198,6 +202,36 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
   const [tips, setTips] = useState<GitBranchTip[]>([])
   /** A bottom-bubble reveal (page down to a watched tip) is in flight. */
   const [revealing, setRevealing] = useState(false)
+
+  /** The changed-file list layout: 'tree' groups entries under collapsible
+   *  directory rows with subtree counts (the default), 'flat' renders one
+   *  row per file with its full path. The toggle sits in the panel header.
+   *  Persisted in the git tab's pluginSettings blob; the local state is the
+   *  optimistic mirror, re-synced whenever the persisted blob changes. */
+  const [fileList, setFileList] = useState<'tree' | 'flat'>(() => gitFileListOf(prefs.pluginSettings['git']))
+  useEffect(() => {
+    setFileList(next => {
+      const synced = gitFileListOf(prefs.pluginSettings['git'])
+      return next === synced ? next : synced
+    })
+  }, [prefs])
+  /** The tree layout's expansion set (directory path → open). One set across
+   *  both sections (a directory keyed by the same path expands in each) and
+   *  ephemeral — collapsed again on remount, like the file tree's defaults. */
+  const [expandedDirs, setExpandedDirs] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleDir = (path: string): void => {
+    setExpandedDirs(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+  const toggleFileList = (): void => {
+    const next = fileList === 'tree' ? 'flat' : 'tree'
+    setFileList(next)
+    if (store !== undefined) updatePluginSettings(store, 'git', blob => ({ ...blob, [GIT_FILE_LIST_KEY]: next }))
+  }
 
   /** The open file-row context menu (cursor position for the portaled Menu). */
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
@@ -698,6 +732,10 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
   const stagedEntries = (status?.entries ?? []).filter(isStagedEntry)
   const unstagedEntries = (status?.entries ?? []).filter(isUnstagedEntry)
 
+  /** The changed-file trees of the current status (one per section). */
+  const stagedTree = useMemo(() => buildGitTree(stagedEntries), [stagedEntries])
+  const unstagedTree = useMemo(() => buildGitTree(unstagedEntries), [unstagedEntries])
+
   /** The lane layout over the accumulated log pages (recomputed on append). */
   const graph = useMemo(() => computeGraphRows(logEntries), [logEntries])
 
@@ -737,9 +775,13 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
     }
   })()
 
-  const renderEntry = (entry: GitStatusEntry, staged: boolean): ReactNode => {
+  const renderEntry = (entry: GitStatusEntry, staged: boolean, depth = 0, name?: string): ReactNode => {
     return (
-      <div key={`${staged ? 's' : 'u'}:${entry.path}`} className={css.gitRow}>
+      <div
+        key={`${staged ? 's' : 'u'}:${entry.path}`}
+        className={css.gitRow}
+        style={depth > 0 ? treeRowStyle(depth, false) : undefined}
+      >
         <button
           type="button"
           className={css.gitRowMain}
@@ -748,7 +790,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
           onContextMenu={(event) => { openFileMenu(event, entry, staged) }}
         >
           <span className={css.gitBadge}>{badgeOf(entry)}</span>
-          <span className={css.gitName}>{entry.path}</span>
+          <span className={css.gitName}>{name ?? entry.path}</span>
         </button>
         <button
           type="button"
@@ -762,6 +804,49 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
         </button>
       </div>
     )
+  }
+
+  /** One changed-file row in the TREE layout: the FileTree's indent geometry
+   *  (22px per depth + 6px inset) and the same guide-line painter — vertical
+   *  strokes under every expanded ancestor, a corner joint on expanded
+   *  directory rows — so the grouping reads exactly like the explorer. */
+  const treeRowStyle = (depth: number, isOpenDir: boolean): CSSProperties => ({
+    paddingLeft: INDENT_BASE + INDENT_STEP * depth,
+    paddingRight: 8,
+    ...treeGuideBackground(depth, isOpenDir),
+  })
+
+  /** One section's changed-file TREE: collapsible directory rows (chevron +
+   *  folder + name + subtree file count) followed by their file rows. The
+   *  root is implicit (the repository root, always expanded): its DIRECTORY
+   *  children become the collapsible rows, its direct files plain rows. */
+  const renderTreeNodes = (nodes: GitTreeNode[], staged: boolean): ReactNode[] => {
+    const rows: ReactNode[] = []
+    for (const node of nodes) {
+      if (node.kind === 'dir') {
+        const open = expandedDirs.has(node.path)
+        rows.push(
+          <div key={`${staged ? 's' : 'u'}:d:${node.path}`} className={css.gitRow} style={treeRowStyle(node.depth, open)}>
+            <button
+              type="button"
+              className={css.gitRowMain}
+              title={node.path}
+              aria-expanded={open}
+              onClick={() => { toggleDir(node.path) }}
+            >
+              <VscChevronRight size={12} className={`${css.gitTreeChevron}${open ? ` ${css.gitTreeChevronOpen}` : ''}`} />
+              {open ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
+              <span className={css.gitName}>{node.name}</span>
+              <span className={css.gitTreeDirCount}>{node.count}</span>
+            </button>
+          </div>,
+        )
+        if (open) rows.push(...renderTreeNodes(node.children, staged))
+      } else {
+        rows.push(renderEntry(node.entry, staged, node.depth, node.name))
+      }
+    }
+    return rows
   }
 
   return (
@@ -851,6 +936,18 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
             <IconRefreshOutline16 size={14} />
           </button>
         </Tooltip>
+        {/* The list/tree layout switch: pinned at the panel's top-right
+            corner (the rightmost header control). */}
+        <Tooltip label={fileList === 'tree' ? t('flatView') : t('treeView')} side="bottom" delayMs={500}>
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={fileList === 'tree' ? t('flatView') : t('treeView')}
+            onClick={toggleFileList}
+          >
+            {fileList === 'tree' ? <VscListFlat size={14} /> : <VscListTree size={14} />}
+          </button>
+        </Tooltip>
       </div>
 
       {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
@@ -874,7 +971,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
               )}
             </div>
             {stagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
-            {stagedEntries.map(entry => renderEntry(entry, true))}
+            {fileList === 'tree' ? renderTreeNodes(stagedTree, true) : stagedEntries.map(entry => renderEntry(entry, true))}
           </div>
           <div className={`${css.gitSection}${unstagedEntries.length > 0 ? ` ${css.gitChangesScrolled}` : ''}`}>
             <div className={css.gitSectionHeader}>
@@ -886,7 +983,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
               )}
             </div>
             {unstagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
-            {unstagedEntries.map(entry => renderEntry(entry, false))}
+            {fileList === 'tree' ? renderTreeNodes(unstagedTree, false) : unstagedEntries.map(entry => renderEntry(entry, false))}
           </div>
 
           <div className={css.gitCommit}>

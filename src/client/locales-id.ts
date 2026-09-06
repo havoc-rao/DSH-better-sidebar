@@ -143,6 +143,8 @@ export const id: Record<string, string> = {
   changes: 'Perubahan',
   staged: 'Staged',
   unstaged: 'Unstaged',
+  flatView: 'Tampilan daftar',
+  treeView: 'Tampilan pohon',
   cancel: 'Batal',
   diffEmpty: 'Tidak ada perubahan teks',
   diffLoadError: 'Gagal memuat diff',

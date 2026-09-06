@@ -3175,6 +3175,27 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
+/* The changed-file TREE layout (grouped by directory): the director rows'
+   chevron rotates when the directory is expanded, the subtree file count
+   sits at the row's right edge (its name flexes, so the count never wraps). */
+.gitTreeChevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 150ms var(--ds-ease-in-out);
+}
+
+.gitTreeChevronOpen {
+  transform: rotate(90deg);
+}
+
+.gitTreeDirCount {
+  flex: none;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .gitEmpty {
   padding: 4px 12px 8px;
   font: var(--dsw-font-xxs-12);

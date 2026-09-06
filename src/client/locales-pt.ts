@@ -128,6 +128,8 @@ export const pt: Record<string, string> = {
   changes: 'Alterações',
   staged: 'Preparadas',
   unstaged: 'Não preparadas',
+  flatView: 'Visualização em lista',
+  treeView: 'Visualização em árvore',
   cancel: 'Cancelar',
   diffEmpty: 'Sem alterações de texto',
   diffLoadError: 'Falha ao carregar o diff',

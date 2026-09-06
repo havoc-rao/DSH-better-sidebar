@@ -146,6 +146,8 @@ export const ar: Record<string, string> = {
   changes: 'التغييرات',
   staged: 'مُدرج',
   unstaged: 'غير مُدرج',
+  flatView: 'عرض مسطح',
+  treeView: 'عرض شجري',
   cancel: 'إلغاء',
   diffEmpty: 'لا تغييرات نصية',
   diffLoadError: 'فشل تحميل الفرق',

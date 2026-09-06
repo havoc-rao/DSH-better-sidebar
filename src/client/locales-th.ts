@@ -145,6 +145,8 @@ export const th: Record<string, string> = {
   changes: 'การเปลี่ยนแปลง',
   staged: 'Staged',
   unstaged: 'Unstaged',
+  flatView: 'มุมมองรายการ',
+  treeView: 'มุมมองต้นไม้',
   cancel: 'ยกเลิก',
   diffEmpty: 'ไม่มีการเปลี่ยนแปลงข้อความ',
   diffLoadError: 'โหลด diff ล้มเหลว',

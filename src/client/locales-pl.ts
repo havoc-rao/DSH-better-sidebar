@@ -147,6 +147,8 @@ export const pl: Record<string, string> = {
   changes: 'Zmiany',
   staged: 'W indeksie',
   unstaged: 'Poza indeksem',
+  flatView: 'Widok płaski',
+  treeView: 'Widok drzewa',
   cancel: 'Anuluj',
   diffEmpty: 'Brak zmian tekstowych',
   diffLoadError: 'Ładowanie diff nie powiodło się',

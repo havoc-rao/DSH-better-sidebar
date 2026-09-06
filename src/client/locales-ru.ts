@@ -141,6 +141,8 @@ export const ru: Record<string, string> = {
   changes: 'Изменения',
   staged: 'В индексе',
   unstaged: 'Не в индексе',
+  flatView: 'Плоский список',
+  treeView: 'Дерево',
   cancel: 'Отмена',
   diffEmpty: 'Нет текстовых отличий',
   diffLoadError: 'Не удалось загрузить diff',

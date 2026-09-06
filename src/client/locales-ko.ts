@@ -137,6 +137,8 @@ export const ko: Record<string, string> = {
   changes: '변경 사항',
   staged: '스테이징됨',
   unstaged: '스테이징 안 됨',
+  flatView: '목록 보기',
+  treeView: '트리 보기',
   cancel: '취소',
   diffEmpty: '텍스트 차이 없음',
   diffLoadError: '차이(diff) 불러오기 실패',

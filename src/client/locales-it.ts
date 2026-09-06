@@ -136,6 +136,8 @@ export const it: Record<string, string> = {
   changes: 'Modifiche',
   staged: 'In stage',
   unstaged: 'Non in stage',
+  flatView: 'Vista elenco',
+  treeView: 'Vista ad albero',
   cancel: 'Annulla',
   diffEmpty: 'Nessuna modifica testuale',
   diffLoadError: 'Caricamento del diff non riuscito',

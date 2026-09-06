@@ -145,6 +145,8 @@ export const vi: Record<string, string> = {
   changes: 'Thay đổi',
   staged: 'Đã stage',
   unstaged: 'Chưa stage',
+  flatView: 'Chế độ danh sách',
+  treeView: 'Chế độ cây',
   cancel: 'Hủy',
   diffEmpty: 'Không có khác biệt văn bản',
   diffLoadError: 'Tải diff thất bại',

@@ -138,6 +138,8 @@ export const fr: Record<string, string> = {
   changes: 'Modifications',
   staged: 'En scène',
   unstaged: 'Hors scène',
+  flatView: 'Vue en liste',
+  treeView: 'Vue en arborescence',
   cancel: 'Annuler',
   diffEmpty: 'Aucune différence textuelle',
   diffLoadError: 'Échec du chargement de la différence',

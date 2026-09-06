@@ -145,6 +145,8 @@ export const ja: Record<string, string> = {
   changes: '変更',
   staged: 'ステージ済み',
   unstaged: '未ステージ',
+  flatView: 'リスト表示',
+  treeView: 'ツリー表示',
   cancel: 'キャンセル',
   diffEmpty: 'テキスト差分はありません',
   diffLoadError: '差分の読み込みに失敗',

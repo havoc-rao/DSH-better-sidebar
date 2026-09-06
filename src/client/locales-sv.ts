@@ -128,6 +128,8 @@ export const sv: Record<string, string> = {
   changes: 'Ändringar',
   staged: 'Köade',
   unstaged: 'Avköade',
+  flatView: 'Listvy',
+  treeView: 'Trädvy',
   cancel: 'Avbryt',
   diffEmpty: 'Inga textändringar',
   diffLoadError: 'Kunde inte ladda diff',

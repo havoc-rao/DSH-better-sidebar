@@ -160,6 +160,8 @@ export const zhTW: Record<string, string> = {
   changes: '變更',
   staged: '已暫存',
   unstaged: '未暫存',
+  flatView: '列表檢視',
+  treeView: '樹狀檢視',
   cancel: '取消',
   diffEmpty: '沒有文字差異',
   diffLoadError: '載入差異失敗',

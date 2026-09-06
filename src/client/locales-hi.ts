@@ -145,6 +145,8 @@ export const hi: Record<string, string> = {
   changes: 'बदलाव',
   staged: 'स्टेज किया',
   unstaged: 'अनस्टेज',
+  flatView: 'फ्लैट दृश्य',
+  treeView: 'ट्री दृश्य',
   cancel: 'रद्द करें',
   diffEmpty: 'कोई पाठ बदलाव नहीं',
   diffLoadError: 'डिफ लोड विफल',

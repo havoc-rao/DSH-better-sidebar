@@ -143,6 +143,8 @@ export const nl: Record<string, string> = {
   changes: 'Wijzigingen',
   staged: 'Gestaged',
   unstaged: 'Niet gestaged',
+  flatView: 'Lijstweergave',
+  treeView: 'Boomweergave',
   cancel: 'Annuleren',
   diffEmpty: 'Geen tekstwijzigingen',
   diffLoadError: 'Diff laden mislukt',

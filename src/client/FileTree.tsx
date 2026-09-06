@@ -87,9 +87,11 @@ interface LevelData {
 
 /** The tree's indent geometry: one 22px column per depth level plus the
  *  fixed 6px left inset — this is the row padding formula (`depth * 22 + 6`),
- *  hoisted so the guide painter and the paddings can never drift apart. */
-const INDENT_STEP = 22
-const INDENT_BASE = 6
+ *  hoisted so the guide painter and the paddings can never drift apart.
+ *  Exported so sibling tree surfaces (the Git panel's changed-file tree)
+ *  reuse the exact same geometry and guide painter. */
+export const INDENT_STEP = 22
+export const INDENT_BASE = 6
 
 /** The indent-guide stroke: the app's border token slightly faded (the
  *  repo's color-mix pattern), the visual weight of VSCode's guide lines —
