@@ -161,6 +161,41 @@ function click(target: Element): void {
 describe('file-tree section contract (v0.19.0+)', () => {
   it('SIDEBAR_FEATURES advertises the new capability', () => {
     expect(SIDEBAR_FEATURES).toContain('fileTreeSection')
+    expect(SIDEBAR_FEATURES).toContain('fileTreeSectionSource')
+  })
+
+  it('registerFileTreeSection validates EXACTLY ONE of render (v0.19) / source (v0.20)', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    const source = { createSource: () => ({ list: async () => ({ entries: [] }) }) }
+    // The v0.19 render form still registers…
+    const disposeRender = service.registerFileTreeSection({ id: 'r', match: () => true, render: () => null })
+    // …and the v0.20 source form does too (no render at all).
+    const disposeSource = service.registerFileTreeSection({ id: 's', match: () => true, source })
+    expect(service.getFileTreeSections().map(section => section.id)).toEqual(['r', 's'])
+    // BOTH forms → a clear throw.
+    expect(() => service.registerFileTreeSection({ id: 'both', match: () => true, render: () => null, source }))
+      .toThrow(/must provide exactly one/)
+    // NEITHER form → a clear throw.
+    expect(() => service.registerFileTreeSection({ id: 'none', match: () => true }))
+      .toThrow(/must provide exactly one/)
+    disposeRender()
+    disposeSource()
+  })
+
+  it('resolveFileTreeSection handles source-form sections without touching their data (pure match)', () => {
+    const sections: FileTreeSectionDescriptor[] = [
+      { id: 'plain', match: () => false, render: () => null },
+      {
+        id: 'src-form',
+        match: () => true,
+        source: {
+          createSource: () => ({ list: async () => ({ entries: [] }) }),
+          roots: () => [{ id: 'root', label: 'Remote', dir: '/remote/proj' }],
+        },
+      },
+    ]
+    expect(resolveFileTreeSection(sections, 's1', '/r')?.id).toBe('src-form')
+    expect(resolveFileTreeSection(sections, 's2', '/r')?.id).toBe('src-form') // 'plain' declined
   })
 
   it('resolveFileTreeSection: first match wins, throwing matches are skipped, no match is undefined', () => {
@@ -286,6 +321,36 @@ describe('TreePanel upper-module slot', () => {
     expect(sectionContainer(harness.container, 'local-only')).toBeNull()
     expect(harness.container.textContent).not.toContain('LOCAL')
     expect(harness.container.querySelector('[class*="explorerDual"]')).toBeNull()
+  })
+
+  it('a SOURCE-form section (v0.20.0) renders the HOST FileTree bound to the plugin data source in the upper module', async () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const sourceList = vi.fn(async () => ({
+      entries: [{ name: 'remote.txt', path: '/remote/proj/remote.txt', isDir: false }],
+    }))
+    service.registerFileTreeSection({
+      id: 'remote-src',
+      match: () => true,
+      source: {
+        createSource: () => ({ list: sourceList }),
+        roots: () => [{ id: 'root', label: 'Remote Proj', dir: '/remote/proj' }],
+        capabilities: { open: true },
+      },
+    })
+    harness = await mountPanel({ ctx: { betterSidebar: service } as unknown as Context })
+    await act(async () => { await Promise.resolve() })
+    const section = sectionContainer(harness.container, 'remote-src')
+    expect(section).not.toBeNull()
+    // The upper module hosts the section's own tree (host-drawn, source-fed).
+    expect(section!.querySelector('[data-dsh-file-tree-section-source="remote-src"]')).not.toBeNull()
+    expect(sourceList).toHaveBeenCalledWith('/remote/proj')
+    expect(section!.textContent).toContain('remote.txt')
+    // The root row shows the remote root's basename.
+    expect(section!.textContent).toContain('proj')
+    // The LOWER module keeps the local tree through the local host route.
+    expect(rowNamed(harness.container, 'local.txt')).toBeDefined()
+    expect(fsTreeMock).toHaveBeenCalled()
   })
 
   it('live registration: a section registered while the panel is mounted appears immediately; disposing it disappears', async () => {

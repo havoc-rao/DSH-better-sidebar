@@ -25,6 +25,7 @@ export const id: Record<string, string> = {
   editorExplorerMergedDesc: 'Berkas beralih di tempat di jendela yang sama; jendela baru memulai dengan pohon terbuka',
   editorExplorerSplit: 'Terpisah',
   editorExplorerSplitDesc: 'Jendela tanpa path adalah explorer mandiri (pohon saja); setiap berkas membuka jendelanya sendiri (pohon terpasang, tertutup secara default)',
+  fileTreeSplitter: 'Seret untuk menyesuaikan pembagian atas/bawah; klik dua kali untuk mengatur ulang',
   editorTreeToggle: 'Panel pohon berkas',
   editorPathPlaceholder: 'Path berkas (relatif terhadap direktori sesi atau absolut), Enter untuk membuka',
   editorSearchPlaceholder: 'Cari berkas berdasarkan nama…',

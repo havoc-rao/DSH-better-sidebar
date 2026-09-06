@@ -22,13 +22,16 @@
  * drop over the file window uploads here and never reaches DSH's chat
  * intake.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from 'react'
 import clsx from 'clsx'
 import { IconFolderOpen16, IconRefreshOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, type GitStatusResult } from './api.ts'
 import { FileTree, gitKindCss } from './FileTree.tsx'
 import { fileTreeCapabilityOn, useFileTreeRoots, useFileTreeSource } from './file-tree-source.ts'
-import { useFileTreeSection } from './file-tree-section.ts'
+import { useFileTreeSection, type FileTreeSectionDescriptor, type FileTreeSectionScope } from './file-tree-section.ts'
+import { SectionSourceTree } from './section-source-tree.tsx'
+import { persistFileTreeSplitRatio, readFileTreeSplitRatio } from './file-tree-splitter.ts'
+import { FileTreeSplitter } from './FileTreeSplitter.tsx'
 import type { Context } from '../context-types.ts'
 import { buildGitStatusMap, subscribeGitStatusChanged } from './git-status.ts'
 import { IconUploadOutline16 } from './icons.tsx'
@@ -444,27 +447,27 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
         <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
       )}
       {needle === '' ? (
-        /* Dual-module (v0.19.0+): with a matched section the tree area is a
-           vertical stack — the injected upper module (independent scroll
-           region, content-driven height capped at half the panel, separated
-           from the tree by a hairline) over the LOCAL tree, which keeps its
-           own scroll context and every existing capability. The wrapper
-           exists ONLY on the matched path; sectionless renders the local
-           tree directly (byte-for-byte the pre-slot DOM). While the local
-           search box is active the results list REPLACES the whole tree
-           area (both modules), so the section renders exclusively in tree
-           mode. The section is only ever the match winner's —
-           `section.render` receives the session scope; better-sidebar
-           applies no panel capability to it. */
+        /* Dual-module (v0.19.0+, splitter v0.19.1+): with a matched section
+           the tree area is a vertical stack — the injected upper module
+           (independent scroll region, height driven by the SPLITTER's ratio,
+           default 4:1 upper:lower, clamped so neither module can vanish)
+           over the draggable divider strip (FileTreeSplitter.tsx) over the
+           LOCAL tree, which keeps its own scroll context and every existing
+           capability. The wrapper exists ONLY on the matched path;
+           sectionless renders the local tree directly (byte-for-byte the
+           pre-slot DOM). While the local search box is active the results
+           list REPLACES the whole tree area (both modules), so the section
+           renders exclusively in tree mode. The section is only ever the
+           match winner's — `section.render` receives the session scope;
+           better-sidebar applies no panel capability to it. */
         section === undefined
           ? localTree
           : (
-            <div className={css.explorerDual}>
-              <div className={css.explorerSection} data-dsh-file-tree-section={section.id}>
-                {section.render({ sessionId, cwd, ctx: ctx! })}
-              </div>
-              {localTree}
-            </div>
+            <ExplorerDual
+              section={section}
+              scope={{ sessionId, cwd, ctx: ctx! }}
+              localTree={localTree}
+            />
           )
       ) : (
         <div className={css.explorerBody}>
@@ -524,6 +527,50 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
           cancelling={cancelling}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * The dual-module stack (v0.19.0+, splitter v0.19.1+): the matched section
+ * (upper) over the local tree (lower), joined by the draggable splitter
+ * strip. Owns the split ratio: lazy-read from localStorage ONCE at mount —
+ * this component mounts only on the matched path, so a sectionless panel
+ * never touches storage — live-updated while dragging, persisted on the
+ * drag's release. The section's flex-basis IS the ratio (default 80%);
+ * the splitter's CSS min-heights guard the stored-ratio edge cases (a
+ * persisted value from a taller container), and the tree keeps its own
+ * flex:1 + scroll context below.
+ *
+ * The upper module renders by SECTION FORM (v0.20.0): the v0.19 `render`
+ * (plugin-drawn surface) or, when the descriptor carries `source`, the
+ * host's own FileTree bound to the plugin's data source
+ * (`SectionSourceTree`).
+ */
+function ExplorerDual(props: {
+  section: FileTreeSectionDescriptor
+  scope: FileTreeSectionScope
+  localTree: ReactElement
+}) {
+  const { section, scope, localTree } = props
+  /** The upper module's share of the stack (0–1); the splitter mutates it
+   *  live during a drag. */
+  const [splitRatio, setSplitRatio] = useState(() => readFileTreeSplitRatio())
+  const commitRatio = useCallback((next: number): void => {
+    setSplitRatio(next)
+    persistFileTreeSplitRatio(next)
+  }, [])
+  return (
+    <div className={css.explorerDual}>
+      <div
+        className={css.explorerSection}
+        style={{ flex: `0 1 ${splitRatio * 100}%` }}
+        data-dsh-file-tree-section={section.id}
+      >
+        {section.source !== undefined ? <SectionSourceTree section={section} scope={scope} /> : section.render?.(scope)}
+      </div>
+      <FileTreeSplitter ratio={splitRatio} onRatio={setSplitRatio} onCommit={commitRatio} />
+      {localTree}
     </div>
   )
 }

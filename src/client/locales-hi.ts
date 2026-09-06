@@ -27,6 +27,7 @@ export const hi: Record<string, string> = {
   editorExplorerMergedDesc: 'फ़ाइलें उसी विंडो में स्थान पर स्विच होती हैं; नई विंडो फ़ाइल ट्री खुला हुआ शुरू होती है',
   editorExplorerSplit: 'अलग',
   editorExplorerSplitDesc: 'पथ-रहित विंडो एक्सप्लोरर है (केवल ट्री); प्रत्येक फ़ाइल अपनी नई विंडो खोलती है (ट्री साथ, डिफ़ॉल्ट रूप से संक्षिप्त)',
+  fileTreeSplitter: 'ऊपर/नीचे विभाजन समायोजित करने के लिए खींचें; रीसेट करने के लिए डबल-क्लिक करें',
   editorTreeToggle: 'फ़ाइल ट्री पैनल',
   editorPathPlaceholder: 'फ़ाइल पथ दर्ज करें (सत्र डायरेक्टरी के सापेक्ष या निरपेक्ष), Enter से खोलें',
   editorSearchPlaceholder: 'फ़ाइल नाम से खोजें…',

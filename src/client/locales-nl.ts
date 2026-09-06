@@ -25,6 +25,7 @@ export const nl: Record<string, string> = {
   editorExplorerMergedDesc: 'Bestanden wisselen in-place in hetzelfde venster; nieuwe vensters beginnen met de boom open',
   editorExplorerSplit: 'Afzonderlijk',
   editorExplorerSplitDesc: 'Vensters zonder pad zijn de zelfstandige verkenner (alleen bestandsboom); elk bestand opent een eigen venster (boom gedockt, standaard gesloten)',
+  fileTreeSplitter: 'Sleep om de boven/onder-verdeling aan te passen; dubbelklik om te resetten',
   editorTreeToggle: 'Bestandsboompaneel',
   editorPathPlaceholder: 'Voer een bestandspad in (relatief aan de sessiemap of absoluut), Enter om te openen',
   editorSearchPlaceholder: 'Zoek op bestandsnaam…',

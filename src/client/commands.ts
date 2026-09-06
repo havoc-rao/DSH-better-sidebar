@@ -34,6 +34,11 @@ export interface CommandMenuContext {
   isRoot?: boolean
   /** Tab menus: the triggering tab instance. */
   tab?: SidebarTab
+  /** Row menus (v0.20.0): the session the triggering row belongs to —
+   *  filled by the FILE-TREE row menus (a remote session's rows carry
+   *  their owner session so commands can scope their payload); tab menus
+   *  do not fill it. */
+  sessionId?: string
 }
 
 /** The payload handed to `CommandDescriptor.run`. */

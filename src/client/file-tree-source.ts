@@ -59,6 +59,10 @@ import type { FsEntry } from './api.ts'
  * git-specific or inode-like fields in the row shape — git decorations
  * ride the separate `gitStatus` overlay, which providers gate through
  * `capabilities.git` instead.
+ *
+ * v0.20.0: `meta` — optional stat detail (file size / mtime) rendered as
+ * a dimmed row suffix when present. The local host's fs.tree never sets
+ * it, so local rows stay byte-for-byte identical.
  */
 export interface FileTreeEntry {
   name: string
@@ -67,6 +71,13 @@ export interface FileTreeEntry {
   hidden?: boolean
   isSymlink?: boolean
   broken?: boolean
+  /** Optional stat detail (v0.20.0): a dimmed size/mtime suffix. */
+  meta?: {
+    /** Byte size (files); absent → no size shown. */
+    size?: number
+    /** Last-modified epoch millis; absent → no time shown. */
+    mtime?: number
+  }
 }
 
 /** One directory listing (or its failure), mirror of the host fs.tree shape. */
@@ -97,6 +108,11 @@ export interface FileTreeProviderCapabilities {
   openWith?: boolean
   /** The global file-name search box (provider `search()`). Default off. */
   search?: boolean
+  /** File-row clicks / Enter / Space open through the provider's `open(path)`
+   *  (v0.20.0) — the provider owns the open action for paths under its
+   *  data. Default off: without it the tree runs the caller's original
+   *  `onOpenFile(path)` path, byte for byte. */
+  open?: boolean
 }
 
 /**
@@ -110,6 +126,11 @@ export interface FileTreeDataSource {
   /** Global file-name search; only consulted when `capabilities.search`
    *  is declared — a provider declaring search must provide this. */
   search?(query: string, signal?: AbortSignal): Promise<FileTreeSearchResult>
+  /** Open one remote path (v0.20.0): the open DELEGATE for file rows when
+   *  `capabilities.open` is declared — the tree calls `open(path)` instead
+   *  of the caller's `onOpenFile(path)`. Without the declared capability or
+   *  this function the tree keeps its original `onOpenFile` path. */
+  open?(path: string): void
 }
 
 /**
@@ -282,7 +303,9 @@ export async function resolveFileTreeRoots(
 }
 
 /** Fill a provider listing's optional cosmetic fields with safe defaults,
- *  yielding the exact local host row shape the tree renders. */
+ *  yielding the exact local host row shape the tree renders. `entry.meta`
+ *  (v0.20.0) is passed through as-is (absent → absent), so provider stat
+ *  detail can ride the same row the local fs.tree shape produces. */
 export function normalizeFileTreeEntries(entries: readonly FileTreeEntry[]): FsEntry[] {
   return entries.map(entry => ({
     name: entry.name,
@@ -291,6 +314,7 @@ export function normalizeFileTreeEntries(entries: readonly FileTreeEntry[]): FsE
     hidden: entry.hidden === true,
     isSymlink: entry.isSymlink === true,
     broken: entry.broken === true,
+    ...(entry.meta !== undefined ? { meta: entry.meta } : {}),
   }))
 }
 

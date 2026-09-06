@@ -32,6 +32,15 @@ export interface FsEntry {
   isSymlink: boolean
   /** For symlinks: the target is missing or unreadable (stat failed). */
   broken: boolean
+  /** Optional stat detail (v0.20.0): a dimmed size/mtime row suffix. The
+   *  host's local fs.tree never sets it, so local rows render unchanged;
+   *  provider-fed rows (normalizeFileTreeEntries) may carry it. */
+  meta?: {
+    /** Byte size (files); absent → no size shown. */
+    size?: number
+    /** Last-modified epoch millis; absent → no time shown. */
+    mtime?: number
+  }
 }
 
 /** Git status entry (host git shape). */

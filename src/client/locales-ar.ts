@@ -28,6 +28,7 @@ export const ar: Record<string, string> = {
   editorExplorerMergedDesc: 'الملفات تتبدّل في مكانها داخل نفس النافذة؛ النوافذ الجديدة تبدأ بالشجرة مفتوحة',
   editorExplorerSplit: 'منفصل',
   editorExplorerSplitDesc: 'النوافذ بلا مسار هي المستكشف المستقل (شجرة فقط)؛ كل ملف يفتح نافذته الخاصة (الشجرة مرساة، مغلقة افتراضياً)',
+  fileTreeSplitter: 'اسحب لضبط تقسيم المنطقتين العلوية والسفلية، وانقر نقرًا مزدوجًا لإعادة التعيين',
   editorTreeToggle: 'لوحة شجرة الملفات',
   editorPathPlaceholder: 'مسار الملف (نسبي لدليل الجلسة أو مطلق)، Enter للفتح',
   editorSearchPlaceholder: 'البحث في الملفات بالاسم…',

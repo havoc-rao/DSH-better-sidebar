@@ -42,6 +42,7 @@ export const zhTW: Record<string, string> = {
   editorExplorerMergedDesc: '檔案在同一視窗內原地切換；新視窗預設展開檔案樹',
   editorExplorerSplit: '獨立',
   editorExplorerSplitDesc: '無路徑視窗即檔案總管（僅檔案樹）；檔案各自新開視窗（帶檔案樹，預設收起）',
+  fileTreeSplitter: '拖曳調整上下區域比例，雙擊重設',
   editorTreeToggle: '檔案樹面板',
   editorPathPlaceholder: '輸入檔案路徑（相對工作階段目錄或絕對路徑），Enter 開啟',
   editorSearchPlaceholder: '按檔案名稱搜尋…',

@@ -1425,12 +1425,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 4px 8px 8px;
 }
 
-/* The dual-module (upper section + local tree) stack (v0.19.0+): a flex
-   column that exists ONLY when a matched section renders; sectionless
-   panels keep the pre-slot DOM (explorerBody as the panel's direct child).
-   Each module keeps its own scroll context: the section scrolls inside
-   itself (content-driven height, capped below), the tree keeps
-   explorerBody's own rules untouched. */
+/* The dual-module (upper section + local tree) stack (v0.19.0+, splitter
+   v0.19.1+): a flex column that exists ONLY when a matched section renders;
+   sectionless panels keep the pre-slot DOM (explorerBody as the panel's
+   direct child). Each module keeps its own scroll context: the section
+   scrolls inside itself (its height is the splitter's ratio), the tree
+   keeps explorerBody's own rules untouched. */
 .explorerDual {
   flex: 1;
   min-height: 0;
@@ -1439,18 +1439,73 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 /* The UPPER module: the injecting plugin's own surface (toolbar / remote
-   tree / menus), zero better-sidebar capability applied. Height follows
-   the injected content, capped at half the panel in definite-height hosts
-   (an indefinite host resolves the percentage to auto — content height);
-   overflow scrolls INSIDE the section so the local tree below always has
-   its own viewport. The hairline is the visual separator between the two
-   modules. */
+   tree / menus), zero better-sidebar capability applied. Its flex-basis
+   comes from the splitter (inline `flex: 0 1 <ratio>%`, default 80% — the
+   4:1 requirement); definite hosts resolve it against the stack's height,
+   indefinite hosts fall back to content height (percentage basis →
+   auto). The floor below keeps a stored ratio from another container size
+   from shrinking the section out of view; overflow scrolls INSIDE the
+   section so the local tree below always has its own viewport. The
+   hairline separator lives on the splitter strip now (v0.19.1+). */
 .explorerSection {
   flex: none;
-  min-height: 0;
-  max-height: 50%;
+  /* ≥160px: the splitter's pixel clamp, mirrored here as a layout-time
+     invariant (the tree's own floor rides .explorerDual .explorerBody). */
+  min-height: 160px;
   overflow-y: auto;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* The draggable divider between the two modules (v0.19.1+): a 5px hit
+   strip whose visual is a 1px hairline centered in it (the split-pane
+   divider look — a divider line, not a thick band). Row-resize cursor on
+   the whole strip; hover/drag thickens and accents the hairline. */
+.explorerSplitter {
+  position: relative;
+  flex: none;
+  height: 5px;
+  cursor: row-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.explorerSplitter::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  background: var(--dsw-alias-border-l2);
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    height var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.explorerSplitter:hover::after,
+.explorerSplitterActive::after {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  height: 3px;
+}
+
+/* The LOWER module's floor inside the dual stack: the splitter's pixel
+   clamp already guarantees ≥120px in pointer space; this makes it a layout
+   invariant even for a ratio persisted on a different container size (the
+   tree may still shrink — overflow scrolls inside it either way). */
+.explorerDual .explorerBody {
+  min-height: 120px;
+}
+
+/* The SOURCE-form section's tree container (v0.20.0): a full-height flex
+   column inside the upper module — FileTree's own explorerBody flexes to
+   the remaining height and scrolls inside it, the same container
+   structure the LOCAL tree uses inside the panel. Height: 100% resolves
+   against the splitter's definite flex-basis on definite hosts and
+   degrades to content height on indefinite ones. */
+.sectionSourceTree {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 /* One tree row: the app's session-row cell (34px, radius 8, inset, hover
@@ -1570,6 +1625,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: none;
   color: var(--dsw-alias-label-tertiary);
   transition: transform 120ms var(--ds-ease-in-out);
+}
+
+/* The dimmed stat suffix on provider-fed rows (v0.20.0): small type in
+   tertiary ink, flex-none (never pushes the trailing row actions), with
+   the same ellipsis guards as the row name. Local rows never carry meta,
+   so this class never appears on the local render path. */
+.explorerMeta {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .explorerHidden {
@@ -1699,6 +1768,21 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
   cursor: default;
+}
+
+/* The in-flight level row (v0.20.0): a spinning glyph + dimmed label, so a
+   slow subfolder listing reads as working instead of a frozen gap (the
+   expand commit lands the level placeholder before the listing resolves).
+   The glyph spins via the shared git-spin keyframes above. */
+.explorerLoadingSpin {
+  flex: none;
+  animation: git-spin 900ms linear infinite;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.explorerLoading {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /* Mount fade for tree rows (the app's session-row reveal). */

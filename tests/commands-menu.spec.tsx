@@ -113,7 +113,7 @@ describe('FileTree command menu contributions', () => {
 
       await pick(items, 'Format file')
       expect(payloads).toHaveLength(1)
-      expect(payloads[0]).toEqual({ where: 'file-row', path: '/repo/a.ts', isDir: false, isRoot: false })
+      expect(payloads[0]).toEqual({ where: 'file-row', path: '/repo/a.ts', isDir: false, isRoot: false, sessionId: 's' })
     } finally {
       unmount()
       document.querySelectorAll('[role="menuitem"]').forEach(node => node.remove())
@@ -143,12 +143,12 @@ describe('FileTree command menu contributions', () => {
       // A plain dir row gets where='dir-row'.
       const dirItems = await openRowMenu(container, 'src')
       expect(await pick(dirItems, 'Treeify')).toBeDefined()
-      expect(payloads.slice(-1)[0]).toEqual({ where: 'dir-row', path: '/repo/src', isDir: true, isRoot: false })
+      expect(payloads.slice(-1)[0]).toEqual({ where: 'dir-row', path: '/repo/src', isDir: true, isRoot: false, sessionId: 's' })
 
       // The ROOT row (the cwd itself) gets where='root-row'.
       const rootItems = await openRowMenu(container, 'repo')
       expect(await pick(rootItems, 'Treeify')).toBeDefined()
-      expect(payloads.slice(-1)[0]).toEqual({ where: 'root-row', path: '/repo', isDir: true, isRoot: true })
+      expect(payloads.slice(-1)[0]).toEqual({ where: 'root-row', path: '/repo', isDir: true, isRoot: true, sessionId: 's' })
     } finally {
       unmount()
       document.querySelectorAll('[role="menuitem"]').forEach(node => node.remove())

@@ -25,7 +25,7 @@ if (g.localStorage === undefined) {
 import { createBetterSidebarService, SIDEBAR_FEATURES } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 import {
-  commandMenuRows, type CommandDescriptor, type CommandRunPayload,
+  commandMenuRows, type CommandDescriptor, type CommandMenuContext, type CommandRunPayload,
 } from '../src/client/commands.ts'
 
 const svgData = 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='
@@ -127,6 +127,18 @@ describe('commandMenuRows (pure builder)', () => {
     ]
     expect(commandMenuRows(commands, 'file-row', {}).map(r => r.id)).toEqual(['throwing'])
     expect(commandMenuRows(commands, 'file-row', { isDir: true }).map(r => r.id)).toEqual(['throwing', 'gated'])
+  })
+
+  it('hands the FULL context (incl. sessionId, v0.20.0) to when() verbatim', () => {
+    const seen: CommandMenuContext[] = []
+    const commands = [command({
+      id: 'scoped',
+      menus: [{ where: 'file-row', when: (menu) => { seen.push(menu); return true } }],
+    })]
+    const context: CommandMenuContext = { path: '/r/a.ts', isDir: false, isRoot: false, sessionId: 's9' }
+    expect(commandMenuRows(commands, 'file-row', context).map(r => r.id)).toEqual(['scoped'])
+    // The predicate saw the complete context object, sessionId included.
+    expect(seen).toEqual([context])
   })
 
   it('an svg asset is passed through untouched (the icons stay plugin-side)', () => {

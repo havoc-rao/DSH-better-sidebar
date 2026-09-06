@@ -20,6 +20,7 @@ export const fr: Record<string, string> = {
   editorExplorerMergedDesc: 'Les fichiers se remplacent dans la même fenêtre ; les nouvelles fenêtres ouvrent l’arborescence par défaut',
   editorExplorerSplit: 'Séparé',
   editorExplorerSplitDesc: 'Les fenêtres sans chemin sont l’explorateur autonome (arborescence uniquement) ; chaque fichier ouvre sa propre fenêtre (avec arborescence, réduite par défaut)',
+  fileTreeSplitter: 'Faites glisser pour ajuster la repartition haut/bas ; double-clic pour reinitialiser',
   editorTreeToggle: 'Panneau d’arborescence',
   editorPathPlaceholder: 'Saisissez un chemin de fichier (relatif au répertoire de session ou absolu), Entrée pour ouvrir',
   editorSearchPlaceholder: 'Rechercher par nom de fichier…',

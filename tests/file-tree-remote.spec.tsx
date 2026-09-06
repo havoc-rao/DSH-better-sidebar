@@ -11,7 +11,7 @@ import { beforeAll, afterEach, beforeEach, describe, expect, it, vi, type Mock }
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
-import { FileTree } from '../src/client/FileTree.tsx'
+import { FileTree, fileMetaTime, humanFileSize, metaSuffixCramped, metaSuffixFits } from '../src/client/FileTree.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import type { Context } from '../src/context-types.ts'
@@ -183,6 +183,52 @@ describe('FileTree with a registered data source provider', () => {
     expect(rowNamed(harness.container, 'a.txt')).toBeDefined()
   })
 
+  describe('level loading indicator (v0.20.0)', () => {
+    it('an expansion whose listing is in flight renders a loading row; the listing lands → children replace it', async () => {
+      let release!: (level: FileTreeListResult) => void
+      const subListing = new Promise<FileTreeListResult>(resolve => { release = resolve })
+      harness = await mountTree({
+        listEntries: [
+          { name: 'sub', path: '/r/sub', isDir: true },
+          { name: 'a.txt', path: '/r/a.txt', isDir: false },
+        ],
+      })
+      harness.list.mockImplementation((dir: string) =>
+        dir === '/r/sub'
+          ? subListing
+          : Promise.resolve({ entries: [{ name: 'sub', path: '/r/sub', isDir: true }] }),
+      )
+      await harness.rerender({ expanded: ['/r/sub'] })
+      // The spinning glyph (its class also contains "explorerLoading" — the
+      // label span matches too, so the SVG is the precise target).
+      const spinner = harness.container.querySelector('[class*="explorerLoadingSpin"]')
+      expect(spinner).not.toBeNull()
+      // The status row carrying it shows the localized loading label.
+      const loading = spinner?.closest('[role="status"]')
+      expect(loading).not.toBeNull()
+      expect(loading?.textContent).toContain('Loading')
+      await act(async () => {
+        release({ entries: [{ name: 'x.txt', path: '/r/sub/x.txt', isDir: false }] })
+        await subListing
+      })
+      expect(harness.container.querySelector('[class*="explorerLoading"]')).toBeNull()
+      expect(rowNamed(harness.container, 'x.txt')).toBeDefined()
+    })
+
+    it('a loaded EMPTY level renders nothing — only in-flight listings show the loading row', async () => {
+      harness = await mountTree({
+        listEntries: [{ name: 'empty', path: '/r/empty', isDir: true }],
+      })
+      harness.list.mockImplementation((dir: string) =>
+        dir === '/r/empty'
+          ? Promise.resolve({ entries: [] })
+          : Promise.resolve({ entries: [{ name: 'empty', path: '/r/empty', isDir: true }] }),
+      )
+      await harness.rerender({ expanded: ['/r/empty'] })
+      expect(harness.container.querySelector('[class*="explorerLoading"]')).toBeNull()
+    })
+  })
+
   it('provider rows carry the optional cosmetic fields with safe defaults', async () => {
     harness = await mountTree({
       listEntries: [
@@ -322,6 +368,175 @@ describe('FileTree with a registered data source provider', () => {
       const badge = harness.container.querySelector('[class*="explorerGitBadge"]')
       expect(badge).not.toBeNull()
       expect(badge!.textContent).toBe('M')
+    })
+  })
+
+  describe('file-row open delegation (v0.20.0)', () => {
+    it('click AND Enter/Space delegate to source.open when capabilities.open is declared', async () => {
+      const open = vi.fn()
+      const list = vi.fn(async () => ({ entries: [{ name: 'a.txt', path: '/r/a.txt', isDir: false }] }))
+      const store = createSidebarStore()
+      const service = createBetterSidebarService(store)
+      service.registerFileTreeProvider({
+        id: 'remote',
+        match: () => true,
+        createSource: () => ({ list, open }),
+        capabilities: { open: true },
+      })
+      harness = await mountTree({ ctx: { betterSidebar: service } as unknown as Context })
+      const opens: string[] = []
+      await harness.rerender({ onOpenFile: (path: string) => { opens.push(path) } })
+      // Click: the provider owns the open.
+      act(() => { rowNamed(harness.container, 'a.txt')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })) })
+      expect(open).toHaveBeenCalledWith('/r/a.txt')
+      expect(opens).toEqual([])
+      // Enter: same delegation.
+      act(() => { rowNamed(harness.container, 'a.txt')
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) })
+      expect(open).toHaveBeenCalledTimes(2)
+      // Space: same delegation.
+      act(() => { rowNamed(harness.container, 'a.txt')
+        .dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })) })
+      expect(open).toHaveBeenCalledTimes(3)
+      expect(opens).toEqual([])
+    })
+
+    it('WITHOUT the declared capability the caller onOpenFile keeps running; a declared capability without source.open too', async () => {
+      const list = vi.fn(async () => ({ entries: [{ name: 'a.txt', path: '/r/a.txt', isDir: false }] }))
+      const opens: string[] = []
+      // Capability absent → the original path.
+      let service = createBetterSidebarService(createSidebarStore())
+      service.registerFileTreeProvider({ id: 'remote', match: () => true, createSource: () => ({ list }), capabilities: {} })
+      harness = await mountTree({ ctx: { betterSidebar: service } as unknown as Context })
+      await harness.rerender({ onOpenFile: (path: string) => { opens.push(path) } })
+      act(() => { rowNamed(harness.container, 'a.txt')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })) })
+      expect(opens).toEqual(['/r/a.txt'])
+      // Capability declared but the source provides no open() → the
+      // original path still runs (the delegation is capability AND
+      // function gated).
+      harness.unmount()
+      document.body.innerHTML = ''
+      service = createBetterSidebarService(createSidebarStore())
+      service.registerFileTreeProvider({ id: 'remote', match: () => true, createSource: () => ({ list }), capabilities: { open: true } })
+      harness = await mountTree({ ctx: { betterSidebar: service } as unknown as Context })
+      await harness.rerender({ onOpenFile: (path: string) => { opens.push(path) } })
+      act(() => { rowNamed(harness.container, 'a.txt')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })) })
+      expect(opens).toEqual(['/r/a.txt', '/r/a.txt'])
+    })
+  })
+
+  describe('row stat suffix (v0.20.0)', () => {
+    it('provider rows carry the dimmed size/mtime suffix; rows without meta never do', async () => {
+      harness = await mountTree({
+        listEntries: [
+          { name: 'big.bin', path: '/r/big.bin', isDir: false, meta: { size: 3565158, mtime: new Date(2026, 8, 6, 14, 30).getTime() } },
+          { name: 'tiny.txt', path: '/r/tiny.txt', isDir: false, meta: { size: 42 } },
+          { name: 'plain', path: '/r/plain', isDir: false },
+        ],
+      })
+      expect(rowNamed(harness.container, 'big.bin').querySelector('[class*="explorerMeta"]')?.textContent)
+        .toBe('3.4 MB 9-6 14:30')
+      expect(rowNamed(harness.container, 'tiny.txt').querySelector('[class*="explorerMeta"]')?.textContent)
+        .toBe('42 B')
+      expect(rowNamed(harness.container, 'plain').querySelector('[class*="explorerMeta"]')).toBeNull()
+    })
+
+    it('display priority: a cramped row (name truncated) drops its suffix; room brings it back', async () => {
+      harness = await mountTree({
+        listEntries: [
+          { name: 'big.bin', path: '/r/big.bin', isDir: false, meta: { size: 3565158, mtime: new Date(2026, 8, 6, 14, 30).getTime() } },
+          { name: 'tiny.txt', path: '/r/tiny.txt', isDir: false, meta: { size: 42 } },
+          { name: 'pkg', path: '/r/pkg', isDir: true, meta: { mtime: new Date(2026, 8, 6, 14, 30).getTime() } },
+        ],
+      })
+      const row = rowNamed(harness.container, 'big.bin')
+      const name = row.querySelector<HTMLElement>('[class*="explorerName"]')!
+      // Cramped: the name span is clipped (scrollWidth > clientWidth) —
+      // jsdom has no layout, so the geometry is injected like
+      // tab-bar-wheel.spec.tsx does.
+      Object.defineProperty(name, 'scrollWidth', { value: 500, configurable: true })
+      Object.defineProperty(name, 'clientWidth', { value: 120, configurable: true })
+      // The directory row follows the same priority (dirs may carry meta too).
+      const dirRow = rowNamed(harness.container, 'pkg')
+      const dirName = dirRow.querySelector<HTMLElement>('[class*="explorerName"]')!
+      Object.defineProperty(dirName, 'scrollWidth', { value: 300, configurable: true })
+      Object.defineProperty(dirName, 'clientWidth', { value: 100, configurable: true })
+      await harness.rerender({})
+      expect(rowNamed(harness.container, 'big.bin').querySelector('[class*="explorerMeta"]')).toBeNull()
+      expect(rowNamed(harness.container, 'pkg').querySelector('[class*="explorerMeta"]')).toBeNull()
+      // Unaffected rows (plenty of room, name at full width) keep theirs.
+      expect(rowNamed(harness.container, 'tiny.txt').querySelector('[class*="explorerMeta"]')?.textContent)
+        .toBe('42 B')
+      // The name fits again and the row has room right of it: the suffix
+      // re-shows (re-rendering with the suffix must not re-cramp the row).
+      Object.defineProperty(name, 'scrollWidth', { value: 120, configurable: true })
+      Object.defineProperty(name, 'clientWidth', { value: 120, configurable: true })
+      Object.defineProperty(name, 'offsetLeft', { value: 40, configurable: true })
+      Object.defineProperty(row, 'clientWidth', { value: 400, configurable: true })
+      await harness.rerender({})
+      expect(rowNamed(harness.container, 'big.bin').querySelector('[class*="explorerMeta"]')?.textContent)
+        .toBe('3.4 MB 9-6 14:30')
+    })
+
+    it('display priority: a still-truncated name never re-shows the suffix, whatever the row width', async () => {
+      harness = await mountTree({
+        listEntries: [
+          { name: 'long-name-file-here.txt', path: '/r/long-name-file-here.txt', isDir: false, meta: { size: 42 } },
+        ],
+      })
+      const row = rowNamed(harness.container, 'long-name-file-here.txt')
+      const name = row.querySelector<HTMLElement>('[class*="explorerName"]')!
+      Object.defineProperty(name, 'scrollWidth', { value: 500, configurable: true })
+      Object.defineProperty(name, 'clientWidth', { value: 120, configurable: true })
+      await harness.rerender({})
+      expect(rowNamed(harness.container, 'long-name-file-here.txt').querySelector('[class*="explorerMeta"]')).toBeNull()
+      // A wide row still cannot host the suffix while the name is clipped.
+      Object.defineProperty(row, 'clientWidth', { value: 800, configurable: true })
+      await harness.rerender({})
+      expect(rowNamed(harness.container, 'long-name-file-here.txt').querySelector('[class*="explorerMeta"]')).toBeNull()
+    })
+
+    it('local (no-provider) rows never render the suffix — the default listing has no meta', async () => {
+      harness = await mountTree({ withProvider: false })
+      expect(rowNamed(harness.container, 'local.txt').querySelector('[class*="explorerMeta"]')).toBeNull()
+    })
+  })
+
+  describe('stat suffix formatters (v0.20.0, pure)', () => {
+    it('humanFileSize: bytes under 1024, one-decimal KB/MB/GB above', () => {
+      expect(humanFileSize(0)).toBe('0 B')
+      expect(humanFileSize(42)).toBe('42 B')
+      expect(humanFileSize(1023)).toBe('1023 B')
+      expect(humanFileSize(1024)).toBe('1.0 KB')
+      expect(humanFileSize(1228)).toBe('1.2 KB')
+      expect(humanFileSize(3565158)).toBe('3.4 MB')
+      expect(humanFileSize(4 * 1024 * 1024 * 1024)).toBe('4.0 GB')
+      expect(humanFileSize(Number.NaN)).toBe('')
+      expect(humanFileSize(-1)).toBe('')
+    })
+
+    it('fileMetaTime: compact local M-D hh:mm with zero padding', () => {
+      expect(fileMetaTime(new Date(2026, 0, 2, 3, 4).getTime())).toBe('1-2 03:04')
+      expect(fileMetaTime(new Date(2026, 8, 6, 14, 30).getTime())).toBe('9-6 14:30')
+    })
+
+    it('metaSuffixCramped: the name is squeezed only when its rendered width falls short', () => {
+      expect(metaSuffixCramped(101, 100)).toBe(true)
+      expect(metaSuffixCramped(100, 100)).toBe(false)
+      expect(metaSuffixCramped(0, 0)).toBe(false)
+    })
+
+    it('metaSuffixFits: a fitting name plus free room ≥ suffix width + margin', () => {
+      // Free space right of the name = rowClient − (nameOffset + nameClient).
+      expect(metaSuffixFits(100, 100, 400, 40, 80)).toBe(true)   // free 260 ≥ 92
+      expect(metaSuffixFits(100, 100, 200, 40, 80)).toBe(false)  // free 60 < 92
+      expect(metaSuffixFits(100, 100, 400, 40, 300)).toBe(false) // suffix alone too wide
+      expect(metaSuffixFits(150, 100, 400, 40, 80)).toBe(false)  // name still truncated
+      expect(metaSuffixFits(100, 100, 112, 0, 0)).toBe(true)    // free 12 — the exact margin
+      expect(metaSuffixFits(100, 100, 111, 0, 0)).toBe(false)   // free 11 — one px short
     })
   })
 })

@@ -25,8 +25,6 @@ import { BrowserView } from '../BrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16, IconGlobalWorkspaceOutline16, IconPanelRightOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
-import type { SessionScope } from '../api.ts'
-import type { SidebarStore } from '../state.ts'
 import type { TabDescriptor } from '../service.ts'
 
 /**
@@ -45,23 +43,12 @@ import type { TabDescriptor } from '../service.ts'
  * TerminalView the built-in terminal tab uses.
  */
 
-/** The terminal view's props (mirror of TerminalView's own signature). */
-export interface TerminalViewProps {
-  ctx: Context
-  scope: SessionScope
-  tabId: string
-  store: SidebarStore
-  /** Host-downlink command-title updates; routes through updateTab so the
-   *  tab title follows the running command's first token (workspace-bound
-   *  stubs retitle in EVERY session via the windows store). */
-  onTitleChange?: (title: string) => void
-  /** Whether the tab is the active one with the panel open; hidden tabs
-   *  re-fit + repaint on the way back to visible (tabby reactivate pattern). */
-  visible?: boolean
-  /** Render the box's info bar (cwd + running CLI) above the terminal —
-   *  the Global Workspace's bottom workbench boxes use it. */
-  infoBar?: boolean
-}
+// The terminal view's props: the shared definition lives with the transport
+// layer (terminal-transport.ts — the `transport` slot is part of it), so
+// core-bundle code, the lazy chunk and cross-plugin consumers all agree on
+// the same shape. Re-exported here for existing importers.
+export type { TerminalViewProps } from '../terminal-transport.ts'
+import type { TerminalViewProps } from '../terminal-transport.ts'
 
 /** The chunk-loaded terminal view component (see the doc comment above). */
 export const LazyTerminal = lazyChunkComponent<TerminalViewProps>(

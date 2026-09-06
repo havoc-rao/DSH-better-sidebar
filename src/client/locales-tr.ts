@@ -27,6 +27,7 @@ export const tr: Record<string, string> = {
   editorExplorerMergedDesc: 'Dosyalar aynı pencerede yerinde geçer; yeni pencereler ağaç açık başlar',
   editorExplorerSplit: 'Ayrı',
   editorExplorerSplitDesc: 'Yolsuz pencere tek başına gezgindir (yalnızca ağaç); her dosya kendi penceresini açar (ağaç yuvalanmış, varsayılan kapalı)',
+  fileTreeSplitter: 'Ust/alt bölmeyi sürükleyerek ayarlayin; sifirlamak için çift tiklayin',
   editorTreeToggle: 'Dosya ağacı paneli',
   editorPathPlaceholder: 'Dosya yolu (oturum dizinine göreli veya mutlak), Enter ile aç',
   editorSearchPlaceholder: 'Dosya adına göre ara…',

@@ -27,6 +27,7 @@ export const th: Record<string, string> = {
   editorExplorerMergedDesc: 'ไฟล์สลับในตำแหน่งเดิมในหน้าต่างเดียวกัน; หน้าต่างใหม่เริ่มต้นด้วยต้นไม้ไฟล์ที่เปิดอยู่',
   editorExplorerSplit: 'แยก',
   editorExplorerSplitDesc: 'หน้าต่างที่ไม่มีพาธคือตัวสำรวจแบบสแตนด์อโลน (ต้นไม้ไฟล์เท่านั้น); แต่ละไฟล์เปิดหน้าต่างของตัวเอง (ต้นไม้ไฟล์ docked, ปิดเป็นค่าเริ่มต้น)',
+  fileTreeSplitter: 'ลากเพื่อปรับสัดส่วนบน/ล่าง คลิกสองครั้งเพื่อรีเซ็ต',
   editorTreeToggle: 'พาเนลต้นไม้ไฟล์',
   editorPathPlaceholder: 'พาธไฟล์ (สัมพันธ์กับไดเรกทอรีเซสชันหรือแบบ absolute), Enter เพื่อเปิด',
   editorSearchPlaceholder: 'ค้นหาไฟล์ตามชื่อ…',

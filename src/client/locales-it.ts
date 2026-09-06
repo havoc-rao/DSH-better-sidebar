@@ -18,6 +18,7 @@ export const it: Record<string, string> = {
   editorExplorerMergedDesc: 'I file cambiano sul posto nella stessa finestra; le nuove finestre avviano l’albero espanso',
   editorExplorerSplit: 'Separato',
   editorExplorerSplitDesc: 'Le finestre senza percorso sono l’esplora risorse autonomo (solo albero dei file); ogni file apre la propria finestra (albero agganciato, chiuso per impostazione predefinita)',
+  fileTreeSplitter: 'Trascina per regolare la divisione superiore/inferiore; doppio clic per ripristinare',
   editorTreeToggle: 'Pannello dell’albero dei file',
   editorPathPlaceholder: 'Percorso del file (relativo alla directory della sessione o assoluto), Invio per aprire',
   editorSearchPlaceholder: 'Cerca file per nome…',

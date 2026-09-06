@@ -73,7 +73,7 @@ export type {
   FileTreeProviderDescriptor, FileTreeProviderRoot, FileTreeSearchResult,
   ResolvedFileTreeRoot, ResolvedFileTreeSource,
 } from './file-tree-source.ts'
-export type { FileTreeSectionDescriptor, FileTreeSectionScope } from './file-tree-section.ts'
+export type { FileTreeSectionDescriptor, FileTreeSectionScope, FileTreeSectionSourceDescriptor } from './file-tree-section.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -503,8 +503,18 @@ export interface BetterSidebarService {
    * no panel-level capability (search / upload / git stay local-tree-only).
    * Resolution is registration-order, FIRST match wins; a throwing `match`
    * skips that section. No match → the upper region is not rendered (the
-   * exact pre-slot render path). A duplicate id throws; the disposer
-   * unregisters (HMR-safe through `ctx.effect`). See `file-tree-section.ts`.
+   * exact pre-slot render path).
+   *
+   * Two descriptor forms, EXACTLY one required (validated here): `render`
+   * (v0.19, the plugin draws its own surface) or `source` (v0.20, feature
+   * `'fileTreeSectionSource'` — the HOST renders its own FileTree in the
+   * upper module bound to the plugin's data source; see
+   * `file-tree-section.ts` / `section-source-tree.tsx`). The source form
+   * needs no global provider registration, so the lower module's local
+   * tree is never affected.
+   *
+   * A duplicate id throws; the disposer unregisters (HMR-safe through
+   * `ctx.effect`). See `file-tree-section.ts`.
    */
   registerFileTreeSection(descriptor: FileTreeSectionDescriptor): () => void
   /** The registered file-tree sections (registration order). */
@@ -569,7 +579,8 @@ export interface BetterSidebarService {
   /**
    * Monotonic capability list (v0.12.0+): 'badge' | 'tabLifecycle' |
    * 'updateTab' | 'openFile' | 'targetedOpen' | 'stateSubscription' |
-   * 'tabMeta' | 'pluginSettings' | 'fileTreeSection'. Features are never
+   * 'tabMeta' | 'pluginSettings' | 'fileTreeSection' |
+   * 'fileTreeSectionSource'. Features are never
    * removed — consumers gate new API usage on membership.
    */
   readonly features: readonly string[]
@@ -638,7 +649,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.19.0'
+export const SIDEBAR_SERVICE_VERSION = '0.20.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -665,6 +676,11 @@ export const SIDEBAR_SERVICE_VERSION = '0.19.0'
  *   getFileTreeSections — the UPPER-module slot of the Files panel's tree
  *   area: an independently-scrolling component region rendered above the
  *   local tree, owned entirely by the injecting plugin
+ * - 'fileTreeSectionSource' (v0.20.0): the SOURCE form of a file-tree
+ *   section descriptor — `source: { createSource, roots?, capabilities? }`
+ *   makes the HOST render its own FileTree in the upper module bound to
+ *   the plugin's data source (single-source, no global provider
+ *   registration; the lower module's local tree is never affected)
  * - 'floatWindows' (v0.16.0): tabs float as free windows — openTab's dedupe/
  *   id focus targets RAISE the floating window (never duplicate the tab or
  *   expand panels), closeTab on a floating tab closes it with its window.
@@ -685,6 +701,7 @@ export const SIDEBAR_FEATURES = [
   'commands',
   'fileTreeSource',
   'fileTreeSection',
+  'fileTreeSectionSource',
   'floatWindows',
 ] as const
 
@@ -859,6 +876,15 @@ export function createBetterSidebarService(
   const registerFileTreeSection = (descriptor: FileTreeSectionDescriptor): (() => void) => {
     if (fileTreeSections.has(descriptor.id)) {
       throw new Error(`[dsh-better-sidebar] file tree section "${descriptor.id}" already registered`)
+    }
+    // The two forms are mutually exclusive AND exhaustive: exactly one of
+    // `render` (v0.19, plugin-drawn) / `source` (v0.20, host-drawn bound to
+    // the plugin's data) must be present — anything else is a contract bug.
+    if ((descriptor.render === undefined) === (descriptor.source === undefined)) {
+      throw new Error(
+        `[dsh-better-sidebar] file tree section "${descriptor.id}" must provide exactly one of `
+        + '`render` (v0.19 form) or `source` (v0.20 form)',
+      )
     }
     fileTreeSections.set(descriptor.id, descriptor)
     notify()

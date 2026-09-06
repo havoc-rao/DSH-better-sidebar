@@ -1,35 +1,39 @@
 /**
- * The interactive terminal: xterm.js over a WebSocket to the host pty.
+ * The interactive terminal: xterm.js rendered against an injectable
+ * TRANSPORT (a connection layer), defaulting to a WebSocket to the host pty
+ * (see terminal-transport.ts — the default {@link localTransport} keeps the
+ * historical behavior byte for byte: host transcript replay on connect,
+ * live streaming, `{type:'resize'}` frames, automatic reconnect on
+ * transient drops, a server-side refusal (close code 1011 with a reason,
+ * e.g. a failed pty spawn) stops the loop and shows the reason with a
+ * manual retry, and repeated unreasoned failures surface the close code
+ * after three attempts, so the banner never spins forever).
+ *
+ * The view itself owns everything UI: the connected/fatal state machine,
+ * the banners + retry, the block tracker (Enter-separated "add to
+ * conversation" blocks), the selection popup, the info bar (title frames),
+ * fit/theme/font, openWhenSized, visibility re-fit and onTitleChange
+ * routing. A consumer plugin (e.g. dsh-remote) injects its own transport
+ * — a remote SSH PTY channel — through the `transport` prop; the default
+ * view behavior is unchanged when no transport is injected.
+ *
+ * Transport lifecycle on unmount (the VIEW decides which branch applies
+ * from the store/scope state; each transport implements what the branch
+ * means for its channel):
+ * - user closed the tab → `handle.close()` (the local transport sends
+ *   `{type:'close'}`, killing the pty immediately / quota released),
+ * - user switched to another conversation (tab still open in its session)
+ *   → `handle.park()` (local: `{type:'park'}` — the host keeps the pty
+ *   alive indefinitely, so switching back reattaches the SAME shell),
+ * - same-session unmount (page refresh, crash, plugin teardown, re-render)
+ *   → bare `handle.dispose()` (local: bare socket drop — the host's
+ *   reconnect grace keeps the shell alive for a quick reconnect),
+ * - agent terminals (tabId `agent:...`) follow the close-frame rule and
+ *   never park (their lifetime is owned by the agent).
+ *
  * The host replays the session's transcript on connect, then streams live
  * output; input frames are raw text, resize frames are JSON with
- * type:"resize". Transient disconnects (page refresh, host restart) reconnect
- * automatically; a server-side refusal (close code 1011 with a reason, e.g.
- * a failed pty spawn) stops the loop and shows the reason with a manual
- * retry, and repeated unreasoned failures surface the close code after three
- * attempts, so the banner never spins forever.
- *
- * Three control frames shape the pty lifecycle on unmount:
- * - `{type:'close'}` — the user closed the tab. The host kills the pty
- *   immediately (quota released).
- * - `{type:'park'}` — the user switched to another conversation. The tab is
- *   still open in its session's persisted state but its view unmounted; the
- *   host keeps the pty alive indefinitely (no grace countdown), so switching
- *   back reattaches the same shell instead of respawning one.
- * - bare socket drop (no frame) — page refresh, crash, plugin teardown, or a
- *   same-session re-render. The host's reconnect grace keeps the shell alive
- *   for a quick reconnect.
- *
- * Two attach modes share one upgrade endpoint:
- * - `tabId` starting with `agent:` is an agent-owned terminal (created by
- *   the `terminal_create` tool). The uuid is the suffix after `agent:`; the
- *   view connects with `?uuid=...`. A close frame kills the pty (the agent's
- *   terminal closes when the user closes the tab); a bare socket drop
- *   leaves the pty alive (the agent owns the lifetime) — agent terminals
- *   never send park (their lifetime is already indefinite on bare drop).
- * - Any other `tabId` is a UI-tab terminal (the user created it from the +
- *   menu). The view connects with `?tab=...&sessionId=...&cwd=...`. A close
- *   frame schedules a 0-ms close; a park frame marks the pty as parked; a
- *   bare socket drop gets the host's reconnect grace.
+ * type:"resize".
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -40,8 +44,8 @@ import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
 import { t } from './locales.ts'
 import { openWhenSized } from './open-when-sized.ts'
-import { api, type SessionScope, type TerminalDepsStatus } from './api.ts'
-import { agentUuidOf, isAgentTabId, type SidebarStore } from './state.ts'
+import type { SessionScope } from './api.ts'
+import { isAgentTabId, type SidebarStore } from './state.ts'
 import { isDarkScheme, subscribeColorScheme, effectiveTokenValue, tokenValue } from './theme.ts'
 import { resolveTerminalFont } from './terminal-font.ts'
 import { generatePalette } from './generate-palette.ts'
@@ -56,51 +60,21 @@ import {
   type TerminalBlock,
 } from './terminal-blocks.ts'
 import { TerminalBlockOverlay } from './TerminalBlockOverlay.tsx'
+import {
+  localTransport,
+  type TerminalDepsInfo,
+  type TerminalTransport,
+  type TerminalTransportHandle,
+} from './terminal-transport.ts'
 import type { Context } from '../context-types.ts'
 import css from './sidebar.module.css'
 
-/** How many consecutive unreasoned failures before showing the error banner. */
-const FAILURE_LIMIT = 3
-
-/**
- * The WS close-code-1011 reason the host sends when node-pty is unavailable
- * (mirror of the host's PTY_DEPS_MISSING; the value is a wire contract, so
- * the two sides keep the literal in lockstep). The view then fetches the
- * full repair details from /sidebar/api/terminal.deps.
- */
-const PTY_DEPS_MISSING = 'pty-deps-missing'
-
-/** The terminal-deps status record reduced to its failure shape (deps.ok ===
- *  false carries `command`, `profile` and `note` — the banner's content). */
-type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
-
-/**
- * Parse one host-downlink control frame. The `title` frame today carries
- * {type:'title', title, command, cwd} (the info bar's running CLI + project
- * dir); anything else — including terminal output that merely looks like
- * JSON — returns null and is written verbatim. Bounded length and a
- * leading-`{` fast path so high-volume program output never pays a
- * JSON.parse per chunk.
- */
-export function parseDownlinkFrame(data: string): { type: 'title'; title: string; command?: string; cwd?: string } | null {
-  if (data.length > 512 || data.charCodeAt(0) !== 0x7b) return null // '{'
-  try {
-    const parsed = JSON.parse(data) as unknown
-    if (parsed === null || typeof parsed !== 'object') return null
-    const record = parsed as Record<string, unknown>
-    if (record.type === 'title' && typeof record.title === 'string') {
-      return {
-        type: 'title',
-        title: record.title,
-        ...(typeof record.command === 'string' ? { command: record.command } : {}),
-        ...(typeof record.cwd === 'string' ? { cwd: record.cwd } : {}),
-      }
-    }
-    return null
-  } catch {
-    return null
-  }
-}
+// The frame parser + wire constants live with the transport layer now (both
+// the client exports and the lazy chunk can import them); re-exported from
+// here so existing importers (tests, consumers of TerminalView.tsx) keep
+// resolving the same symbols.
+export { parseDownlinkFrame, FAILURE_LIMIT, PTY_DEPS_MISSING } from './terminal-transport.ts'
+export type { TerminalTransport, TerminalTransportHandle, TerminalTransportSession, TerminalTransportSurface } from './terminal-transport.ts'
 
 /**
  * Curated ANSI palettes for the terminal. The surface colors (background,
@@ -191,8 +165,13 @@ export function TerminalView(props: {
   /** Render the box's info bar (cwd + running CLI) above the terminal —
    *  the Global Workspace's bottom workbench boxes use it. */
   infoBar?: boolean
+  /** The connection layer behind this terminal. Absent → localTransport
+   *  (the local pty WS — the historical behavior, byte for byte). Read ONCE
+   *  at mount like onTitleChange: pass a stable instance (a module-level
+   *  singleton); swapping it requires remounting the view. */
+  transport?: TerminalTransport
 }) {
-  const { ctx, scope, tabId, store, onTitleChange, visible = true, infoBar = false } = props
+  const { ctx, scope, tabId, store, onTitleChange, visible = true, infoBar = false, transport } = props
   const hostRef = useRef<HTMLDivElement>(null)
   // onTitleChange is a fresh closure on every parent render (the tab
   // descriptor builds it inline) — it must NEVER ride the effect deps: a
@@ -203,13 +182,23 @@ export function TerminalView(props: {
   // keeps the effect stable while the latest callback stays reachable.
   const onTitleChangeRef = useRef(onTitleChange)
   onTitleChangeRef.current = onTitleChange
+  // Same rule for the transport: mount binds ONE connection layer (an
+  // inline `transport={{...}}` expression in JSX must not tear the shell
+  // down on every parent render).
+  const transportRef = useRef<TerminalTransport | undefined>(transport)
+  transportRef.current = transport
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
   const [depsFatal, setDepsFatal] = useState<TerminalDepsInfo | null>(null)
   const [lastUrl, setLastUrl] = useState<string | null>(null)
   /** The info bar payload (cwd + running CLI), fed by host title frames. */
   const [info, setInfo] = useState<{ cwd?: string; command?: string } | null>(null)
-  const connectRef = useRef<(() => void) | null>(null)
+  /** The live transport handle (the view's only channel into the session). */
+  const handleRef = useRef<TerminalTransportHandle | null>(null)
+  /** The banner retry action (published by the main effect); visibility
+   *  changes never restart the terminal effect, so the buttons read it
+   *  through the ref (same pattern as refreshRef). */
+  const retryRef = useRef<(() => void) | null>(null)
   // Re-fit + repaint when the tab becomes visible again (the canvas can come
   // back stale/blank after a display:none stay). The main effect publishes
   // the live refresh closure here so visibility changes never restart the
@@ -304,114 +293,79 @@ export function TerminalView(props: {
     }
     const schemeSub = subscribeColorScheme(applyTheme)
 
-    let socket: WebSocket | null = null
-    let closed = false
-    let retry: number | undefined
-    let failures = 0
+    // The connection layer: this mount's transport (absent → the default
+    // local pty WS). The socket / frames / reconnect loop live INSIDE the
+    // transport; the view only translates its callbacks into the
+    // connected/fatal/title state machine and forwards input + resize.
+    const transport = transportRef.current ?? localTransport
 
-    const wsUrl = (): string => {
-      const url = new URL('/sidebar/ws/terminal', location.origin)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      // Agent terminals attach by uuid (the host looks them up in the agent
-      // pty registry); UI-tab terminals attach by sessionId+tab (the host
-      // uses the UI-tab pty manager). Same upgrade endpoint, different query.
-      if (isAgentTabId(tabId)) {
-        url.search = new URLSearchParams({ uuid: agentUuidOf(tabId) }).toString()
-      } else {
-        const params = new URLSearchParams({ sessionId: scope.sessionId, tab: tabId })
-        if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
-        url.search = params.toString()
-      }
-      // Same construction the app's own downlink WebSockets use (new URL
-      // over location.origin + protocol swap): whatever the environment
-      // does to the app's websockets applies identically here.
-      return url.toString()
-    }
-
-    const sendResize = (): void => {
-      if (socket !== null && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-      }
-    }
-
-    const connect = (): void => {
-      if (closed) return
-      const url = wsUrl()
-      setLastUrl(url)
-      socket = new WebSocket(url)
-      socket.onopen = () => {
-        failures = 0
-        setConnected(true)
-        setFatal(null)
-        // Reset stale terminal modes (mouse tracking normal/button/any-event,
-        // SGR extended mouse, bracketed paste) IN THE XTERM INSTANCE itself —
-        // ported from tabby's resetTerminalModes (it writes into the
-        // frontend, not the session). A fresh instance no-ops; a reused
-        // instance that a previous program left in mouse/bracketed-paste
-        // mode stops leaking escape sequences into the shell (e.g. after the
-        // host respawned the pty for a cwd change or an exited handle).
-        term.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l')
-        sendResize()
-      }
-      socket.onmessage = (event) => {
-        if (typeof event.data !== 'string') return
-        // Host downlink control frames ({type:'title',…}) are intercepted;
-        // anything else — including terminal output that merely looks like
-        // JSON — is written verbatim.
-        const frame = parseDownlinkFrame(event.data)
-        if (frame !== null) {
-          if (frame.type === 'title') {
-            onTitleChangeRef.current?.(frame.title)
-            setInfo({ cwd: frame.cwd, command: frame.command })
-          }
-          return
-        }
-        term.write(event.data)
-      }
-      socket.onclose = (event) => {
-        setConnected(false)
-        // node-pty dependency missing/broken (issue #140): the host closed
-        // with the short marker. Fetch the full repair details over HTTP —
-        // a WS close reason is capped at 123 bytes, too small for the
-        // pasteable command. A failed fetch falls back to the plain banner.
-        if (event.code === 1011 && event.reason === PTY_DEPS_MISSING) {
-          void api.terminalDeps().then((status) => {
-            if (status.ok) {
-              // The host recovered between the close and the fetch — the
-              // plain banner with a retry is the honest state.
-              setFatal(t('terminalDepsFailed'))
-              return
+    /** Open one transport session for this mount (first open + the banner
+     *  retry fallback when the handle has no `retry`). */
+    const openSession = (): void => {
+      handleRef.current?.dispose()
+      let handle: TerminalTransportHandle
+      try {
+        handle = transport.open({
+          term,
+          scope,
+          tabId,
+          cwd: scope.cwd,
+          onOutput: (data) => {
+            try {
+              term.write(data)
+            } catch {
+              // The view is already torn down (a late write from a custom
+              // transport); xterm throws after dispose — swallow.
             }
-            setFatal(null)
-            setDepsFatal(status)
-          }).catch(() => {
-            setFatal(t('terminalDepsFailed'))
-          })
-          return
-        }
-        // A server-side refusal carries a close code + reason; retrying it
-        // forever would only spin the banner, so surface it with a retry.
-        if (event.code === 1011 && event.reason !== '') {
-          setFatal(event.reason)
-          return
-        }
-        // Unreasoned drops (upgrade rejected, host down, mid-handshake
-        // refusal) normally recover on the next attempt; after a few
-        // consecutive failures stop spinning and show the close code.
-        failures += 1
-        if (failures >= FAILURE_LIMIT) {
-          const detail = event.reason !== '' ? ` (${event.code}: ${event.reason})` : ` (${event.code})`
-          console.error('[dsh-better-sidebar] terminal connection failed:', event.code, event.reason, url)
-          setFatal(`${t('terminalConnectFailed')}${detail}`)
-          return
-        }
-        if (!closed) retry = window.setTimeout(connect, 2000)
+          },
+          onTitle: (title, info) => {
+            onTitleChangeRef.current?.(title)
+            if (info !== undefined) setInfo(info)
+          },
+          onConnected: (connected) => {
+            if (connected) {
+              setConnected(true)
+              setFatal(null)
+            } else {
+              setConnected(false)
+            }
+          },
+          onFatal: (reason, detail) => {
+            // The pty-deps repair banner is the LOCAL transport's reporting
+            // channel; any other fatal rides the plain banner + retry.
+            if (detail?.deps !== undefined) {
+              setFatal(null)
+              setDepsFatal(detail.deps)
+            } else {
+              setFatal(reason)
+            }
+          },
+          onEndpoint: (endpoint) => setLastUrl(endpoint),
+        })
+      } catch (error) {
+        // A broken custom transport must not take down the tab tree: pin
+        // the fatal banner with the retry affordance instead.
+        console.error('[dsh-better-sidebar] terminal transport open failed:', error)
+        setFatal(t('terminalConnectFailed'))
+        return
       }
-      socket.onerror = () => {
-        socket?.close()
-      }
+      handleRef.current = handle
     }
-    connectRef.current = connect
+    openSession()
+
+    // The banner retry: the transport's own retry when it has one (one
+    // fresh connection attempt); absent — tear down and open a fresh
+    // session (transports may treat a fatal as session-ending).
+    retryRef.current = (): void => {
+      const handle = handleRef.current
+      if (handle?.retry !== undefined) {
+        handle.retry()
+        return
+      }
+      handleRef.current = null
+      handle?.dispose()
+      openSession()
+    }
 
     // Reflows are rate-limited (see throttled-fit.ts): ResizeObserver fires
     // every frame during a panel drag — each fit + pty resize would be a
@@ -422,7 +376,7 @@ export function TerminalView(props: {
       try {
         fit.fit()
         term.refresh(0, term.rows - 1)
-        sendResize()
+        handleRef.current?.resize(term.cols, term.rows)
       } catch {
         // The terminal may be mid-dispose; ignore.
       }
@@ -435,18 +389,18 @@ export function TerminalView(props: {
         if (term.element !== undefined) {
           fit.fit()
           term.refresh(0, term.rows - 1)
-          sendResize()
+          handleRef.current?.resize(term.cols, term.rows)
         }
       } catch {
         // The terminal may be mid-dispose; ignore.
       }
     }
 
-    // The input stream feeds BOTH the socket and the block model: every
+    // The input stream feeds BOTH the transport and the block model: every
     // Enter submits the echo-row-anchored command block (terminal-blocks.ts).
     const inputSub = term.onData((data) => {
       tracker.onData(data, term.buffer.active.length)
-      if (socket !== null && socket.readyState === WebSocket.OPEN) socket.send(data)
+      handleRef.current?.input(data)
     })
     // Selection → the floating "add to conversation" popup (the shared
     // selectionPopup chrome anchored at the selection head; same contract as
@@ -467,7 +421,7 @@ export function TerminalView(props: {
         return
       }
       selectionFrame = window.requestAnimationFrame(() => {
-        if (closed) return
+        if (handleRef.current === null) return
         const firstSegment = host.querySelector('.xterm-selection > div:first-child')
         if (firstSegment === null) {
           hideSelectionPopup()
@@ -507,26 +461,24 @@ export function TerminalView(props: {
     // height 0; any display:none-hidden ancestor does the same). Defer
     // open+fit until the host has a real size — writes arriving meanwhile
     // are buffered by xterm's WriteBuffer and render once open, and
-    // FitAddon.fit() is a safe no-op before open. sendResize() here covers
-    // the deferred path where the socket may already be open with the
+    // FitAddon.fit() is a safe no-op before open. The resize here covers
+    // the deferred path where the transport may already be open with the
     // default 80x24 dims.
     const cancelOpen = openWhenSized(host, () => {
       try {
         term.open(host)
         fit.fit()
-        sendResize()
+        handleRef.current?.resize(term.cols, term.rows)
       } catch (error) {
         console.error('[dsh-better-sidebar] xterm open failed:', error)
       }
     })
 
-    connect()
     return () => {
-      closed = true
       cancelOpen()
       reflow.cancel()
       refreshRef.current = null
-      window.clearTimeout(retry)
+      retryRef.current = null
       window.cancelAnimationFrame(selectionFrame ?? 0)
       observer.disconnect()
       fontSub()
@@ -535,34 +487,31 @@ export function TerminalView(props: {
       selectionSub.dispose()
       scrollSub.dispose()
       // Three unmount cases, distinguished by the store's tab/open state and
-      // the active session id:
-      // 1. The tab was closed by the user (NOT in its session's state): send
-      //    `{type:'close'}` — the host releases the pty immediately.
+      // the active session id (the VIEW decides which branch applies; each
+      // transport implements what close/park/bare-drop mean for its
+      // channel):
+      // 1. The tab was closed by the user (NOT in its session's state):
+      //    close() — the host releases the pty immediately.
       // 2. The user switched to another conversation (the tab IS still open
       //    in scope.sessionId's state, but the active session is now a
-      //    different one): send `{type:'park'}` — the host keeps the pty
-      //    alive indefinitely (no grace countdown), so switching back
-      //    reattaches the SAME shell. Without this, the bare socket drop
-      //    would start the 30s reconnect-grace countdown and kill the shell
-      //    while the user is still actively working in the other session.
+      //    different one): park() — the host keeps the pty alive
+      //    indefinitely (no grace countdown), so switching back reattaches
+      //    the SAME shell. Without this, the bare drop would start the 30s
+      //    reconnect-grace countdown and kill the shell while the user is
+      //    still actively working in the other session.
       // 3. A same-session unmount (page refresh, crash, plugin teardown, a
-      //    re-render that re-mounts the view): bare socket drop — the host's
+      //    re-render that re-mounts the view): bare dispose() — the host's
       //    reconnect grace keeps the shell alive for a quick reconnect.
       // Agent terminals follow the close-frame rule; their lifetime is owned
       // by the agent, so a bare drop (case 3) already leaves them alive
       // indefinitely — no park frame needed.
       const tabStillOpen = store.tabOpen(scope.sessionId, tabId)
       const sessionSwitched = store.getSnapshot().sessionId !== scope.sessionId
-      if (!tabStillOpen
-        && socket !== null && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'close' }))
-      } else if (tabStillOpen && sessionSwitched && !isAgentTabId(tabId)
-        && socket !== null && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'park' }))
-      }
-      socket?.close()
+      if (!tabStillOpen) handleRef.current?.close()
+      else if (sessionSwitched && !isAgentTabId(tabId)) handleRef.current?.park()
+      handleRef.current?.dispose()
+      handleRef.current = null
       term.dispose()
-      connectRef.current = null
       termRef.current = null
       trackerRef.current = null
       setSession(null)
@@ -579,7 +528,7 @@ export function TerminalView(props: {
   return (
     <div className={css.terminalWrap}>
       {depsFatal !== null && (
-        <TerminalDepsBanner deps={depsFatal} onRetry={() => { setDepsFatal(null); connectRef.current?.() }} />
+        <TerminalDepsBanner deps={depsFatal} onRetry={() => { setDepsFatal(null); retryRef.current?.() }} />
       )}
       {fatal !== null && (
         <div className={css.terminalBanner}>
@@ -588,7 +537,7 @@ export function TerminalView(props: {
           <button
             type="button"
             className={css.terminalRetry}
-            onClick={() => { setFatal(null); connectRef.current?.() }}
+            onClick={() => { setFatal(null); retryRef.current?.() }}
           >
             {t('terminalRetry')}
           </button>
@@ -654,7 +603,9 @@ function baseNameOf(path: string): string {
  * terminal's native dependency failed to load and shows the PASTEABLE repair
  * command (bash / cmd / PowerShell) with a copy button — the user pastes it
  * into a terminal where their DSH profile lives and runs it, then retries.
- * Extracted as a standalone component for direct testing.
+ * Extracted as a standalone component for direct testing. Raised ONLY by
+ * the local transport's pty-deps-missing path (remote transports report
+ * plain fatals).
  */
 export function TerminalDepsBanner(props: { deps: TerminalDepsInfo; onRetry: () => void }) {
   const { deps, onRetry } = props

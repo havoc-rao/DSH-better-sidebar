@@ -29,6 +29,7 @@ export const pl: Record<string, string> = {
   editorExplorerMergedDesc: 'Pliki przełączają się w miejscu w tym samym oknie; nowe okna zaczynają z rozwiniętym drzewem',
   editorExplorerSplit: 'Osobne',
   editorExplorerSplitDesc: 'Okna bez ścieżki to samodzielny eksplorator (tylko drzewo); każdy plik otwiera własne okno (drzewo zadokowane, domyślnie zwinięte)',
+  fileTreeSplitter: 'Przeciagnij, aby dostosowac podzial góra/dól; kliknij dwukrotnie, aby zresetowac',
   editorTreeToggle: 'Panel drzewa plików',
   editorPathPlaceholder: 'Ścieżka pliku (względna do katalogu sesji lub bezwzględna), Enter, aby otworzyć',
   editorSearchPlaceholder: 'Szukaj po nazwie pliku…',

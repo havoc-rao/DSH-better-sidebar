@@ -36,6 +36,38 @@ import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en,
 import css from './sidebar.module.css'
 import './layout.css'
 
+// ── Terminal transport slot (cross-plugin reuse) ─────────────────────────
+// The connection layer behind TerminalView is injectable per tab. These
+// client exports are the stable cross-plugin entry: another plugin's client
+// half (e.g. dsh-remote) resolves them through the client module system —
+// `ctx.modules.import('dsh-better-sidebar')` (rc.8+) or the
+// `__DSH_MODULES__.import('dsh-better-sidebar')` page global — which arrives
+// this bundle on demand and materializes its factory exports. A SYNCHRONOUS
+// `require('dsh-better-sidebar')` inside another plugin's client factory is
+// NOT a stable path: the loader's sync require is seed-table / registered
+// factories only, so it only resolves after THIS bundle has already executed
+// on the page (order-dependent).
+//
+//   const { loadTerminalView } = await ctx.modules.import('dsh-better-sidebar')
+//   const { TerminalView, localTransport } = await loadTerminalView()
+//
+// TerminalView (the xterm-dependent component) is NOT statically exported —
+// it lives in the lazy client-terminal.js chunk; loadTerminalView() fetches
+// it through the plugin's own chunk system on first use. Types are also
+// exported at 'dsh-better-sidebar/client/terminal' (a .d.ts subpath), so
+// consumers type against the slot without bundling xterm.
+export { loadTerminalView } from './terminal-view-loader.ts'
+export type { LoadedTerminalView } from './terminal-view-loader.ts'
+export { localTransport, parseDownlinkFrame } from './terminal-transport.ts'
+export type {
+  TerminalDepsInfo,
+  TerminalTransport,
+  TerminalTransportHandle,
+  TerminalTransportSession,
+  TerminalTransportSurface,
+  TerminalViewProps,
+} from './terminal-transport.ts'
+
 /** Services required before mounting (provided by the client runtime; the
  *  locale service backs the sidebar's copy — see locales.ts). `modules`
  *  (rc.8+) is the client module system the chunk loader resolves its

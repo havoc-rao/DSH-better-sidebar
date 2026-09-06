@@ -177,6 +177,24 @@ describe('normalizeFileTreeEntries', () => {
       { name: 'd', path: '/p/d', isDir: true, hidden: true, isSymlink: true, broken: false },
     ])
   })
+
+  it('passes entry.meta through as-is (v0.20.0): present → present, absent → absent', () => {
+    const meta = { size: 1280, mtime: 1725600000000 }
+    expect(normalizeFileTreeEntries([
+      { name: 'a', path: '/p/a', isDir: false, meta },
+      { name: 'b', path: '/p/b', isDir: true },
+    ])).toEqual([
+      { name: 'a', path: '/p/a', isDir: false, hidden: false, isSymlink: false, broken: false, meta },
+      { name: 'b', path: '/p/b', isDir: true, hidden: false, isSymlink: false, broken: false },
+    ])
+  })
+
+  it('keeps PARTIAL meta (size only / mtime only) exact', () => {
+    expect(normalizeFileTreeEntries([{ name: 's', path: '/p/s', isDir: false, meta: { size: 42 } }])[0]!.meta)
+      .toEqual({ size: 42 })
+    expect(normalizeFileTreeEntries([{ name: 't', path: '/p/t', isDir: false, meta: { mtime: 1 } }])[0]!.meta)
+      .toEqual({ mtime: 1 })
+  })
 })
 
 describe('fileTreeCapabilityOn', () => {
@@ -195,9 +213,11 @@ describe('fileTreeCapabilityOn', () => {
     expect(fileTreeCapabilityOn(resolved, 'git')).toBe(false)
     expect(fileTreeCapabilityOn(resolved, 'openWith')).toBe(false)
     expect(fileTreeCapabilityOn(resolved, 'search')).toBe(false)
-    const rich = resolveFileTreeSource([makeProvider({ capabilities: { upload: true, search: true } })], 's1', '/p')!
+    expect(fileTreeCapabilityOn(resolved, 'open')).toBe(false)
+    const rich = resolveFileTreeSource([makeProvider({ capabilities: { upload: true, search: true, open: true } })], 's1', '/p')!
     expect(fileTreeCapabilityOn(rich, 'upload')).toBe(true)
     expect(fileTreeCapabilityOn(rich, 'search')).toBe(true)
+    expect(fileTreeCapabilityOn(rich, 'open')).toBe(true)
     expect(fileTreeCapabilityOn(rich, 'download')).toBe(false)
   })
 })

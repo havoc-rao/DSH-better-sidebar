@@ -36,6 +36,26 @@ import type {
 } from 'dsh-better-sidebar/client/service'
 import type { SessionScope, SidebarSnapshot, SidebarState, SidebarStore, SidebarTab } from 'dsh-better-sidebar/client/service'
 import type { SidebarPrefs } from 'dsh-better-sidebar/client/service'
+// The terminal transport slot: the cross-plugin type surface must be every
+// bit as node-free — a remote-terminal plugin types its transport against
+// it without @types/node (and without installing @xterm/xterm: the terminal
+// surface is structural).
+import type {
+  TerminalDepsInfo, TerminalTransport, TerminalTransportHandle,
+  TerminalTransportSession, TerminalTransportSurface, TerminalViewProps,
+} from 'dsh-better-sidebar/client/terminal'
+declare const remoteTransport: TerminalTransport
+void remoteTransport.kind
+const remoteHandle: TerminalTransportHandle = null as unknown as TerminalTransportHandle
+void remoteHandle
+const remoteSession: TerminalTransportSession = null as unknown as TerminalTransportSession
+void remoteSession
+const remoteSurface: TerminalTransportSurface = null as unknown as TerminalTransportSurface
+void remoteSurface.write('x')
+declare const viewProps: TerminalViewProps
+void viewProps.transport
+declare const deps: TerminalDepsInfo
+void deps.command
 // The vendored-cordis path: `Context` from '@deepseek-ai/cordis' plus the
 // side-effect type import above must expose `ctx.betterSidebar` — the consumer
 // never needs to import this package's own Context type.
@@ -112,5 +132,5 @@ if [ "$STATUS" -ne 0 ]; then
   echo "[check-consumer-types] pass 2 note: strict mode only reports upstream declaration noise:"
   grep -v "dsh-better-sidebar\|lib/types\|check\.ts" "$WORK/strict.log" | head -5 || true
 fi
-echo "[check-consumer-types] OK: the client/service declaration surface is node-free and self-contained."
+echo "[check-consumer-types] OK: the client/service + client/terminal declaration surfaces are node-free and self-contained."
 

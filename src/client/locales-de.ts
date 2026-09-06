@@ -13,6 +13,7 @@ export const de: Record<string, string> = {
   editorExplorerMergedDesc: 'Dateien wechseln im selben Fenster; neue Fenster starten mit geöffneter Baumansicht',
   editorExplorerSplit: 'Getrennt',
   editorExplorerSplitDesc: 'Fenster ohne Pfad sind der eigenständige Explorer (nur Dateibaum); jede Datei öffnet ein eigenes Fenster (mit angedocktem, standardmäßig eingeklapptem Baum)',
+  fileTreeSplitter: 'Verteilung oben/unten per Ziehen anpassen; Doppelklick setzt zurueck',
   editorTreeToggle: 'Dateibaum-Panel',
   editorPathPlaceholder: 'Dateipfad (relativ zum Sitzungsverzeichnis oder absolut), Enter zum Öffnen',
   editorSearchPlaceholder: 'Nach Dateiname suchen…',

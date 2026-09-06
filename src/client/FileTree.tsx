@@ -53,12 +53,12 @@
  * them down so its panel-level gates and the tree share one resolution;
  * without the prop the tree resolves on its own (direct consumers).
  */
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
   IconChevronRightOutline14, IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16,
-  IconFolderClose16, IconFolderOpen16,
+  IconFolderClose16, IconFolderOpen16, IconLoadingOutline16,
   IconLinkOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
@@ -67,6 +67,7 @@ import { api, downloadUrl, type FsEntry } from './api.ts'
 import {
   fileTreeCapabilityOn, normalizeFileTreeEntries, useFileTreeRoots, useFileTreeSource,
   type FileTreeDataSource, type FileTreeProviderCapabilities, type ResolvedFileTreeRoot,
+  type ResolvedFileTreeSource,
 } from './file-tree-source.ts'
 import { gitStatusAt, type GitRowStatus, type GitStatusKind } from './git-status.ts'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
@@ -163,6 +164,80 @@ export function baseName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, '')
   const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
   return at === -1 ? trimmed : trimmed.slice(at + 1)
+}
+
+/** One byte count → a short human size ('48 B', '1.2 KB', '3.4 MB'),
+ *  the v0.20 stat-suffix formatter (1024-based, one decimal under 100). */
+export function humanFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return ''
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  const units = ['KB', 'MB', 'GB', 'TB', 'PB']
+  let value = bytes
+  let unit = -1
+  do {
+    value /= 1024
+    unit++
+  } while (value >= 1024 && unit < units.length - 1)
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
+}
+
+/** One epoch-millis timestamp → a short LOCAL time ('9-6 14:30'), the
+ *  v0.20 stat-suffix formatter (compact M-D hh:mm — the day unpadded, the
+ *  clock zero-padded 24h). */
+export function fileMetaTime(ms: number): string {
+  const date = new Date(ms)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${date.getMonth() + 1}-${date.getDate()} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/** The dimmed stat suffix of one row ('1.2 KB 9-6 14:30'), or null when
+ *  the entry carries no meta detail (absent meta / no size and no mtime) —
+ *  local rows always land here, so their rendering stays byte-for-byte. */
+function metaSuffix(meta: FsEntry['meta']): string | null {
+  if (meta === undefined) return null
+  if (meta.size === undefined && meta.mtime === undefined) return null
+  const parts: string[] = []
+  if (meta.size !== undefined) parts.push(humanFileSize(meta.size))
+  if (meta.mtime !== undefined) parts.push(fileMetaTime(meta.mtime))
+  return parts.join(' ')
+}
+
+/**
+ * The v0.20.0 stat-suffix display priority: the icon + file name own the
+ * row — the size/mtime suffix only renders while the name still fits. A
+ * name that the flex row is squeezing (scrollWidth > clientWidth, i.e. the
+ * ellipsis is active) means "no space left for icon + name", so the suffix
+ * drops; a dropped suffix returns only when the row shows it would fit
+ * again with breathing room (free space right of the name ≥ suffix width +
+ * `META_FIT_MARGIN`) — the margin keeps a row sitting exactly on the
+ * boundary from ping-ponging between hide and show on every pass.
+ *
+ * The two inputs are measured from the live row (see `measureMetaPriority`):
+ * the name span's natural/rendered widths and the row's client width / the
+ * name's left offset (all integers — px). Factored pure (no DOM) so the
+ * decision is unit-testable.
+ */
+/** Re-show headroom: the suffix must fit with the 6px flex gap plus this
+ *  much free space to spare (sub-pixel / reflow jitter guard). */
+const META_FIT_MARGIN = 12
+
+/** Whether the suffix fits again on its row: the name is no longer
+ *  truncated AND the free space right of the name holds the suffix. */
+export function metaSuffixFits(
+  nameScroll: number,
+  nameClient: number,
+  rowClient: number,
+  nameOffset: number,
+  metaWidth: number,
+): boolean {
+  if (nameScroll > nameClient) return false
+  return rowClient - (nameOffset + nameClient) >= metaWidth + META_FIT_MARGIN
+}
+
+/** Whether the row is too cramped for the suffix (the name is being
+ *  truncated — "no space left for icon + name"). */
+export function metaSuffixCramped(nameScroll: number, nameClient: number): boolean {
+  return nameScroll > nameClient
 }
 
 /** The containing directory of an absolute row path (never the root edge here). */
@@ -344,6 +419,17 @@ export function FileTree(props: {
   roots?: readonly ResolvedFileTreeRoot[]
   /** Files highlighted by a "Show in folder" reveal (absolute paths). */
   revealed?: string[]
+  /**
+   * A data-source override (v0.20.0): when non-undefined this resolved
+   * source REPLACES the internal `useFileTreeSource` resolution (the hook
+   * still runs unconditionally — only its result is overridden). The
+   * component's mode key (`single:<providerId>`) and the single-source
+   * selection adapt automatically. This is the seam the SOURCE-form file
+   * tree sections use: the host renders its own FileTree bound EXPLICITLY
+   * to the plugin's source instance — no global provider registration, so
+   * the local tree can never be taken over.
+   */
+  sourceOverride?: ResolvedFileTreeSource
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
   /** Context-menu "open in a new tab" (file rows; absent → no entry). */
@@ -376,7 +462,7 @@ export function FileTree(props: {
   /** True while an upload is in flight (drops are ignored). */
   busy?: boolean
 }) {
-  const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, gitStatus, onUploadRequest, busy } = props
+  const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, gitStatus, onUploadRequest, busy, sourceOverride } = props
   // The active icon theme's row resolver (null when no theme is active —
   // the built-in outline icons below stay the default).
   const fileIcon = useFileIconResolver(ctx)
@@ -385,7 +471,13 @@ export function FileTree(props: {
   // ALL listings. Re-resolves live on registry changes (plugin activation).
   // In multi-root mode this single-source resolution is NOT consulted for
   // listings — each root carries its own source (see `loadDir` below).
-  const fileSource = useFileTreeSource(ctx, sessionId, cwd)
+  const resolvedFileSource = useFileTreeSource(ctx, sessionId, cwd)
+  // A sourceOverride (v0.20.0) wins over the resolution — the hook above
+  // still runs unconditionally (hooks order stays stable), only its result
+  // is replaced. Everything downstream (capability gates, the mode key
+  // `single:<providerId>`, the single-source listing selection) reads the
+  // EFFECTIVE source, so the override path adapts with zero further change.
+  const fileSource: ResolvedFileTreeSource | undefined = sourceOverride !== undefined ? sourceOverride : resolvedFileSource
   // The session's resolved REMOTE roots (multi-root mode): the caller's
   // resolution wins (TreePanel passes it down so panel gates and the tree
   // resolve roots once); without the prop the tree resolves on its own.
@@ -440,6 +532,25 @@ export function FileTree(props: {
   const capOn = (path: string, key: keyof FileTreeProviderCapabilities): boolean => {
     const face = faceOf(path)
     return face === null || face[key] === true
+  }
+
+  /**
+   * Open one FILE row (v0.20.0): when the row's capability face declares
+   * `open` AND the source owning the row provides `open(path)` — the
+   * provider owns the open (single-source mode: the session's effective
+   * `fileSource`; multi-root mode: the source of the root owning the
+   * path). Otherwise the caller's original `onOpenFile(path)` runs
+   * unchanged, byte for byte.
+   */
+  const openFileRow = (path: string): void => {
+    if (capOn(path, 'open')) {
+      const source = multiRoot ? rootAt(path)?.source : fileSource?.source
+      if (source !== undefined && typeof source.open === 'function') {
+        source.open(path)
+        return
+      }
+    }
+    onOpenFile(path)
   }
 
   /** The body-level upload gate: in multi-root mode the BODY belongs to
@@ -530,6 +641,98 @@ export function FileTree(props: {
   /** Context-menu "upload here" target directory. */
   const pendingUploadDir = useRef<string | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  /** The v0.20.0 stat-suffix priority state: the row's name span and meta
+   *  span refs (keyed by row path, populated by per-row ref callbacks), the
+   *  set of rows whose suffix is currently dropped (read during render — a
+   *  re-render is driven by bumping `metaTick`) and each dropped row's
+   *  last-known suffix width (measured when it dropped; re-shows need it to
+   *  prove the suffix fits again). */
+  const nameEls = useRef(new Map<string, HTMLSpanElement>())
+  const metaEls = useRef(new Map<string, HTMLSpanElement>())
+  const hiddenMetaPaths = useRef<ReadonlySet<string>>(new Set())
+  const hiddenMetaWidth = useRef(new Map<string, number>())
+  const [, bumpMetaTick] = useState(0)
+
+  /**
+   * The suffix-priority measurement pass: re-checks every rendered row's
+   * geometry (run after each commit and on body resizes). Rows carrying the
+   * suffix drop it while their name is being truncated; rows that dropped
+   * it re-show only once the row proves there is room again (see
+   * `metaSuffixFits`) — both directions re-render through `bumpMetaTick`
+   * when the hidden set actually changed, so a stable layout costs nothing
+   * per pass beyond the width reads. Reads only refs, so it is stable and
+   * can be shared by the layout effect and the ResizeObserver.
+   */
+  const measureMetaPriority = useCallback((): void => {
+    if (metaEls.current.size === 0 && hiddenMetaPaths.current.size === 0) return
+    const nextHidden = new Set<string>()
+    // Rows rendering the suffix: drop it while the name is being squeezed
+    // ("no space left for icon + name"); remember the suffix's natural
+    // width for the re-show check below.
+    for (const [path, metaEl] of metaEls.current) {
+      const nameEl = nameEls.current.get(path)
+      if (nameEl === undefined) continue
+      if (metaSuffixCramped(nameEl.scrollWidth, nameEl.clientWidth)) {
+        nextHidden.add(path)
+        hiddenMetaWidth.current.set(path, metaEl.scrollWidth)
+      }
+    }
+    // Rows that dropped the suffix: re-show only once the row proves there
+    // is room again (the name at full width + free space right of it ≥
+    // suffix width + margin) — a fresh fit never re-cramps, so this
+    // direction cannot ping-pong with the hide above.
+    for (const path of hiddenMetaPaths.current) {
+      if (nextHidden.has(path)) continue
+      const nameEl = nameEls.current.get(path)
+      if (nameEl === undefined) continue
+      // The name is a direct child of the row (position: relative), so the
+      // row's client width and the name's left offset are read from here.
+      const rowEl = nameEl.parentElement
+      if (rowEl === null) continue
+      const metaWidth = hiddenMetaWidth.current.get(path) ?? 0
+      if (metaSuffixFits(nameEl.scrollWidth, nameEl.clientWidth, rowEl.clientWidth, nameEl.offsetLeft, metaWidth)) {
+        hiddenMetaWidth.current.delete(path)
+      } else {
+        nextHidden.add(path)
+      }
+    }
+    if (nextHidden.size !== hiddenMetaPaths.current.size
+      || [...nextHidden].some(path => !hiddenMetaPaths.current.has(path))) {
+      hiddenMetaPaths.current = nextHidden
+      bumpMetaTick(tick => tick + 1)
+    }
+  }, [])
+
+  // After every commit (listings, expansions, suffix toggles): keep the
+  // suffix visibility in sync with the row geometry before the paint.
+  useLayoutEffect(() => {
+    measureMetaPriority()
+  })
+
+  // Panel resizes are the main reason a row's room changes without a
+  // re-render — observe the tree body (rAF-throttled; the pass is O(rows
+  // with a suffix) and gated by the same refs).
+  useEffect(() => {
+    const body = bodyRef.current
+    if (body === null || typeof ResizeObserver === 'undefined') return
+    let frame = 0
+    const observer = new ResizeObserver(() => {
+      if (frame !== 0) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        measureMetaPriority()
+      })
+    })
+    observer.observe(body)
+    return () => {
+      observer.disconnect()
+      if (frame !== 0) {
+        cancelAnimationFrame(frame)
+        frame = 0
+      }
+    }
+  }, [measureMetaPriority])
 
   /** Reset all drag state (drop landed, the drag left, or a new drag begins). */
   const resetDrop = (): void => {
@@ -896,24 +1099,57 @@ export function FileTree(props: {
   const commandItems = ctx?.betterSidebar === undefined ? [] : commandMenuRows(
     ctx.betterSidebar.getCommands(),
     rowWhere,
-    { path: rowMenu?.path, isDir: rowMenu?.isDir, isRoot: rowMenu !== null && isRootRow(rowMenu.path) },
+    { path: rowMenu?.path, isDir: rowMenu?.isDir, isRoot: rowMenu !== null && isRootRow(rowMenu.path), sessionId },
   )
 
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
-    if (level === undefined) {
-      return <div className={css.explorerRow} style={{ paddingLeft: depth * INDENT_STEP + INDENT_BASE }}>{t('loading')}</div>
-    }
-    if (level.error !== undefined) {
+    if (level !== undefined && level.error !== undefined) {
       return (
         <div className={clsx(css.explorerRow, css.explorerError)} style={{ paddingLeft: depth * INDENT_STEP + INDENT_BASE }}>
           {level.error}
         </div>
       )
     }
-    const entries = level.entries ?? []
+    // In-flight level: the expand commit lands the `{}` placeholder (the
+    // pre-effect window is `undefined`) — both render one dimmed loading row
+    // so a slow subfolder listing reads as working instead of a frozen gap
+    // (previously the whole fetch rendered nothing). A LOADED empty level
+    // carries `entries: []` and renders nothing, exactly as before.
+    if (level === undefined || level.entries === undefined) {
+      return (
+        <div
+          role="status"
+          className={css.explorerRow}
+          style={{ paddingLeft: depth * INDENT_STEP + INDENT_BASE }}
+        >
+          <IconLoadingOutline16 size={12} className={css.explorerLoadingSpin} />
+          <span className={css.explorerLoading}>{t('loading')}</span>
+        </div>
+      )
+    }
+    const entries = level.entries
+    if (entries.length === 0) return null
     return entries.map(entry => {
       const status = gitStatusAt(effectiveGitStatus, entry.path)
+      // The dimmed stat suffix (v0.20.0): provider-fed rows may carry
+      // `meta`; local rows never do → null keeps their render exact.
+      const meta = metaSuffix(entry.meta)
+      // v0.20.0 display priority: the size/time suffix yields to the icon +
+      // name — while the measurement pass has this row marked as cramped the
+      // suffix is dropped (the name reclaims the row). Re-renders arrive via
+      // `bumpMetaTick`, the refs below feed the pass.
+      const metaShown = meta !== null && !hiddenMetaPaths.current.has(entry.path)
+      // Per-row name/meta refs (the renderLevel map is the one place every
+      // row of the tree is created): the pass reads these to decide.
+      const nameRef = (el: HTMLSpanElement | null): void => {
+        if (el === null) nameEls.current.delete(entry.path)
+        else nameEls.current.set(entry.path, el)
+      }
+      const metaRef = (el: HTMLSpanElement | null): void => {
+        if (el === null) metaEls.current.delete(entry.path)
+        else metaEls.current.set(entry.path, el)
+      }
       // While a guide band is hovered, the ancestor's whole line lights up:
       // every row whose stroke at the hovered column belongs to the same
       // ancestor renders that stroke highlighted — the hovered row included
@@ -953,7 +1189,8 @@ className={clsx(
             >
               {guideHitBands(entry.path, depth, onToggle, setHoverGuide)}
 {fileIcon({ name: entry.name, isDir: true, expanded: isOpen }) ?? (isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />)}
-              <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
+              <span ref={nameRef} className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
+              {metaShown && <span ref={metaRef} className={css.explorerMeta}>{meta}</span>}
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {gitBadge(status)}
               {rowActions(entry)}
@@ -981,11 +1218,11 @@ css.explorerRow,
             ...treeGuideBackground(depth, false, highlightCol),
           }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
-          onClick={() => { onOpenFile(entry.path) }}
+          onClick={() => { openFileRow(entry.path) }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault()
-              onOpenFile(entry.path)
+              openFileRow(entry.path)
             }
           }}
           onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
@@ -994,7 +1231,8 @@ css.explorerRow,
         >
           {guideHitBands(entry.path, depth, onToggle, setHoverGuide)}
 {fileIcon({ name: entry.name, isDir: false }) ?? <IconCodeOutline16 size={14} />}
-          <span className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
+          <span ref={nameRef} className={clsx(css.explorerName, status !== undefined && gitKindCss[status.kind])}>{entry.name}</span>
+          {metaShown && <span ref={metaRef} className={css.explorerMeta}>{meta}</span>}
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {gitBadge(status)}
           {rowActions(entry)}
@@ -1259,6 +1497,7 @@ if (id === 'upload-here') {
             path: target.path,
             isDir: target.isDir,
             isRoot: target.path === root,
+            sessionId,
           })
         }}
         portal

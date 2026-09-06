@@ -10,6 +10,7 @@ export const pt: Record<string, string> = {
   editorExplorerMergedDesc: 'Arquivos alternam no mesmo lugar na mesma janela; novas janelas começam com a árvore de arquivos aberta',
   editorExplorerSplit: 'Separado',
   editorExplorerSplitDesc: 'Janelas sem caminho são o explorador independente (somente árvore de arquivos); cada arquivo abre sua própria janela (com árvore encaixada, fechada por padrão)',
+  fileTreeSplitter: 'Arraste para ajustar a divisao superior/inferior; clique duas vezes para redefinir',
   editorTreeToggle: 'Painel da árvore de arquivos',
   editorPathPlaceholder: 'Caminho do arquivo (relativo ao diretório da sessão ou absoluto), Enter para abrir',
   editorSearchPlaceholder: 'Pesquisar arquivos por nome…',

@@ -27,6 +27,7 @@ export const ja: Record<string, string> = {
   editorExplorerMergedDesc: '同じウィンドウ内でファイルを切り替え。新しいウィンドウはファイルツューを展開した状態で開く',
   editorExplorerSplit: '個別',
   editorExplorerSplitDesc: 'パスなしウィンドウはエクスプローラー単体（ツリーのみ）。各ファイルは別ウィンドウで開く（ツリーは格納済み、デフォルトで折りたたみ）',
+  fileTreeSplitter: '上下セクションの分割比率をドラッグで調整（ダブルクリックでリセット）',
   editorTreeToggle: 'ファイルツリーパネル',
   editorPathPlaceholder: 'ファイルパス（セッションディレクトリからの相対 or 絶対）、Enter で開く',
   editorSearchPlaceholder: 'ファイル名で検索…',
