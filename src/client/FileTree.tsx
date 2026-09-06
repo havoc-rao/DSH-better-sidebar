@@ -31,6 +31,27 @@
  * caller: every request is reported through `onUploadRequest(dir, items)`
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
+ *
+ * Data source slot (v0.17.0+): listings default to the local host fs.tree
+ * route; a provider registered through `ctx.betterSidebar
+ * .registerFileTreeProvider` whose `match` accepts this session replaces
+ * the source for ALL listings (root + expansions), and its declared
+ * `capabilities` decide which local-only abilities (upload / download /
+ * openWith / git) stay available — undeclared ones degrade off (see
+ * file-tree-source.ts). The diverge lives in ONE place: `loadDir` below;
+ * refreshTick keeps its exact cache-wipe → reload semantics.
+ *
+ * Multi-root (v0.18.0+): when a matched provider declares `roots`, the
+ * tree renders a root LIST at the top — the local cwd root (full local
+ * semantics, listed through the local fs.tree route, never taken over by a
+ * provider) plus one expandable row per provider-contributed remote root
+ * (listings through that provider's `list`). Root rows carry their own
+ * open state (the local root starts open), each root's levels cache under
+ * its dir string, and each remote root's rows degrade their local-only
+ * abilities by the ROOT's capability face — the local root keeps every
+ * ability unconditionally. TreePanel resolves the roots once and passes
+ * them down so its panel-level gates and the tree share one resolution;
+ * without the prop the tree resolves on its own (direct consumers).
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -41,8 +62,12 @@ import {
   IconLinkOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
-import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
+import { VscChevronRight, VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, downloadUrl, type FsEntry } from './api.ts'
+import {
+  fileTreeCapabilityOn, normalizeFileTreeEntries, useFileTreeRoots, useFileTreeSource,
+  type FileTreeDataSource, type FileTreeProviderCapabilities, type ResolvedFileTreeRoot,
+} from './file-tree-source.ts'
 import { gitStatusAt, type GitRowStatus, type GitStatusKind } from './git-status.ts'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
@@ -308,6 +333,15 @@ export function FileTree(props: {
 /** The client context (v0.16.0+): enables the ACTIVE icon theme's file
    *  icons on rows. Absent → the built-in outline icons (zero change). */
   ctx?: Context
+  /**
+   * The session's resolved remote roots (v0.18.0+, multi-root mode).
+   * TreePanel resolves these via `useFileTreeRoots` so its panel-level
+   * gates and the tree share ONE resolution (the provider's `roots` is
+   * consulted once per change). Absent → the tree resolves roots itself
+   * through `ctx` (direct consumers / tests). An EMPTY array is a settled
+   * "no remote roots" — the plain single-root render, byte for byte.
+   */
+  roots?: readonly ResolvedFileTreeRoot[]
   /** Files highlighted by a "Show in folder" reveal (absolute paths). */
   revealed?: string[]
   onToggle: (path: string) => void
@@ -346,6 +380,128 @@ export function FileTree(props: {
   // The active icon theme's row resolver (null when no theme is active —
   // the built-in outline icons below stay the default).
   const fileIcon = useFileIconResolver(ctx)
+  // The session's file-tree data source: undefined = the default local host
+  // fs.tree; a matching provider (see file-tree-source.ts) replaces it for
+  // ALL listings. Re-resolves live on registry changes (plugin activation).
+  // In multi-root mode this single-source resolution is NOT consulted for
+  // listings — each root carries its own source (see `loadDir` below).
+  const fileSource = useFileTreeSource(ctx, sessionId, cwd)
+  // The session's resolved REMOTE roots (multi-root mode): the caller's
+  // resolution wins (TreePanel passes it down so panel gates and the tree
+  // resolve roots once); without the prop the tree resolves on its own.
+  const selfRoots = useFileTreeRoots(ctx, sessionId, cwd)
+  // While the FIRST roots resolution is still in flight, the tree renders
+  // the single-root path through the LOCAL route: a provider that declares
+  // roots is multi-root-bound (its roots settle non-empty in the common
+  // case), so letting the v0.17 single-source takeover serve the cwd tree
+  // in that window would flash a provider listing under the local starting
+  // point. If the roots settle EMPTY, the v0.17 takeover resumes (mode-key
+  // wipe + reload) — one extra local read, never a wrong provider read.
+  const rootsPending = props.roots !== undefined ? false : selfRoots === undefined
+  const resolvedRoots: readonly ResolvedFileTreeRoot[] = props.roots !== undefined ? props.roots : (selfRoots ?? [])
+  const multiRoot = resolvedRoots.length > 0
+  // Local-only abilities in provider mode: on for local sessions, on for
+  // provider sessions ONLY when the provider declared them (absent = off).
+  const uploadOn = fileTreeCapabilityOn(fileSource, 'upload')
+  const gitOn = fileTreeCapabilityOn(fileSource, 'git')
+  // Git decorations only render when meaningful: local sessions, provider
+  // sessions whose provider declared git support, and multi-root sessions
+  // (the LOCAL root always carries the local repo's status; remote rows
+  // never match its local-path map, so the overlay cannot bleed into
+  // them — the caller also stops fetching in single-provider mode, which
+  // guards callers that still pass a stale map).
+  const effectiveGitStatus = (!multiRoot && !gitOn) ? undefined : gitStatus
+
+  /**
+   * Multi-root (v0.18.0+): whether `path` lies under directory `dir`
+   * (equal, or a '/'- or '\'-separated descendant — remote-absolute
+   * semantics may use either separator).
+   */
+  const underDir = (path: string, dir: string): boolean =>
+    path === dir || path.startsWith(dir + '/') || path.startsWith(dir + '\\')
+
+  /** The remote root owning a path, or undefined for the LOCAL subtree
+   *  (paths under cwd always resolve local — the local root is never
+   *  taken over, even when a remote root's dir string would prefix-match). */
+  const rootAt = (path: string): ResolvedFileTreeRoot | undefined => {
+    if (cwd !== undefined && underDir(path, cwd)) return undefined
+    return resolvedRoots.find(root => underDir(path, root.dir))
+  }
+
+  /** One row's capability face: null = the FULL local face. Single-root
+   *  mode → the session's resolved provider face (or null); multi-root →
+   *  the owning root's face, the local subtree always null. */
+  const faceOf = (path: string): FileTreeProviderCapabilities | null => {
+    if (!multiRoot) return fileSource === undefined ? null : fileSource.capabilities
+    return rootAt(path)?.capabilities ?? null
+  }
+
+  /** Whether one local ability is on for a path's surface. */
+  const capOn = (path: string, key: keyof FileTreeProviderCapabilities): boolean => {
+    const face = faceOf(path)
+    return face === null || face[key] === true
+  }
+
+  /** The body-level upload gate: in multi-root mode the BODY belongs to
+   *  the local root (full local face — uploads into cwd always work);
+   *  single-root mode keeps the v0.17 session face. */
+  const bodyUploadOn = !multiRoot ? uploadOn : true
+
+  /** The directory a row's relative-path copy is relative to: the row's
+   *  OWN root in multi-root mode (local rows → cwd, remote rows → their
+   *  root dir — a remote path relative to the local cwd would be
+   *  meaningless), the session cwd in single-root mode (unchanged). */
+  const relativeBaseOf = (path: string): string => {
+    if (!multiRoot || cwd === undefined) return cwd ?? ''
+    const root = rootAt(path)
+    return root === undefined ? cwd : root.dir
+  }
+
+  /**
+   * Multi-root (v0.18.0+): the root rows' expand/collapse state, keyed by
+   * root dir strings — each root opens and collapses independently.
+   * Seeded with the LOCAL root open (the local subtree stays visible with
+   * its full local semantics from the first frame; remote roots start
+   * collapsed). Sub-directory expansion below any root keeps riding the
+   * caller's `expanded` set, so reveals and persistence stay untouched.
+   */
+  const [openRoots, setOpenRoots] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleRoot = useCallback((dir: string): void => {
+    setOpenRoots(prev => {
+      const next = new Set(prev)
+      if (next.has(dir)) next.delete(dir)
+      else next.add(dir)
+      return next
+    })
+  }, [])
+  // Mode / cwd transitions (re)seed: entering multi-root opens the local
+  // root; a cwd change (session switch) starts the list over.
+  useEffect(() => {
+    setOpenRoots(multiRoot && cwd !== undefined ? new Set([cwd]) : new Set())
+  }, [multiRoot, cwd])
+  // Roots-list changes prune STALE entries; the user's open/close state
+  // survives untouched (expanding a root never re-collapses others).
+  useEffect(() => {
+    if (!multiRoot) return
+    setOpenRoots(prev => {
+      const valid = new Set<string>(cwd !== undefined ? [cwd] : [])
+      for (const root of resolvedRoots) valid.add(root.dir)
+      let changed = false
+      for (const dir of prev) {
+        if (!valid.has(dir)) { changed = true; break }
+      }
+      return changed ? new Set([...prev].filter(dir => valid.has(dir))) : prev
+    })
+  }, [multiRoot, cwd, resolvedRoots])
+  // A "Show in folder" reveal of LOCAL paths opens the local root row even
+  // when the user collapsed it first (the reveal would otherwise be
+  // invisible under a closed root).
+  useEffect(() => {
+    if (!multiRoot || cwd === undefined || openRoots.has(cwd)) return
+    if ((revealed ?? []).some(path => underDir(path, cwd))) {
+      setOpenRoots(prev => new Set(prev).add(cwd))
+    }
+  }, [multiRoot, cwd, revealed, openRoots])
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -398,7 +554,7 @@ export function FileTree(props: {
     })
   }
   const handleBodyDrop = (event: DragEvent): void => {
-    if (!isFileDrag(event)) return
+    if (!isFileDrag(event) || !bodyUploadOn) return
     event.preventDefault()
     event.stopPropagation()
     resetDrop()
@@ -406,6 +562,16 @@ export function FileTree(props: {
   }
   const handleDirDrop = (event: DragEvent, dir: string): void => {
     if (!isFileDrag(event)) return
+    if (!capOn(dir, 'upload')) {
+      // A remote surface whose provider did not declare upload is INERT:
+      // swallow the drop so it can never fall through to the local root
+      // underneath (single-root mode keeps the v0.17 pass-through).
+      if (multiRoot) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     resetDrop()
@@ -416,7 +582,7 @@ export function FileTree(props: {
     handleDirDrop(event, parentOf(path))
   }
   const handleBodyDragEnter = (event: DragEvent): void => {
-    if (!isFileDrag(event)) return
+    if (!isFileDrag(event) || !bodyUploadOn) return
     event.preventDefault()
     event.stopPropagation()
     dropDepth.current += 1
@@ -436,7 +602,7 @@ export function FileTree(props: {
     setDropRect(null)
   }
   const handleBodyDragOver = (event: DragEvent): void => {
-    if (!isFileDrag(event)) return
+    if (!isFileDrag(event) || !bodyUploadOn) return
     event.preventDefault()
     event.stopPropagation()
     event.dataTransfer.dropEffect = busy ? 'none' : 'copy'
@@ -448,6 +614,16 @@ export function FileTree(props: {
   }
   const handleRowDragOver = (event: DragEvent, dir: string): void => {
     if (!isFileDrag(event)) return
+    if (!capOn(dir, 'upload')) {
+      // Inert remote surface: mark the row as no-drop so the browser never
+      // offers the local-root fallback beneath it (multi-root only).
+      if (multiRoot) {
+        event.preventDefault()
+        event.stopPropagation()
+        event.dataTransfer.dropEffect = 'none'
+      }
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     event.dataTransfer.dropEffect = busy ? 'none' : 'copy'
@@ -460,12 +636,30 @@ export function FileTree(props: {
     setData(dataRef.current)
   }, [])
 
-  const loadDir = useCallback((dir: string) => {
+  /** One directory level's data source: 'local' forces the local host
+   *  fs.tree route; a source carries the provider's live listing. */
+  type DirSource = 'local' | FileTreeDataSource
+
+  const loadDir = useCallback((dir: string, source: DirSource) => {
     if (dataRef.current[dir] !== undefined) return
     storeLevel(dir, {})
-    api.fsTree({ sessionId, cwd }, dir).then((listing) => {
-      storeLevel(dir, { entries: listing.entries })
-    }).catch((error: unknown) => {
+    // THE single data-source diverge point: a remote root's provider
+    // `list` replaces the default local host fs.tree for listings under
+    // that root; the LOCAL root (and every single-root path) always runs
+    // through the local route. Everything downstream (the level cache,
+    // rendering, the refreshTick wipe) is source-agnostic, so a refresh
+    // bump reloads the visible set through whichever source is resolved —
+    // exactly the local semantics, provider or not.
+    const request: Promise<LevelData> = (async () => {
+      if (source === 'local') {
+        const listing = await api.fsTree({ sessionId, cwd }, dir)
+        return { entries: listing.entries }
+      }
+      const result = await source.list(dir)
+      if ('error' in result) return { error: result.error }
+      return { entries: normalizeFileTreeEntries(result.entries) }
+    })()
+    request.then(level => { storeLevel(dir, level) }).catch((error: unknown) => {
       storeLevel(dir, { error: error instanceof Error ? error.message : String(error) })
     })
   }, [sessionId, cwd, storeLevel])
@@ -480,14 +674,71 @@ export function FileTree(props: {
     setData({})
   }, [refreshTick])
 
+  // The RESOLVED MODE switching — the single-source provider (v0.17) or
+  // the multi-root composition (v0.18) — wipes the cache too, so the load
+  // effect below (whose `loadDir` identities follow the sources) refetches
+  // the visible set through the NEW sources with no refresh bump. Guarded
+  // by a mode key: a registry notification that re-resolves to the same
+  // mode only changes object identities — the cache survives and nothing
+  // refetches, exactly the pre-slot behavior.
+  const lastModeKey = useRef<string | null>(null)
+  useEffect(() => {
+    const key = multiRoot
+      ? `multi:${resolvedRoots.map(root => `${root.providerId}/${root.id}@${root.dir}`).join(',')}`
+      : rootsPending
+        ? 'pending'
+        : fileSource === undefined ? null : `single:${fileSource.providerId}`
+    if (lastModeKey.current === key) return
+    lastModeKey.current = key
+    dataRef.current = {}
+    setData({})
+  }, [multiRoot, resolvedRoots, fileSource, rootsPending])
+
   useEffect(() => {
     // Load the visible set; already-loaded levels (kept in the cache) are
     // not refetched. Only the refresh tick wipes the cache.
-    const root = cwd
-    if (root === undefined) return
-    loadDir(root)
-    for (const dir of expanded) loadDir(dir)
-  }, [cwd, expanded, refreshTick, loadDir])
+    if (!multiRoot) {
+      const root = cwd
+      if (root === undefined) return
+      // While the roots resolution is in flight the local route serves the
+      // cwd tree (see `rootsPending`); the v0.17 single-source takeover
+      // applies only once the session settled with NO remote roots.
+      const singleSource: DirSource = !rootsPending && fileSource !== undefined ? fileSource.source : 'local'
+      loadDir(root, singleSource)
+      for (const dir of expanded) {
+        // Pending window: only dirs under the local root are legitimate
+        // targets (the remote dirs are not mapped to any source yet —
+        // loading them through the local route would be a wrong read).
+        if (rootsPending && (cwd === undefined || !underDir(dir, cwd))) continue
+        loadDir(dir, singleSource)
+      }
+      return
+    }
+    // Multi-root: each OPEN root row loads its own dir — the local root
+    // ALWAYS from the local host (never taken over by a provider), each
+    // remote root from its providing provider — plus every expanded dir
+    // under it (level caches key by dir string, so the local and remote
+    // path namespaces never collide).
+    if (cwd !== undefined && openRoots.has(cwd)) {
+      loadDir(cwd, 'local')
+      for (const dir of expanded) {
+        if (underDir(dir, cwd)) loadDir(dir, 'local')
+      }
+    }
+    for (const root of resolvedRoots) {
+      if (!openRoots.has(root.dir)) continue
+      loadDir(root.dir, root.source)
+      for (const dir of expanded) {
+        if (underDir(dir, root.dir)) loadDir(dir, root.source)
+      }
+    }
+  // The mode inputs are deps so a resolved-mode change (registry tick,
+  // roots settlement) re-runs this effect right after the mode-key wipe —
+  // the wipe clears the cache and the reload must follow through the NEW
+  // sources. A same-mode re-resolution only changes `fileSource`'s object
+  // identity → this effect re-runs against the intact cache (loadDir is
+  // cache-guarded, so nothing refetches).
+  }, [cwd, expanded, refreshTick, loadDir, multiRoot, openRoots, resolvedRoots, fileSource, rootsPending])
 
   // Bring a "Show in folder" reveal into view: the ancestors expand above
   // (revealPaths), but the row may not be scrolled into sight — a reveal on
@@ -560,8 +811,8 @@ export function FileTree(props: {
    * the parent row with every target as a nested submenu. Both only render
    * when the caller wired the feature and at least one target is visible.
    */
-  const openWithEntries = (): MenuEntry[] => {
-    if (openWithTargets === undefined || onOpenWith === undefined || openWithTargets.length === 0) return []
+  const openWithEntries = (on: boolean): MenuEntry[] => {
+    if (openWithTargets === undefined || onOpenWith === undefined || openWithTargets.length === 0 || !on) return []
     const pinnedIds = openWithPinned ?? []
     /** Brand marks for the built-ins (monochrome silhouettes, currentColor);
      *  reveal gets the folder glyph, custom editors a generic code mark. */
@@ -634,15 +885,18 @@ export function FileTree(props: {
 
   // Plugin-command rows for the row context menu (v0.16.0+): appended
   // after the built-in rows, driven by the pure builder — zero logic here.
+  // Multi-root: every root row (local + remote) is a root-row surface.
+  const isRootRow = (path: string): boolean =>
+    path === root || resolvedRoots.some(candidate => candidate.dir === path)
   const rowWhere: CommandMenuWhere = rowMenu === null
     ? 'file-row'
     : rowMenu.isDir
-      ? (rowMenu.path === root ? 'root-row' : 'dir-row')
+      ? (isRootRow(rowMenu.path) ? 'root-row' : 'dir-row')
       : 'file-row'
   const commandItems = ctx?.betterSidebar === undefined ? [] : commandMenuRows(
     ctx.betterSidebar.getCommands(),
     rowWhere,
-    { path: rowMenu?.path, isDir: rowMenu?.isDir, isRoot: rowMenu !== null && rowMenu.path === root },
+    { path: rowMenu?.path, isDir: rowMenu?.isDir, isRoot: rowMenu !== null && isRootRow(rowMenu.path) },
   )
 
   const renderLevel = (dir: string, depth: number): ReactNode => {
@@ -659,7 +913,7 @@ export function FileTree(props: {
     }
     const entries = level.entries ?? []
     return entries.map(entry => {
-      const status = gitStatusAt(gitStatus, entry.path)
+      const status = gitStatusAt(effectiveGitStatus, entry.path)
       // While a guide band is hovered, the ancestor's whole line lights up:
       // every row whose stroke at the hovered column belongs to the same
       // ancestor renders that stroke highlighted — the hovered row included
@@ -749,6 +1003,79 @@ css.explorerRow,
     })
   }
 
+  /**
+   * One root-list row (multi-root, v0.18.0+): a chevron + folder icon +
+   * label line distinct from plain directory rows (filled tint, absolute
+   * dir as title). Clicking toggles THIS root's open state (independent of
+   * every other root and of the caller's `expanded` set); open roots
+   * render their subtree below with the shared row rendering at depth 1.
+   * Drop + context-menu surfaces behave like a directory row, gated by
+   * the root's own capability face (the local root keeps the full face).
+   */
+  const renderRootRow = (rowDir: string, rowLabel: string): ReactNode => {
+    const open = openRoots.has(rowDir)
+    return (
+      <div key={`root:${rowDir}`}>
+        <div
+          role="button"
+          tabIndex={0}
+          className={clsx(css.explorerRow, css.explorerRootRow, dropTarget === rowDir && css.explorerRowDropTarget)}
+          title={rowDir}
+          onClick={() => { toggleRoot(rowDir) }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              toggleRoot(rowDir)
+            }
+          }}
+          onDragOver={(event) => { handleRowDragOver(event, rowDir) }}
+          onDrop={(event) => { handleDirDrop(event, rowDir) }}
+          onContextMenu={(event) => { openRowMenu(event, rowDir, true) }}
+        >
+          <VscChevronRight
+            size={14}
+            className={css.explorerRootChevron}
+            style={{ transform: open ? 'rotate(90deg)' : undefined }}
+          />
+          {fileIcon({ name: baseName(rowDir), isDir: true, expanded: open, isRoot: true }) ?? (open ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />)}
+          <span className={css.explorerName}>{rowLabel}</span>
+          {copiedPath === rowDir
+            ? <span className={css.explorerCopied}>{t('copied')}</span>
+            : (
+              <button
+                type="button"
+                className={css.explorerRef}
+                aria-label={t('referenceFile')}
+                title={t('referenceFile')}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onReferenceFile(rowDir)
+                }}
+              >
+                {t('referenceFile')}
+              </button>
+            )}
+        </div>
+        {open && data[rowDir] !== undefined && renderLevel(rowDir, 1)}
+      </div>
+    )
+  }
+
+  /** Multi-root (v0.18.0+): the root LIST body — the LOCAL starting point
+   *  first (full local semantics, collapsible like any root row but open
+   *  by default), then each provider-contributed remote root. Rows
+   *  distinguish themselves from plain directory rows visually (root-row
+   *  fill + chevron) and carry the root's absolute dir in their title. */
+  const rootsBody = multiRoot ? (
+    <>
+      {cwd !== undefined && renderRootRow(cwd, baseName(cwd))}
+      {/* A remote root whose dir equals the local cwd is unreachable
+          (local paths always resolve local) — skip it so the root list
+          never renders two rows for one dir. */}
+      {resolvedRoots.filter(candidate => candidate.dir !== cwd).map(candidate => renderRootRow(candidate.dir, candidate.label))}
+    </>
+  ) : null
+
   return (
     <div
       ref={bodyRef}
@@ -759,36 +1086,40 @@ css.explorerRow,
       onDrop={handleBodyDrop}
     >
       {root === undefined ? (
-        <div className={css.explorerEmpty}>{t('noSession')}</div>
+        rootsBody ?? <div className={css.explorerEmpty}>{t('noSession')}</div>
       ) : (
         <>
-          <div
+          {rootsBody ?? (
+            <>
+              <div
 className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarget)}
-            style={{ paddingLeft: INDENT_BASE }}
-            onDragOver={(event) => { handleRowDragOver(event, root) }}
-            onDrop={(event) => { handleDirDrop(event, root) }}
-            onContextMenu={(event) => { openRowMenu(event, root, true) }}
-          >
-            {fileIcon({ name: baseName(root), isDir: true, expanded: true, isRoot: true }) ?? <IconFolderOpen16 size={14} />}
-            <span className={css.explorerName}>{baseName(root)}</span>
-            {copiedPath === root
-              ? <span className={css.explorerCopied}>{t('copied')}</span>
-              : (
-                <button
-                  type="button"
-                  className={css.explorerRef}
-                  aria-label={t('referenceFile')}
-                  title={t('referenceFile')}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onReferenceFile(root)
-                  }}
-                >
-                  {t('referenceFile')}
-                </button>
-              )}
-          </div>
-          {data[root] !== undefined && renderLevel(root, 1)}
+                style={{ paddingLeft: INDENT_BASE }}
+                onDragOver={(event) => { handleRowDragOver(event, root) }}
+                onDrop={(event) => { handleDirDrop(event, root) }}
+                onContextMenu={(event) => { openRowMenu(event, root, true) }}
+              >
+                {fileIcon({ name: baseName(root), isDir: true, expanded: true, isRoot: true }) ?? <IconFolderOpen16 size={14} />}
+                <span className={css.explorerName}>{baseName(root)}</span>
+                {copiedPath === root
+                  ? <span className={css.explorerCopied}>{t('copied')}</span>
+                  : (
+                    <button
+                      type="button"
+                      className={css.explorerRef}
+                      aria-label={t('referenceFile')}
+                      title={t('referenceFile')}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onReferenceFile(root)
+                      }}
+                    >
+                      {t('referenceFile')}
+                    </button>
+                  )}
+              </div>
+              {data[root] !== undefined && renderLevel(root, 1)}
+            </>
+          )}
         </>
       )}
       {dropOver && dropRect !== null && createPortal(
@@ -866,13 +1197,21 @@ className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarge
           ...(rowMenu?.isDir === false && onOpenFileSide !== undefined
             ? [{ id: 'open-side', label: t('openFileSide'), icon: <VscFolderOpened size={16} /> }]
             : []),
-          ...openWithEntries(),
-          // Download applies to files only (the host route refuses directories).
-          ...(rowMenu?.isDir === false
+          // The open-with section gates on the TARGET row's capability
+          // face: full local face for local roots/sessions, the row's
+          // provider face inside a remote root (absent = off).
+          ...openWithEntries(rowMenu !== null && capOn(rowMenu.path, 'openWith')),
+          // Download applies to files only (the host route refuses
+          // directories); hidden in provider mode unless the provider
+          // declared download support (the local file route cannot serve
+          // paths it does not own) — per-row face in multi-root mode.
+          ...(rowMenu?.isDir === false && rowMenu !== null && capOn(rowMenu.path, 'download')
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={16} /> }]
             : []),
-// Upload into a directory (incl. the workspace root row).
-          ...(rowMenu?.isDir === true
+// Upload into a directory (incl. the workspace root row); hidden in
+// provider mode unless the provider declared upload support — per-row
+// face in multi-root mode (the local root keeps it unconditionally).
+          ...(rowMenu?.isDir === true && rowMenu !== null && capOn(rowMenu.path, 'upload')
             ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={16} /> }]
             : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={16} /> },
@@ -905,7 +1244,7 @@ if (id === 'upload-here') {
             return
           }
           if (id === 'relative') {
-            copyPath(relativeTo(cwd ?? '', target.path), target.path)
+            copyPath(relativeTo(relativeBaseOf(target.path), target.path), target.path)
             return
           }
           if (id === 'absolute') {

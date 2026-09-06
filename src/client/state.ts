@@ -408,7 +408,10 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seed: 
 sideBarView: SIDEBAR_BAR_VIEW_DEFAULT,
     sideBarWidth: SIDEBAR_BAR_WIDTH_DEFAULT,
     sideBarOpen: true,
-    chatOpen: true,
+    // The IDE chat column STARTS collapsed — it never pops out by itself;
+    // the fullscreen's top-right toggle (or ⌘⌥B / ⌘⇧B inside the mode)
+    // pops it out on demand.
+    chatOpen: false,
     chatWidth: CHAT_WIDTH_DEFAULT,
     floats: [],
   }
@@ -992,12 +995,14 @@ export function togglePanel(state: SidebarState): SidebarState {
 
 /** Toggle the IDE FULLSCREEN mode (⌘⌥⇧B): the right panel covers the whole
  *  viewport as a standalone VSCode window — the resource manager pins to the
- *  panel's LEFT edge, the CHAT COLUMN docks to its RIGHT edge (the main
+ *  panel's LEFT edge, the CHAT COLUMN can dock to its RIGHT edge (the main
  *  conversation sits behind the fullscreen, so the Side Chat section is the
  *  mode's conversation surface), and the bottom workbench docks BELOW the
  *  editor tabs. Entering opens the panel and defaults the explorer drawer
- *  AND the chat column EXPANDED (a collapsed drawer would leave the left
- *  column empty; a collapsed chat would hide the mode's chat); exiting
+ *  EXPANDED (a collapsed drawer would leave the left column empty); the chat
+ *  column KEEPS ITS CURRENT STATE instead — it never pops out by default
+ *  (the top-right toggle next to the exit ✕ / ⌘⌥B / ⌘⇧B expand it on
+ *  demand), so the fullscreen never surprises with a side column. Exiting
  *  restores the docked width (the panel stays open). The flag is orthogonal
  *  to `bottomMaximized` — the IDE panel covers the bottom panel behind it. */
 export function toggleRightMaximized(state: SidebarState): SidebarState {
@@ -1009,7 +1014,7 @@ export function toggleRightMaximized(state: SidebarState): SidebarState {
     // Bar), so the default-expand never disturbs a docked user's layout.
     sideBarOpen: maximized ? true : state.sideBarOpen,
     // Inert outside IDE mode (chatOpen only drives the fullscreen column).
-    chatOpen: maximized ? true : state.chatOpen,
+    chatOpen: state.chatOpen,
     rightMaximized: maximized,
   }
 }
@@ -1738,8 +1743,9 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     // (true) so the file tree never disappears on upgrade.
     sideBarOpen: record.sideBarOpen !== false,
     // The IDE chat-column fields arrived with the fullscreen column: older
-    // states restore expanded at the default width (inert outside IDE mode).
-    chatOpen: record.chatOpen !== false,
+    // states restore COLLAPSED — the "never pops out by default" contract
+    // (the column expands only via the top-right toggle / ⌘⌥B / ⌘⇧B).
+    chatOpen: record.chatOpen === true,
     chatWidth: typeof record.chatWidth === 'number' && Number.isFinite(record.chatWidth)
       ? clampChatWidth(record.chatWidth)
       : CHAT_WIDTH_DEFAULT,

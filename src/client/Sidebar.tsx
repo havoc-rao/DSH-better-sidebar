@@ -31,7 +31,7 @@
 import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
-import { IconCloseFill14, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, IconNewChatOutline16, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarLayoutService, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
@@ -2131,23 +2131,41 @@ className={clsx(css.panel, !state.panelOpen && css.panelHidden, state.rightMaxim
           </div>
         )}
         {/*
-          The IDE-fullscreen (⌘⌥⇧B) exit control: pinned to the panel's
-          top-right like the bottom panel's close — the corner toggle
-          cluster sits UNDER the fullscreen panel (z-index 1000), so this
-          button is the mouse way back to the docked layout (the key toggles
-          too).
+          The IDE-fullscreen (⌘⌥⇧B) controls pinned to the panel's top-right:
+          the CHAT COLUMN toggle (the same 28px circle as the corner toggle
+          cluster — the mouse way to pop the Side Chat in/out, which no
+          longer pops out by default) and the EXIT button. The corner toggle
+          cluster sits UNDER the fullscreen panel (z-index 1000), so these
+          are the mouse way back to the docked layout (the key toggles too).
         */}
         {state.rightMaximized && (
-          <Tooltip label={`${t('ideModeExit')} (${panelHotkeyHint('ide')})`} side="bottom" delayMs={500}>
-            <button
-              type="button"
-              className={css.ideExit}
-              aria-label={t('ideModeExit')}
-              onClick={() => { store.reduce(toggleRightMaximized) }}
+          <>
+            <Tooltip
+              label={`${state.chatOpen ? t('sideChatCollapse') : t('sideChatExpand')} (${panelHotkeyHint('right')} / ${panelHotkeyHint('chat')})`}
+              side="bottom"
+              delayMs={500}
             >
-              <IconCloseFill14 />
-            </button>
-          </Tooltip>
+              <button
+                type="button"
+                className={clsx(css.toggleButton, css.ideChatToggle, state.chatOpen && css.ideChatToggleActive)}
+                aria-label={state.chatOpen ? t('sideChatCollapse') : t('sideChatExpand')}
+                aria-pressed={state.chatOpen}
+                onClick={toggleChat}
+              >
+                <IconNewChatOutline16 />
+              </button>
+            </Tooltip>
+            <Tooltip label={`${t('ideModeExit')} (${panelHotkeyHint('ide')})`} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.ideExit}
+                aria-label={t('ideModeExit')}
+                onClick={() => { store.reduce(toggleRightMaximized) }}
+              >
+                <IconCloseFill14 />
+              </button>
+            </Tooltip>
+          </>
         )}
         <div className={css.panelBody}>
 {/*

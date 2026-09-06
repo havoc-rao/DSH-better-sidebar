@@ -95,7 +95,9 @@ function mountPane(tab: SidebarTab | null, chatOpen = true): PaneHandles {
   document.body.append(container)
   const store = createSidebarStore()
   store.setSession('chat-pane-session')
-  if (!chatOpen) store.reduce(s => setChatOpen(s, false))
+  // The store no longer defaults the column open — always set the requested
+  // state explicitly (the harness's `chatOpen` param is the column's state).
+  store.reduce(s => setChatOpen(s, chatOpen))
   const ctx = ctxFor(store, createBetterSidebarService(store), 'chat-pane-session', {})
   const onToggleChat = vi.fn()
   const onNewThread = vi.fn()
@@ -226,6 +228,10 @@ describe('Sidebar shell in IDE FULLSCREEN (⌘⌥⇧B) with the chat column', ()
     })
     store.setSession('ide-chat-session')
     store.reduce(toggleRightMaximized)
+    // Entering the mode no longer force-expands the chat column (it pops
+    // out on demand) — these harness tests exercise the EXPANDED column,
+    // so pop it out explicitly.
+    store.reduce(s => setChatOpen(s, true))
     store.reduce(s => openTabInActivePane(s, {
       id: 'sidechat:t1',
       type: 'sidechat',

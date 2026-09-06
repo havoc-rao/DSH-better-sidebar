@@ -20,7 +20,10 @@
  * contract). Collapse (`state.chatOpen` false) renders the column at width 0
  * with the same animated transition as the explorer drawer — the view stays
  * MOUNTED (a running thread keeps streaming and the transcript never reloads);
- * the Activity Bar's chat icon and the header's collapse button toggle it.
+ * the Activity Bar's chat icon, the header's collapse button and the
+ * fullscreen top-right toggle (next to the exit ✕) toggle it. The column
+ * starts COLLAPSED — it never pops out by default (see makeDefaultState /
+ * toggleRightMaximized).
  *
  * The whole column exists ONLY inside IDE mode — outside it the shell never
  * renders this component (side-chat tabs keep their regular workbench cells).

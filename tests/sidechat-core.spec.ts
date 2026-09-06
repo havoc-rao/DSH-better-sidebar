@@ -276,6 +276,22 @@ describe('sideThreadRows', () => {
     const rows = sideThreadRows(byId, 'main')
     expect(rows).toEqual([{ id: 'thread', title: 'Side: q', running: true }])
   })
+
+  it('never surfaces hidden one-shot helpers (git-commit-*) as threads', () => {
+    const byId: Record<string, SidebarSessionSummary> = {
+      main: summary({ id: 'main', displayTitle: 'Main' }),
+      // The commit-draft helper shares the 'Side: ' convention but is a
+      // transient scratch session, not a re-openable thread.
+      helper: summary({
+        id: 'git-commit-1234',
+        origin: 'subagent',
+        parentId: 'main',
+        displayTitle: 'Side: Git commit draft',
+        running: true,
+      }),
+    }
+    expect(sideThreadRows(byId, 'main')).toEqual([])
+  })
 })
 
 describe('save eligibility', () => {

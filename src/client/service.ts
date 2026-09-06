@@ -40,6 +40,7 @@ import {
   type IconThemeIndex,
 } from './icon-theme.ts'
 import type { CommandDescriptor, CommandRunPayload } from './commands.ts'
+import type { FileTreeProviderDescriptor } from './file-tree-source.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -65,6 +66,12 @@ export type {
   CommandDescriptor, CommandMenuContext, CommandMenuContribution, CommandMenuRow, CommandMenuWhere,
   CommandRunPayload, CommandRunWhere,
 } from './commands.ts'
+export type { FsEntry } from './api.ts'
+export type {
+  FileTreeDataSource, FileTreeEntry, FileTreeListResult, FileTreeProviderCapabilities,
+  FileTreeProviderDescriptor, FileTreeProviderRoot, FileTreeSearchResult,
+  ResolvedFileTreeRoot, ResolvedFileTreeSource,
+} from './file-tree-source.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -462,6 +469,29 @@ export interface BetterSidebarService {
    */
   executeCommand(id: string, payload?: CommandRunPayload): boolean
   /**
+   * Register a file-tree data source provider (v0.17.0+): the explorer's
+   * data-source injection slot. A provider owns the tree of every session
+   * its `match` accepts — the root listing and each expansion then run
+   * through the provider's `list` instead of the local host `fs.tree`
+   * route; sessions no provider matches keep the local host path byte for
+   * byte. The declared `capabilities` tell the tree which local-only
+   * abilities (upload / download / search / git / openWith) remain
+   * available in provider mode — anything undeclared degrades OFF (hidden
+   * menu entries, inert drag-drop, no git decorations). Resolution is
+   * registration-order, FIRST match wins; a throwing `match`/`createSource`
+   * skips that provider. Multi-root (v0.18.0+): a provider may also
+   * declare `roots` — when a matched provider's `roots` settles non-empty,
+   * the session's tree renders the local cwd root (full local semantics,
+   * never taken over) plus one expandable root row per declared remote
+   * root (browsed through that provider's `list`); providers merge in
+   * registration order, duplicate root ids keep the first registration.
+   * A duplicate id throws; the disposer unregisters (HMR-safe through
+   * `ctx.effect`). See `file-tree-source.ts`.
+   */
+  registerFileTreeProvider(descriptor: FileTreeProviderDescriptor): () => void
+  /** The registered file-tree providers (registration order). */
+  getFileTreeProviders(): readonly FileTreeProviderDescriptor[]
+  /**
    * Open a tab (used by external tabs and the + menu). `title` overrides
    * the descriptor's title when given (the editor tab shows the file name);
    * when the descriptor provides `createTab` it mints the tab itself and
@@ -590,7 +620,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.17.0'
+export const SIDEBAR_SERVICE_VERSION = '0.18.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -609,6 +639,10 @@ export const SIDEBAR_SERVICE_VERSION = '0.17.0'
  * - 'iconTheme' (v0.16.0): registerIconTheme / getIconThemes /
  *   getActiveIconTheme / matchFileIcon
  * - 'commands' (v0.16.0): registerCommand / getCommands / executeCommand
+ * - 'fileTreeSource' (v0.17.0): registerFileTreeProvider /
+ *   getFileTreeProviders — the explorer's data-source injection slot
+ *   (v0.18.0+ adds provider `roots` — multi-root sessions: local root +
+ *   per-provider remote roots)
  * - 'floatWindows' (v0.16.0): tabs float as free windows — openTab's dedupe/
  *   id focus targets RAISE the floating window (never duplicate the tab or
  *   expand panels), closeTab on a floating tab closes it with its window.
@@ -627,6 +661,7 @@ export const SIDEBAR_FEATURES = [
 'keybindings',
   'iconTheme',
   'commands',
+  'fileTreeSource',
   'floatWindows',
 ] as const
 
@@ -660,6 +695,7 @@ export function createBetterSidebarService(
   const iconThemes = new Map<string, IconThemeDescriptor>()
   const iconThemeIndexes = new Map<string, IconThemeIndex>()
   const commands = new Map<string, CommandDescriptor>()
+  const fileTreeProviders = new Map<string, FileTreeProviderDescriptor>()
   const listeners = new Set<() => void>()
   // A private runtime when none is shared (standalone/tests): the registry
   // semantics (dup ids, disposal, listing) work the same either way, only
@@ -779,6 +815,22 @@ export function createBetterSidebarService(
   }
 
   const getCommands = (): readonly CommandDescriptor[] => Array.from(commands.values())
+
+  const registerFileTreeProvider = (descriptor: FileTreeProviderDescriptor): (() => void) => {
+    if (fileTreeProviders.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] file tree provider "${descriptor.id}" already registered`)
+    }
+    fileTreeProviders.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (fileTreeProviders.get(descriptor.id) === descriptor) {
+        fileTreeProviders.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  const getFileTreeProviders = (): readonly FileTreeProviderDescriptor[] => Array.from(fileTreeProviders.values())
 
   const executeCommand = (id: string, payload?: CommandRunPayload): boolean => {
     const descriptor = commands.get(id)
@@ -1133,6 +1185,8 @@ export function createBetterSidebarService(
     registerCommand,
     getCommands,
     executeCommand,
+    registerFileTreeProvider,
+    getFileTreeProviders,
     openTab,
     closeTab,
     subscribe,

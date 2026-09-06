@@ -493,28 +493,30 @@ describe('sidebar state', () => {
     expect(s.sideBarOpen).toBe(true)
   })
 
-  it('entering IDE fullscreen defaults the CHAT COLUMN expanded (the mode\'s conversation surface)', () => {
+  it('entering IDE fullscreen does NOT force the chat column (it pops out only on demand)', () => {
     let s = { ...state(), chatOpen: false }
     expect(s.chatOpen).toBe(false)
     s = toggleRightMaximized(s)
     expect(s.rightMaximized).toBe(true)
-    expect(s.chatOpen).toBe(true)
-    // A collapse inside the mode is the user's own choice — exiting keeps it.
-    s = toggleRightMaximized(setChatOpen(s, false))
-    expect(s.rightMaximized).toBe(false)
+    // The column never pops out by default — the top-right toggle /
+    // ⌘⌥B / ⌘⇧B expand it inside the mode.
     expect(s.chatOpen).toBe(false)
+    // An expansion inside the mode is the user's own choice — exiting keeps it.
+    s = toggleRightMaximized(setChatOpen(s, true))
+    expect(s.rightMaximized).toBe(false)
+    expect(s.chatOpen).toBe(true)
   })
 
-  it('makeDefaultState seeds the chat column expanded at the default width', () => {
+  it('makeDefaultState seeds the chat column collapsed at the default width', () => {
     const s = makeDefaultState()
-    expect(s.chatOpen).toBe(true)
+    expect(s.chatOpen).toBe(false)
     expect(s.chatWidth).toBe(CHAT_WIDTH_DEFAULT)
   })
 
   it('setChatOpen is a no-op for the same value and setChatWidth clamps to the contract', () => {
     const s = state()
-    expect(setChatOpen(s, true)).toBe(s)
-    expect(setChatOpen(s, false).chatOpen).toBe(false)
+    expect(setChatOpen(s, false)).toBe(s)
+    expect(setChatOpen(s, true).chatOpen).toBe(true)
     expect(setChatWidth(s, 1).chatWidth).toBe(CHAT_WIDTH_MIN)
     expect(setChatWidth(s, 9999).chatWidth).toBe(CHAT_WIDTH_MAX)
     expect(setChatWidth(s, 350).chatWidth).toBe(350)
@@ -522,11 +524,11 @@ describe('sidebar state', () => {
 
   it('sanitizeState restores chat column fields leniently (later-build defaults)', () => {
     const base = JSON.parse(JSON.stringify(makeDefaultState())) as Record<string, unknown>
-    // A pre-chat-column persisted state restores expanded at the default width.
+    // A pre-chat-column persisted state restores collapsed at the default width.
     const legacy = { ...base }
     delete legacy.chatOpen
     delete legacy.chatWidth
-    expect(sanitizeState(legacy)?.chatOpen).toBe(true)
+    expect(sanitizeState(legacy)?.chatOpen).toBe(false)
     expect(sanitizeState(legacy)?.chatWidth).toBe(CHAT_WIDTH_DEFAULT)
     // Malformed values degrade to the defaults, valid ones clamp.
     expect(sanitizeState({ ...base, chatOpen: false })?.chatOpen).toBe(false)

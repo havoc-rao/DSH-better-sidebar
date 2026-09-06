@@ -9,6 +9,13 @@
  * - {@link countSubagentDescendants}: uninterrupted subagent-origin lineage
  *   totals (mirror of the official `indexSubagentDescendants` over the
  *   plugin's own summary rows).
+ *
+ * Two row classes never register as topology (both are excluded from every
+ * count/trigger here): Side Chat threads, recognized by their durable
+ * 'Side: ' title, and hidden one-shot helpers like the Git commit-draft
+ * agent, recognized structurally by their session-id prefix ({@link
+ * isHiddenHelperSummary}) — they never pin a 'Side: ' TITLE, so the title
+ * check alone cannot see them.
  */
 import type {
   SidebarSessionList,
@@ -16,6 +23,7 @@ import type {
   SidebarSubagentCatalog,
 } from '../context-types.ts'
 import { SIDE_LABEL_PREFIX } from '../sidechat-core.ts'
+import { GIT_COMMIT_SESSION_PREFIX } from '../agents/commit-draft-shared.ts'
 
 /**
  * Side Chat threads ride the subagent origin (main-list hiding + the RPC
@@ -27,6 +35,16 @@ export function isSideThreadSummary(summary: SidebarSessionSummary): boolean {
   return summary.origin === 'subagent' && summary.displayTitle.startsWith(SIDE_LABEL_PREFIX)
 }
 
+/** Hidden one-shot helper sessions (structural mirror of the 'Side: '
+ *  catalog-label filter in SubagentView). The sessions-list row carries no
+ *  descriptor label, so helpers are recognized by their durable id prefix —
+ *  this is the ONLY client-side surface that sees them before the title
+ *  frame lands; without it the commit-draft helper reads as a genuine new
+ *  subagent and trips the Subagent (任务管理) auto-open. */
+export function isHiddenHelperSummary(summary: SidebarSessionSummary): boolean {
+  return summary.id.startsWith(GIT_COMMIT_SESSION_PREFIX)
+}
+
 /** Count the direct subagent children of one session (durable `origin` rows). */
 export function directSubagentCount(
   byId: SidebarSessionList['byId'],
@@ -35,7 +53,7 @@ export function directSubagentCount(
   let count = 0
   for (const summary of Object.values(byId)) {
     if (summary.origin === 'subagent' && summary.parentId === sessionId
-      && !isSideThreadSummary(summary)) count += 1
+      && !isSideThreadSummary(summary) && !isHiddenHelperSummary(summary)) count += 1
   }
   return count
 }
@@ -119,7 +137,8 @@ export function countSubagentDescendants(
 ): SubagentDescendantTotals {
   const totals: SubagentDescendantTotals = { count: 0, runningCount: 0 }
   for (const descendant of Object.values(byId)) {
-    if (descendant.origin !== 'subagent' || isSideThreadSummary(descendant)) continue
+    if (descendant.origin !== 'subagent' || isSideThreadSummary(descendant)
+      || isHiddenHelperSummary(descendant)) continue
     const seen = new Set<string>()
     let current: SidebarSessionSummary | undefined = descendant
     while (current?.origin === 'subagent' && current.parentId !== undefined

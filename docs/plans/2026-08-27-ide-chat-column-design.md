@@ -6,6 +6,8 @@
 > **用户确认的方向**：右侧聊天列（Cursor 风格）——IDE 布局变为 `ActivityBar | 资源管理器 | 编辑器 | 聊天列`，聊天常驻可见，编辑器区收窄。
 >
 > **后续实施记录（快捷键，2026-08）**：用户确认 **⌘⌥⇧B 是进入/退出 IDE 模式的唯一 hotkey，模式内其他快捷键保持各自语义**（映射到 IDE 窗口自己的面板）：IDE 模式下 `⌘B` 从「宿主左侧栏」改为切左缘资源管理器抽屉（`state.sideBarOpen`，宿主侧栏在全屏遮罩后不可见）；`⌘⌥B`（`builtin:toggle-right-panel` 的 IDE 分支）与新增的 `⌘⇧B`（`builtin:toggle-ide-chat`，`when: state.rightMaximized`）都只开关右缘聊天列 `state.chatOpen`——「收起右侧」的肌肉记忆在 IDE 模式下落到聊天列，**不退出模式、不关整块面板**（曾误做成「⌘⌥B 退出全屏」与原始 `togglePanel` 的「面板整体关闭」，用户两轮反馈后最终定为仅聊天列）；`⌘⇧J` 保留底部 box 最大化/还原（IDE 内向上展开）。聊天列收起钮与 Activity Bar 的 Side Chat 图标 tooltip 均带 ⌘⌥B / ⌘⇧B 提示。改动集中在 `src/client/hotkeys.ts`（`panelToggleBindings`，生产路径与 `registerPanelHotkeys` 原生路径共享同一份定义）；回归见 `tests/builtins-keybindings.spec.tsx` 与 `tests/hotkeys.spec.ts` 的 IDE 用例。
+>
+> **后续实施记录（默认收起，2026）**：用户反馈「聊天列默认不要弹出来，加一个类似右下折叠按钮簇的 action icon 手动开关」——`chatOpen` 默认值改 `false`（`makeDefaultState` / `sanitizeState` 宽容恢复同样改默认收起）、`toggleRightMaximized` 进入 IDE 模式**不再强制展开**（保持原值）；`Sidebar.tsx` 面板右上角 ✕ 旁新增**聊天列开合钮**（`css.toggleButton` 同款 28px 圆钮 + `css.ideChatToggle` 定位，`IconNewChatOutline16`，激活态高亮跟随 `chatOpen`，tooltip 带 ⌘⌥B / ⌘⇧B 提示），`panelMaximized .tabBar` 的右缘预留从 40px 加宽到 72px（两个按钮）。⌘⌥B / ⌘⇧B / Activity Bar 图标路径不变。
 
 ## 0. 背景
 
@@ -17,8 +19,8 @@ IDE 模式（`rightMaximized`）此前只把资源管理器钉到左缘、底部
 
 - **聊天列**（`SideChatPane`，`[data-dsh-ide-chat]`）渲染在 `.panelBody` 行末（最右缘），只存在于 `ideMode`。
 - 列宽 = `state.chatWidth`（新增，240~480 默认 360，`clampChatWidth` 含视口 45% 上限），**左缘拖拽手柄**调宽（向右拖变宽、挤压编辑器），松手提交 store；拖拽中局部宽度、禁用过渡。
-- **折叠**：`state.chatOpen`（新增，随会话持久化、sanitize 宽容恢复）为 false 时列宽 0、`visibility: hidden`、过渡动画——**常驻挂载**（运行中的线程继续轮询、转录不丢）。进入 IDE 模式（`toggleRightMaximized`）默认展开（与 `sideBarOpen` 同款语义）。
-- **开关注**：Activity Bar 的 Side Chat 图标在 IDE 模式下从「开新 tab」变为「开/关聊天列」（`chatOpen`/`onToggleChat` prop 接通时，`isChat` 分支；高亮跟随展开态，折叠时 tooltip 显示 `sideChatExpand`）；列头另有收起钮。
+- **折叠**：`state.chatOpen`（新增，随会话持久化、sanitize 宽容恢复）为 false 时列宽 0、`visibility: hidden`、过渡动画——**常驻挂载**（运行中的线程继续轮询、转录不丢）。**默认收起**：`makeDefaultState` / `sanitizeState` 恢复 `false`，进入 IDE 模式（`toggleRightMaximized`）**不再**默认展开（保持原值）——聊天列绝不自动弹出，按需弹出（2026 变更，见顶部实施记录）。
+- **开关注**：Activity Bar 的 Side Chat 图标在 IDE 模式下从「开新 tab」变为「开/关聊天列」（`chatOpen`/`onToggleChat` prop 接通时，`isChat` 分支；高亮跟随展开态，折叠时 tooltip 显示 `sideChatExpand`）；列头另有收起钮；**面板右上角 ✕ 旁另有开合钮**（`css.toggleButton` 同款 28px 圆钮 + `ideChatToggle` 定位类，激活态高亮——toggle cluster 被全屏面板盖住，这是 IDE 全屏下唯一常驻的鼠标开关注，工具提示带 ⌘⌥B / ⌘⇧B）。
 
 ### 1.2 镜像 vs 独立线程
 
@@ -38,10 +40,10 @@ IDE 模式下底部面板右缘收在聊天列左缘：`right: chatOpen ? chatWi
 
 | 文件 | 改动 |
 |---|---|
-| `src/client/state.ts` | `chatOpen`/`chatWidth` 字段 + `CHAT_WIDTH_*` 契约 + `setChatOpen`/`setChatWidth` + `toggleRightMaximized` 默认展开 + `sanitizeState` 宽容恢复 |
+| `src/client/state.ts` | `chatOpen`/`chatWidth` 字段 + `CHAT_WIDTH_*` 契约 + `setChatOpen`/`setChatWidth` + `toggleRightMaximized` 保持 chatOpen 原值（不默认展开）+ `sanitizeState` 默认收起 |
 | `src/client/SideChatPane.tsx` | **新增**：列 chrome（header/收起钮/左缘手柄/折叠动画）+ 镜像/hero 宿主 |
 | `src/client/SideChatView.tsx` | 可选 `heroAction` prop（hero 启动按钮改道） |
-| `src/client/Sidebar.tsx` | `ideChatTab` 派生 + `renderTab` 抑制 + panelBody 挂列 + ActivityBar 开关注 + 底部面板右缘 |
+| `src/client/Sidebar.tsx` | `ideChatTab` 派生 + `renderTab` 抑制 + panelBody 挂列 + ActivityBar 开关注 + **右上角 ✕ 旁聊天列开合钮** + 底部面板右缘 |
 | `src/client/ActivityBar.tsx` | `chatOpen`/`onToggleChat` 接通时 sidechat 图标变列开关 |
 | `src/client/sidebar.module.css` | `chatPane`/`chatResize`/`chatHeader`/`chatCollapse`/`chatBody`（令牌驱动） |
 | `src/client/locales*.ts` | `sideChatCollapse`/`sideChatExpand`（zh/en/ja + 19 语言同步） |

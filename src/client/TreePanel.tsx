@@ -27,6 +27,7 @@ import clsx from 'clsx'
 import { IconFolderOpen16, IconRefreshOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, type GitStatusResult } from './api.ts'
 import { FileTree, gitKindCss } from './FileTree.tsx'
+import { fileTreeCapabilityOn, useFileTreeRoots, useFileTreeSource } from './file-tree-source.ts'
 import type { Context } from '../context-types.ts'
 import { buildGitStatusMap, subscribeGitStatusChanged } from './git-status.ts'
 import { IconUploadOutline16 } from './icons.tsx'
@@ -92,6 +93,27 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
   const [focused, setFocused] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
+  // ── File-tree data source (v0.17.0+) ────────────────────────────────────
+  // The provider resolved for this session (undefined = local host). It
+  // gates the panel's local-only chrome: search, upload pickers and git
+  // status all ride the provider's declared capabilities — undeclared
+  // abilities degrade OFF in provider mode, local sessions keep everything.
+  const fileSource = useFileTreeSource(ctx, sessionId, cwd)
+  // Multi-root (v0.18.0+): the session's resolved REMOTE roots. Panel-level
+  // capabilities stay LOCAL whenever the local root exists — the search box
+  // serves the LOCAL starting point, uploads land in local dirs, git
+  // decorations describe the local repo — so multi-root mode keeps every
+  // panel surface exactly as a local session has it. Remote-root
+  // degradation is per-ROOT inside the tree (FileTree receives this same
+  // resolution, so the provider's `roots` is consulted once per change).
+  const resolvedRoots = useFileTreeRoots(ctx, sessionId, cwd)
+  const multiRoot = (resolvedRoots?.length ?? 0) > 0
+  const localMode = fileSource === undefined || multiRoot
+  const uploadOn = localMode || fileTreeCapabilityOn(fileSource, 'upload')
+  const gitOn = localMode || fileTreeCapabilityOn(fileSource, 'git')
+  const searchOn = localMode
+    || (fileSource.capabilities.search === true && fileSource.source.search !== undefined)
+
   // ── Git status decorations (VSCode-style) ───────────────────────────────
   // Fetched per panel on mount / session change / the refresh button, plus
   // every time the git panel bumps the shared change bus (stage, commit,
@@ -100,6 +122,13 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
   const [gitStatus, setGitStatus] = useState<GitStatusResult | null>(null)
   const gitRequest = useRef(0)
   const loadGitStatus = useCallback(() => {
+    // Provider sessions: decorations only exist when the provider declared
+    // git support (the local host's git.status cannot describe remote
+    // paths); the map stays null → the tree renders clean, footer hidden.
+    if (!gitOn) {
+      setGitStatus(null)
+      return
+    }
     if (cwd === undefined || cwd === '') {
       setGitStatus(null)
       return
@@ -112,7 +141,7 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
       if (gitRequest.current !== request) return
       setGitStatus(null)
     })
-  }, [sessionId, cwd])
+  }, [sessionId, cwd, gitOn])
   useEffect(() => { loadGitStatus() }, [loadGitStatus, refreshTick])
   // Re-colors the explorer when the git panel refreshes/mutates.
   useEffect(() => {
@@ -142,7 +171,9 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
 
   /** Start one upload session into `dir` (absolute, inside the workspace). */
   const startUpload = (dir: string, items: UploadItem[]): void => {
-    if (items.length === 0 || cwd === undefined || upload !== null) return
+    // Provider sessions without declared upload support never upload (the
+    // local upload route cannot write remote paths).
+    if (items.length === 0 || cwd === undefined || upload !== null || !uploadOn) return
     cancelledRef.current = false
     const controller = new AbortController()
     setUploadFailed(false)
@@ -192,9 +223,31 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
       setActiveIndex(0)
       return
     }
+    // Provider sessions without a declared provider search never hit the
+    // local host search route (it cannot see remote paths); the box is
+    // hidden anyway — this guard keeps a stale query from fetching.
+    if (!searchOn) {
+      setResults(null)
+      setError(null)
+      setActiveIndex(0)
+      return
+    }
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      api.fsSearch({ sessionId, cwd }, needle, controller.signal).then((found) => {
+      const request: Promise<{ matches: string[]; truncated: boolean }> = (async () => {
+        // Provider search only serves v0.17 SINGLE-provider sessions; in
+        // multi-root mode the box always acts on the LOCAL root, so the
+        // local host route owns every query (a remote root's listing
+        // namespace would need its own search surface — v0.18 keeps the
+        // box local-only).
+        if (!multiRoot && fileSource !== undefined && fileSource.source.search !== undefined) {
+          const found = await fileSource.source.search(needle, controller.signal)
+          if ('error' in found) throw new Error(found.error)
+          return { matches: found.matches, truncated: found.truncated === true }
+        }
+        return api.fsSearch({ sessionId, cwd }, needle, controller.signal)
+      })()
+      request.then((found) => {
         setResults(found)
         setError(null)
         setActiveIndex(0)
@@ -209,19 +262,19 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [sessionId, cwd, needle])
+  }, [sessionId, cwd, needle, searchOn, fileSource, multiRoot])
 
 // Publish the transient UI markers the keybinding context reads: the
   // active state (query or focus) and — only while VISIBLE — this input as
   // the global search-focus target (an invisible tab's docked panel must
   // never claim it). The marker lives module-level and is cleared on
   // unmount / hidden, so ⌘P / ⌘F always reach the panel the user sees.
-  useEffect(() => { setSearchActive(needle !== '' || focused) }, [needle, focused])
+  useEffect(() => { setSearchActive(searchOn && (needle !== '' || focused)) }, [needle, focused, searchOn])
   useEffect(() => {
-    if (visible === false) return
+    if (visible === false || !searchOn) return
     setSearchInputElement(inputRef.current)
     return () => { setSearchInputElement(null) }
-  }, [visible])
+  }, [visible, searchOn])
 
   const matches = results?.matches ?? []
   const rowCount = matches.length
@@ -270,18 +323,20 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
       <div className={css.editorTreeSearch}>
-        <input
-          ref={inputRef}
-          className={css.editorSearchInput}
-          value={query}
-          placeholder={t('editorSearchPlaceholder')}
-          spellCheck={false}
-          data-dsh-sidebar-search=""
-          onChange={(event) => { setQuery(event.target.value) }}
-          onFocus={() => { setFocused(true) }}
-          onBlur={() => { setFocused(false) }}
-          onKeyDown={onSearchKeyDown}
-        />
+        {searchOn ? (
+          <input
+            ref={inputRef}
+            className={css.editorSearchInput}
+            value={query}
+            placeholder={t('editorSearchPlaceholder')}
+            spellCheck={false}
+            data-dsh-sidebar-search=""
+            onChange={(event) => { setQuery(event.target.value) }}
+            onFocus={() => { setFocused(true) }}
+            onBlur={() => { setFocused(false) }}
+            onKeyDown={onSearchKeyDown}
+          />
+        ) : null}
 <Tooltip label={t('refresh')} side="bottom" delayMs={500}>
           <button
             type="button"
@@ -293,47 +348,55 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
             <IconRefreshOutline16 size={14} />
           </button>
         </Tooltip>
-        <button
-          type="button"
-          className={css.iconButton}
-          aria-label={t('uploadFiles')}
-          title={t('uploadFiles')}
-          disabled={busy}
-          onClick={() => { fileInputRef.current?.click() }}
-        >
-          <IconUploadOutline16 size={14} />
-        </button>
-        <button
-          type="button"
-          className={css.iconButton}
-          aria-label={t('uploadFolder')}
-          title={t('uploadFolder')}
-          disabled={busy}
-          onClick={() => { folderInputRef.current?.click() }}
-        >
-          <IconFolderOpen16 size={14} />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          style={{ display: 'none' }}
-          onChange={(event) => {
-            if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
-            event.target.value = ''
-          }}
-        />
-        <input
-          ref={folderInputRef}
-          type="file"
-          multiple
-          {...folderInputProps}
-          style={{ display: 'none' }}
-          onChange={(event) => {
-            if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
-            event.target.value = ''
-          }}
-        />
+        {uploadOn && (
+          <>
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('uploadFiles')}
+              title={t('uploadFiles')}
+              disabled={busy}
+              onClick={() => { fileInputRef.current?.click() }}
+            >
+              <IconUploadOutline16 size={14} />
+            </button>
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('uploadFolder')}
+              title={t('uploadFolder')}
+              disabled={busy}
+              onClick={() => { folderInputRef.current?.click() }}
+            >
+              <IconFolderOpen16 size={14} />
+            </button>
+          </>
+        )}
+        {uploadOn && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(event) => {
+                if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
+                event.target.value = ''
+              }}
+            />
+            <input
+              ref={folderInputRef}
+              type="file"
+              multiple
+              {...folderInputProps}
+              style={{ display: 'none' }}
+              onChange={(event) => {
+                if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
+                event.target.value = ''
+              }}
+            />
+          </>
+        )}
       </div>
       {uploadStatus !== '' && (
         <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
@@ -343,6 +406,11 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
           sessionId={sessionId}
           cwd={cwd}
           expanded={expanded}
+          /* Multi-root (v0.18.0+): the panel's own resolution — the tree's
+             row-level gates (per-root capability faces) must stay in step
+             with the panel-level gates above. Passed down so `roots` is
+             consulted exactly once per registry change. */
+          roots={resolvedRoots}
 ctx={ctx}
           revealed={revealed}
           onToggle={onToggle}

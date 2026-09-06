@@ -24,6 +24,7 @@ import {
   COMMIT_HISTORY_REFS_MAX,
   COMMIT_TEMPLATE_DEFAULT,
   COMMIT_TEMPLATES as SHARED_TEMPLATES,
+  GIT_COMMIT_SESSION_PREFIX,
   GIT_COMMIT_SETTING_KEYS,
   commitCustomTemplateOf,
   commitHistoryRefsOf,
@@ -319,6 +320,9 @@ describe('commit agent-loop runner', () => {
       origin: 'subagent',
       delegationDepth: 3,
     })
+    // The helper's id carries the shared prefix the client uses to keep it
+    // out of subagent topology (the 任务管理 auto-open must never fire).
+    expect(String(options?.sessionId)).toMatch(new RegExp(`^${GIT_COMMIT_SESSION_PREFIX}`))
     expect(options?.agentOptions).toEqual({ provider: 'provider', model: 'model' })
     // The helper pins its 'Side: ' label as the durable session title, so the
     // client's list-row filter (isSideThreadSummary) never misreads the

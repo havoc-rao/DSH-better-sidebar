@@ -34,6 +34,7 @@ import { SidebarError } from '../wire.ts'
 import {
   COMMIT_CUSTOM_TEMPLATE_MAX,
   COMMIT_HISTORY_REFS_MAX,
+  GIT_COMMIT_SESSION_PREFIX,
   type LlmCatalog,
   type LlmCatalogProvider,
   type LlmProbeResult,
@@ -411,7 +412,7 @@ export async function draftCommitMessage(
   try {
     const reasoningEffort = await utilityReasoningEffort(llm, route, creation.signal)
     handle = await agents.create({
-      sessionId: SessionId(`git-commit-${randomUUID()}`),
+      sessionId: SessionId(`${GIT_COMMIT_SESSION_PREFIX}${randomUUID()}`),
       meta: {
         cwd,
         parentSession: SessionId(parentSessionId),

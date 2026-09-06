@@ -17,6 +17,7 @@
  * snapshot inside the boundary prompt.
  */
 import type { SidebarHistoryEntry, SidebarSessionSummary } from './context-types.ts'
+import { GIT_COMMIT_SESSION_PREFIX } from './agents/commit-draft-shared.ts'
 
 /** The durable thread-label prefix (also the row filter in the client list). */
 export const SIDE_LABEL_PREFIX = 'Side: '
@@ -347,6 +348,9 @@ export function sideThreadRows(
   for (const summary of Object.values(byId)) {
     if (summary.origin !== 'subagent' || summary.parentId !== sessionId) continue
     if (!summary.displayTitle.startsWith(SIDE_LABEL_PREFIX)) continue
+    // Hidden one-shot helpers (e.g. the Git commit-draft agent) share the
+    // 'Side: ' convention but are transient scratch sessions, never threads.
+    if (summary.id.startsWith(GIT_COMMIT_SESSION_PREFIX)) continue
     rows.push({ id: summary.id, title: summary.displayTitle, running: summary.running === true })
   }
   return rows

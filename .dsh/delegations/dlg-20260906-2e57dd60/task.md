@@ -1,0 +1,42 @@
+# 委派任务书 · dlg-20260906-2e57dd60
+
+| 字段 | 值 |
+| --- | --- |
+| 目标 | `/Users/havoc/Documents/Projects/tools/dsh-plugins/DSH-better-sidebar` |
+| 工作区 | `/Users/havoc/Documents/Projects/tools/dsh-plugins/DSH-better-sidebar` |
+| 父会话 | `session-4eb2b57f-3615-46b4-bc44-370d8ba822d9` |
+| 创建时间 | 2026-09-06T17:35:49.447Z |
+| 任务标题 | 在 fileTreeSource 数据源 slot（上一委派 dlg-20260… |
+| 超时 | 300000 ms |
+| 目标会话 | `session-83e235a7-b6b1-4833-8fa5-a02c9c1ed4e9` |
+| 运行 ID | `session-83e235a7-b6b1-4833-8fa5-a02c9c1ed4e9` |
+
+## 任务原文
+
+在 fileTreeSource 数据源 slot（上一委派 dlg-20260906-f456eff6 已交付，v0.17.0）基础上，为 Files 面板的文件树增加「多起点（multi-root）」支持。工作区即 DSH-better-sidebar；先读 src/client/file-tree-source.ts、FileTree.tsx、TreePanel.tsx 现状。
+
+需求背景（dsh-remote 插件对接方）：远程工作区会话下，Files Tab 的树不应改为「整树远程」，而是呈现【两个起点】：本地文件系统（现有 cwd 树，保持本地语义）+ 远程起点（dsh-remote 注入，树浏览走远程）。本地会话保持现状（单起点，逐字节不变）。
+
+请实现并交付：
+
+1. 契约扩展（src/client/file-tree-source.ts，向后兼容——v0.17 已发布的字段全部保留语义）：
+   - `FileTreeProviderDescriptor` 新增可选 `roots?: (sessionId: string, cwd: string | undefined) => FileTreeProviderRoot[] | Promise<FileTreeProviderRoot[]>`；
+   - `FileTreeProviderRoot = { id: string; label: string; dir: string }`：`dir` 为该起点的根绝对路径（远程语义，不做本地转换；该起点下所有展开均调用提供者的 `list(dir)`）；
+   - 解析语义：某 provider 的 `match` 命中该会话且 `roots` 返回非空数组 → 该会话成为 multi-root：起点列表 = [本地起点（cwd，永远存在，本地语义/本地能力全保留）] + [各 provider 返回的远程起点]（多 provider 时按注册序合并，同 id 先注册者胜）；roots 抛错/拒绝 → 跳过该 provider 的 roots，不破坏树；
+   - 增强 `ResolvedFileTreeSource`（或导出新类型）携带 roots 解析结果，供 FileTree 渲染用。
+2. FileTree 多根渲染：
+   - 单起点（无 roots）→ 完全现有渲染路径（回归零风险）；
+   - 多起点 → 树体顶部渲染起点列表，每起点一行（文件夹图标 + label，可展开/折叠）；展开后渲染该起点下的目录树（复用现有行渲染/缩进参考线/隐藏文件规则）；各起点独立展开状态与 level 缓存（data 缓存 key 保持 dir 字符串——本地与远程路径命名空间天然隔离）；
+   - 起点行视觉与普通目录行区分（可加说明性 title：dir 全路径）；刷新语义仍挂 refreshTick（清全部起点缓存）；
+   - 远程起点的列表走 provider.list（复用现有 loadDir 分流点），本地起点永远走本地 fs.tree（不被 provider 接管——multi-root 下 provider 的列表接管仅对远程起点生效；若现有 createSource 语义导致本地起点也被接管，请在该模式隔离）；
+   - 远程起点的本地能力沿用现有 capabilities 契约降级（upload/download/git/openWith/search 未声明 = off）；本地起点无条件全开。
+3. TreePanel：搜索框/git/上传等面板级能力的判定在多根模式下按「本地起点存在」保持现状；远程起点相关降级沿用现有 fileTreeCapabilityOn 模式（搜索框可保留——它作用于本地起点；若你判断远程起点需要独立搜索，请说明取舍）。
+4. 测试：新增 multi-root spec（本地+远程两起点渲染与各自数据源、roots 异步解析、roots 抛错跳过、无 roots 时行为不变回归），跑 `pnpm typecheck` + 相关测试 + 既有 file-tree-* spec 无回归。
+
+约束：纯 TS/React、无新运行时依赖；v0.17 契约字段与语义不回退；单起点渲染路径尽量零改动（防回归）。
+
+完成后结构化回报：新契约类型原文（含 roots/FileTreeProviderRoot/ResolvedFileTreeSource 变更）、FileTree 多根渲染的实现要点（起点行/展开状态/缓存隔离）、单起点回归保障、测试与 typecheck 结果、给 dsh-remote 侧的 roots 使用示例（伪代码）。
+
+## 续跑指引
+
+见 /Users/havoc/Documents/Projects/tools/dsh-plugins/DSH-better-sidebar/.dsh/delegations/dlg-20260906-2e57dd60/resume.md。

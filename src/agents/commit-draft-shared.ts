@@ -44,6 +44,15 @@ export const COMMIT_HISTORY_REFS_MAX = 30
 /** Cap of the user-written custom template instructions (prompt hygiene). */
 export const COMMIT_CUSTOM_TEMPLATE_MAX = 2000
 
+/** Session id prefix of the hidden one-shot commit-draft helper agent. The
+ *  sessions-list row carries no descriptor label, so the client identifies
+ *  the helper structurally by this prefix (mirror of the 'Side: ' catalog
+ *  label filter): it must never read as subagent topology — not for the
+ *  Subagent (任务管理) auto-open trigger, not for topology counts/rows, not
+ *  for the Side Chat thread list.
+ */
+export const GIT_COMMIT_SESSION_PREFIX = 'git-commit-'
+
 /**
  * The watched-branches (重点关注) setting: a list of local branch names whose
  * tips get divergence markers in the history graph (row rings + top/bottom

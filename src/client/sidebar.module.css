@@ -215,8 +215,32 @@
   color: var(--dsw-alias-label-primary);
 }
 
-/* The IDE-fullscreen tab strips reserve the exit control's width at their
-   right end, so the + menu never hides under it. Their tab list ALSO
+/* The IDE-fullscreen chat-column toggle: the exit control's sibling — the
+   same 28px circle (reusing .toggleButton's look), pinned to the tab
+   strip's right end LEFT of the ✕. The corner toggle cluster sits UNDER
+   the fullscreen panel, and the Side Chat column no longer pops out by
+   default, so this is the always-reachable mouse way to expand/collapse it
+   (⌘⌥B / ⌘⇧B are the keyboard paths). */
+.ideChatToggle {
+  position: absolute;
+  top: 3px;
+  right: 38px;
+  z-index: 4;
+}
+
+/* Highlight follows the column's expanded state — same semantics as the
+   Activity Bar's Side Chat icon (the column collapses to width 0, so the
+   pill is the visible "the column is open" signal at the top-right). */
+.ideChatToggleActive {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The IDE-fullscreen tab strips reserve the top-right controls' width at
+   their right end, so the + menu never hides under them — two circles sit
+   there now (the chat-column toggle at right: 38px + the exit ✕ at right:
+   6px; 6 + 28 + 4 + 28 = 66px, same 72px budget the docked toggle cluster
+   reserves). Their tab list ALSO
    yields the native traffic-light zone in frameless macOS shells: the
    fullscreen panel covers the whole viewport, so
    every right-panel tab strip begins at the window's top-left corner — the
@@ -227,7 +251,7 @@
    is a sibling panel, never matched here, and sits at the window's bottom —
    never under the traffic lights. */
 .panelMaximized .tabBar {
-  padding-right: 40px;
+  padding-right: 72px;
 }
 
 .panelMaximized .tabList {
@@ -1497,6 +1521,27 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .explorerDir {
   font: var(--dsw-font-s-strong-14);
+}
+
+/* Multi-root (v0.18.0+): a top-of-tree starting-point row (the local cwd
+   root plus each provider-contributed remote root). Distinct from plain
+   directory rows — a faint resting fill — so the starting points read as
+   their own layer above the browsable entries (the rows also carry a
+   chevron, which directory rows never do). */
+.explorerRootRow {
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 40%, transparent);
+}
+
+.explorerRootRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The root row's expand/collapse chevron (inline transform rotates it
+   90deg while the root is open). */
+.explorerRootChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 120ms var(--ds-ease-in-out);
 }
 
 .explorerHidden {

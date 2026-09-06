@@ -390,18 +390,18 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
       const chatOpen = (): boolean | undefined => store.getSnapshot().state?.chatOpen
       // Outside IDE mode the chord is unbound: not consumed, no state change.
       expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBe(false)
-      expect(chatOpen()).toBe(true) // the column defaults expanded
+      expect(chatOpen()).toBe(false) // the column defaults collapsed
 
       store.reduce(toggleRightMaximized)
       expect(store.getSnapshot().state?.rightMaximized).toBe(true)
-      expect(chatOpen()).toBe(true) // entering defaults the column expanded
+      expect(chatOpen()).toBe(false) // entering never force-expands it
 
-      // First press COLLAPSES the right column ("右侧收起" in the IDE)…
-      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBe(true)
-      expect(chatOpen()).toBe(false)
-      // …a second press EXPANDS it again.
+      // First press EXPANDS the right column ("右侧展开" in the IDE)…
       expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBe(true)
       expect(chatOpen()).toBe(true)
+      // …a second press COLLAPSES it again.
+      expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, shiftKey: true }))).toBe(true)
+      expect(chatOpen()).toBe(false)
 
       // Exiting the IDE restores the passthrough (⌘⇧B is a host/page key
       // outside the mode — the runtime must not swallow it).
@@ -441,21 +441,21 @@ describe('builtin view-switch keybindings (⌘⇧E explorer / ⌘⇧G source con
       store.reduce(toggleRightMaximized)
       expect(store.getSnapshot().state?.rightMaximized).toBe(true)
       expect(store.getSnapshot().state?.panelOpen).toBe(true)
-      expect(store.getSnapshot().state?.chatOpen).toBe(true)
+      expect(store.getSnapshot().state?.chatOpen).toBe(false) // collapsed by default
 
       // "The right panel" of the IDE window IS its Side Chat column: ⌘⌥B
-      // collapses ONLY that ("只收起右侧的 chat 面板") — the fullscreen
+      // toggles ONLY that ("只开合右侧的 chat 面板") — the fullscreen
       // cover and the mode itself must survive.
       expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, altKey: true }))).toBe(true)
       let state = store.getSnapshot().state!
-      expect(state.chatOpen).toBe(false)
+      expect(state.chatOpen).toBe(true)
       expect(state.rightMaximized).toBe(true)
       expect(state.panelOpen).toBe(true)
 
-      // A second press expands the chat column again.
+      // A second press collapses the chat column again.
       expect(runtime.dispatch(like({ code: 'KeyB', metaKey: true, altKey: true }))).toBe(true)
       state = store.getSnapshot().state!
-      expect(state.chatOpen).toBe(true)
+      expect(state.chatOpen).toBe(false)
 
       // Outside the mode the plain panel open/close toggle applies again.
       store.reduce(toggleRightMaximized)

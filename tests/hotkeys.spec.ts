@@ -295,14 +295,15 @@ describe('registerPanelHotkeys — the native path', () => {
     input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }))
     expect(seen).toEqual(['document:keydown'])
 
-    // Inside IDE fullscreen it collapses the right column…
+    // Inside IDE fullscreen the column starts collapsed (it never pops out
+    // by default) — the FIRST press expands it…
     store.reduce(toggleRightMaximized)
     input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }))
-    expect(store.getSnapshot().state?.chatOpen).toBe(false)
-    expect(seen).toEqual(['document:keydown']) // consumed at capture phase
-    // …and a second press expands it again.
-    input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }))
     expect(store.getSnapshot().state?.chatOpen).toBe(true)
+    expect(seen).toEqual(['document:keydown']) // consumed at capture phase
+    // …and a second press collapses it again.
+    input.dispatchEvent(keyEvent({ key: 'B', code: 'KeyB', metaKey: true, shiftKey: true }))
+    expect(store.getSnapshot().state?.chatOpen).toBe(false)
 
     // Exiting restores the passthrough.
     store.reduce(toggleRightMaximized)
@@ -314,21 +315,21 @@ describe('registerPanelHotkeys — the native path', () => {
     dispose = registerPanelHotkeys(store, leftSpy)
     store.reduce(toggleRightMaximized)
     expect(store.getSnapshot().state?.rightMaximized).toBe(true)
-    expect(store.getSnapshot().state?.chatOpen).toBe(true)
+    expect(store.getSnapshot().state?.chatOpen).toBe(false) // collapsed by default
 
     // "The right panel" of the IDE window is its Side Chat column: ⌘⌥B
-    // collapses ONLY that; the fullscreen cover and the mode survive.
+    // EXPANDS ONLY that; the fullscreen cover and the mode survive.
     input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
     let state = store.getSnapshot().state!
-    expect(state.chatOpen).toBe(false)
+    expect(state.chatOpen).toBe(true)
     expect(state.rightMaximized).toBe(true)
     expect(state.panelOpen).toBe(true)
     expect(seen).toEqual([])
 
-    // A second press expands the chat column again.
+    // A second press collapses the chat column again.
     input.dispatchEvent(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))
     state = store.getSnapshot().state!
-    expect(state.chatOpen).toBe(true)
+    expect(state.chatOpen).toBe(false)
 
     // Exiting the mode restores the ordinary panel open/close toggle.
     store.reduce(toggleRightMaximized)
