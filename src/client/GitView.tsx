@@ -11,11 +11,11 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import {
-  Button, IconBranchOutline16, IconCheckOutline16, IconChevronDownOutline14, IconCodeOutline16, IconCopyOutline16,
+  Button, IconBranchOutline16, IconCheckOutline16, IconCodeOutline16, IconCopyOutline16,
   IconDownloadOutline16, IconFolderClose16, IconFolderOpen16, IconLoadingOutline16, IconRefreshOutline16,
   IconSparkle16, IconTrashOutline16, Menu, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { VscChevronRight, VscListFlat, VscListTree, VscStarFull } from 'react-icons/vsc'
+import { VscChevronRight, VscListFlat, VscListTree, VscStarEmpty, VscStarFull } from 'react-icons/vsc'
 import type { GitBranchStatus, GitBranchTip, GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api, SidebarApiError } from './api.ts'
 import { notifyGitStatusChanged, subscribeGitStatusChanged } from './git-status.ts'
@@ -921,7 +921,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                   setFetchMenu(fetchMenu === null ? { x: rect.right - 8, y: rect.bottom + 4 } : null)
                 }}
               >
-                <IconChevronDownOutline14 size={14} />
+                {watched.length > 0 ? <VscStarFull size={14} /> : <VscStarEmpty size={14} />}
               </button>
             </Tooltip>
           </>
