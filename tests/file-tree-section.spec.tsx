@@ -303,6 +303,67 @@ describe('TreePanel upper-module slot', () => {
     expect(harness.container.querySelector('[data-dsh-sidebar-search]')).not.toBeNull()
   })
 
+  it('the SOURCE-form section tree @-reference pill is WIRED (not a no-op) and maps rows through the source reference() (v0.21.0)', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const references: string[] = []
+    service.registerFileTreeSection({
+      id: 'remote-tree',
+      match: (sessionId) => sessionId === 's1',
+      source: {
+        createSource: () => ({
+          list: async () => ({
+            entries: [
+              { name: 'a.ts', path: '/remote/proj/a.ts', isDir: false },
+              { name: 'sub', path: '/remote/proj/sub', isDir: true },
+            ],
+          }),
+          // The dsh-remote-style mapping: remote row → local mirror path.
+          reference: (path) => path.replace(/^\/remote\/proj/, '/mirror/proj'),
+        }),
+        roots: () => [{ id: 'root', label: 'Remote Project', dir: '/remote/proj' }],
+        capabilities: {},
+      },
+    } satisfies FileTreeSectionDescriptor)
+    const ctx = { betterSidebar: service } as unknown as Context
+    const props = {
+      sessionId: 's1',
+      cwd: '/r',
+      expanded: [],
+      revealed: [],
+      ctx,
+      onToggle: () => {},
+      onOpenFile: () => {},
+      onOpenFileNewTab: () => {},
+      onOpenFileSide: () => {},
+      onReferenceFile: (path: string) => { references.push(path) },
+      visible: true,
+    }
+    await act(async () => { root.render(createElement(TreePanel, props as never)) })
+    // SectionSourceTree: roots settle → createSource → the host FileTree
+    // resolves the root listing (two async hops).
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { await Promise.resolve() })
+
+    expect(container.querySelector('[data-dsh-file-tree-section-source="remote-tree"]')).not.toBeNull()
+    const fileRow = rowNamed(container, 'a.ts')
+    const pill = fileRow.querySelector<HTMLElement>('[class*="explorerRef"]')
+    expect(pill).not.toBeNull()
+    // The pill now APPENDS through the panel's own reference handler —
+    // the ROW is mapped through the source's reference() (the mirror path
+    // the session can read), never the no-op and never the raw remote path.
+    click(pill!)
+    expect(references).toEqual(['/mirror/proj/a.ts'])
+    references.length = 0
+    // The LOCAL bottom tree's pill is untouched: verbatim row path.
+    click(rowNamed(container, 'local.txt').querySelector<HTMLElement>('[class*="explorerRef"]')!)
+    expect(references).toEqual(['/r/local.txt'])
+    act(() => { root.unmount() })
+  })
+
   it('first match wins: only the earliest matching section renders', async () => {
     harness = await mountPanel({
       specs: [

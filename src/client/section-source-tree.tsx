@@ -33,6 +33,14 @@
  * `open(path)`, FileTree delegates file-row clicks / Enter / Space to it;
  * otherwise the row is inert (`onOpenFile` is a no-op — the plugin owns
  * every open escape by design).
+ *
+ * The @-reference pill (v0.21.0): the panel's OWN `onReferenceFile` (the
+ * same composer-draft handler the local tree uses) is passed through —
+ * `FileTree` maps each row path through the source's `reference?()` first,
+ * so a source whose rows carry remote-absolute paths inserts the local
+ * path the session can read (e.g. the local mirror). Absent prop → the
+ * pill stays inert (the pre-v0.21 surface, kept for tests / direct
+ * consumers); a source WITHOUT `reference` inserts row paths verbatim.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -57,6 +65,9 @@ interface ResolvedSectionTree {
 export function SectionSourceTree(props: {
   section: FileTreeSectionDescriptor
   scope: FileTreeSectionScope
+  /** The panel's @-reference handler (v0.21.0): the same composer-draft
+   *  append used by the local tree. Absent → the pill stays inert. */
+  onReferenceFile?: (path: string) => void
 }): ReactNode {
   const { section, scope } = props
   const descriptor = section.source
@@ -150,7 +161,7 @@ export function SectionSourceTree(props: {
         expanded={expanded}
         onToggle={toggleExpanded}
         onOpenFile={() => {}}
-        onReferenceFile={() => {}}
+        onReferenceFile={props.onReferenceFile ?? (() => {})}
         refreshTick={refreshTick}
       />
     </div>

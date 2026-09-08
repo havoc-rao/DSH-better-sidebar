@@ -131,6 +131,19 @@ export interface FileTreeDataSource {
    *  of the caller's `onOpenFile(path)`. Without the declared capability or
    *  this function the tree keeps its original `onOpenFile` path. */
   open?(path: string): void
+  /**
+   * Map one row path to the path the explorer's @-reference should insert
+   * (v0.21.0): a provider whose rows carry remote-absolute paths returns
+   * the LOCAL path the session can actually read (e.g. the session cwd
+   * joined with the path's relative part — a remote workspace's local
+   * mirror). Both directions of path conversion are the provider's
+   * business (same philosophy as the rest of this seam: no path
+   * conversion happens on the host side); the tree only ever consults
+   * this on the pill call sites, and it must be synchronous and cheap.
+   * A `reference` that throws degrades to the row path verbatim. Absent →
+   * the row path is inserted verbatim — byte-for-byte the local behavior.
+   */
+  reference?(path: string): string
 }
 
 /**
@@ -326,6 +339,64 @@ export function fileTreeCapabilityOn(
   key: keyof FileTreeProviderCapabilities,
 ): boolean {
   return resolved === undefined || resolved.capabilities[key] === true
+}
+
+/** The mode inputs of `referencablePathOf` — the tree's OWN effective
+ *  mode, read at the call sites (single-source files, multi-root roots),
+ *  so one pure mapper serves every surface. */
+export interface ReferencablePathMode {
+  /** The session cwd (the LOCAL root; only consulted in multi-root mode
+   *  to keep the local subtree from ever mapping through a provider). */
+  cwd?: string | undefined
+  /** The session's effective single source (v0.17 single-source takeover
+   *  and v0.20 sourceOverride section trees); undefined = default local. */
+  singleSource?: ResolvedFileTreeSource | undefined
+  /** The resolved remote roots (v0.18.0+ multi-root). Empty list or
+   *  undefined = not multi-root. */
+  roots?: readonly ResolvedFileTreeRoot[] | undefined
+}
+
+/** One row's reference text (v0.21.0): the row path mapped through the
+ *  data source that OWNS the row — the source's `reference?(path)` — so
+ *  the explorer's @-reference button inserts a path the session can
+ *  actually read (a provider whose rows carry remote-absolute paths maps
+ *  them to the local mirror path; local rows stay verbatim). The owning
+ *  source is resolved exactly like the tree's open delegation:
+ *   - multi-root (`roots` non-empty): rows under a REMOTE root map through
+ *     that root's source — rows under the LOCAL `cwd` subtree never map
+ *     (the local root is never taken over), and rows under no root keep
+ *     the row path;
+ *   - otherwise the session's `singleSource` maps every row (a provider
+ *     that serves a mix of path forms decides internally — returning the
+ *     row path unchanged is the identity escape hatch).
+ * Absent `reference` / no owning source / a throwing `reference` → the
+ * row path verbatim, byte for byte. Pure and throwing-safe — the pill
+ * call sites stay synchronous and can never break the tree.
+ */
+export function referencablePathOf(path: string, mode: ReferencablePathMode): string {
+  const { cwd, singleSource, roots } = mode
+  if (roots !== undefined && roots.length > 0) {
+    if (cwd !== undefined && (path === cwd || path.startsWith(cwd + '/') || path.startsWith(cwd + '\\'))) return path
+    // Same prefix semantics as FileTree's underDir ('/' and '\' — remote-
+    // absolute row paths may use either separator).
+    const root = roots.find(r => path === r.dir || path.startsWith(r.dir + '/') || path.startsWith(r.dir + '\\'))
+    if (root === undefined) return path
+    return mapFilePathReference(root.source, path)
+  }
+  if (singleSource === undefined) return path
+  return mapFilePathReference(singleSource.source, path)
+}
+
+/** Apply one source's `reference` mapping, throwing-safe: a throwing or
+ *  missing mapping degrades to the row path verbatim. */
+function mapFilePathReference(source: FileTreeDataSource, path: string): string {
+  if (typeof source.reference !== 'function') return path
+  try {
+    return source.reference(path) ?? path
+  } catch (error) {
+    console.error('[dsh-better-sidebar] file tree reference error:', error)
+    return path
+  }
 }
 
 /**

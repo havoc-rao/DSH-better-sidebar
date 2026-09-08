@@ -649,7 +649,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.20.0'
+export const SIDEBAR_SERVICE_VERSION = '0.21.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -671,7 +671,8 @@ export const SIDEBAR_SERVICE_VERSION = '0.20.0'
  * - 'fileTreeSource' (v0.17.0): registerFileTreeProvider /
  *   getFileTreeProviders — the explorer's data-source injection slot
  *   (v0.18.0+ adds provider `roots` — multi-root sessions: local root +
- *   per-provider remote roots)
+ *   per-provider remote roots; v0.21.0 adds `FileTreeDataSource.reference`
+ *   — the row-path → local-path mapping behind the @-reference pill)
  * - 'fileTreeSection' (v0.19.0): registerFileTreeSection /
  *   getFileTreeSections — the UPPER-module slot of the Files panel's tree
  *   area: an independently-scrolling component region rendered above the

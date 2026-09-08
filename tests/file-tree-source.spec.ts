@@ -9,8 +9,9 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
-  fileTreeCapabilityOn, normalizeFileTreeEntries, resolveFileTreeRoots, resolveFileTreeSource,
+  fileTreeCapabilityOn, normalizeFileTreeEntries, referencablePathOf, resolveFileTreeRoots, resolveFileTreeSource,
   type FileTreeDataSource, type FileTreeProviderDescriptor, type FileTreeProviderRoot,
+  type ResolvedFileTreeRoot, type ResolvedFileTreeSource,
 } from '../src/client/file-tree-source.ts'
 import { SIDEBAR_FEATURES, createBetterSidebarService } from '../src/client/service.ts'
 import { createSidebarStore } from '../src/client/state.ts'
@@ -219,6 +220,72 @@ describe('fileTreeCapabilityOn', () => {
     expect(fileTreeCapabilityOn(rich, 'search')).toBe(true)
     expect(fileTreeCapabilityOn(rich, 'open')).toBe(true)
     expect(fileTreeCapabilityOn(rich, 'download')).toBe(false)
+  })
+})
+
+describe('referencablePathOf (the @-reference mapping, v0.21.0)', () => {
+  const refSource = (reference?: (path: string) => string): FileTreeDataSource =>
+    reference === undefined ? sourceOf() : { ...sourceOf(), reference }
+
+  const resolved = (source: FileTreeDataSource, caps = {}): ResolvedFileTreeSource =>
+    ({ providerId: 'remote', source, capabilities: caps })
+
+  const rootOf = (dir: string, source: FileTreeDataSource): ResolvedFileTreeRoot =>
+    ({ id: 'r', label: dir, dir, providerId: 'remote', source, capabilities: {} })
+
+  it('local mode (no source, no roots) keeps the row path verbatim', () => {
+    expect(referencablePathOf('/w/a.ts', { cwd: '/w' })).toBe('/w/a.ts')
+    expect(referencablePathOf('/w/a.ts', { cwd: '/w', singleSource: undefined, roots: [] })).toBe('/w/a.ts')
+  })
+
+  it('single-source mode maps every row through the source reference()', () => {
+    const source = refSource((path) => path.replace(/^\/remote/, '/mirror'))
+    const mode = { cwd: '/mirror', singleSource: resolved(source) }
+    expect(referencablePathOf('/remote/src/a.ts', mode)).toBe('/mirror/src/a.ts')
+  })
+
+  it('single-source mode without a reference() keeps the row path verbatim (byte-for-byte)', () => {
+    const mode = { cwd: '/mirror', singleSource: resolved(sourceOf()) }
+    expect(referencablePathOf('/remote/src/a.ts', mode)).toBe('/remote/src/a.ts')
+  })
+
+  it('single-source mode: a throwing reference() degrades to the row path (pill never breaks)', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const source = refSource(() => { throw new Error('boom') })
+      expect(referencablePathOf('/remote/a.ts', { cwd: '/mirror', singleSource: resolved(source) })).toBe('/remote/a.ts')
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('multi-root: rows under a REMOTE root map through that root\'s source', () => {
+    const source = refSource((path) => path.replace(/^\/remote/, '/mirror'))
+    const roots = [rootOf('/remote', source)]
+    expect(referencablePathOf('/remote/src/a.ts', { cwd: '/w', roots })).toBe('/mirror/src/a.ts')
+    // The root row itself maps as well (dir references).
+    expect(referencablePathOf('/remote', { cwd: '/w', roots })).toBe('/mirror')
+  })
+
+  it('multi-root: the LOCAL subtree (under cwd) never maps — the local root is never taken over', () => {
+    const source = refSource(() => '/hijacked')
+    const roots = [rootOf('/remote', source)]
+    expect(referencablePathOf('/w/a.ts', { cwd: '/w', roots })).toBe('/w/a.ts')
+    // A REMOTE root whose dir string would prefix-match a local path is
+    // shadowed by the cwd guard (same rule as the tree's rootAt).
+    const evilRoot = rootOf('/w', source)
+    expect(referencablePathOf('/w/a.ts', { cwd: '/w', roots: [evilRoot] })).toBe('/w/a.ts')
+  })
+
+  it('multi-root: rows under NO root keep the row path verbatim', () => {
+    const source = refSource(() => '/mapped')
+    expect(referencablePathOf('/elsewhere/b.ts', { cwd: '/w', roots: [rootOf('/remote', source)] })).toBe('/elsewhere/b.ts')
+  })
+
+  it('multi-root rows tolerate backslash separators (remote-absolute semantics)', () => {
+    const source = refSource((path) => path.replace(/^D:\\remote/, 'D:\\mirror'))
+    const roots = [rootOf('D:\\remote', source)]
+    expect(referencablePathOf('D:\\remote\\src\\a.ts', { cwd: 'C:\\w', roots })).toBe('D:\\mirror\\src\\a.ts')
   })
 })
 

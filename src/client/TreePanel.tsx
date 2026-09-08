@@ -467,6 +467,7 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
               section={section}
               scope={{ sessionId, cwd, ctx: ctx! }}
               localTree={localTree}
+              onReferenceFile={onReferenceFile}
             />
           )
       ) : (
@@ -551,8 +552,12 @@ function ExplorerDual(props: {
   section: FileTreeSectionDescriptor
   scope: FileTreeSectionScope
   localTree: ReactElement
+  /** The panel's @-reference handler, passed through to the SOURCE-form
+   *  section tree (v0.21.0) so its pill appends to the same composer
+   *  draft the local tree uses. */
+  onReferenceFile: (path: string) => void
 }) {
-  const { section, scope, localTree } = props
+  const { section, scope, localTree, onReferenceFile } = props
   /** The upper module's share of the stack (0–1); the splitter mutates it
    *  live during a drag. */
   const [splitRatio, setSplitRatio] = useState(() => readFileTreeSplitRatio())
@@ -567,7 +572,7 @@ function ExplorerDual(props: {
         style={{ flex: `0 1 ${splitRatio * 100}%` }}
         data-dsh-file-tree-section={section.id}
       >
-        {section.source !== undefined ? <SectionSourceTree section={section} scope={scope} /> : section.render?.(scope)}
+        {section.source !== undefined ? <SectionSourceTree section={section} scope={scope} onReferenceFile={onReferenceFile} /> : section.render?.(scope)}
       </div>
       <FileTreeSplitter ratio={splitRatio} onRatio={setSplitRatio} onCommit={commitRatio} />
       {localTree}

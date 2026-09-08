@@ -65,7 +65,7 @@ import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscChevronRight, VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import {
-  fileTreeCapabilityOn, normalizeFileTreeEntries, useFileTreeRoots, useFileTreeSource,
+  fileTreeCapabilityOn, normalizeFileTreeEntries, referencablePathOf, useFileTreeRoots, useFileTreeSource,
   type FileTreeDataSource, type FileTreeProviderCapabilities, type ResolvedFileTreeRoot,
   type ResolvedFileTreeSource,
 } from './file-tree-source.ts'
@@ -555,6 +555,18 @@ export function FileTree(props: {
     onOpenFile(path)
   }
 
+  /**
+   * One row's @-reference text (v0.21.0): the row path mapped through the
+   * owning source's `reference()` (see `referencablePathOf`) — provider
+   * rows with remote-absolute semantics map to the local path the session
+   * can read (e.g. a remote workspace's local mirror), local rows stay
+   * verbatim. The mode inputs mirror the tree's own effective mode, so
+   * the pill behaves identically in every surface (local tree, v0.17
+   * takeover, multi-root remote roots, v0.20 section trees).
+   */
+  const refOf = (path: string): string =>
+    referencablePathOf(path, { cwd, singleSource: fileSource, roots: resolvedRoots })
+
   /** The body-level upload gate: in multi-root mode the BODY belongs to
    *  the local root (full local face — uploads into cwd always work);
    *  single-root mode keeps the v0.17 session face. */
@@ -979,7 +991,7 @@ export function FileTree(props: {
         title={t('referenceFile')}
         onClick={(event) => {
           event.stopPropagation()
-          onReferenceFile(entry.path)
+          onReferenceFile(refOf(entry.path))
         }}
       >
         {t('referenceFile')}
@@ -1289,7 +1301,7 @@ css.explorerRow,
                 title={t('referenceFile')}
                 onClick={(event) => {
                   event.stopPropagation()
-                  onReferenceFile(rowDir)
+                  onReferenceFile(refOf(rowDir))
                 }}
               >
                 {t('referenceFile')}
@@ -1350,7 +1362,7 @@ className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarge
                       title={t('referenceFile')}
                       onClick={(event) => {
                         event.stopPropagation()
-                        onReferenceFile(root)
+                        onReferenceFile(refOf(root))
                       }}
                     >
                       {t('referenceFile')}

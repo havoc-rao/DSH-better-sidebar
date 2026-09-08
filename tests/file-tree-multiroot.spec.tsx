@@ -64,12 +64,16 @@ interface ProviderSpec {
   caps?: FileTreeProviderCapabilities
   /** The listing the provider serves under ANY of its dirs (dir → entries). */
   listEntries?: Record<string, Array<Record<string, unknown>>>
+  /** The @-reference row-path mapping (v0.21.0, see FileTreeDataSource.reference). */
+  reference?: (path: string) => string
 }
 
 interface Harness {
   container: HTMLDivElement
   lists: Map<string, Mock<(dir: string) => Promise<FileTreeListResult>>>
   uploads: { dir: string; items: UploadItem[] }[]
+  /** The paths the @-reference pill reported (v0.21.0). */
+  references: string[]
   rerender: (patch: Record<string, unknown>) => Promise<void>
   unmount: () => void
   service: ReturnType<typeof createBetterSidebarService>
@@ -89,6 +93,7 @@ async function mountTree(options: {
   const root: Root = createRoot(container)
   const lists = new Map<string, Mock<(dir: string) => Promise<FileTreeListResult>>>()
   const uploads: { dir: string; items: UploadItem[] }[] = []
+  const references: string[] = []
   let ctx = options.ctx
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
@@ -104,7 +109,10 @@ async function mountTree(options: {
       service.registerFileTreeProvider({
         id: spec.id,
         match: () => spec.matches !== false,
-        createSource: () => ({ list }),
+        createSource: () => ({
+          list,
+          ...(spec.reference !== undefined ? { reference: spec.reference } : {}),
+        }),
         roots: spec.roots === undefined
           ? undefined
           : () => {
@@ -128,7 +136,7 @@ async function mountTree(options: {
     onOpenFile: () => {},
     onOpenFileNewTab: () => {},
     onOpenFileSide: () => {},
-    onReferenceFile: () => {},
+    onReferenceFile: (path: string) => { references.push(path) },
     refreshTick: 0,
     gitStatus: options.gitStatus,
     onUploadRequest: (dir: string, items: UploadItem[]) => { uploads.push({ dir, items }) },
@@ -146,6 +154,7 @@ async function mountTree(options: {
     container,
     lists,
     uploads,
+    references,
     service,
     rerender: async (patch: Record<string, unknown>) => {
       await act(async () => { render(patch) })
@@ -306,6 +315,30 @@ describe('FileTree multi-root mode', () => {
     await harness.rerender({ refreshTick: 1 })
     expect(fsTreeMock.mock.calls.length).toBe(localCalls + 1)
     expect(harness.lists.get('remote')!.mock.calls.length).toBe(remoteCalls + 1)
+  })
+
+  it('the @-reference pill maps REMOTE rows through the owning source reference() and keeps LOCAL rows verbatim (v0.21.0)', async () => {
+    harness = await mountTree({
+      specs: [{
+        id: 'remote',
+        roots: () => [{ id: 'proj', label: 'Remote Project', dir: '/remote/proj' }],
+        caps: {},
+        reference: (path) => path.replace(/^\/remote\/proj/, '/mirror/proj'),
+      }],
+    })
+    click(rootRowNamed(harness.container, 'Remote Project'))
+    await act(async () => { await Promise.resolve() })
+    // A REMOTE row's pill reports the reference()-mapped path (the local
+    // mirror path the session can read) — never the raw remote path.
+    const remoteRow = rowNamed(harness.container, 'remote-remote.txt')
+    const remotePill = remoteRow.querySelector<HTMLElement>('[class*="explorerRef"]')
+    expect(remotePill).not.toBeNull()
+    click(remotePill!)
+    expect(harness.references).toEqual(['/mirror/proj/remote-remote.txt'])
+    harness.references.length = 0
+    // The LOCAL subtree's pill stays byte-for-byte: the verbatim row path.
+    click(rowNamed(harness.container, 'local.txt').querySelector<HTMLElement>('[class*="explorerRef"]')!)
+    expect(harness.references).toEqual(['/r/local.txt'])
   })
 
   it('async roots (a promise) settle into multi-root; the local root stays local', async () => {
