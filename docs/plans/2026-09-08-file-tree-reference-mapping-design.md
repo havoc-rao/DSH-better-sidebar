@@ -58,6 +58,18 @@ referencablePathOf(path, { cwd, singleSource, roots }): string
 | ≥0.21 | 远端行 pill 插入镜像路径 ✓ | 段落树 pill 已接线但插入远端原路径（退化，不更坏于 v0.20 的死按钮） |
 | <0.21 | `reference()` 永不被调用（恒等，逐字节旧行为） | 旧行为 |
 
+## 附：插入后自动聚焦 composer（v0.21.0）
+
+@-引用（及终端块、viewer 选择等插入流）成功写入 draft 后，**自动聚焦宿主 composer**——@-mention 手势：点击后用户的下一击键直接落在输入框，无需再点一下。
+
+**实现**：纯插件侧只读 DOM 操作，**不需要动 deepseek-harness**：
+- harness 的 InputBar（`packages/client/ui-conversation` 的 InputBar，源码指向 InputBar.js 根节点）卡片**恒挂** `data-composer-card`（textarea 恒有 `data-phase`）——这是官方组件留给外部扩展的稳定只读钩子；
+- `appendToDraft`（`src/client/conversation-draft.ts`）成功后经 `requestAnimationFrame`（post-commit，受控 textarea 已持有新 draft）`focus()` + 光标置尾；
+- conversation 服务只暴露 `state/setDraft`、无 focus 通道，因此去 harness 加 service 级 `focus()` 属于改 DSH 源码（仓库硬约束禁止），收益有限，不做；
+- 守卫：composer 缺失 / disabled → 严格 no-op；display:none 由浏览器天然忽略；被遮挡的 composer 仍聚焦（击键落在 draft，正是用户所求）。
+
+四个插入流（@-引用 pill、终端 "add to conversation" ×2、viewer 选择）共用 `appendToDraft`，一处生效。e2e 挂载冒烟在**真实 InputBar DOM** 上断言：点击 pill → `[data-composer-card] textarea` 获得焦点 + draft 含 `@<相对路径>`——选择器若与 harness 实际标记漂移，门禁即红。
+
 ## 测试
 
 - `tests/file-tree-source.spec.ts`（纯函数）：local 恒等 / 单源映射 / 无 `reference` 恒等 / 抛错退化 / multi-root 远端行映射与根行映射 / 本地子树永不映射（含形似前缀的恶意 root）/ 无 root 命中恒等 / 反斜杠分隔符。

@@ -451,6 +451,21 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     'no icon-theme spans may render while no theme is registered',
   ).toBe(0)
   await expect(fileRow.locator('svg'), 'the file row must keep its built-in outline icon').toHaveCount(1)
+  // The @-reference pill (v0.21.0): hovering a tree row reveals it, and
+  // clicking it appends `@<relative path>` to the HOST composer draft AND
+  // focuses the composer (the @-mention gesture — the very first keystroke
+  // after the click continues in the composer). The composer is the
+  // harness's own InputBar surface ([data-composer-card] textarea), so
+  // these assertions prove the focus contract against the REAL host DOM.
+  const composer = page.locator('[data-composer-card] textarea')
+  await expect(composer, 'the host composer must be present in the shell').toHaveCount(1)
+  await fileRow.hover()
+  const refPill = fileRow.locator('[class*="explorerRef"]')
+  await expect(refPill, 'hovering a tree row reveals its @-reference pill').toBeVisible()
+  await refPill.click()
+  await expect(composer, 'the @-reference insert must FOCUS the host composer').toBeFocused({ timeout: 10_000 })
+  await expect(composer, 'the composer draft carries the referenced file').toHaveValue(new RegExp(`@${SEEDED_FILE}$`))
+  await assertNoCrash()
   // Click near the row's LEFT edge: hovering reveals an @-reference button at
   // the row's right end, and a center click on a narrow dock lands on it
   // (referencing the file into the composer instead of opening it).
