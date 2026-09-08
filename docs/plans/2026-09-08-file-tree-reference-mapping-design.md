@@ -70,6 +70,8 @@ referencablePathOf(path, { cwd, singleSource, roots }): string
 
 四个插入流（@-引用 pill、终端 "add to conversation" ×2、viewer 选择）共用 `appendToDraft`，一处生效。e2e 挂载冒烟在**真实 InputBar DOM** 上断言：点击 pill → `[data-composer-card] textarea` 获得焦点 + draft 含 `@<相对路径>`——选择器若与 harness 实际标记漂移，门禁即红。
 
+**拼接间距规则**（同版）：插入文本**前置空格仅在 draft 已有文本时加**（且不与 draft 已有的尾部空格重复），**末尾恒带一个空格**（插入文本自身以空白结尾时不重复）——`@` token 读作独立词，光标置尾后下一击键直接继续打字。
+
 ## 测试
 
 - `tests/file-tree-source.spec.ts`（纯函数）：local 恒等 / 单源映射 / 无 `reference` 恒等 / 抛错退化 / multi-root 远端行映射与根行映射 / 本地子树永不映射（含形似前缀的恶意 root）/ 无 root 命中恒等 / 反斜杠分隔符。

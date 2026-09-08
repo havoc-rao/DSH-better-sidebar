@@ -50,12 +50,29 @@ afterEach(() => {
 })
 
 describe('appendToDraft', () => {
-  it('appends space-separated to the session draft (empty draft = bare text)', () => {
-    const { ctx, setDraft, draftOf } = makeCtx()
+  it('appends with the join rule: leading space only over text, trailing space always (v0.21.0)', () => {
+    const { ctx, draftOf } = makeCtx()
+    // Empty draft: no leading space, the insert carries a TRAILING space.
     expect(appendToDraft(ctx, 's1', '@src/a.ts')).toBe(true)
-    expect(draftOf()).toBe('@src/a.ts')
+    expect(draftOf()).toBe('@src/a.ts ')
+    // Text before: a single leading space, still the trailing one.
     expect(appendToDraft(ctx, 's1', '@src/b.ts')).toBe(true)
-    expect(setDraft).toHaveBeenLastCalledWith('@src/a.ts @src/b.ts')
+    expect(draftOf()).toBe('@src/a.ts @src/b.ts ')
+  })
+
+  it('the leading separator never doubles an existing trailing space', () => {
+    const { ctx, draftOf } = makeCtx('hello ')
+    expect(appendToDraft(ctx, 's1', '@x.ts')).toBe(true)
+    expect(draftOf()).toBe('hello @x.ts ')
+    // The chained result stays single-spaced across inserts.
+    expect(appendToDraft(ctx, 's1', '@y.ts')).toBe(true)
+    expect(draftOf()).toBe('hello @x.ts @y.ts ')
+  })
+
+  it('an insert that already ends with whitespace gets no trailing space added', () => {
+    const { ctx, draftOf } = makeCtx()
+    expect(appendToDraft(ctx, 's1', 'git status\n')).toBe(true)
+    expect(draftOf()).toBe('git status\n')
   })
 
   it('FOCUSES the host composer after a successful insert and puts the caret at the end (v0.21.0)', async () => {
@@ -64,7 +81,7 @@ describe('appendToDraft', () => {
     appendToDraft(ctx, 's1', '@src/a.ts')
     // The real flow: setDraft → React commits the new value into the same
     // textarea node (identity preserved) → the post-commit focus step runs.
-    textarea.value = '@src/a.ts'
+    textarea.value = '@src/a.ts '
     await new Promise((resolve) => setTimeout(resolve, 30)) // let rAF fire
     expect(document.activeElement).toBe(textarea)
     expect(textarea.selectionStart).toBe(textarea.value.length)

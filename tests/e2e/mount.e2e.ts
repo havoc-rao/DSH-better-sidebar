@@ -464,7 +464,9 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(refPill, 'hovering a tree row reveals its @-reference pill').toBeVisible()
   await refPill.click()
   await expect(composer, 'the @-reference insert must FOCUS the host composer').toBeFocused({ timeout: 10_000 })
-  await expect(composer, 'the composer draft carries the referenced file').toHaveValue(new RegExp(`@${SEEDED_FILE}$`))
+  // The join rule (v0.21.0): the insert carries a trailing space, so the
+  // next keystroke continues right after the @-token.
+  await expect(composer, 'the composer draft carries the referenced file').toHaveValue(new RegExp(`@${SEEDED_FILE}\\s*$`))
   await assertNoCrash()
   // Click near the row's LEFT edge: hovering reveals an @-reference button at
   // the row's right end, and a center click on a narrow dock lands on it

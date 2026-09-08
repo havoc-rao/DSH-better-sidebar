@@ -51,11 +51,17 @@ function focusComposerAfterInsert(): void {
 }
 
 /**
- * Append `text` to the session's composer draft (space-separated, like the
- * @-mentions). On success, also focuses the host composer (v0.21.0, see
- * `focusComposerAfterInsert`). Returns false when the conversation service
- * or the session scope is unavailable (silent no-op); a throwing service
- * call also returns false and logs a console.warn.
+ * Append `text` to the session's composer draft. On success, also focuses
+ * the host composer (v0.21.0, see `focusComposerAfterInsert`). Returns
+ * false when the conversation service or the session scope is unavailable
+ * (silent no-op); a throwing service call also returns false and logs a
+ * console.warn.
+ *
+ * Join rule (v0.21.0): the insert carries a LEADING space only when the
+ * draft already holds text — never doubling an existing trailing
+ * separator — and always a TRAILING space (unless the inserted text
+ * already ends with whitespace). The @-token reads as its own word and
+ * the next keystroke can immediately continue typing after it.
  */
 export function appendToDraft(ctx: Context, sessionId: string, text: string): boolean {
   try {
@@ -65,7 +71,10 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
     if (conversation === undefined) return false
     const input = conversation.input.for(actx)
     const draft = input.state.getSnapshot().draft
-    input.setDraft(draft.trim() === '' ? text : `${draft} ${text}`)
+    const hasText = draft.trim() !== ''
+    const lead = hasText && !/\s$/.test(draft) ? ' ' : ''
+    const tail = /\s$/.test(text) ? '' : ' '
+    input.setDraft(`${draft}${lead}${text}${tail}`)
     focusComposerAfterInsert()
     return true
   } catch (error) {
