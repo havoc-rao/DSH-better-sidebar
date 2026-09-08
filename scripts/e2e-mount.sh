@@ -78,8 +78,13 @@ mkdir -p "$DSH_HOME/profiles/web" "$WORKSPACE_DIR"
 say "scratch home: ${DSH_HOME}（DSH_HOME=${DSH_HOME}）"
 
 SERVER_PID=""
+DAEMON_PID=""
 cleanup() {
   local code=$?
+  if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
+    kill "$DAEMON_PID" 2>/dev/null || true
+    wait "$DAEMON_PID" 2>/dev/null || true
+  fi
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
@@ -142,25 +147,32 @@ if ! node -e '
 fi
 say "挂载已注册：dsh.profile.bundles 包含 dsh-better-sidebar"
 
-# 步骤 4：启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）
+# 步骤 4：启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）。
+# dsh >= 0.1.2 默认后台守护化：CLI 打印「web started (pid N)」与 URL 后即
+# 退出，真正的服务器是子进程 N（其日志在多行后的 DSH_HOME/web.log）。
+# rc.2（CI 基线）则是前台常驻。就绪循环对两种形态都成立：先找 URL 行
+# （守护形态下 CLI 退出也不影响该行已在 WEB_LOG 中），CLI 死了且无 URL
+# 才算启动失败。
 say "启动 dsh web（port=${PORT}）..."
 $DSH_CMD web --port "$PORT" > "$WEB_LOG" 2>&1 &
 SERVER_PID=$!
 
 URL=""
 for _ in $(seq 1 120); do
+  if URL="$(grep -oE 'dsh web: http://127\.0\.0\.1:[0-9]+' "$WEB_LOG" | head -1 | awk '{print $3}')" && [ -n "$URL" ]; then
+    break
+  fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "=== dsh web 提前退出，日志尾部 ===" >&2
     tail -30 "$WEB_LOG" >&2 || true
     exit 1
   fi
-  if URL="$(grep -oE 'dsh web: http://127\.0\.0\.1:[0-9]+' "$WEB_LOG" | head -1 | awk '{print $3}')" && [ -n "$URL" ]; then
-    break
-  fi
   sleep 1
 done
 [ -n "$URL" ] || { echo "=== 120s 内未等到 dsh web 就绪，日志尾部 ===" >&2; tail -40 "$WEB_LOG" >&2 || true; exit 1; }
-say "dsh web 就绪：${URL}（pid ${SERVER_PID}）"
+# 守护形态：记录真正的服务器 pid 供 cleanup 兜底（前台形态下为空）。
+DAEMON_PID="$(sed -nE 's/.*web started \(pid ([0-9]+)\).*/\1/p' "$WEB_LOG" | head -1 || true)"
+say "dsh web 就绪：${URL}（pid ${SERVER_PID}${DAEMON_PID:+, daemon ${DAEMON_PID}}）"
 
 # 步骤 5：运行无头渲染 lane
 say "运行 Playwright 无头渲染 lane..."
