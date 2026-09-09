@@ -47,6 +47,7 @@ import { IconTerminalOutline16 } from './icons.tsx'
 import { openWhenSized } from './open-when-sized.ts'
 import type { SessionScope } from './api.ts'
 import { isAgentTabId, type SidebarStore } from './state.ts'
+import { isMacPlatform } from './keybindings.ts'
 import { isDarkScheme, subscribeColorScheme, effectiveTokenValue, tokenValue } from './theme.ts'
 import { resolveTerminalFont } from './terminal-font.ts'
 import { generatePalette } from './generate-palette.ts'
@@ -290,6 +291,25 @@ export function TerminalView(props: {
       scrollback: 4000,
       theme: xtermTheme(),
     })
+    // ⌥↓ must SCROLL to the bottom (the muscle memory most terminals share),
+    // not reach the shell as an Alt-modified escape sequence (`ESC[1;3B`)
+    // that bash/zsh echo back as garbage. Intercept before xterm's key
+    // evaluation: returning false keeps the chord out of the pty input path
+    // entirely. macOS only — Option is the Mac spelling of Alt; on other
+    // platforms Alt+arrows stay free for shell bindings.
+    if (isMacPlatform()) {
+      term.attachCustomKeyEventHandler((event) => {
+        if (
+          event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+          && event.code === 'ArrowDown'
+        ) {
+          event.preventDefault()
+          term.scrollToBottom()
+          return false
+        }
+        return true
+      })
+    }
     // The block model: every Enter in the input stream submits a command and
     // opens a new block anchored at the shell's echo row (terminal-blocks.ts).
     // Each block pins that row with an xterm marker — markers slide with
