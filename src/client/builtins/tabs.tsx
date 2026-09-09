@@ -24,8 +24,9 @@ import { api } from '../api.ts'
 import { BrowserView } from '../BrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16, IconGlobalWorkspaceOutline16, IconPanelRightOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
-import type { ComponentType } from 'react'
-import type { TabDescriptor } from '../service.ts'
+import { useTerminalTransport } from '../terminal-source.ts'
+import type { ComponentType, ReactNode } from 'react'
+import type { TabDescriptor, TabComponentProps } from '../service.ts'
 
 /**
  * Lazy wrapper over the terminal view: xterm (and its stylesheet) is fetched
@@ -55,6 +56,32 @@ export const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
   'terminal',
   (mod) => mod.TerminalView as ComponentType<TerminalViewProps> | undefined,
 )
+
+/**
+ * The terminal tab's SOURCE-RESOLVING wrapper (the terminal-source slot,
+ * feature 'terminalSource'): the custom transport a registered provider
+ * resolved for this (session, cwd, tab) — absent → TerminalView keeps its
+ * default localTransport, byte for byte. TerminalView reads `transport`
+ * once at mount, so the resolution applies to terminals mounted after the
+ * registry read; the descriptor's `component` stays a plain render
+ * function (the lazy-chunk.spec contract: callable without a render
+ * scope), the hook lives in this inner component.
+ */
+function TerminalTabTransport(props: TabComponentProps): ReactNode {
+  const { ctx, tab, scope, store, visible } = props
+  const transport = useTerminalTransport(ctx, scope?.sessionId, scope?.cwd, tab.id)
+  return (
+    <LazyTerminal
+      ctx={ctx}
+      scope={scope}
+      store={store}
+      tabId={tab.id}
+      visible={visible}
+      transport={transport}
+      onTitleChange={(title) => { ctx.betterSidebar?.updateTab(tab.id, { title }) }}
+    />
+  )
+}
 
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
 export const TERMINAL_LIMIT = 3
@@ -360,16 +387,15 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
-component: ({ ctx, tab, scope, store, visible }) => (
-        <LazyTerminal
-          ctx={ctx}
-          scope={scope}
-          store={store}
-          tabId={tab.id}
-          visible={visible}
-          onTitleChange={(title) => { ctx.betterSidebar?.updateTab(tab.id, { title }) }}
-        />
-      ),
+      // The default terminal tab mounts through the terminal-source slot:
+      // TerminalTabTransport resolves the connection layer from the
+      // provider registry (match on session/cwd/tab, first match wins, no
+      // match → the default localTransport) and frames it as the
+      // `transport` prop TerminalView already knows. Pinned virtual
+      // terminals render through this same component with the home
+      // session's scope, so a pinned terminal follows its home session's
+      // source; `gb:` global-shared windows are not resolved here.
+      component: (props) => <TerminalTabTransport {...props} />,
     },
     {
       id: 'browser',

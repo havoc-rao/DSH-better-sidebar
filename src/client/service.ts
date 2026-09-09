@@ -42,6 +42,7 @@ import {
 import type { CommandDescriptor, CommandRunPayload } from './commands.ts'
 import type { FileTreeProviderDescriptor } from './file-tree-source.ts'
 import type { FileTreeSectionDescriptor } from './file-tree-section.ts'
+import type { TerminalProviderDescriptor } from './terminal-source.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -74,6 +75,7 @@ export type {
   ResolvedFileTreeRoot, ResolvedFileTreeSource,
 } from './file-tree-source.ts'
 export type { FileTreeSectionDescriptor, FileTreeSectionScope, FileTreeSectionSourceDescriptor } from './file-tree-section.ts'
+export type { TerminalProviderDescriptor } from './terminal-source.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -494,6 +496,28 @@ export interface BetterSidebarService {
   /** The registered file-tree providers (registration order). */
   getFileTreeProviders(): readonly FileTreeProviderDescriptor[]
   /**
+   * Register a terminal data-source provider: the DEFAULT terminal tab's
+   * connection-layer injection slot. A provider owns the terminal tabs of
+   * every session its `match` accepts — the built-in terminal descriptor
+   * resolves the tab's transport through this registry, and a matching
+   * provider's `createTransport` result flows verbatim into TerminalView's
+   * existing `transport` prop (the TerminalTransport contract — no second
+   * wire protocol); tabs no provider matches keep the default
+   * localTransport (the local pty WS) byte for byte. Resolution is
+   * registration-order, FIRST match wins; a throwing `match` /
+   * `createTransport` — or an explicit `undefined` factory result (a
+   * per-tab refusal) — skips that provider. A duplicate id throws; the
+   * disposer unregisters (HMR-safe through `ctx.effect`). TerminalView
+   * reads `transport` once at mount, so the resolved source applies to
+   * terminals mounted afterwards (new tabs / remounts). Pinned virtual
+   * terminals resolve against their HOME session's scope; the instance-
+   * level `gb:` global-shared terminals are not resolved here and stay
+   * local. See `terminal-source.ts`.
+   */
+  registerTerminalProvider(descriptor: TerminalProviderDescriptor): () => void
+  /** The registered terminal providers (registration order). */
+  getTerminalProviders(): readonly TerminalProviderDescriptor[]
+  /**
    * Register a file-tree SECTION (v0.19.0+): the UPPER-MODULE slot of the
    * Files panel's tree area. A section is an independent component region
    * rendered ABOVE the local tree (the lower module keeps every existing
@@ -682,6 +706,11 @@ export const SIDEBAR_SERVICE_VERSION = '0.21.0'
  *   makes the HOST render its own FileTree in the upper module bound to
  *   the plugin's data source (single-source, no global provider
  *   registration; the lower module's local tree is never affected)
+ * - 'terminalSource' (v0.22.0): registerTerminalProvider /
+ *   getTerminalProviders — the DEFAULT terminal tab's connection-layer
+ *   injection slot (the resolver flows a provider's TerminalTransport
+ *   into TerminalView's existing `transport` prop; no match keeps the
+ *   default local pty WS, byte for byte)
  * - 'floatWindows' (v0.16.0): tabs float as free windows — openTab's dedupe/
  *   id focus targets RAISE the floating window (never duplicate the tab or
  *   expand panels), closeTab on a floating tab closes it with its window.
@@ -703,6 +732,7 @@ export const SIDEBAR_FEATURES = [
   'fileTreeSource',
   'fileTreeSection',
   'fileTreeSectionSource',
+  'terminalSource',
   'floatWindows',
 ] as const
 
@@ -738,6 +768,7 @@ export function createBetterSidebarService(
   const commands = new Map<string, CommandDescriptor>()
   const fileTreeProviders = new Map<string, FileTreeProviderDescriptor>()
   const fileTreeSections = new Map<string, FileTreeSectionDescriptor>()
+  const terminalProviders = new Map<string, TerminalProviderDescriptor>()
   const listeners = new Set<() => void>()
   // A private runtime when none is shared (standalone/tests): the registry
   // semantics (dup ids, disposal, listing) work the same either way, only
@@ -873,6 +904,22 @@ export function createBetterSidebarService(
   }
 
   const getFileTreeProviders = (): readonly FileTreeProviderDescriptor[] => Array.from(fileTreeProviders.values())
+
+  const registerTerminalProvider = (descriptor: TerminalProviderDescriptor): (() => void) => {
+    if (terminalProviders.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] terminal provider "${descriptor.id}" already registered`)
+    }
+    terminalProviders.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (terminalProviders.get(descriptor.id) === descriptor) {
+        terminalProviders.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  const getTerminalProviders = (): readonly TerminalProviderDescriptor[] => Array.from(terminalProviders.values())
 
   const registerFileTreeSection = (descriptor: FileTreeSectionDescriptor): (() => void) => {
     if (fileTreeSections.has(descriptor.id)) {
@@ -1256,6 +1303,8 @@ export function createBetterSidebarService(
     getFileTreeProviders,
     registerFileTreeSection,
     getFileTreeSections,
+    registerTerminalProvider,
+    getTerminalProviders,
     openTab,
     closeTab,
     subscribe,

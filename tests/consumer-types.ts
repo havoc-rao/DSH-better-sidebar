@@ -34,6 +34,8 @@ import type {
   KeySpec,
   SidebarKeybindingContext,
 } from '../src/client/service.ts'
+import type { TerminalProviderDescriptor } from '../src/client/service.ts'
+import type { TerminalTransport } from '../src/client/terminal-transport.ts'
 import type {
   SessionScope,
   SidebarDiffRef,
@@ -149,6 +151,20 @@ void bindings
 const keySpec: KeySpec = null as unknown as KeySpec
 const eventLike: KeybindingEventLike = null as unknown as KeybindingEventLike
 void keySpec; void eventLike
+
+/** The v0.22.0 terminal source slot: the default terminal tab's
+ *  connection-layer takeover, exercised exactly as consumers call it. */
+const terminalProvider: TerminalProviderDescriptor = {
+  id: 'dsh-remote',
+  match: (sessionId: string, cwd: string | undefined, tabId: string) => {
+    void sessionId; void cwd
+    return !tabId.startsWith('agent:') // UI tabs only, provider's decision
+  },
+  createTransport: (_sessionId, _cwd, _tabId) => null as unknown as TerminalTransport,
+}
+service.registerTerminalProvider(terminalProvider)
+const terminalProviders: readonly TerminalProviderDescriptor[] = service.getTerminalProviders()
+void terminalProviders
 
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }

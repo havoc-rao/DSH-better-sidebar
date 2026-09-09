@@ -68,6 +68,18 @@ export type {
   TerminalViewProps,
 } from './terminal-transport.ts'
 
+// ── Terminal source slot (default-terminal takeover) ────────────────────
+// The DEFAULT terminal tab's data-source seam (feature 'terminalSource',
+// see terminal-source.ts / docs/plans/2026-09-09-terminal-source-slot-design.md):
+// an external plugin (e.g. dsh-remote) registers a TerminalProviderDescriptor
+// through `ctx.betterSidebar.registerTerminalProvider(...)` — no module
+// import needed for registration. These exports are for consumers that
+// want to resolve the slot programmatically (pure `resolveTerminalSource`)
+// or reuse the render-side hook; the type is also importable from
+// 'dsh-better-sidebar/client/service' like every descriptor type.
+export { resolveTerminalSource, useTerminalTransport } from './terminal-source.ts'
+export type { TerminalProviderDescriptor } from './terminal-source.ts'
+
 /** Services required before mounting (provided by the client runtime; the
  *  locale service backs the sidebar's copy — see locales.ts). `modules`
  *  (rc.8+) is the client module system the chunk loader resolves its

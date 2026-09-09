@@ -520,6 +520,10 @@ interface BetterSidebarService {
   isViewerEnabled(id: string): boolean
   /** 按 path 匹配 file viewer（priority 降序单趟：detect → exts；跳过硬禁用 viewer） */
   matchFileViewer(path: string, head?: Uint8Array): FileViewerDescriptor | undefined
+  /** 注册终端数据源 provider（v0.22.0+）；返回 disposer（见 7.1 终端数据源槽位） */
+  registerTerminalProvider(descriptor: TerminalProviderDescriptor): () => void
+  /** 已注册的 terminal provider（注册顺序） */
+  getTerminalProviders(): readonly TerminalProviderDescriptor[]
   /**
    * 打开一个 tab（+ 菜单和外部触发都用它；走 descriptor.dedupeKey 去重）。
    * title 可选：给出时优先于 descriptor.title（editor 显示文件名）；
@@ -544,7 +548,7 @@ interface BetterSidebarService {
   readonly version: string
   /** 单调能力清单（只增不删）：'badge' | 'tabLifecycle' | 'updateTab' |
    *  'openFile' | 'targetedOpen' | 'stateSubscription' | 'tabMeta' |
-   *  'pluginSettings'——用 `features.includes('xxx')` 按能力 gate。 */
+   *  'pluginSettings' | 'terminalSource'——用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
    *  session 未激活时 state/sessionId 为 undefined。 */
@@ -598,6 +602,70 @@ ctx.effect(() =>
   })
 )
 ```
+
+---
+
+### 7.1 终端数据源槽位（v0.22.0+，`features.includes('terminalSource')`）
+
+**它是什么**：默认终端 tab（`+` 菜单 / 快捷键 / bottom 自动终端打开的 `terminal:<uuid>` tab，即 TerminalView 渲染的 xterm）的连接层注入槽位——参照 FileTree 的 data-source 槽位（`registerFileTreeProvider`），让外部插件（如 dsh-remote）成为**默认**的 term 数据源：接管数据源与数据处理（socket/通道、重连、帧解析、upstream 控制帧），而 UI（xterm 渲染、block overlay、selection popup、info bar、banner 状态机、fit/theme/font）保持原样。
+
+**核心契约**：注册项的产出是**既有的 `TerminalTransport` 契约**的一个 factory（或直接一个实例），最终流入 TerminalView 既有的 `transport` prop——**不发明第二套 wire/frame 协议**。TerminalView 在挂载时一次性读取 transport，因此解析结果作用于**之后挂载**的终端（新开 tab / 重挂载）；已打开的终端不热切换。
+
+```ts
+// 类型从 'dsh-better-sidebar/client/service' 导入（终端侧符号从主入口 / './client/terminal'）
+import type { TerminalProviderDescriptor } from 'dsh-better-sidebar/client/service'
+import type { TerminalTransport } from 'dsh-better-sidebar'          // TerminalViewProps 等
+
+interface TerminalProviderDescriptor {
+  /** 唯一 id（建议包前缀，如 'dsh-remote'）；重复注册抛错 */
+  id: string
+  /** 会话/终端谓词：这个 provider 是否接管该终端 tab？first match wins。
+   *  三个参数原样透传（无路径/会话转换）：
+   *  - sessionId：tab 所属会话（pinned 虚拟终端是 home 会话）；
+   *  - cwd：会话工作目录（未知时 undefined）；
+   *  - tabId：完整 tab id——'terminal:<uuid>' 普通 tab；'agent:<uuid>' 是
+   *    agent 拥有的终端（不接管就对该前缀返回 false）。 */
+  match(sessionId: string, cwd: string | undefined, tabId: string): boolean
+  /** 连接层 factory：返回该 tab 挂载时注入 TerminalView 的 TerminalTransport。
+   *  返回 undefined = 拒绝接管（下一个 provider 继续）；抛错同样跳过。
+   *  建议返回稳定实例（模块级单例或按会话缓存）——一个 transport 可经
+   *  `open(session)` 同时拥有多个 tab。 */
+  createTransport(sessionId: string, cwd: string | undefined, tabId: string): TerminalTransport | undefined
+}
+```
+
+**解析规则**（与 file-tree 槽位逐条对齐，`tests/terminal-source.spec.tsx` 守护）：
+
+1. 按**注册顺序**遍历；第一个 `match(...) === true` 的 provider 胜出（后注册的永不遮蔽先注册的）。
+2. `match` / `createTransport` 抛错 → `console.error` + 跳过该 provider。
+3. `createTransport` 返回 `undefined` → 视为按 tab 拒绝，下一个继续。
+4. **无人匹配 / 全部拒绝 / 未注册 → 不传 `transport` prop → 默认 `localTransport`（本地 pty WS）**，行为与未接入该槽位时逐字节一致（回归安全）。
+5. 覆盖范围：普通终端 tab、agent 终端自动补 tab（provider 自行决定）、bottom 自动终端、pinned 虚拟终端（以 **home 会话 scope** 解析）。`gb:` 全局共享终端（Global 工作区）**不纳入解析**，保持本地。
+
+**最小对接示例**（dsh-remote 形态）：
+
+```ts
+// dsh-remote/src/client/index.ts
+import type {} from 'dsh-better-sidebar'                       // 触发 ctx.betterSidebar 类型合并
+import type { TerminalProviderDescriptor } from 'dsh-better-sidebar/client/service'
+import type { TerminalTransport } from 'dsh-better-sidebar'    // 或 './client/terminal'
+
+export const inject = ['betterSidebar']
+
+export function apply(ctx: Context): void {
+  ctx.effect(() =>
+    ctx.betterSidebar.registerTerminalProvider({
+      id: 'dsh-remote',
+      // 只接管 dsh-remote 拥有的会话；agent 终端暂不接管
+      match: (sessionId, _cwd, tabId) => !tabId.startsWith('agent:') && isRemoteSession(sessionId),
+      createTransport: (sessionId, cwd, tabId): TerminalTransport =>
+        makeRemoteTransport(sessionId, cwd, tabId),  // 复用既有 TerminalTransport 契约
+    })
+  )
+}
+```
+
+> 需要编程式解析或复用渲染侧 hook 时，可从主入口导入 `resolveTerminalSource` / `useTerminalTransport`（`ctx.modules.import('dsh-better-sidebar')` 异步解析）。
 
 ---
 
@@ -765,6 +833,7 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"）：
 
 - **`src/client/builtins/`**：7 个内置 tab（tabs.tsx）+ 6 个内置 viewer（viewers.tsx）的注册代码 + 聚合与 disposer 生命周期（index.ts）
 - **`src/client/service.ts`**：`BetterSidebarService` 接口 + `createBetterSidebarService` 工厂实现（含匹配算法、dedupe、createTab、启用态 gating）
+- **`src/client/terminal-source.ts`**：终端数据源槽位（v0.22.0+）——`TerminalProviderDescriptor` + `resolveTerminalSource` 纯解析 + `useTerminalTransport` hook；内置 terminal descriptor 的 `TerminalTabTransport` 包装经它解析 `transport` prop（设计见 `docs/plans/2026-09-09-terminal-source-slot-design.md`）
 - **`src/client/Sidebar.tsx`**：`TabContent` 分发（查 `getTab` → 调 descriptor.component；未注册 → `<OrphanedTab/>`）、`+` 菜单构建（order 排序 + available disabled + 禁用过滤）
 - **`src/client/SideCardSection.tsx`**：声明式设置页（注册表驱动清单 + `settings.toggles` 嵌套开关 + 开关持久化）
 - **`src/client/api.ts`**：`/sidebar` API 的封装（复制其 fetch 模式到你的插件）
