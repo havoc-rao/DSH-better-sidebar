@@ -77,6 +77,20 @@ export { parseDownlinkFrame, FAILURE_LIMIT, PTY_DEPS_MISSING } from './terminal-
 export type { TerminalTransport, TerminalTransportHandle, TerminalTransportSession, TerminalTransportSurface } from './terminal-transport.ts'
 
 /**
+ * Whether a host title frame may RETITLE the terminal tab: only a non-empty
+ * title — the first token of a SETTLED CLI command (`npm run dev` → `npm`)
+ * — replaces the tab name. The host replays `title: ''` on every attach
+ * (its "no command settled yet" state, see {@link digestCommandInput}), and
+ * that must never overwrite the tab's DEFAULT name (终端): the default
+ * stays until a CLI actually runs inside, then the name is replaced. The
+ * info bar is unaffected — `cwd` / `command` follow every frame regardless.
+ * Exported for the regression tests (tests/command-title.spec.ts).
+ */
+export function shouldRetitleTerminal(title: string): boolean {
+  return title !== ''
+}
+
+/**
  * Curated ANSI palettes for the terminal. The surface colors (background,
  * foreground, cursor, selection) ride the theme tokens so the terminal
  * blends with the panel in both schemes; the 16 ANSI colors are the same
@@ -155,7 +169,9 @@ export function TerminalView(props: {
   /** Host-downlink command-title updates (the tab title follows the running
    *  command's first token). The caller routes it through updateTab so both
    *  local tabs (patchTab) and workspace-bound stubs (windows store →
-   *  every session) retitle. */
+   *  every session) retitle. NEVER called with an empty title: the host's
+   *  "no CLI settled yet" attach replay (`title: ''`) is filtered out here,
+   *  so the tab's default name (终端) survives until a CLI actually runs. */
   onTitleChange?: (title: string) => void
   /** Whether this is the active tab with the panel open. Hidden tabs stay
    *  mounted (display:none); flipping back to visible forces a re-fit +
@@ -319,7 +335,11 @@ export function TerminalView(props: {
             }
           },
           onTitle: (title, info) => {
-            onTitleChangeRef.current?.(title)
+            // An EMPTY title is the host's "no CLI settled yet" attach
+            // replay — it must never overwrite the tab's default name (终端).
+            // Only a settled CLI's first token replaces the name; the info
+            // bar still follows every frame.
+            if (shouldRetitleTerminal(title)) onTitleChangeRef.current?.(title)
             if (info !== undefined) setInfo(info)
           },
           onConnected: (connected) => {

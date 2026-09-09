@@ -211,8 +211,10 @@ function metaSuffix(meta: FsEntry['meta']): string | null {
  * ellipsis is active) means "no space left for icon + name", so the suffix
  * drops; a dropped suffix returns only when the row shows it would fit
  * again with breathing room (free space right of the name ≥ suffix width +
- * `META_FIT_MARGIN`) — the margin keeps a row sitting exactly on the
- * boundary from ping-ponging between hide and show on every pass.
+ * `META_FIT_MARGIN`), and only on width-change passes — a hide produced by
+ * a commit is never reversed by the very render it caused (see
+ * `measureMetaPriority`'s convergence contract), so a boundary row can
+ * never ping-pong hide/show into React's nested-update loop.
  *
  * The two inputs are measured from the live row (see `measureMetaPriority`):
  * the name span's natural/rendered widths and the row's client width / the
@@ -222,6 +224,14 @@ function metaSuffix(meta: FsEntry['meta']): string | null {
 /** Re-show headroom: the suffix must fit with the 6px flex gap plus this
  *  much free space to spare (sub-pixel / reflow jitter guard). */
 const META_FIT_MARGIN = 12
+
+/** Commit-phase bump-streak freeze cap (see the measurement pass's
+ *  convergence contract): after this many consecutive commit-driven hidden-
+ *  set changes without an intervening width-change pass, further bumps are
+ *  frozen until the next resize. Chosen well below React's 50-deep nested-
+ *  update limit so a layout feedback loop degrades to a momentarily stale
+ *  suffix instead of the "Maximum update depth exceeded" boundary error. */
+const MAX_CONSECUTIVE_HIDE_BUMPS = 16
 
 /** Whether the suffix fits again on its row: the name is no longer
  *  truncated AND the free space right of the name holds the suffix. */
@@ -666,6 +676,12 @@ export function FileTree(props: {
   const metaEls = useRef(new Map<string, HTMLSpanElement>())
   const hiddenMetaPaths = useRef<ReadonlySet<string>>(new Set())
   const hiddenMetaWidth = useRef(new Map<string, number>())
+  /** Each hidden row's name NATURAL width (scrollWidth) recorded at hide
+   *  time (see the pass's content-change exception below). */
+  const hiddenNameScroll = useRef(new Map<string, number>())
+  /** Consecutive commit-phase hidden-set changes without an intervening
+   *  width-change pass (see the pass's convergence contract). */
+  const hideBumpStreak = useRef(0)
   const [, bumpMetaTick] = useState(0)
 
   /**
@@ -677,10 +693,31 @@ export function FileTree(props: {
    * when the hidden set actually changed, so a stable layout costs nothing
    * per pass beyond the width reads. Reads only refs, so it is stable and
    * can be shared by the layout effect and the ResizeObserver.
+   *
+   * CONVERGENCE CONTRACT (a commit-phase measurement must never feed
+   * React's 50-deep nested-update loop): the pass is DIRECTIONAL —
+   * commit passes (`allowShow = false`) may only ADD rows to the hidden
+   * set; re-showing is reserved for width-change passes (`allowShow =
+   * true`, the ResizeObserver), which reset the direction — with one
+   * content-driven exception: a hidden row whose name's NATURAL width
+   * changed (different text, a live content update) is re-decided even
+   * on commit passes. The hide/show ping-pong never changes the natural
+   * width — hiding the suffix only changes the RENDERED width — so a
+   * same-content row can never be reversed by the very render its own
+   * hide produced: the hidden set only grows within one width context,
+   * and every growth corresponds to rows that just mounted (a data
+   * settle) or a content change. The bump-streak guard is the last-resort
+   * brake: a commit-phase change that somehow kept arriving anyway (an
+   * unforeseen width feedback) freezes further bumps long before React's
+   * nested-update cap, degrading to a momentarily stale suffix instead
+   * of the boundary error taking the sidebar down.
    */
-  const measureMetaPriority = useCallback((): void => {
+  const measureMetaPriority = useCallback((allowShow: boolean): void => {
     if (metaEls.current.size === 0 && hiddenMetaPaths.current.size === 0) return
-    const nextHidden = new Set<string>()
+    // Directional baseline: commit passes start from the CURRENT hidden
+    // set (hide-only — still-hidden rows stay hidden); width-change passes
+    // start empty and re-decide every row.
+    const nextHidden = new Set(allowShow ? [] : hiddenMetaPaths.current)
     // Rows rendering the suffix: drop it while the name is being squeezed
     // ("no space left for icon + name"); remember the suffix's natural
     // width for the re-show check below.
@@ -690,16 +727,30 @@ export function FileTree(props: {
       if (metaSuffixCramped(nameEl.scrollWidth, nameEl.clientWidth)) {
         nextHidden.add(path)
         hiddenMetaWidth.current.set(path, metaEl.scrollWidth)
+        hiddenNameScroll.current.set(path, nameEl.scrollWidth)
       }
     }
     // Rows that dropped the suffix: re-show only once the row proves there
     // is room again (the name at full width + free space right of it ≥
-    // suffix width + margin) — a fresh fit never re-cramps, so this
-    // direction cannot ping-pong with the hide above.
+    // suffix width + margin). Two gates keep this from feeding React's
+    // nested-update loop:
+    // - width-change passes (allowShow) reconsider every hidden row;
+    // - commit passes re-show ONLY rows whose CONTENT changed — the name's
+    //   natural width (scrollWidth, content-intrinsic) differs from the
+    //   value recorded at hide time. The hide/show ping-pong never changes
+    //   the natural width — hiding the suffix only changes the RENDERED
+    //   width and free space — so a same-content row can never be reversed
+    //   by the very render its own hide produced.
     for (const path of hiddenMetaPaths.current) {
-      if (nextHidden.has(path)) continue
+      // Resize passes start from an EMPTY baseline: a row the hide loop
+      // just re-added is confirmed hidden this pass. Commit passes start
+      // from the CURRENT hidden set (the baseline), so every hidden row
+      // reaches the re-show decision below — only rows whose content
+      // changed can be re-shown, but the decision must still run.
+      if (allowShow && nextHidden.has(path)) continue
       const nameEl = nameEls.current.get(path)
       if (nameEl === undefined) continue
+      if (!allowShow && hiddenNameScroll.current.get(path) === nameEl.scrollWidth) continue
       // The name is a direct child of the row (position: relative), so the
       // row's client width and the name's left offset are read from here.
       const rowEl = nameEl.parentElement
@@ -707,6 +758,8 @@ export function FileTree(props: {
       const metaWidth = hiddenMetaWidth.current.get(path) ?? 0
       if (metaSuffixFits(nameEl.scrollWidth, nameEl.clientWidth, rowEl.clientWidth, nameEl.offsetLeft, metaWidth)) {
         hiddenMetaWidth.current.delete(path)
+        hiddenNameScroll.current.delete(path)
+        nextHidden.delete(path)
       } else {
         nextHidden.add(path)
       }
@@ -714,14 +767,30 @@ export function FileTree(props: {
     if (nextHidden.size !== hiddenMetaPaths.current.size
       || [...nextHidden].some(path => !hiddenMetaPaths.current.has(path))) {
       hiddenMetaPaths.current = nextHidden
-      bumpMetaTick(tick => tick + 1)
+      if (allowShow) {
+        // A width-change pass: fresh geometry, the direction resets.
+        hideBumpStreak.current = 0
+        bumpMetaTick(tick => tick + 1)
+      } else if (hideBumpStreak.current < MAX_CONSECUTIVE_HIDE_BUMPS) {
+        // A commit pass found NEW hidden rows — normally the single settle
+        // of a just-expanded level (one bump per expansion). A streak past
+        // the cap means the layout keeps churning on its own; freeze until
+        // a resize pass resets the streak (the crash-proof brake — far
+        // below React's 50-deep nested-update limit).
+        hideBumpStreak.current += 1
+        bumpMetaTick(tick => tick + 1)
+      }
     }
   }, [])
 
   // After every commit (listings, expansions, suffix toggles): keep the
   // suffix visibility in sync with the row geometry before the paint.
+  // DIRECTIONAL by contract (see the pass's convergence contract): commits
+  // may drop suffixes and re-show only content-changed rows — ordinary
+  // re-showing belongs to the ResizeObserver pass, so a commit can never
+  // feed a hide/show loop.
   useLayoutEffect(() => {
-    measureMetaPriority()
+    measureMetaPriority(false)
   })
 
   // Panel resizes are the main reason a row's room changes without a
@@ -735,7 +804,8 @@ export function FileTree(props: {
       if (frame !== 0) return
       frame = requestAnimationFrame(() => {
         frame = 0
-        measureMetaPriority()
+        // Width-change pass: the full re-decision (hide + re-show).
+        measureMetaPriority(true)
       })
     })
     observer.observe(body)

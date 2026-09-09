@@ -76,7 +76,9 @@ export interface TerminalTransportSession {
   onOutput(data: string): void
   /** A title frame → the tab retitles AND the info bar updates (cwd +
    *  running CLI). Call with `info` undefined to retitle only, leaving the
-   *  info bar untouched. */
+   *  info bar untouched. The VIEW filters the retitle: an empty title —
+   *  the "no CLI settled yet" state — never overwrites the tab's default
+   *  name, while the info bar follows every frame. */
   onTitle?(title: string, info?: { cwd?: string; command?: string }): void
   /** Connection-state flips (the view's disconnected banner and the block
    *  overlay's visibility ride this). */
@@ -149,7 +151,8 @@ export interface TerminalViewProps {
    *  triage, font prefs). */
   store: SidebarStore
   /** Host-downlink command-title updates; routes through updateTab so the
-   *  tab title follows the running command's first token. */
+   *  tab title follows the running command's first token. Empty titles are
+   *  filtered out by the view (they would overwrite the default name). */
   onTitleChange?: (title: string) => void
   /** Whether the tab is the active one with the panel open; hidden tabs
    *  re-fit + repaint on the way back to visible. */
