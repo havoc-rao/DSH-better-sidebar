@@ -6,11 +6,11 @@
  * live/shared badge).
  *
  * A global window's ENTIRE lifecycle (its one shared PTY / xterm session)
- * lives in the Global Workspace — a SPECIAL SESSION that owns its own bottom
+ * lives in the Global Workspace — a SPECIAL SESSION that owns its own
  * workbench. Binding a terminal parks the window here as a card and it is
  * NOT merged into any session's tab bar. One-click card actions:
  * - clicking a card ATTACHES the window into the Global Workspace's own
- *   bottom workbench (the virtual `global-workspace` session's bottom tree;
+ *   workbench (the virtual `global-workspace` session's bottom tree;
  *   the terminal view attaches to the same shared pty — the full-page view
  *   shows it live);
  * - the card's ✕ unbinds the window from the whole instance (closes it
@@ -19,9 +19,11 @@
  * Two faces share one body (`GlobalInfoList`):
  * - `GlobalView` — the panel TAB face (TabComponentProps): the card grid with
  *   an "expand to full page" affordance.
- * - `GlobalPage` — the FULL-PAGE face: the same card grid under a page header
- *   plus the bottom workbench (the "core page / complete page" the official
- *   left sidebar's footer button opens).
+ * - `GlobalPage` — the FULL-PAGE face (tabby-style terminal workspace: a
+ *   slim toolbar + a window tab strip + the full-height workbench — see
+ *   GlobalPage.tsx). It does NOT use the card grid; the grid stays the
+ *   compact face's vocabulary, while the page's strip shows the same
+ *   windows as tabs.
  *
  * The list rides the host-side `globalWindows` extra on TabComponentProps
  * (the renderer feeds it from the workspace windows store's instance-level

@@ -2875,38 +2875,82 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   opacity: 0.85;
 }
 
-/* The terminal box's info bar (the Global Workspace's bottom workbench):
-   a slim strip above the xterm showing the box's project dir + running CLI,
-   fed live by the host's title frames. */
+/* The terminal box's info bar (the Global Workspace's workbench): the box's
+   header strip above the xterm showing the project dir + running CLI, fed
+   live by the host's title frames. Styled after the file tree's DIRECTORY
+   ROW (the explorerRow/explorerDir recipe — folder icon + strong name) so
+   the box reads as "the project dir it runs in"; the running CLI trails as
+   a dimmed mono segment. */
 .terminalInfoBar {
   flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 22px;
-  padding: 2px 10px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-2);
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
   white-space: nowrap;
   overflow: hidden;
 }
 
-.terminalInfoCwd::before {
-  content: '📁 ';
+.terminalInfoBar:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.terminalInfoCli {
+/* The project dir segment: the tree's dir-row anatomy — folder icon +
+   strong name (explorerDir). Capped so a long path never squeezes the CLI
+   segment out. */
+.terminalInfoCwd {
+  flex: none;
+  max-width: 55%;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--dsw-font-s-strong-14);
   color: var(--dsw-alias-label-primary);
 }
 
-.terminalInfoCli::before {
-  content: '⚡ ';
+.terminalInfoCwd svg {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.terminalInfoCwdName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The running CLI segment: dimmed mono, taking the remaining width. */
+.terminalInfoCli {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.terminalInfoCli svg {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.terminalInfoCliText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .boundaryError {
@@ -4259,13 +4303,18 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 /* ── Full-page "Global info" surface (GlobalPage) ────────────────────────────
    Rendered IN PLACE as the official `conversation` column (the chat box's
    page area) via a dynamic priority -1 slot takeover — NOT a fixed overlay.
-   Fills the column box the layout gives it. Styled with the DSH framework
-   recipes so the page reads native:
-   - app-style page header: large title (--dsw-font-l-20) + one-line desc
-     (the section heading+intro recipe), close icon-button on the right;
-   - body = a PluginCard GROUP container (l2 hairline, r16, layer-3 fill)
-     with the catalogHeading recipe (13/600 title + tabular-nums count);
-   - the inventory = the settings icon-card grid (SideCardSection sync). */
+   Fills the column box the layout gives it. TABBY-STYLE chrome so the page
+   reads like a global terminal, not a settings card:
+   - slim toolbar: title + one-line desc (no hero header, no window count —
+     the tab strip already shows every window — and no close button: Esc /
+     opening a session dismiss the page);
+   - the TAB STRIP below it: every global window is a tab (attached windows
+     lead; PARKED windows dim at the tail behind a divider); the trailing +
+     mints a fresh global terminal;
+   - the WORKBENCH fills everything below the strip (no fixed-height bottom
+     box — the terminal IS the page), its per-pane tab strips suppressed:
+     the page's own strip drives the tabs.
+   All visuals ride the alias tokens (skins follow). */
 
 .globalPage {
   display: flex;
@@ -4277,140 +4326,167 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
-.globalPageHeader {
+/* The slim one-row toolbar: the page's only header chrome. */
+.globalToolbar {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 16px 20px 14px;
+  min-width: 0;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
-.globalPageHeaderText {
+.globalToolbarText {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
+  flex: 1;
 }
 
-.globalPageTitle {
-  font: var(--dsw-font-l-20);
+.globalToolbarTitle {
+  flex: none;
+  font: var(--dsw-font-s-strong-14);
   color: var(--dsw-alias-label-primary);
 }
 
-.globalPageDesc {
-  font: 13px/20px var(--dsw-font-family);
+.globalToolbarDesc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px/18px var(--dsw-font-family);
   color: var(--dsw-alias-label-tertiary);
 }
 
-.globalPageBody {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 16px 20px 24px;
-}
-
-/* The page's own bottom workbench ("下方的 box"): the Global Workspace is a
-   SPECIAL SESSION — it owns a bottom panel of its own (virtual
-   `global-workspace` session's bottomSplits), where attached global
-   terminals render live. A fixed-height box pinned to the page's bottom
-   edge, above the body scroll area. NO header bar — it appears directly
-   once it holds a terminal. */
-.globalPageBottom {
+/* The TAB STRIP: tabby's tab row. Tabs reuse the pane TabBar's .tab recipe
+   (capped width raised for the wide page); a divider splits the parked
+   group; the trailing + mints a new global terminal. */
+.globalStrip {
   flex: none;
   display: flex;
-  flex-direction: column;
-  height: 280px;
-  min-height: 0;
-  border-top: 1px solid var(--dsw-alias-border-l1);
+  align-items: stretch;
+  height: 34px;
+  min-width: 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-2);
 }
 
-.globalPageBottomBody {
+.globalStripTabs {
   flex: 1;
-  min-height: 0;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-/* Non-terminal tabs in the page's bottom workbench (should not occur —
-   only terminal windows attach globally) fall back to a plain label. */
+.globalStripTabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* The page's strip has room: roomier tabs than the narrow pane bars. */
+.globalStripTabs .tab {
+  max-width: 240px;
+}
+
+/* The tab's main label button (click = activate / attach): transparent over
+   the .tab chrome, stretches over the label so the whole tab is clickable
+   while the trailing ✕ stays a separate control. */
+.globalStripTabMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.globalStripTabIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+/* A PARKED window (defined in the global blob, not attached into the
+   workbench): dimmed so the strip reads "attached first, parked at the
+   tail"; clicking brings it into the workbench. */
+.globalStripParked {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.globalStripParked:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.globalStripParked .globalStripTabIcon {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The WORKBENCH area: everything below the strip. The workbench keeps every
+   attached terminal mounted (tab switches never drop a pty connection). */
+.globalPageMain {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+
+/* The hero fills the main area and centers its column. */
+.globalPageMain > .globalEmpty {
+  flex: 1;
+  justify-content: center;
+}
+
+/* The hero's primary action (the "new terminal" CTA). */
+.globalEmptyAction {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 16px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-inverted);
+  font: var(--dsw-font-xs-strong-12);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.globalEmptyAction:hover {
+  background: var(--dsw-alias-button-primary-hover);
+}
+
+.globalEmptyAction:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+}
+
+/* Non-terminal tabs in the page's workbench (should not occur — only
+   terminal windows attach globally) fall back to a plain label. */
 .globalPageTabFallback {
   padding: 16px;
   color: var(--dsw-alias-label-tertiary);
   font: 13px/20px var(--dsw-font-family);
 }
 
-/* Group container: the DSH PluginCard recipe — l2 hairline, r16, layer-3
-   fill; holds its own heading + the inventory. */
-.globalGroup {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 18px 20px 20px;
-  box-sizing: border-box;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 16px;
-  background: var(--dsw-alias-bg-layer-3);
-}
-
-/* Group heading: 13/600 + the inventory count badge (the settings
-   catalogHeading recipe: count in tabular-nums, tertiary). */
-.globalGroupHeading {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  padding: 0 2px 2px;
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 600;
-  color: var(--dsw-alias-label-primary);
-}
-
-.globalGroupCount {
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 400;
-  color: var(--dsw-alias-label-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-/* The "new terminal" quick-add (tabby-style): a small ghost + button at the
-   group heading's right edge — mints a fresh global terminal and attaches
-   it into the page's bottom workbench. */
-.globalNewTerminal {
-  margin-left: auto;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.globalNewTerminal:hover {
-  background: var(--dsw-alias-interactive-bg-active);
-  color: var(--dsw-alias-label-primary);
-}
-
-.globalNewTerminal:focus-visible {
-  outline: 2px solid var(--dsw-alias-border-l4);
-  outline-offset: 2px;
-}
-
 /* ── Global info content: the settings "icon card" recipe (SideCardSection
    sync) ─────────────────────────────────────────────────────────────────────
-   Mirrors the DSH settings inventory cards so the global page/tab reads
-   consistently with the app's settings UI: responsive auto-fill grid, small
-   cards (icon chip + title + badge), lit "on" state like an enabled
-   settings card. */
+   Mirrors the DSH settings inventory cards so the global TAB (the compact
+   panel face — GlobalView) reads consistently with the app's settings UI:
+   responsive auto-fill grid, small cards (icon chip + title + badge), lit
+   "on" state like an enabled settings card. (The FULL PAGE does not use the
+   grid — it shows the tabby-style strip + workbench; see GlobalPage.) */
 
 .globalGrid {
   display: grid;

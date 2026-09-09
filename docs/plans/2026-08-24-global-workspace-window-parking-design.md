@@ -11,15 +11,15 @@ v0.13.x 的全局共享终端（`gb:`，「所有项目同步」）语义是：`
 用户反馈（2026-08-24，两轮）：
 
 1. **「在『全局工作区』这里，会把窗口转移到『全局工作区』，而不是所有 session 的 tabs 中都能看到」**——全局共享窗口的完整生命周期（同一个 xterm 会话 / 同一个 PTY 进程）应当驻留在全局工作区，不再自动出现在每个 session 的 tab 栏。
-2. **「点击这个 term 不会在当前 session 中去创一个……而是可以把下方的这个 box 也集成到全局工作区。此时全局工作区就相当于原本 chatbox 的布局位置，它可以拥有属于自己的下方工作区扩展，相当于它是一个特殊的 session」**——全局工作区**本身是一个特殊 session**：占据 chatbox 布局位置，并拥有**自己的下方工作区**；点击卡片把窗口带入**它自己的底部工作区**，而不是任何真实会话。
+2. **「点击这个 term 不会在当前 session 中去创一个……而是可以把下方的这个 box 也集成到全局工作区。此时全局工作区就相当于原本 chatbox 的布局位置，它可以拥有属于自己的下方工作区扩展，相当于它是一个特殊的 session」**——全局工作区**本身是一个特殊 session**：占据 chatbox 布局位置，并拥有**自己的工作台**；点击标签页把窗口带入**它自己的工作台**，而不是任何真实会话。
 
 ## 2. 设计目标
 
 - **不改变默认行为**：只有被显式「全局共享」的终端才进入全局工作区；其余终端维持现状。
 - **全局工作区 = 特殊 session**：虚拟 `global-workspace` 会话（`GLOBAL_WORKSPACE_SESSION_ID`）拥有独立的 sidebar 状态（含 `bottomSplits`），经 `SidebarStore.getStateOf / subscribeOf / reduceFor` 读写，状态持久化在 `localStorage: dsh-sidebar:v1:global-workspace`。
 - **生命周期驻留**：`bindGlobal` 后窗口定义与 PTY 进程都属于全局 blob（`dsh-sidebar:v1:global-windows`）；任何真实 session 都不再自动持有 stub。
-- **按需 attach 进专属下方工作区**：点卡片 = `attachGlobal` 把窗口带入**全局工作区自己的底部工作区**（虚拟会话 `bottomSplits` 首个叶子 + `bottomOpen`）——不碰任何真实 session，完整页面保持打开。
-- **detach 本地化**：底部工作区 attached stub 的 ✕ 只 detach（窗口与共享 PTY 存活、回卡片列表）；「取消全局共享」（`unbindGlobal(false)`）才是全实例关闭。
+- **按需 attach 进专属工作台**：点标签页 = `attachGlobal` 把窗口带入**全局工作区自己的工作台**（虚拟会话 `bottomSplits` 首个叶子 + `bottomOpen`）——不碰任何真实 session，完整页面保持打开。
+- **detach 本地化**：工作台 attached stub 的 ✕ 只 detach（窗口与共享 PTY 存活、回标签条驻留组）；驻留标签页 ✕（`unbindGlobal(false)`）才是全实例关闭。
 - **持久化一致**：attached stub 持久化在虚拟会话布局，reload 对照全局 blob 校验（窗口已取消则剥离，reconcile 剥离会同步持久化）。
 
 ## 3. 设计
@@ -62,15 +62,15 @@ attach 后底部工作区的 TerminalView 以 `gb:<n>` id 连接 → host `share
 ### 3.6 取消共享：`unbindGlobal`
 
 - `keepInSession=true`（真实会话里 legacy attached stub 的右键「取消全局共享」）：窗口离开全局 blob，该 stub **原地变成本地 terminal**（PTY re-parent 回本地键）。
-- `keepInSession=false`（卡片 ✕）：窗口全实例关闭；attached stub 经 reconcile feed 剥离（含虚拟会话），其 unmount close frames 杀 PTY；**未 attach 过的「无头」PTY 由显式 `api.ptyClose` 兜底释放**（payload sessionId 对 `gb:` 键无影响，无会话时用占位串）。
+- `keepInSession=false`（驻留标签页 ✕）：窗口全实例关闭；attached stub 经 reconcile feed 剥离（含虚拟会话），其 unmount close frames 杀 PTY；**未 attach 过的「无头」PTY 由显式 `api.ptyClose` 兜底释放**（payload sessionId 对 `gb:` 键无影响，无会话时用占位串）。
 
 ### 3.7 全局工作区面
 
-`TabComponentProps` 新增两个可选 prop：`onAttachGlobal(tabId)` / `onUnbindGlobal(tabId)`（宿主未暴露 windows store 时缺省，卡片点击静默 no-op）。`builtins/tabs.tsx` 导出 `LazyTerminal`（页面底部工作区复用终端懒加载渲染）。
+`TabComponentProps` 新增两个可选 prop：`onAttachGlobal(tabId)` / `onUnbindGlobal(tabId)`（宿主未暴露 windows store 时缺省，卡片点击静默 no-op）。`builtins/tabs.tsx` 导出 `LazyTerminal`（页面工作台复用终端懒加载渲染）。
 
-- **`GlobalView`（面板 tab）**：卡片点击 → `attachGlobal`（带入虚拟会话的底部工作区，不碰当前 session）；卡片 ✕ → `unbindGlobal(false)`。
-- **`GlobalPage`（完整页面）**：`registerGlobalPageSurface(ctx, store, windows)`（新增 store 参数）。页面经 `useSyncExternalStore` 同时订阅 windows store 与**虚拟会话状态**；- **每个终端 box 的信息条**（`TerminalView.infoBar`）：host title 帧扩展 `{type:'title', title, command, cwd}`——`digestCommandInput` 新增 `lastCommand`（完整 settled 命令行）与 `SidebarPty.command`；连接时总是回放含 cwd 的初始帧。box 顶部渲染该终端自己的 project-dir（cwd basename + tooltip 全路径）与完整运行命令（如 `pnpm run dev`）。
-本体 = 卡片列表 + **专属下方工作区**（`globalPageBottom`，**无 header**——有 attached 终端即直接渲染；复用 `Workbench` 渲染虚拟会话 `bottomSplits`，terminal stub 经 `LazyTerminal` 渲染、标题经 `windows.update` 回流）。**直接新建终端（tabby 式）**：`windows.createGlobalTerminal()` mint 全新 `gb:` 窗口（title 缺省终端标签）并立即 `attachGlobal` 进底部工作区——无需会话/右键；host `sessionCwdOf` 对虚拟会话回退 `os.homedir()`（新终端的「根目录」启动 cwd）。卡片点击 = `attachGlobal`（页面不关闭）；卡片 ✕ = `unbindGlobal(false)`（列表实时刷新）。`openGlobalPage` 只 `ctx.sessions.clear()` + 置 open（不再捕获/恢复原 session）。
+- **`GlobalView`（面板 tab）**：卡片点击 → `attachGlobal`（带入虚拟会话的工作台，不碰当前 session）；卡片 ✕ → `unbindGlobal(false)`。
+- **`GlobalPage`（完整页面）**：`registerGlobalPageSurface(ctx, store, windows)`（新增 store 参数）。页面经 `useSyncExternalStore` 同时订阅 windows store 与**虚拟会话状态**；**每个终端 box 的信息条**（`TerminalView.infoBar`）：host title 帧扩展 `{type:'title', title, command, cwd}`——`digestCommandInput` 新增 `lastCommand`（完整 settled 命令行）与 `SidebarPty.command`；连接时总是回放含 cwd 的初始帧。box 顶部渲染该终端自己的 project-dir（cwd basename + tooltip 全路径）与完整运行命令（如 `pnpm run dev`）（条外形 = 文件树 dir 行风格：文件夹图标 + 强体项目名 + 灰色等宽命令段）。
+**v0.23+ 页面本体改为 tabby 式全局终端**（替代「卡片列表 + 固定 280px 底部工作区」——卡片网格移到 GlobalView 面板 tab，完整页面主区交给终端）：精简工具栏（标题 + 一行 desc）+ **标签条**（attached 窗口在前，**驻留窗口**（blob 有定义但未 attach）灰显在分隔线之后：attached 点击 = 激活、✕ = detach；驻留点击 = `attachGlobal` 并打开、✕ = `unbindGlobal(false)`；标签条尾部 + 直接新建）+ **全高工作台**（复用 `Workbench` 渲染虚拟会话 `bottomSplits`，`hideTabBar` 抑制 pane 自带标签条——页面标签条即唯一 tab 面，所有 attached 终端保持挂载、切 tab 不丢 pty；无 attached 时主区是引导 hero）。**直接新建终端（tabby 式）**：`windows.createGlobalTerminal()` mint 全新 `gb:` 窗口（title 缺省终端标签）并立即 `attachGlobal` 进工作台——无需会话/右键；host `sessionCwdOf` 对虚拟会话回退 `os.homedir()`（新终端的「根目录」启动 cwd）。`openGlobalPage` 只 `ctx.sessions.clear()` + 置 open（不再捕获/恢复原 session）。
 - 文案：`bindGlobal` → 「全局共享（转移到全局工作区）」；徽标 → 「驻留全局工作区」；empty 提示更新。
 
 ## 4. 实施偏差与注意

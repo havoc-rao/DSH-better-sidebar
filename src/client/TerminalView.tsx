@@ -39,10 +39,11 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { writeClipboard, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
 import { t } from './locales.ts'
+import { IconTerminalOutline16 } from './icons.tsx'
 import { openWhenSized } from './open-when-sized.ts'
 import type { SessionScope } from './api.ts'
 import { isAgentTabId, type SidebarStore } from './state.ts'
@@ -568,12 +569,14 @@ export function TerminalView(props: {
         <div className={css.terminalInfoBar}>
           {info.cwd !== undefined && (
             <span className={css.terminalInfoCwd} title={info.cwd}>
-              {baseNameOf(info.cwd)}
+              <IconFolderOpen16 size={14} />
+              <span className={css.terminalInfoCwdName}>{baseNameOf(info.cwd)}</span>
             </span>
           )}
           {info.command !== undefined && info.command !== '' && (
             <span className={css.terminalInfoCli} title={info.command}>
-              {info.command}
+              <IconTerminalOutline16 size={12} />
+              <span className={css.terminalInfoCliText}>{info.command}</span>
             </span>
           )}
         </div>
