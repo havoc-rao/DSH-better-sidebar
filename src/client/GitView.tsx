@@ -30,7 +30,7 @@ import { SIDEBAR_PREFS_DEFAULTS } from '../prefs-shared.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import { relativeTime, t } from './locales.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
-import type { SidebarStore, SidebarTab } from './state.ts'
+import { patchTab, type SidebarStore, type SidebarTab } from './state.ts'
 import {
   GIT_COMMIT_SETTING_KEYS,
   GIT_FILE_LIST_KEY,
@@ -131,6 +131,25 @@ const LOG_BATCH = 20
  *  many batches (160 commits) before giving up and leaving the bubble. */
 const REVEAL_PAGE_CAP = 8
 
+/** The git tab's persisted meta object for the commit draft (a malformed
+ *  meta reads as empty — the same rule EditorHost's metaOf applies). */
+function draftMetaOf(tab: SidebarTab): Record<string, unknown> {
+  const meta = tab.meta
+  return meta !== null && typeof meta === 'object' && !Array.isArray(meta)
+    ? meta as Record<string, unknown>
+    : {}
+}
+
+/** The commit-message draft persisted on the git tab's `meta` ('' when the
+ *  tab is absent — isolated tests — or carries no draft). The draft rides
+ *  the layout like EditorHost's treeOpen/treeWidth, so switching sessions —
+ *  or a reload — restores what the user was typing. */
+function commitDraftOf(tab: SidebarTab | undefined): string {
+  if (tab === undefined) return ''
+  const draft = draftMetaOf(tab).commitMsg
+  return typeof draft === 'string' ? draft : ''
+}
+
 /** One history page for the given scope. The graph route now also
  *  accepts the selected linked worktree (resolveWorktree enforces the
  *  allowlist on the host), so we route BOTH branches through it and keep
@@ -154,13 +173,18 @@ export function GitView(props: {
   ctx?: Context
   /** Optional (v0.17.0): absent → static prefs (isolated tests / previewers). */
   store?: SidebarStore
+  /** The git tab itself: the commit-message draft persists into `tab.meta`
+   *  (the sole write path — the store's per-session persistence then makes
+   *  it survive session switches and reloads). Absent in isolated tests →
+   *  the draft stays component-local only. */
+  tab?: SidebarTab
   onOpenFile: (path: string) => void
   /** Open a diff tab (the shell places it below the git pane on first use). */
   onOpenDiff: (tab: SidebarTab) => void
   /** Poll only while the tab is actually visible. */
   visible?: boolean
 }) {
-const { scope, ctx, store, onOpenFile, onOpenDiff, visible } = props
+const { scope, ctx, store, tab, onOpenFile, onOpenDiff, visible } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
   const [selectedWorktree, setSelectedWorktree] = useState<string | undefined>()
@@ -173,10 +197,80 @@ const { scope, ctx, store, onOpenFile, onOpenDiff, visible } = props
   /** Whether a fetch is in flight (the button shows a spinner + disables). */
   const [fetching, setFetching] = useState(false)
   const [logEntries, setLogEntries] = useState<GitGraphEntry[]>([])
-  const [commitMsg, setCommitMsg] = useState('')
+  /** The commit-message draft. Seeded from the git tab's persisted meta:
+   *  switching sessions unmounts this panel, and component-local state alone
+   *  would lose what the user was typing (the sidebar state is per-session,
+   *  and the tab's meta rides that layout). */
+  const [commitMsg, setCommitMsg] = useState<string>(() => commitDraftOf(tab))
   /** The commit box's <textarea> (auto-grows up to the CSS max-height, then
    *  scrolls internally instead of growing further). */
   const commitMsgRef = useRef<HTMLTextAreaElement | null>(null)
+  /** The tab + displayed session the current draft belongs to, read by the
+   *  flush paths (a session switch right after typing must not drop the
+   *  last keystrokes — the debounce may never fire). NEVER assigned during
+   *  render: the session-sync effect below reads them as the PREVIOUS
+   *  identity and a render-time assignment would capture the new one and
+   *  skip the flush. */
+  const draftTabRef = useRef<SidebarTab | undefined>(tab)
+  const draftSessionRef = useRef<string>(scope.sessionId)
+  const draftRef = useRef(commitMsg)
+  draftRef.current = commitMsg
+  const draftTimer = useRef<number | undefined>(undefined)
+  /** Write the draft into the tab's own session state (patchTab by id). The
+   *  active session may have ALREADY switched when a flush runs, so a plain
+   *  `updateTab` (active-session reduce) would land the draft in the wrong
+   *  session's state — reduceFor targets the tab's session regardless. */
+  const writeDraft = useCallback((sessionId: string, target: SidebarTab, draft: string): void => {
+    store?.reduceFor(sessionId, state => patchTab(state, target.id, {
+      meta: { ...draftMetaOf(target), commitMsg: draft },
+    }))
+  }, [store])
+  /** Schedule a debounced draft write; unchanged text never writes. The
+   *  captured tab/session keep the write valid even after a session switch
+   *  (the timer closure outlives the component). */
+  const persistDraft = (draft: string): void => {
+    const target = draftTabRef.current
+    const sessionId = draftSessionRef.current
+    if (target === undefined || draft === commitDraftOf(target)) return
+    window.clearTimeout(draftTimer.current)
+    draftTimer.current = window.setTimeout(() => { writeDraft(sessionId, target, draft) }, 400)
+  }
+  /** The single draft-update path (typing, AI draft, post-commit clear):
+   *  set the local state AND schedule the layout write. */
+  const updateCommitDraft = (next: string): void => {
+    setCommitMsg(next)
+    persistDraft(next)
+  }
+  /** A real tab swap — the displayed session changed, or the pane handed us
+   *  a different logical tab (id/type) — flushes the pending draft into the
+   *  PREVIOUS session immediately (the debounce may never fire) and re-seeds
+   *  from the new tab. Identity-only churn within the SAME session (an
+   *  unrelated store notify re-renders the pane with fresh tab objects)
+   *  never flushes or re-seeds: the in-flight draft survives the re-render. */
+  useEffect(() => {
+    const previous = draftTabRef.current
+    const previousSession = draftSessionRef.current
+    const logicalSwap = previous?.id !== tab?.id || previous?.type !== tab?.type
+    if (previousSession !== scope.sessionId || logicalSwap) {
+      if (previous !== undefined && draftRef.current !== commitDraftOf(previous)) {
+        writeDraft(previousSession, previous, draftRef.current)
+      }
+      window.clearTimeout(draftTimer.current)
+      setCommitMsg(commitDraftOf(tab))
+    }
+    draftTabRef.current = tab
+    draftSessionRef.current = scope.sessionId
+  }, [tab, scope.sessionId, writeDraft])
+  /** Unmount flush: a session switch right after typing must not lose the
+   *  pending keystrokes (the debounce may never fire). */
+  useEffect(() => () => {
+    window.clearTimeout(draftTimer.current)
+    const target = draftTabRef.current
+    const sessionId = draftSessionRef.current
+    if (target !== undefined && draftRef.current !== commitDraftOf(target)) {
+      writeDraft(sessionId, target, draftRef.current)
+    }
+  }, [writeDraft])
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
@@ -593,7 +687,15 @@ const next = await historyPage(git, gitScope, LOG_BATCH, logEntries.length, targ
     setCommitError(null)
     try {
       await git.gitCommit(gitScope, message, selectedWorktree)
+      // Clear the draft in both mirrors — and immediately in the persisted
+      // meta, not via the debounce: a committed message must not resurrect
+      // when the panel reopens.
       setCommitMsg('')
+      const clearTarget = draftTabRef.current
+      const clearSession = draftSessionRef.current
+      if (clearTarget !== undefined && commitDraftOf(clearTarget) !== '') {
+        writeDraft(clearSession, clearTarget, '')
+      }
       await refresh()
     } catch (reason) {
       setCommitError(reason instanceof Error ? reason.message : String(reason))
@@ -625,7 +727,9 @@ const next = await historyPage(git, gitScope, LOG_BATCH, logEntries.length, targ
         historyRefs: commitHistoryRefsOf(blob),
         worktree: selectedWorktree,
       })
-      setCommitMsg(result.message)
+      // The AI draft is itself a draft: persist it like typed text, so a
+      // session switch right after drafting keeps it.
+      updateCommitDraft(result.message)
     } catch (reason) {
       const code = reason instanceof SidebarApiError ? reason.code : undefined
       const message = code === 'no-changes' || code === 'no-staged-changes' ? t('commitDraftNoStaged')
@@ -1022,7 +1126,7 @@ const next = await historyPage(git, gitScope, LOG_BATCH, logEntries.length, targ
               value={commitMsg}
               disabled={busy || drafting}
               rows={1}
-              onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
+              onChange={(event) => { updateCommitDraft(event.target.value); setCommitError(null) }}
               onKeyDown={(event) => {
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
               }}

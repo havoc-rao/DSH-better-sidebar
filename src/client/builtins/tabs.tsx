@@ -255,6 +255,7 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
             ctx={ctx}
             scope={scope}
             store={store}
+            tab={tab}
             visible={visible}
             onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path, gitArea) }}
             onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
