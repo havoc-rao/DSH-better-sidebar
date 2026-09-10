@@ -73,7 +73,7 @@ describe('shared pty key mapping', () => {
 describe('global-shared pty (all-projects bound terminals)', () => {
   it('two sessions across workspaces attach to the SAME gb: process (first cwd wins)', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const first = manager.open('session-a', GLOBAL_STUB_ID, '/proj-a', 80, 24)
     const second = manager.open('session-b', GLOBAL_STUB_ID, '/proj-b', 100, 40)
 
@@ -89,7 +89,7 @@ describe('global-shared pty (all-projects bound terminals)', () => {
 
   it('a gb: shared pty never counts toward any session quota', () => {
     const { module } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 1, [], module)
+    const manager = new PtyManager('/bin/sh', 1, [], module)
     manager.open('session-a', GLOBAL_STUB_ID, '/proj-a', 80, 24)
     manager.open('session-a', 'terminal:1', '/proj-a', 80, 24)
     // The per-session cap (1) is exhausted by the local terminal, but the
@@ -102,7 +102,7 @@ describe('global-shared pty (all-projects bound terminals)', () => {
 
   it('a gb: stub re-parents a live session pty to the shared global key, same process', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const local = manager.open('session-a', 'terminal:1', '/proj-a', 80, 24)
     spawns[0]!.pty.emit('server watching…')
 
@@ -124,7 +124,7 @@ describe('global-shared pty (all-projects bound terminals)', () => {
 describe('workspace-shared pty (bound terminals)', () => {
   it('two sessions opening the same ws: stub attach to the SAME process', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const first = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     const second = manager.open('session-b', STUB_ID, '/ws-a', 100, 40)
 
@@ -140,7 +140,7 @@ describe('workspace-shared pty (bound terminals)', () => {
 
   it('a different session cwd never respawns a shared pty (first cwd wins)', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const first = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     const second = manager.open('session-b', STUB_ID, '/elsewhere', 80, 24)
 
@@ -152,7 +152,7 @@ describe('workspace-shared pty (bound terminals)', () => {
 
   it('shared ptys never count toward a session quota', () => {
     const { module } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 1, [], module)
+    const manager = new PtyManager('/bin/sh', 1, [], module)
     manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     manager.open('session-b', STUB_ID, '/ws-a', 80, 24)
 
@@ -168,7 +168,7 @@ describe('workspace-shared pty (bound terminals)', () => {
 
   it('a reconnected exited shared pty respawns a fresh shell', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const first = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     spawns[0]!.pty.exit(0)
     expect(first.exited).toBe(true)
@@ -182,7 +182,7 @@ describe('workspace-shared pty (bound terminals)', () => {
 
   it('close kills the shared process (window closed everywhere)', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const handle = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     manager.close(handle.key)
     expect(spawns[0]!.pty.kill).toHaveBeenCalledTimes(1)
@@ -191,7 +191,7 @@ describe('workspace-shared pty (bound terminals)', () => {
 
   it('scheduleClose on a shared key with a grace still kills after the timer', async () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const handle = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     manager.scheduleClose(handle.key, 20)
     await new Promise(resolve => setTimeout(resolve, 60))
@@ -200,7 +200,7 @@ describe('workspace-shared pty (bound terminals)', () => {
 
   it('a shared handle records the first session id but is excluded from its keys', () => {
     const { module } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     expect(manager.keysOf('session-a')).toEqual([])
     expect(manager.keysOf('session-b')).toEqual([])
@@ -211,7 +211,7 @@ describe('workspace-shared pty (bound terminals)', () => {
 describe('pty re-parenting (bind/unbind keep the process alive)', () => {
   it('bind direction: a session pty moves to the shared key, same process', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const local = manager.open('session-a', 'terminal:1', '/ws-a', 80, 24)
     spawns[0]!.pty.emit('running npm run dev…')
     expect(local.title).toBe('') // not digested here; transcript is what matters
@@ -235,7 +235,7 @@ describe('pty re-parenting (bind/unbind keep the process alive)', () => {
 
   it('unbind direction: a shared pty moves to the session key and counts toward its quota', () => {
     const { module } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 1, [], module)
+    const manager = new PtyManager('/bin/sh', 1, [], module)
     manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     // Before unbind the shared pty is quota-exempt…
     expect(manager.keysOf('session-a')).toEqual([])
@@ -256,7 +256,7 @@ describe('pty re-parenting (bind/unbind keep the process alive)', () => {
 
   it('a migrated handle survives an open() with a different cwd (no respawn)', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const shared = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     manager.reparent(`shared:${STUB_ID}`, 'session-a:terminal:9', 'session-a', false)
 
@@ -272,7 +272,7 @@ describe('pty re-parenting (bind/unbind keep the process alive)', () => {
 
   it('a NON-migrated per-session handle still respawns on a cwd change', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const first = manager.open('session-a', 'terminal:1', '/ws-a', 80, 24)
     expect(first.migrated).toBeUndefined()
 
@@ -285,7 +285,7 @@ describe('pty re-parenting (bind/unbind keep the process alive)', () => {
 
   it('reparent cancels a pending grace close (the process survives the timer)', async () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const local = manager.open('session-a', 'terminal:1', '/ws-a', 80, 24)
     manager.scheduleClose('session-a:terminal:1', 20) // bare socket drop, grace pending
     expect(manager.reparent('session-a:terminal:1', `shared:${STUB_ID}`, 'session-a', true)).toBe(true)
@@ -298,7 +298,7 @@ describe('pty re-parenting (bind/unbind keep the process alive)', () => {
 
   it('reparent with no source handle is a no-op (the new tab spawns fresh)', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     expect(manager.reparent('session-a:terminal:1', `shared:${STUB_ID}`, 'session-a', true)).toBe(false)
     expect(spawns).toHaveLength(0)
 
@@ -310,7 +310,7 @@ describe('pty re-parenting (bind/unbind keep the process alive)', () => {
 
   it('an exited handle migrates and the new attach respawns fresh (status quo for dead shells)', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const shared = manager.open('session-a', STUB_ID, '/ws-a', 80, 24)
     spawns[0]!.pty.exit(0)
     expect(manager.reparent(`shared:${STUB_ID}`, 'session-a:terminal:9', 'session-a', false)).toBe(true)
@@ -324,7 +324,7 @@ describe('pty re-parenting (bind/unbind keep the process alive)', () => {
 
   it('round trip local → shared → local keeps ONE process end to end', () => {
     const { module, spawns } = fakeNodePty()
-    const manager = new PtyManager('/bin/fake', 3, [], module)
+    const manager = new PtyManager('/bin/sh', 3, [], module)
     const original = manager.open('session-a', 'terminal:1', '/ws-a', 80, 24)
     spawns[0]!.pty.emit('server listening on :3000')
 

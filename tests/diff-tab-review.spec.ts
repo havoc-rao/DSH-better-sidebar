@@ -7,7 +7,7 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { api } from '../src/client/api.ts'
-import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
+import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
 import { loadReviewPatch, synthesizeAdditionPatch } from '../src/client/DiffTab.tsx'
 import { t } from '../src/client/locales.ts'
 

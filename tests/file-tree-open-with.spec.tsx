@@ -11,10 +11,12 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { createSidebarStore } from '../src/client/state.ts'
 import type { OpenWithTarget } from '../src/client/open-with.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 // vitest 4.1.11+ follows the OS locale; pin en-US so menu copy is English.
 beforeAll(() => {
@@ -201,3 +203,4 @@ describe('FileTree open-with menu', () => {
     expect(items.some(item => item.getAttribute('aria-haspopup') === 'menu')).toBe(false)
   })
 })
+

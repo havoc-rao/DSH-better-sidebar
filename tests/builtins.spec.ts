@@ -95,7 +95,7 @@ it('the global tab records the instance-level global info page (single, + menu v
   it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'sidebarLayout', 'sideBarSide', 'allowOpenOutsideWorkspace', 'fileIconTheme'])
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'sidebarLayout', 'sideBarSide', 'allowOpenOutsideWorkspace', 'fileIconTheme', 'workspaceFence'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.

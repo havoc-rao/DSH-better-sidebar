@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
+import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
 import {
   branchStatus, branchTips, fetch, graphLog, parseGraphLines, parseLogLines, parsePorcelainZ, repoRoots, status,
 } from '../src/git.ts'

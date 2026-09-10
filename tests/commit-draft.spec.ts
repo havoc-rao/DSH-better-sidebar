@@ -272,7 +272,7 @@ describe('commit agent-loop runner', () => {
     const dispose = vi.fn(async () => {})
     const agent = {
       session: {
-        events: [{
+        snapshotEvents: () => [{
           type: 'assistant/message',
           seq: 1,
           time: 1,
@@ -294,7 +294,7 @@ describe('commit agent-loop runner', () => {
         systemPrompt: { section, suppressRuntimeContext },
         tools: { restrict },
         on,
-      } as unknown as CordisContext)
+      } as unknown as CordisContext, agent as never)
       return { agent, dispose }
     })
     const rename = vi.fn(() => ({ title: '', eventSeq: 1 }))

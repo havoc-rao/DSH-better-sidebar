@@ -158,9 +158,9 @@ async function classifyTarget(raw: string, cwd: string): Promise<{ kind: AgentOp
     info = await stat(target)
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT') throw new Error(`"${raw}" does not exist (resolved to "${target}")`)
-    if (code === 'EACCES' || code === 'EPERM') throw new Error(`"${target}" is not readable`)
-    throw new Error(`cannot open "${target}": ${error instanceof Error ? error.message : String(error)}`)
+    if (code === 'ENOENT') throw new Error(`"${raw}" does not exist (resolved to "${target}")`, { cause: error })
+    if (code === 'EACCES' || code === 'EPERM') throw new Error(`"${target}" is not readable`, { cause: error })
+    throw new Error(`cannot open "${target}": ${error instanceof Error ? error.message : String(error)}`, { cause: error })
   }
   const title = basenameOf(target)
   return { kind: info.isDirectory() ? 'folder' : 'file', target, title: title === '' ? raw : title }
@@ -188,14 +188,17 @@ function isWindowsDrivePrefix(raw: string): boolean {
  * own routes do.
  * @param ctx - host plugin context (carries the tools service).
  * @param registry - the open-request registry (per-session queue + views).
- * @param resolveCwd - live cwd resolver for one session id.
+ * @param resolveCwd - async cwd resolver for one session id. Resolves through
+ *  the session header, the client-supplied cwd, and the persistence index
+ *  before falling back to the host process cwd (production always provides
+ *  persistence, so the fallback is reached only in tests / stripped-down hosts).
  * @param readPrefs - live resolved side card prefs (for tab enable gates).
  * @returns a disposer that unregisters the tool.
  */
 export function registerOpenTool(
   ctx: Context,
   registry: AgentOpenRegistry,
-  resolveCwd: (sessionId: string) => string,
+  resolveCwd: (sessionId: string) => Promise<string>,
   readPrefs: () => SidebarPrefs,
 ): () => void {
   return ctx.tools.register(defineTool({
@@ -245,7 +248,7 @@ export function registerOpenTool(
     execute: async (args: { target: string; title?: string }, exec: ToolRunContext) => {
       exec.signal.throwIfAborted()
       const sessionId = sessionIdOf(exec)
-      const cwd = resolveCwd(sessionId)
+      const cwd = await resolveCwd(sessionId)
       const { kind, target, title: defaultTitle } = await classifyTarget(args.target, cwd)
       // A disabled target tab type would make the client no-op the open:
       // report the real cause to the model instead of a silent success.

@@ -25,7 +25,7 @@ import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { AgentHandle, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig, LlmRuntime, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { Context, SidebarSessionTitleService } from '../context-types.ts'
@@ -402,7 +402,7 @@ export async function draftCommitMessage(
   })
   const seed: SessionEvent[] = [{
     type: 'subagent/descriptor',
-    seq: 0,
+    seq: SessionSeq(0),
     time: Date.now(),
     data: descriptor,
   }]
@@ -416,7 +416,6 @@ export async function draftCommitMessage(
       meta: {
         cwd,
         parentSession: SessionId(parentSessionId),
-        seedLength: seed.length,
         origin: 'subagent',
         delegationDepth: (parentHeader?.delegationDepth ?? 0) + 1,
       },
@@ -464,9 +463,9 @@ export async function draftCommitMessage(
       source: { kind: 'user' },
     }))
     await waitForDraft(handle, COMMIT_DRAFT_TIMEOUT_MS)
-    const message = finalAssistantText(handle.agent.session.events)
+    const message = finalAssistantText(handle.agent.session.snapshotEvents())
     if (message !== '') return message
-    throw new SidebarError('llm-error', terminalError(handle.agent.session.events) ?? 'the commit agent returned an empty message', 502)
+    throw new SidebarError('llm-error', terminalError(handle.agent.session.snapshotEvents()) ?? 'the commit agent returned an empty message', 502)
   } catch (error) {
     if (error instanceof SidebarError) throw error
     throw new SidebarError('llm-error', error instanceof Error ? error.message : String(error), 502)

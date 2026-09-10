@@ -17,6 +17,9 @@ const env = (partial: Partial<DesktopEnv>): DesktopEnv => ({
   ...partial,
 })
 
+/** Resolve an i18n-friendly desc (string or () => string) to its text. */
+const textOf = (desc: string | (() => string)): string => typeof desc === 'function' ? desc() : desc
+
 describe('shell presets', () => {
   it('keeps the registry well-formed (unique ids, titles, pure strip/left functions)', () => {
     const presets = getShellPresets()
@@ -26,7 +29,7 @@ describe('shell presets', () => {
       expect(ids.has(preset.id)).toBe(false)
       ids.add(preset.id)
       expect(preset.title.length).toBeGreaterThan(0)
-      expect(preset.desc.length).toBeGreaterThan(0)
+      expect(textOf(preset.desc).length).toBeGreaterThan(0)
       // The strip/left functions must be total — an unknown environment
       // yields undefined, never a throw.
       const plain = env({ desktop: false, mode: null, platform: null })

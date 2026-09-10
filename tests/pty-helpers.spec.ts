@@ -12,8 +12,20 @@ vi.mock('node:os', async (importOriginal) => {
   }
 })
 
+import { existsSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { resolveSidebarConfig } from '../src/config.ts'
-import { defaultShell, ensureSpawnHelper, shellDisplayName, shellSpawnArgs } from '../src/pty-manager.ts'
+import {
+  defaultShell,
+  ensureSpawnHelper,
+  resolveShellExecutable,
+  shellDisplayName,
+  shellSpawnArgs,
+  splitShellArgs,
+  unquotePath,
+} from '../src/pty-manager.ts'
+import { SidebarError } from '../src/wire.ts'
 
 describe('pty helpers', () => {
   it('prefers an explicit shell, then SHELL, then the account login shell on POSIX', () => {
@@ -66,6 +78,80 @@ describe('pty helpers', () => {
     expect(defaultShell({ platform: 'win32', env: {}, exists: () => false })).toBe('powershell.exe')
   })
 
+  it('Windows: resolves bare custom shells through PATH/PATHEXT before node-pty spawn', () => {
+    const files = new Set([
+      'C:/Tools/PowerShell/pwsh.exe',
+      'C:/Windows/System32/cmd.exe',
+    ])
+    const options = {
+      platform: 'win32' as const,
+      // Mixed-case Path/PATHEXT pins the case-insensitive environment lookup
+      // that real Windows process.env provides but plain test objects do not.
+      env: {
+        Path: 'C:\\Tools\\PowerShell',
+        PathExt: '.COM;.EXE;.BAT;.CMD',
+        SystemRoot: 'C:\\Windows',
+      },
+      exists: (path: string) => files.has(path.replaceAll('\\', '/')),
+    }
+    expect(resolveShellExecutable('pwsh', options).replaceAll('\\', '/'))
+      .toBe('C:/Tools/PowerShell/pwsh.exe')
+    expect(resolveShellExecutable('cmd', options).replaceAll('\\', '/'))
+      .toBe('C:/Windows/System32/cmd.exe')
+  })
+
+  it('Windows: accepts .exe names and absolute paths, and names a missing configured shell', () => {
+    const options = {
+      platform: 'win32' as const,
+      env: { PATH: 'C:\\Tools' },
+      exists: (path: string) => path.replaceAll('\\', '/') === 'C:/Tools/pwsh.exe'
+        || path.replaceAll('\\', '/') === 'D:/Portable Shell/custom.exe',
+    }
+    expect(resolveShellExecutable('pwsh.exe', options).replaceAll('\\', '/'))
+      .toBe('C:/Tools/pwsh.exe')
+    expect(resolveShellExecutable('D:\\Portable Shell\\custom.exe', options).replaceAll('\\', '/'))
+      .toBe('D:/Portable Shell/custom.exe')
+    expect(() => resolveShellExecutable('missing-shell', options))
+      .toThrow('shell executable not found: "missing-shell"')
+  })
+
+  it('POSIX: resolves bare names along PATH and names a missing configured shell', () => {
+    const options = {
+      platform: 'linux' as const,
+      env: { PATH: '/usr/local/bin:/usr/bin' },
+      exists: (path: string) => path === join('/usr/bin', 'zsh'),
+    }
+    expect(resolveShellExecutable('zsh', options)).toBe(join('/usr/bin', 'zsh'))
+    const thrown = (() => {
+      try {
+        resolveShellExecutable('nope', options)
+        return undefined
+      } catch (error) {
+        return error
+      }
+    })()
+    expect(thrown).toBeInstanceOf(SidebarError)
+    expect((thrown as SidebarError).code).toBe('shell-not-found')
+    expect((thrown as SidebarError).message).toBe('shell executable not found: "nope"')
+    expect((thrown as SidebarError).meta?.shell).toBe('nope')
+  })
+
+  it('POSIX: checks an absolute path exists and passes it through verbatim', () => {
+    expect(resolveShellExecutable('/explicit/zsh', { platform: 'linux', env: {}, exists: () => true }))
+      .toBe('/explicit/zsh')
+    expect(() => resolveShellExecutable('/missing/zsh', { platform: 'linux', env: {}, exists: () => false }))
+      .toThrow('shell executable not found: "/missing/zsh"')
+  })
+
+  it('unquotes the configured shell before resolving (Windows probe included)', () => {
+    const options = {
+      platform: 'win32' as const,
+      env: { PATH: 'C:\\Tools' },
+      exists: (path: string) => path.replaceAll('\\', '/') === 'C:/Tools/pwsh.exe',
+    }
+    expect(resolveShellExecutable('"pwsh.exe"', options).replaceAll('\\', '/')).toBe('C:/Tools/pwsh.exe')
+  })
+
   it('trims the configured shell and defaults it to auto for old documents', () => {
     expect(resolveSidebarConfig(undefined).shell).toBe('')
     expect(resolveSidebarConfig({ shell: '  pwsh.exe  ' }).shell).toBe('pwsh.exe')
@@ -94,9 +180,6 @@ describe('pty helpers', () => {
     if (process.platform !== 'darwin') return
     ensureSpawnHelper()
     ensureSpawnHelper()
-    const { existsSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const { dirname, join } = require('node:path') as typeof import('node:path')
-    const { createRequire } = require('node:module') as typeof import('node:module')
     const entry = createRequire(import.meta.url).resolve('node-pty')
     const root = dirname(dirname(entry))
     // Prebuilt (tarball) or node-gyp-compiled (build/Release): mirror
@@ -108,5 +191,35 @@ describe('pty helpers', () => {
     const helper = candidates.find(existsSync)
     expect(helper).toBeTruthy()
     expect((statSync(helper!).mode & 0o111) !== 0).toBe(true)
+  })
+
+  it('unquotes a paired surrounding quote from a configured shell path', () => {
+    expect(unquotePath('"C:\\Program Files\\PowerShell\\7\\pwsh.exe"'))
+      .toBe('C:\\Program Files\\PowerShell\\7\\pwsh.exe')
+    expect(unquotePath("'/usr/bin/my shell'")).toBe('/usr/bin/my shell')
+    // Unpaired or single characters stay verbatim.
+    expect(unquotePath('"mismatched')).toBe('"mismatched')
+    expect(unquotePath('pwsh.exe')).toBe('pwsh.exe')
+    expect(unquotePath('"')).toBe('"')
+    expect(unquotePath('')).toBe('')
+  })
+
+  it('splits shell args with quote-aware grouping', () => {
+    expect(splitShellArgs('-NoLogo -File "C:\\my init\\init.ps1"'))
+      .toEqual(['-NoLogo', '-File', 'C:\\my init\\init.ps1'])
+    // Single quotes group too, and preserve inner double quotes verbatim.
+    expect(splitShellArgs("-c 'echo \"hi\"'")).toEqual(['-c', 'echo "hi"'])
+    expect(splitShellArgs('  -l   ')).toEqual(['-l'])
+    expect(splitShellArgs('')).toEqual([])
+    expect(splitShellArgs('   ')).toEqual([])
+  })
+
+  it('keeps backslashes literal inside quotes and tolerates an unclosed quote', () => {
+    // Backslash is NOT an escape (Windows paths): "C:\a\" ends with a slash.
+    expect(splitShellArgs('"C:\\a\\"')).toEqual(['C:\\a\\'])
+    // An unclosed quote folds the remainder into one token instead of erroring.
+    expect(splitShellArgs('"unclosed quote')).toEqual(['unclosed quote'])
+    // Empty quote pairs produce no empty-string argument.
+    expect(splitShellArgs('"" x')).toEqual(['x'])
   })
 })

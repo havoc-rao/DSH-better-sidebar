@@ -7,8 +7,6 @@
 
 import z from 'schemastery'
 import {
-  SIDEBAR_PREFS_DEFAULTS,
-  SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
@@ -30,9 +28,6 @@ export {
   TITLE_BAR_STRIP_DEFAULT,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
-  WIDTH_PERCENT_DEFAULT,
-  WIDTH_PERCENT_MAX,
-  WIDTH_PERCENT_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
@@ -139,6 +134,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   // The active file-icon theme id ('' = built-in outline icons); unknown
   // ids are not a schema error — the client falls back to the built-ins.
   fileIconTheme: z.string().default(''),
+  workspaceFence: z.boolean().default(true),
   terminalShell: z.string().default(''),
   terminalShellArgs: z.string().default(''),
   titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),

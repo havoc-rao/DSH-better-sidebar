@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
-import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, mediaTypeForPath } from '../src/index.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
@@ -38,6 +38,7 @@ interface FakeContext {
   }
   sessions: { get: (id: string) => { header: { cwd?: string } } | undefined }
   tools: { register: (tool: unknown) => () => void }
+  on: (event: string, listener: (payload: unknown) => void) => () => void
   effect: (fn: () => void | (() => void), label?: string) => void
   /** The settings service never appears in the smoke context: the inject
    *  callback must never run (mirror of cordis' service-less inject). */
@@ -105,7 +106,7 @@ const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
       const entry = namespaces.get(ns)
       if (entry === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
       if (expectedRevision !== undefined && expectedRevision !== entry.revision) {
-        throw new SettingsConflictError(settingsNamespace(ns), expectedRevision, entry.revision)
+        throw new SettingsConflictError(ns as SettingsNamespace, expectedRevision, entry.revision)
       }
       entry.value = { ...entry.value, ...patch }
       entry.revision += 1
@@ -131,6 +132,7 @@ describe('host plugin smoke', () => {
       },
       sessions: { get: () => undefined },
       tools: { register: () => () => {} },
+      on: () => () => {},
       // The DSH-vendored cordis runs the registration effect immediately and
       // keeps its cleanup for disposal.
       effect: (fn) => {
@@ -151,7 +153,7 @@ describe('host plugin smoke', () => {
       '/sidebar/file',
       '/sidebar/html',
     ])
-    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals', '/sidebar/ws/agent-opens'])
+    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals', '/sidebar/ws/agent-opens', '/sidebar/ws/cmd-w'])
     // Teardown runs without throwing (pty manager has nothing open).
     for (const cleanup of effects) cleanup()
   })
@@ -171,6 +173,7 @@ describe('host plugin smoke', () => {
       },
       sessions: { get: () => ({ header: { cwd: directory } }) },
       tools: { register: () => () => {} },
+      on: () => () => {},
       effect: (fn) => {
         const cleanup = fn()
         if (typeof cleanup === 'function') effects.push(cleanup)
@@ -541,6 +544,7 @@ describe('session cwd resolution over the API route', () => {
       },
       sessions: overrides.sessions ?? { get: () => undefined },
       tools: { register: () => () => {} },
+      on: () => () => {},
       // The vendored cordis runs registration effects immediately.
       effect: (fn: () => void | (() => void)) => { fn() },
       // The settings inject callback runs only when a settings face is given
@@ -925,6 +929,7 @@ describe('side card settings routes', () => {
       },
       sessions: sessions ?? { get: () => undefined },
       tools: { register: () => () => {} },
+      on: () => () => {},
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings') && settings !== undefined) callback({ settings })
@@ -1011,6 +1016,7 @@ describe('side card settings routes', () => {
         sidebarLayout: 'docked',
         sideBarSide: 'right',
         fileIconTheme: '',
+        workspaceFence: true,
         terminalShell: '',
         terminalShellArgs: '',
         // The scheme trio (titleBarScheme/presetId/customCss) is deliberately
@@ -1157,6 +1163,7 @@ describe('agent terminal tool gating', () => {
       },
       sessions: { get: () => undefined },
       tools: { register: () => { registered += 1; return () => { disposed += 1 } } },
+      on: () => () => {},
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings')) callback({ settings })
@@ -1214,6 +1221,7 @@ describe('agent sidebar-open tool gating', () => {
       },
       sessions: { get: () => undefined },
       tools: { register: () => { registered += 1; return () => { disposed += 1 } } },
+      on: () => () => {},
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings')) callback({ settings })

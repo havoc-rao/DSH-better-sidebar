@@ -73,14 +73,17 @@ function sessionIdOf(exec: ToolRunContext): string {
  * session's terminals.
  * @param ctx - host plugin context (carries the tools service).
  * @param registry - the agent-owned terminal registry.
- * @param resolveCwd - live cwd resolver for one session id.
+ * @param resolveCwd - async cwd resolver for one session id. Resolves through
+ *  the session header, the client-supplied cwd, and the persistence index
+ *  before falling back to the host process cwd (production always provides
+ *  persistence, so the fallback is reached only in tests / stripped-down hosts).
  * @returns a disposer that unregisters all eight tools (the caller gates
  * registration on the side-card setting and calls this to turn them off).
  */
 export function registerTools(
   ctx: Context,
   registry: AgentPtyRegistry,
-  resolveCwd: (sessionId: string) => string,
+  resolveCwd: (sessionId: string) => Promise<string>,
   readShellOverrides: () => { shell?: string; shellArgs?: string[] },
 ): () => void {
   const disposers: Array<() => void> = []
@@ -124,13 +127,13 @@ export function registerTools(
         `Opened terminal "${v.title}" (uuid: ${v.uuid}). The sidebar tab appears automatically; use terminal_read to see output and terminal_send (with submit=true) to run more commands.`,
       ),
     },
-    execute: (args: { title: string; command: string }, exec) => {
+    execute: async (args: { title: string; command: string }, exec) => {
       exec.signal.throwIfAborted()
       const sessionId = sessionIdOf(exec)
-      const cwd = resolveCwd(sessionId)
+      const cwd = await resolveCwd(sessionId)
       const { shell, shellArgs } = readShellOverrides()
       const uuid = registry.create(sessionId, args.title, args.command, cwd, 80, 24, shell, shellArgs)
-      return Promise.resolve({ uuid, title: args.title })
+      return { uuid, title: args.title }
     },
   }))
 
@@ -284,11 +287,14 @@ export function registerTools(
   register(defineTool({
     name: 'terminal_wait_for',
     description:
-      'Block until a substring appears in a terminal\'s retained transcript, or until the timeout elapses, or until the terminal exits — whichever happens first. '
+      'Block until a pattern appears in a terminal\'s retained transcript, or until the timeout elapses, or until the terminal exits — whichever happens first. '
       + 'Use this to synchronize on command completion cues ( e.g. a shell prompt, "done", "Listening on", "Build successful" ) '
       + 'without busy-polling terminal_read. '
+      + 'The needle is a JavaScript regular expression ( a pattern that fails to compile falls back to verbatim substring matching ). '
+      + 'One needle may cover MULTIPLE outcomes — e.g. wait on `(BUILD_OK|BUILD_FAIL)` or `Build (succeeded|failed)` returns as soon as EITHER marker appears, '
+      + 'and the found result\'s `match` field tells which alternative hit ( build success vs failure ). '
       + 'The wait scans the FULL retained transcript (up to ~1 MiB) on every poll, so a needle that scrolled past the most recent chunk is still a match. '
-      + 'Returns `found` with the line/column of the first occurrence, `timeout` if the needle did not appear in time, or `exited` if the terminal process died before the needle appeared. '
+      + 'Returns `found` with the line/column and the matched text, `timeout` if the needle did not appear in time, or `exited` if the terminal process died before the needle appeared. '
       + 'Default timeout is 10 seconds; raise it for long-running commands ( dev servers, test suites ). '
       + 'The wait is cooperative: a tool-call cancel ( or agent turn end ) aborts it immediately.',
     parameters: {
@@ -300,7 +306,8 @@ export function registerTools(
       needle: {
         type: 'string',
         required: true,
-        description: 'Substring to wait for (case-sensitive, verbatim). Must be non-empty.',
+        description: 'JavaScript regular expression to wait for (case-sensitive); a pattern that fails to compile falls back to verbatim substring matching. '
+          + 'May cover several outcomes in one wait ( e.g. `(BUILD_OK|BUILD_FAIL)` for build success/failure ) — check `match` in the found result to see which one hit. Must be non-empty.',
       },
       timeout_ms: {
         type: 'number',
@@ -318,6 +325,7 @@ export function registerTools(
               needle: { type: 'string', required: true },
               line: { type: 'integer', required: true, description: '0-based line index in the retained transcript where the needle first appeared.' },
               column: { type: 'integer', required: true, description: '0-based column index within that line where the match starts.' },
+              match: { type: 'string', required: true, description: 'The text that actually matched — for multi-outcome patterns ( e.g. `(BUILD_OK|BUILD_FAIL)` ) this tells which alternative matched.' },
               elapsedMs: { type: 'integer', required: true, description: 'Wall-clock milliseconds from wait start to match.' },
             },
           },
@@ -344,9 +352,10 @@ export function registerTools(
         ],
       },
       render: (_args, value) => {
-        const v = value as { kind: 'found' | 'timeout' | 'exited'; needle: string; elapsedMs?: number; timeoutMs?: number; line?: number; column?: number; exitCode?: number | null; exitSignal?: string | null }
+        const v = value as { kind: 'found' | 'timeout' | 'exited'; needle: string; elapsedMs?: number; timeoutMs?: number; line?: number; column?: number; match?: string; exitCode?: number | null; exitSignal?: string | null }
         if (v.kind === 'found') {
-          return [{ type: 'text', text: `Found "${v.needle}" at line ${v.line}, column ${v.column} (after ${v.elapsedMs}ms).` }]
+          const matched = v.match !== undefined && v.match !== '' ? `, matched "${v.match}"` : ''
+          return [{ type: 'text', text: `Found "${v.needle}" at line ${v.line}, column ${v.column}${matched} (after ${v.elapsedMs}ms).` }]
         }
         if (v.kind === 'timeout') {
           return [{ type: 'text', text: `Timed out after ${v.timeoutMs}ms waiting for "${v.needle}". Call terminal_read to inspect the transcript.` }]

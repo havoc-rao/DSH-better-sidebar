@@ -279,6 +279,10 @@ export const TAB_MAX_WIDTH = 160
  *  bound is the viewport, enforced by {@link setBottomHeight}). */
 export const BOTTOM_MIN = 120
 export const BOTTOM_DEFAULT = 220
+/** The conversation column keeps at least this much height when the bottom
+ *  workbench claims space (the layout-push companion of the official
+ *  contract; the local setBottomHeight clamps against the viewport). */
+export const CONVERSATION_MIN = 280
 /** Free-window geometry contract: the floor keeps the window usable (a
  *  header plus some content), the ceiling is the viewport. */
 export const FLOAT_MIN_W = 320
@@ -884,6 +888,33 @@ export function openTabInActivePane(state: SidebarState, tab: SidebarTab): Sideb
     ...state,
     activePane: targetId,
     [targetKey]: mapLeaf(state[targetKey], targetId, (leaf) => {
+      leaf.tabs = [...leaf.tabs, tab]
+      leaf.active = tab.id
+    }),
+  }
+}
+
+/**
+ * Land a tab in the BOTTOM workbench's first pane — the official open path
+ * (the plugin's own opens land in the bottom workbench; the native right
+ * Sidebar owns the right column). Always lands in the bottom tree's first
+ * leaf and opens the bottom panel, with the id-based safety net.
+ * @param state - the session state.
+ * @param tab - the tab to land.
+ * @returns the next state, with the bottom panel open.
+ */
+export function openTabInBottomPane(state: SidebarState, tab: SidebarTab): SidebarState {
+  const targetId = firstLeaf(state.bottomSplits).id
+  // Id-based safety net: if a tab with the same id exists, focus it.
+  for (const leaf of allLeaves(state.bottomSplits)) {
+    const existing = leaf.tabs.find(candidate => candidate.id === tab.id)
+    if (existing !== undefined) return activateTab(state, leaf.id, existing.id)
+  }
+  return {
+    ...state,
+    bottomOpen: true,
+    activePane: targetId,
+    bottomSplits: mapLeaf(state.bottomSplits, targetId, (leaf) => {
       leaf.tabs = [...leaf.tabs, tab]
       leaf.active = tab.id
     }),
@@ -1637,8 +1668,15 @@ function defaultState(prefs: SidebarPrefs, globalWidth?: number): SidebarState {
 export function sanitizeState(parsed: unknown): SidebarState | undefined {
   if (parsed === null || typeof parsed !== 'object') return undefined
   const record = parsed as Record<string, unknown>
-  if (typeof record.panelOpen !== 'boolean') return undefined
-  if (typeof record.width !== 'number' || !Number.isFinite(record.width)) return undefined
+  // The panel geometry arrived with the first persisted shape; a legacy or
+  // foreign document WITHOUT the fields restores the defaults instead of
+  // being rejected (the panels themselves are the source of truth for the
+  // window's current size). A present-but-malformed value is still rejected
+  // (structural corruption must not silently half-restore).
+  if (record.panelOpen !== undefined && typeof record.panelOpen !== 'boolean') return undefined
+  if (record.width !== undefined && (typeof record.width !== 'number' || !Number.isFinite(record.width))) return undefined
+  const panelOpen = record.panelOpen === undefined ? false : record.panelOpen
+  const width = record.width === undefined ? PANEL_DEFAULT : record.width
   if (typeof record.nextTerminal !== 'number' || !Number.isInteger(record.nextTerminal) || record.nextTerminal < 1) {
     return undefined
   }
@@ -1656,7 +1694,12 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
   // bottom tree.
   const seen = new Set<string>()
   const reid = new Map<string, string>()
-  const restoredSplits = sanitizeNode(record.splits, seen, reid)
+  const restoredSplits = record.splits === undefined
+    ? ({ kind: 'leaf' as const, id: uid('pane'), tabs: [], active: null })
+    : sanitizeNode(record.splits, seen, reid)
+  // A PRESENT but corrupted right tree is structural corruption — reject the
+  // document; only an ABSENT tree (a legacy single-workbench document)
+  // restores the empty default.
   if (restoredSplits === undefined) return undefined
   const splits = pruneEmptyPanes(restoredSplits)
   // Bottom-panel fields arrived in a later build: a missing or malformed
@@ -1709,8 +1752,8 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
       : firstLeaf(splits).id
   const maxWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
   return {
-    panelOpen: record.panelOpen,
-    width: Math.max(PANEL_MIN, Math.min(record.width, maxWidth)),
+    panelOpen,
+    width: Math.max(PANEL_MIN, Math.min(width, maxWidth)),
     // A stale duplicate pane id may have been re-ided; follow the rename so
     // new tabs still land in the pane the user was using.
     activePane,

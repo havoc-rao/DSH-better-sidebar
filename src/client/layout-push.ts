@@ -3,7 +3,7 @@
  * The conversation column (output + composer) must keep at least
  * {@link PANEL_MIN} of the viewport after the bottom panel claims height.
  */
-import { PANEL_MIN } from './state.ts'
+import { CONVERSATION_MIN, PANEL_MIN } from './state.ts'
 
 export interface LayoutPushInput {
   narrow: boolean
@@ -34,4 +34,19 @@ export function layoutPushSize(input: LayoutPushInput): LayoutPushSize {
     width: input.panelOpen ? Math.min(finiteNonNegative(input.width), viewportWidth) : 0,
     height: input.bottomOpen ? Math.min(finiteNonNegative(input.bottomHeight), maxHeight) : 0,
   }
+}
+
+/** The bottom workbench's live push contribution (upstream naming). */
+export interface BottomPushInput {
+  open: boolean
+  height: number
+  viewportHeight: number
+}
+
+/** The bottom panel's push height (0 when closed; capped by the conversation floor). */
+export function bottomPushHeight(input: BottomPushInput): number {
+  if (!input.open) return 0
+  const viewportHeight = finiteNonNegative(input.viewportHeight)
+  const maxHeight = Math.max(0, viewportHeight - Math.min(CONVERSATION_MIN, viewportHeight))
+  return Math.min(finiteNonNegative(input.height), maxHeight)
 }

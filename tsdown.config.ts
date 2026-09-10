@@ -56,7 +56,7 @@ const NODE_BUILTINS = new Set([
   ...builtinModules.map(id => `node:${id}`),
 ])
 
-/** Module specifiers the web shell shares into the frozen module table (the official PLATFORM_MODULES list, plus the runtime/client exemption). */
+/** Module specifiers the web shell shares into the frozen module table (the official PLATFORM_MODULES list; `dsh-client-runtime` was removed upstream in DSH 0.1.2-alpha and no chunk requires it). */
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
@@ -65,7 +65,6 @@ const CLIENT_EXTERNALS = [
   'cordis',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-runtime/client',
 ]
 
 /**
@@ -328,7 +327,7 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
 }
 
 /** The lazy chunk names (keep in sync with src/bundle-route.ts CHUNK_NAMES). */
-const CHUNKS = ['terminal', 'editor', 'mermaid']
+const CHUNKS = ['terminal', 'editor', 'mermaid', 'locale']
 
 export default [
   {

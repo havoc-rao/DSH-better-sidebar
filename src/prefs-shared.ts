@@ -9,20 +9,20 @@
 /** The user-settings namespace holding the side card preferences. */
 export const SIDEBAR_PREFS_NS = 'dsh-better-sidebar'
 
-/** User-facing side card preferences (new-conversation defaults). */
+/** User-facing side card preferences. */
 export interface SidebarPrefs {
   /** Whether a brand-new conversation opens the side card by default. */
   openByDefault: boolean
   /** Default panel width as a percent of the window width (20–60). */
   defaultWidthPercent: number
   /**
-   * Whether the sidebar auto-activates (opens the panel) and expands the
-   * Subagent page when the current conversation spawns a new subagent.
+   * Whether the sidebar auto-activates the Tasks page when the current
+   * conversation spawns a new subagent.
    */
   autoOpenSubagent: boolean
   /**
-   * Whether the sidebar auto-activates (opens the panel) and expands the
-   * Jobs page when a NEW background job appears for the current
+   * Whether the sidebar auto-activates the Tasks page containing the
+   * background-jobs section when a NEW job appears for the current
    * conversation (any new job id, not just the first one).
    */
   autoOpenJobs: boolean
@@ -125,11 +125,27 @@ export interface SidebarPrefs {
    */
   fileIconTheme: string
   /**
+   * Whether the sidebar's filesystem routes enforce the workspace fence:
+   * every client-supplied path must resolve (through symlinks) inside the
+   * session workspace, else the route answers 403 "outside workspace". On
+   * by default; turning it OFF lets the file tree / editor read+write /
+   * media / HTML preview / upload routes reach ANY host path (e.g. the
+   * global ~/.dsh/AGENTS.md or a linked worktree outside the session cwd)
+   * — the trade-off being that any same-origin script (including
+   * third-party consumer plugins) can read/write outside the workspace
+   * through those routes while it is off. The switch lives under the files
+   * tab's gear in the Side card settings; the fence error surfaces offer a
+   * one-click global off + retry.
+   */
+  workspaceFence: boolean
+  /**
    * Position compatibility mode: reserves space at the top for the native
    * Windows title bar (drawn at the window's top-right corner over the web
    * content in frameless/hidden-title-bar windows). When on, the toggle
    * cluster drops below the strip and the right panel's content starts
    * below it. Off by default — the sidebar layout is untouched.
+   */
+  /**
    * The shell the UI and agent terminals spawn (absolute path or bare
    * executable name). Empty (default) keeps the legacy resolution order:
    * `cordis.patch.yml` `config.shell`, then `$SHELL` / login shell /
@@ -274,10 +290,11 @@ export interface SidebarPrefs {
   pluginSettings: Record<string, Record<string, unknown>>
 }
 
-/** Range contract of {@link SidebarPrefs.defaultWidthPercent}. */
-export const WIDTH_PERCENT_MIN = 20
-export const WIDTH_PERCENT_MAX = 60
-export const WIDTH_PERCENT_DEFAULT = 35
+/** Clamp one default-width percent into the contract range (shared by
+ *  schema and client reads). */
+export function clampWidthPercent(value: number): number {
+  return Math.min(WIDTH_PERCENT_MAX, Math.max(WIDTH_PERCENT_MIN, Math.round(value)))
+}
 
 /** Range contract of {@link SidebarPrefs.terminalFontSize}. */
 export const TERMINAL_FONT_SIZE_MIN = 9
@@ -300,6 +317,11 @@ export const SIDEBAR_BAR_WIDTH_DEFAULT = 240
 export const TITLE_BAR_SCHEMES = ['auto', 'web', 'preset', 'custom'] as const
 export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 
+/** Range contract of {@link SidebarPrefs.defaultWidthPercent}. */
+export const WIDTH_PERCENT_MIN = 20
+export const WIDTH_PERCENT_MAX = 60
+export const WIDTH_PERCENT_DEFAULT = 35
+
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: false,
@@ -318,6 +340,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   sidebarLayout: 'docked',
   sideBarSide: 'right',
   fileIconTheme: '',
+  workspaceFence: true,
   terminalShell: '',
   terminalShellArgs: '',
   titleBarScheme: 'auto',
@@ -336,11 +359,6 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},
-}
-
-/** Clamp one width percent into the contract range (shared by schema and client reads). */
-export function clampWidthPercent(value: number): number {
-  return Math.min(WIDTH_PERCENT_MAX, Math.max(WIDTH_PERCENT_MIN, Math.round(value)))
 }
 
 /** Clamp one terminal font size into the contract range (shared by schema and client reads). */

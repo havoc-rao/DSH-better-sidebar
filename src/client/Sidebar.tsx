@@ -2578,3 +2578,34 @@ The tab right-click menu, positioned at the cursor like the file
     </div>
   )
 }
+
+/**
+ * The bottom workbench's expand/collapse button, registered into DSH's
+ * session-header utilities list (`conversation.session.header.utilities`) —
+ * DSH 0.1.5 draws its own right-Sidebar expand button in the header's corner
+ * slot, so the plugin's dock toggle lives in the utilities row left of it.
+ */
+export function BottomDockToggle(props: { store: SidebarStore }) {
+  const { store } = props
+  const snapshot = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot(), [store]),
+  )
+  const open = snapshot.state?.bottomOpen === true
+  const label = open ? t('collapseBottomPanel') : t('expandBottomPanel')
+  return (
+    <Tooltip label={label} side="bottom" delayMs={500}>
+      <button
+        type="button"
+        className={css.toggleButton}
+        data-dsh-bottom-toggle
+        data-active={open ? 'true' : undefined}
+        aria-label={label}
+        aria-pressed={open}
+        onClick={() => { store.reduce(toggleBottomPanel) }}
+      >
+        <IconPanelBottomOutline16 />
+      </button>
+    </Tooltip>
+  )
+}

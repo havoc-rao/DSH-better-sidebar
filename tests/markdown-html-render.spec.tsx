@@ -15,7 +15,8 @@ import { MarkdownDocument, type MarkdownHtmlMedia } from '../src/client/Markdown
 import { analyzeMarkdownHtml } from '../src/client/markdown-html.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 const media: MarkdownHtmlMedia = {
   scope: { sessionId: 's1', cwd: '/ws' },
@@ -171,6 +172,54 @@ describe('MarkdownDocument (inline pass)', () => {
     const { container, root } = await renderDocument('text <img src="./icon.png" alt="i"/> tail')
     const img = container.querySelector('[data-html-inline] img')
     expect(img?.getAttribute('src')).toContain('/sidebar/file?')
+    await unmount(root)
+  })
+})
+
+describe('MarkdownDocument (local markdown images)', () => {
+  it('renders markdown-syntax local images through the /sidebar/file route', async () => {
+    const { container, root } = await renderDocument([
+      '# Title',
+      '',
+      '![icon](./assets/icon.svg)',
+      '',
+      '![logo][logo]',
+      '',
+      '[logo]: ./logo.png',
+    ].join('\n'))
+    const imgs = [...container.querySelectorAll('img')]
+    expect(imgs.length, 'both local images must render as <img>, not alt fallback').toBe(2)
+    expect(imgs[0]?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fassets%2Ficon.svg&cwd=%2Fws')
+    expect(imgs[0]?.getAttribute('alt')).toBe('icon')
+    expect(imgs[1]?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Flogo.png&cwd=%2Fws')
+    expect(imgs[1]?.getAttribute('alt')).toBe('logo')
+    await unmount(root)
+  })
+
+  it('renders local markdown images in HTML-mixed documents (the production path)', async () => {
+    const { container, root } = await renderDocument([
+      '<div align="center">badges</div>',
+      '',
+      '![shot](./img.png)',
+    ].join('\n'))
+    const img = container.querySelector('img')
+    expect(img, 'the markdown-syntax image after an HTML run must render').not.toBeNull()
+    expect(img?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws')
+    await unmount(root)
+  })
+
+  it('keeps remote image destinations untouched', async () => {
+    const { container, root } = await renderDocument('![r](https://example.com/x.png)')
+    const img = container.querySelector('img')
+    expect(img?.getAttribute('src')).toBe('https://example.com/x.png')
+    await unmount(root)
+  })
+
+  it('is idempotent for already-rewritten media URLs', async () => {
+    const url = 'http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws'
+    const { container, root } = await renderDocument(`![a](${url})`)
+    const img = container.querySelector('img')
+    expect(img?.getAttribute('src')).toBe(url)
     await unmount(root)
   })
 })

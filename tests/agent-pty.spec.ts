@@ -5,8 +5,13 @@
  * console noise from node-pty's ConPTY module on Windows is expected and
  * does not affect the assertions.
  */
-import { describe, expect, it } from 'vitest'
-import { AgentPtyRegistry, ALLOWED_SIGNALS, snapshotOf, type AgentTerminalSnapshot } from '../src/agent-pty.ts'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  AgentPtyRegistry,
+  ALLOWED_SIGNALS,
+  snapshotOf,
+  tryResizePty,
+} from '../src/agent-pty.ts'
 
 /**
  * Resolve a shell binary for tests: on Windows use PowerShell (available on
@@ -32,6 +37,35 @@ async function waitForTranscript(
   const handle = registry.get(uuid)
   return handle?.transcript ?? ''
 }
+
+describe('tryResizePty', () => {
+  it('clamps valid dimensions before resizing', () => {
+    const resize = vi.fn()
+
+    expect(tryResizePty({ resize }, 5000, 80.9)).toBe(true)
+    expect(resize).toHaveBeenCalledWith(1024, 80)
+  })
+
+  it('contains a node-pty resize failure', () => {
+    const resize = vi.fn(() => {
+      throw new Error('Usage: pty.resize(fd, cols, rows, xPixel, yPixel)')
+    })
+
+    expect(tryResizePty({ resize }, 80, 24)).toBe(false)
+    expect(resize).toHaveBeenCalledWith(80, 24)
+  })
+
+  it.each([
+    [Number.NaN, 24],
+    [Number.POSITIVE_INFINITY, 24],
+    [80, Number.NEGATIVE_INFINITY],
+  ])('rejects non-finite dimensions without calling node-pty (%s, %s)', (cols, rows) => {
+    const resize = vi.fn()
+
+    expect(tryResizePty({ resize }, cols, rows)).toBe(false)
+    expect(resize).not.toHaveBeenCalled()
+  })
+})
 
 describe('AgentPtyRegistry', () => {
   it('creates a terminal with a uuid, writes the command to stdin, and lists it', async () => {
@@ -241,6 +275,57 @@ describe('AgentPtyRegistry', () => {
       if (result.kind === 'found') {
         expect(result.needle).toBe('wait-for-fast')
         expect(result.elapsedMs).toBeLessThan(500)
+      }
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('waitFor supports regex alternation and reports which alternative matched', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      // Multi-outcome pattern (build success/failure): the terminal prints
+      // only the FAILURE marker; the alternation must match immediately and
+      // the `match` field must tell WHICH alternative hit.
+      const uuid = registry.create('s1', 'multi-outcome', 'echo BUILD_FAIL', process.cwd(), 80, 24)
+      await waitForTranscript(registry, uuid, 'BUILD_FAIL')
+      const result = await registry.waitFor(uuid, 'BUILD_(OK|FAIL)', 2000)
+      expect(result.kind).toBe('found')
+      if (result.kind === 'found') {
+        expect(result.needle).toBe('BUILD_(OK|FAIL)')
+        expect(result.match).toBe('BUILD_FAIL')
+      }
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('waitFor falls back to verbatim matching when the pattern is not a valid regex', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      // `BUILD_(OK` does not compile as a regex (unbalanced group); the wait
+      // must degrade to literal substring matching and still find it.
+      const uuid = registry.create('s1', 'bad-regex', 'echo "BUILD_(OK literal"', process.cwd(), 80, 24)
+      await waitForTranscript(registry, uuid, 'BUILD_(OK')
+      const result = await registry.waitFor(uuid, 'BUILD_(OK', 2000)
+      expect(result.kind).toBe('found')
+      if (result.kind === 'found') {
+        expect(result.match).toBe('BUILD_(OK')
+      }
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('waitFor regex matches text a plain substring could not express', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      const uuid = registry.create('s1', 'regex-version', 'echo version v1.2.3 ready', process.cwd(), 80, 24)
+      await waitForTranscript(registry, uuid, 'v1.2.3')
+      const result = await registry.waitFor(uuid, String.raw`v\d+\.\d+\.\d+`, 2000)
+      expect(result.kind).toBe('found')
+      if (result.kind === 'found') {
+        expect(result.match).toBe('v1.2.3')
       }
     } finally {
       registry.disposeAll()
