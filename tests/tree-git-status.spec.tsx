@@ -14,6 +14,10 @@ import { act } from 'react-dom/test-utils'
 import { api, type FsEntry, type GitStatusResult } from '../src/client/api.ts'
 import { notifyGitStatusChanged } from '../src/client/git-status.ts'
 import { TreePanel } from '../src/client/TreePanel.tsx'
+import { createBetterSidebarService } from '../src/client/service.ts'
+import { createSidebarStore } from '../src/client/state.ts'
+import type { FileTreeProviderDescriptor } from '../src/client/file-tree-source.ts'
+import type { GitDataSource } from '../src/client/git-source.ts'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -180,5 +184,117 @@ describe('TreePanel git decorations', () => {
     } finally {
       unmount()
     }
+  })
+
+  describe('git data-source provider sessions (feature gitSource, v0.23.0+)', () => {
+    const ctxOf = (): Parameters<typeof TreePanel>[0]['ctx'] => {
+      const service = createBetterSidebarService(createSidebarStore())
+      return { betterSidebar: service } as unknown as NonNullable<Parameters<typeof TreePanel>[0]['ctx']>
+    }
+
+    /** A single-source file-tree provider owning this session: the tree rows
+     *  carry REMOTE paths ('/remote-root/…'), so the local host git.status
+     *  can never describe them — the git provider's status snapshot must. */
+    const treeProvider = (capabilities: FileTreeProviderDescriptor['capabilities']): FileTreeProviderDescriptor => ({
+      id: 'remote',
+      match: (sessionId, cwd) => sessionId === 's' && cwd === '/p',
+      createSource: () => ({
+        list: async (dir: string) =>
+          dir === '/p' ? { entries: [file('a.ts', '/remote-root/a.ts')] } : { entries: [] },
+      }),
+      capabilities,
+    })
+
+    const providerStatus = (root = '/remote-root'): GitStatusResult => ({
+      isRepo: true,
+      branch: 'main',
+      root,
+      entries: [{ path: 'a.ts', xy: ' M' }],
+    })
+
+    const gitSource = (gitStatus: GitDataSource['gitStatus']): GitDataSource => ({
+      gitStatus,
+      gitWorktrees: async () => [],
+      gitBranch: async () => ({ current: 'main', names: [] }),
+      gitBranchStatus: async () => ({ upstream: undefined, ahead: 0, behind: 0, gone: false }),
+      gitBranchTips: async () => ({ tips: [] }),
+      gitLogGraph: async () => [],
+      gitDiff: async () => ({ diff: '' }),
+      gitCommitDiff: async () => ({ diff: '' }),
+      gitStage: async () => ({ ok: true }),
+      gitUnstage: async () => ({ ok: true }),
+      gitCommit: async () => ({ ok: true }),
+      gitCheckout: async () => ({ ok: true }),
+      gitFetch: async () => ({ ok: true }),
+      gitDiscard: async () => ({ ok: true }),
+      gitRevert: async () => ({ ok: true }),
+      gitCherryPick: async () => ({ ok: true }),
+    })
+
+    it('decorates remote rows from the git provider when the tree provider declared git support', async () => {
+      const ctx = ctxOf()
+      const service = ctx!.betterSidebar
+      service.registerFileTreeProvider(treeProvider({ git: true }))
+      const gitStatus = vi.fn(async () => providerStatus())
+      vi.spyOn(api, 'gitStatus') // must never be reached: the git provider owns the data
+      service.registerGitProvider({
+        id: 'remote-git',
+        match: () => true,
+        createSource: () => gitSource(gitStatus),
+      })
+      const { container, unmount } = mountTree({ sessionId: 's', cwd: '/p', ctx })
+      try {
+        await vi.waitFor(() => expect(gitStatus).toHaveBeenCalled())
+        await vi.waitFor(() => expect(container.querySelector('[title="Modified"]')).not.toBeNull())
+        const modified = container.querySelector<HTMLElement>('[title="Modified"]')!
+        expect(modified.textContent).toBe('M')
+        expect(modified.parentElement?.getAttribute('title')).toBe('/remote-root/a.ts')
+        // The provider's own status root scopes the overlay: the fetch goes
+        // through the git source, never the local host route.
+        expect(api.gitStatus).not.toHaveBeenCalled()
+      } finally {
+        unmount()
+      }
+    })
+
+    it('keeps the tree clean when the file-tree provider did not declare git support', async () => {
+      const ctx = ctxOf()
+      const service = ctx!.betterSidebar
+      service.registerFileTreeProvider(treeProvider(undefined))
+      const gitStatus = vi.fn(async () => providerStatus())
+      service.registerGitProvider({
+        id: 'remote-git',
+        match: () => true,
+        createSource: () => gitSource(gitStatus),
+      })
+      const { container, unmount } = mountTree({ sessionId: 's', cwd: '/p', ctx })
+      try {
+        // The provider row renders (single-source takeover serves the
+        // listing); the git capability gate is closed: no fetch, no badges,
+        // no footer.
+        await vi.waitFor(() =>
+          expect(container.querySelector('[title="/remote-root/a.ts"]')).not.toBeNull())
+        await new Promise(resolve => setTimeout(resolve, 0))
+        expect(gitStatus).not.toHaveBeenCalled()
+        expect(container.querySelector('[title^="Git status"]')).toBeNull()
+        expect(container.querySelector('[class*="explorerGitBadge"]')).toBeNull()
+      } finally {
+        unmount()
+      }
+    })
+
+    it('falls back to the host route when git support is declared but no git provider matches', async () => {
+      const ctx = ctxOf()
+      const service = ctx!.betterSidebar
+      service.registerFileTreeProvider(treeProvider({ git: true }))
+      const hostStatus = vi.spyOn(api, 'gitStatus').mockResolvedValue(providerStatus())
+      const { container, unmount } = mountTree({ sessionId: 's', cwd: '/p', ctx })
+      try {
+        await vi.waitFor(() => expect(hostStatus).toHaveBeenCalled())
+        expect(container.querySelector('[title^="Git status"]')).toBeNull()
+      } finally {
+        unmount()
+      }
+    })
   })
 })

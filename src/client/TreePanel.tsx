@@ -28,6 +28,7 @@ import { IconFolderOpen16, IconRefreshOutline16, Tooltip } from '@deepseek-ai/ds
 import { api, type GitStatusResult } from './api.ts'
 import { FileTree, gitKindCss } from './FileTree.tsx'
 import { fileTreeCapabilityOn, useFileTreeRoots, useFileTreeSource } from './file-tree-source.ts'
+import { useGitSource } from './git-source.ts'
 import { useFileTreeSection, type FileTreeSectionDescriptor, type FileTreeSectionScope } from './file-tree-section.ts'
 import { SectionSourceTree } from './section-source-tree.tsx'
 import { persistFileTreeSplitRatio, readFileTreeSplitRatio } from './file-tree-splitter.ts'
@@ -129,14 +130,23 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
   // ── Git status decorations (VSCode-style) ───────────────────────────────
   // Fetched per panel on mount / session change / the refresh button, plus
   // every time the git panel bumps the shared change bus (stage, commit,
-  // discard…). Failures degrade silently to a clean tree — the git panel is
-  // the place that surfaces git errors.
+  // discard…) — and, when a git data-source provider (feature 'gitSource',
+  // v0.23.0+) owns this session, on the provider's own push channel.
+  // Failures degrade silently to a clean tree — the git panel is the place
+  // that surfaces git errors.
+  const gitSource = useGitSource(ctx, sessionId, cwd)
   const [gitStatus, setGitStatus] = useState<GitStatusResult | null>(null)
   const gitRequest = useRef(0)
   const loadGitStatus = useCallback(() => {
-    // Provider sessions: decorations only exist when the provider declared
-    // git support (the local host's git.status cannot describe remote
-    // paths); the map stays null → the tree renders clean, footer hidden.
+    // Provider tree sessions: decorations only exist when the provider
+    // declared git support (the local host's git.status cannot describe
+    // remote paths); the DATA then comes from the git data-source slot —
+    // a matching git provider's status snapshot describes the tree rows'
+    // own (remote) path namespace. Local / multi-root sessions keep every
+    // ability; multi-root fetches through the git provider too so the
+    // REMOTE roots decorate from the remote repo. No git provider → the
+    // host route, byte for byte. The map stays null → clean tree, footer
+    // hidden otherwise.
     if (!gitOn) {
       setGitStatus(null)
       return
@@ -146,14 +156,17 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
       return
     }
     const request = ++gitRequest.current
-    api.gitStatus({ sessionId, cwd }).then((result) => {
+    const fetch = gitSource !== undefined
+      ? gitSource.gitStatus({ sessionId, cwd })
+      : api.gitStatus({ sessionId, cwd })
+    fetch.then((result) => {
       if (gitRequest.current !== request) return
       setGitStatus(result)
     }).catch(() => {
       if (gitRequest.current !== request) return
       setGitStatus(null)
     })
-  }, [sessionId, cwd, gitOn])
+  }, [sessionId, cwd, gitOn, gitSource])
   useEffect(() => { loadGitStatus() }, [loadGitStatus, refreshTick])
   // Re-colors the explorer when the git panel refreshes/mutates.
   useEffect(() => {
@@ -164,7 +177,20 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
       gitRequest.current += 1
     }
   }, [loadGitStatus])
-  const overlay = useMemo(() => buildGitStatusMap(gitStatus, cwd), [gitStatus, cwd])
+  // A git provider's push channel (feature 'gitSource'): the provider
+  // bumps the listener when the remote repository changed outside the host
+  // surfaces, and every mounted explorer re-fetches immediately.
+  useEffect(() => {
+    if (gitSource === undefined || gitSource.subscribe === undefined) return
+    return gitSource.subscribe(loadGitStatus)
+  }, [gitSource, loadGitStatus])
+  // Provider-fed status carries the provider's OWN root (remote-absolute
+  // paths); the overlay must scope to it so its rows match. Local status
+  // keeps the session-cwd scope byte for byte.
+  const overlay = useMemo(
+    () => buildGitStatusMap(gitStatus, gitSource !== undefined ? gitStatus?.root ?? cwd : cwd),
+    [gitStatus, cwd, gitSource],
+  )
 
   // ── Uploads (header pickers; the tree receives its own drag-drop) ──────
   /** One-line upload status under the search row ('' hides the hint). */

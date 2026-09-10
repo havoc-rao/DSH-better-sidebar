@@ -243,6 +243,7 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
         const gitArea = state === undefined ? 'right' : areaOfTab(state, tab.id)
         return (
           <GitView
+            ctx={ctx}
             scope={scope}
             store={store}
             visible={visible}
@@ -460,9 +461,9 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
       order: -1,
       hidden: true,
       dedupeKey: (tab) => tab.id,
-      component: ({ scope, tab }) => (
+      component: ({ ctx, scope, tab }) => (
         tab.diff === undefined ? null
-          : <DiffTab sessionId={scope.sessionId} cwd={scope.cwd} diff={tab.diff} />
+          : <DiffTab ctx={ctx} sessionId={scope.sessionId} cwd={scope.cwd} diff={tab.diff} />
       ),
     },
   ]

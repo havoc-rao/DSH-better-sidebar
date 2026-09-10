@@ -80,6 +80,18 @@ export type {
 export { resolveTerminalSource, useTerminalTransport } from './terminal-source.ts'
 export type { TerminalProviderDescriptor } from './terminal-source.ts'
 
+// ── Git source slot (git surfaces takeover) ─────────────────────────────
+// The git surfaces' data-source seam (feature 'gitSource', see git-source.ts
+// / docs/plans/2026-09-10-git-source-slot-design.md): a provider registers
+// through `ctx.betterSidebar.registerGitProvider(...)` and owns every git
+// read + mutation of its sessions (GitView panel, explorer decorations,
+// diff tabs). These exports are for consumers that want to resolve the
+// slot programmatically (pure `resolveGitSource`) or reuse the render-side
+// hook; the descriptor/source types are also importable from
+// 'dsh-better-sidebar/client/service' like every descriptor type.
+export { resolveGitSource, useGitSource } from './git-source.ts'
+export type { GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
+
 /** Services required before mounting (provided by the client runtime; the
  *  locale service backs the sidebar's copy — see locales.ts). `modules`
  *  (rc.8+) is the client module system the chunk loader resolves its

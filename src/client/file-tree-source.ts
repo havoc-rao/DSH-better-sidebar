@@ -102,7 +102,12 @@ export interface FileTreeProviderCapabilities {
   upload?: boolean
   /** The file context-menu download (local host file route). Default off. */
   download?: boolean
-  /** Git status decorations / footer (a provider-fed overlay). Default off. */
+  /** Git status decorations / footer (a provider-fed overlay). Default off.
+   *  Declaring it turns decorations ON for provider sessions — the DATA
+   *  then comes from the git data-source slot (feature `'gitSource'`,
+   *  v0.23.0+): a registered git provider's status snapshot for the
+   *  session feeds the overlay (see `git-source.ts`). Without a matching
+   *  git provider the overlay has no source and the tree stays clean. */
   git?: boolean
   /** The "open with" external-target section. Default off. */
   openWith?: boolean

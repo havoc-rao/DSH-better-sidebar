@@ -550,6 +550,25 @@ interface BetterSidebarService {
   /** 已注册的 terminal provider（注册顺序） */
   getTerminalProviders(): readonly TerminalProviderDescriptor[]
   /**
+   * 注册 git 数据源 provider（v0.23.0+）：全部 Git 数据面的数据源注入
+   * 槽位（feature `'gitSource'`）。provider 的 `GitDataSource` 是宿主
+   * `git.*` 路由的**逐方法同签名影子面**（gitStatus/gitWorktrees/
+   * gitBranch/gitBranchStatus/gitBranchTips/gitLogGraph/gitDiff/
+   * gitCommitDiff + gitStage/gitUnstage/gitCommit/gitCheckout/gitFetch/
+   * gitDiscard/gitRevert/gitCherryPick，可选 `subscribe` 推送通道），
+   * GitView 面板、explorer git 装饰、diff 标签页在 provider 匹配时会话
+   * 上把每个 `api.gitX(...)` 换成 `source.gitX(...)`；无匹配保持宿主
+   * 路由逐字节（`api` 本身即合法的默认数据源，消费侧 `useGitSource() ?? api`
+   * 一行回退）。解析为注册顺序 FIRST match wins；match/createSource 抛错
+   * 或显式 undefined（按会话拒绝）跳过。explorer 装饰门与数据源解耦：
+   * file-tree provider 声明 `capabilities.git: true` 后，provider 会话
+   * 的行装饰数据由本槽位供给。重复 id 抛错；disposer 取消注册。见
+   * `git-source.ts` 与 docs/plans/2026-09-10-git-source-slot-design.md。
+   */
+  registerGitProvider(descriptor: GitProviderDescriptor): () => void
+  /** 已注册的 git provider（注册顺序） */
+  getGitProviders(): readonly GitProviderDescriptor[]
+  /**
    * 打开一个 tab（+ 菜单和外部触发都用它；走 descriptor.dedupeKey 去重）。
    * title 可选：给出时优先于 descriptor.title（editor 显示文件名）；
    * 有 createTab 的 descriptor（terminal）会忽略 title/path/id。
@@ -577,7 +596,7 @@ interface BetterSidebarService {
   /** 单调能力清单（只增不删）：'badge' | 'tabLifecycle' | 'updateTab' |
    *  'openFile' | 'targetedOpen' | 'stateSubscription' | 'tabMeta' |
 *  'pluginSettings' | 'urlTarget' | 'settingSelect' | 'keybindings' |
-   *  'iconTheme' | 'commands' | 'terminalSource' | 'floatWindows'——消费
+   *  'iconTheme' | 'commands' | 'terminalSource' | 'gitSource' | 'floatWindows'——消费
    * 插件用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。

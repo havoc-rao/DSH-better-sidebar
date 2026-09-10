@@ -36,6 +36,7 @@ import type {
 } from '../src/client/service.ts'
 import type { TerminalProviderDescriptor } from '../src/client/service.ts'
 import type { TerminalTransport } from '../src/client/terminal-transport.ts'
+import type { GitDataSource, GitOkResult, GitProviderDescriptor } from '../src/client/service.ts'
 import type {
   SessionScope,
   SidebarDiffRef,
@@ -165,6 +166,45 @@ const terminalProvider: TerminalProviderDescriptor = {
 service.registerTerminalProvider(terminalProvider)
 const terminalProviders: readonly TerminalProviderDescriptor[] = service.getTerminalProviders()
 void terminalProviders
+
+/** The v0.23.0 git source slot: the full host `git.*` route surface
+ *  mirrored method-for-method, exercised exactly as consumers implement
+ *  it (dsh-remote: every method = one remote git command). */
+const gitSource: GitDataSource = {
+  gitStatus: (_scope, _worktree, _signal) => Promise.resolve(
+    { isRepo: true, root: '/r', branch: 'main', entries: [], repositories: ['/r'] },
+  ),
+  gitWorktrees: () => Promise.resolve([]),
+  gitBranch: () => Promise.resolve({ current: 'main', names: ['main'] }),
+  gitBranchStatus: () => Promise.resolve({ upstream: 'origin/main', ahead: 0, behind: 0, gone: false }),
+  gitBranchTips: () => Promise.resolve({ tips: [] }),
+  gitLogGraph: () => Promise.resolve([]),
+  gitDiff: () => Promise.resolve({ diff: '' }),
+  gitCommitDiff: () => Promise.resolve({ diff: '' }),
+  gitStage: () => Promise.resolve({ ok: true } as GitOkResult),
+  gitUnstage: () => Promise.resolve({ ok: true }),
+  gitCommit: () => Promise.resolve({ ok: true }),
+  gitCheckout: () => Promise.resolve({ ok: true }),
+  gitFetch: () => Promise.resolve({ ok: true }),
+  gitDiscard: () => Promise.resolve({ ok: true }),
+  gitRevert: () => Promise.resolve({ ok: true }),
+  gitCherryPick: () => Promise.resolve({ ok: true }),
+  subscribe: (listener: () => void) => {
+    void listener
+    return () => { /* provider-side disposer */ }
+  },
+}
+const gitProvider: GitProviderDescriptor = {
+  id: 'dsh-remote',
+  match: (sessionId: string, cwd: string | undefined) => {
+    void sessionId
+    return cwd !== undefined && cwd.includes('remote-workspaces')
+  },
+  createSource: () => gitSource,
+}
+service.registerGitProvider(gitProvider)
+const gitProviders: readonly GitProviderDescriptor[] = service.getGitProviders()
+void gitProviders
 
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }

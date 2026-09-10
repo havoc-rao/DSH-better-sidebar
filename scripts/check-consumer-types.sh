@@ -56,6 +56,40 @@ declare const viewProps: TerminalViewProps
 void viewProps.transport
 declare const deps: TerminalDepsInfo
 void deps.command
+// The git source slot (v0.23.0+): the full host `git.*` route surface must
+// be every bit as node-free — a remote-git plugin types its provider
+// against it without @types/node.
+import type {
+  GitDataSource, GitOkResult, GitProviderDescriptor,
+} from 'dsh-better-sidebar/client/service'
+declare const ctxForGit: { betterSidebar: BetterSidebarService }
+const gitProviderImpl: GitProviderDescriptor = {
+  id: 'x:remote-git',
+  match: () => true,
+  createSource: () => {
+    const source: GitDataSource = {
+      gitStatus: (_scope) => Promise.resolve({ isRepo: true, root: '/r', entries: [] }),
+      gitWorktrees: () => Promise.resolve([]),
+      gitBranch: () => Promise.resolve({ current: 'main', names: [] }),
+      gitBranchStatus: () => Promise.resolve({ upstream: undefined, ahead: 0, behind: 0, gone: false }),
+      gitBranchTips: () => Promise.resolve({ tips: [] }),
+      gitLogGraph: () => Promise.resolve([]),
+      gitDiff: () => Promise.resolve({ diff: '' }),
+      gitCommitDiff: () => Promise.resolve({ diff: '' }),
+      gitStage: () => Promise.resolve({ ok: true } as GitOkResult),
+      gitUnstage: () => Promise.resolve({ ok: true }),
+      gitCommit: () => Promise.resolve({ ok: true }),
+      gitCheckout: () => Promise.resolve({ ok: true }),
+      gitFetch: () => Promise.resolve({ ok: true }),
+      gitDiscard: () => Promise.resolve({ ok: true }),
+      gitRevert: () => Promise.resolve({ ok: true }),
+      gitCherryPick: () => Promise.resolve({ ok: true }),
+    }
+    return source
+  },
+}
+ctxForGit.betterSidebar.registerGitProvider(gitProviderImpl)
+void ctxForGit.betterSidebar.getGitProviders()
 // The vendored-cordis path: `Context` from '@deepseek-ai/cordis' plus the
 // side-effect type import above must expose `ctx.betterSidebar` — the consumer
 // never needs to import this package's own Context type.

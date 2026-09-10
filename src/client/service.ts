@@ -43,6 +43,7 @@ import type { CommandDescriptor, CommandRunPayload } from './commands.ts'
 import type { FileTreeProviderDescriptor } from './file-tree-source.ts'
 import type { FileTreeSectionDescriptor } from './file-tree-section.ts'
 import type { TerminalProviderDescriptor } from './terminal-source.ts'
+import type { GitProviderDescriptor } from './git-source.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -76,6 +77,7 @@ export type {
 } from './file-tree-source.ts'
 export type { FileTreeSectionDescriptor, FileTreeSectionScope, FileTreeSectionSourceDescriptor } from './file-tree-section.ts'
 export type { TerminalProviderDescriptor } from './terminal-source.ts'
+export type { GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -518,6 +520,27 @@ export interface BetterSidebarService {
   /** The registered terminal providers (registration order). */
   getTerminalProviders(): readonly TerminalProviderDescriptor[]
   /**
+   * Register a git data-source provider (v0.23.0+): the GIT surfaces'
+   * data-source injection slot. A provider owns every git read AND
+   * mutation of the sessions its `match` accepts — the GitView panel,
+   * the explorer's git-status decorations and the diff tabs route their
+   * `api.git*` calls through the provider's `GitDataSource` (a shadow
+   * of the host `git.*` route surface, same signatures verbatim);
+   * sessions no provider matches keep the local host routes byte for
+   * byte. A provider may additionally declare an optional `subscribe`
+   * push channel on its source: bumps trigger an immediate refresh on
+   * every mounted consumer (provider-side mutations made outside the
+   * host surfaces). Resolution is registration-order, FIRST match wins;
+   * a throwing `match` / `createSource` — or an explicit `undefined`
+   * factory result (a per-session refusal) — skips that provider. A
+   * duplicate id throws; the disposer unregisters (HMR-safe through
+   * `ctx.effect`). See `git-source.ts` and
+   * docs/plans/2026-09-10-git-source-slot-design.md.
+   */
+  registerGitProvider(descriptor: GitProviderDescriptor): () => void
+  /** The registered git providers (registration order). */
+  getGitProviders(): readonly GitProviderDescriptor[]
+  /**
    * Register a file-tree SECTION (v0.19.0+): the UPPER-MODULE slot of the
    * Files panel's tree area. A section is an independent component region
    * rendered ABOVE the local tree (the lower module keeps every existing
@@ -711,6 +734,11 @@ export const SIDEBAR_SERVICE_VERSION = '0.21.0'
  *   injection slot (the resolver flows a provider's TerminalTransport
  *   into TerminalView's existing `transport` prop; no match keeps the
  *   default local pty WS, byte for byte)
+ * - 'gitSource' (v0.23.0): registerGitProvider / getGitProviders — the
+ *   GIT surfaces' data-source injection slot (GitView panel + explorer
+ *   decorations + diff tabs route every git read AND mutation through
+ *   the provider's GitDataSource for the sessions it owns; no match
+ *   keeps the host `git.*` routes byte for byte)
  * - 'floatWindows' (v0.16.0): tabs float as free windows — openTab's dedupe/
  *   id focus targets RAISE the floating window (never duplicate the tab or
  *   expand panels), closeTab on a floating tab closes it with its window.
@@ -733,6 +761,7 @@ export const SIDEBAR_FEATURES = [
   'fileTreeSection',
   'fileTreeSectionSource',
   'terminalSource',
+  'gitSource',
   'floatWindows',
 ] as const
 
@@ -769,6 +798,7 @@ export function createBetterSidebarService(
   const fileTreeProviders = new Map<string, FileTreeProviderDescriptor>()
   const fileTreeSections = new Map<string, FileTreeSectionDescriptor>()
   const terminalProviders = new Map<string, TerminalProviderDescriptor>()
+  const gitProviders = new Map<string, GitProviderDescriptor>()
   const listeners = new Set<() => void>()
   // A private runtime when none is shared (standalone/tests): the registry
   // semantics (dup ids, disposal, listing) work the same either way, only
@@ -920,6 +950,22 @@ export function createBetterSidebarService(
   }
 
   const getTerminalProviders = (): readonly TerminalProviderDescriptor[] => Array.from(terminalProviders.values())
+
+  const registerGitProvider = (descriptor: GitProviderDescriptor): (() => void) => {
+    if (gitProviders.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] git provider "${descriptor.id}" already registered`)
+    }
+    gitProviders.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (gitProviders.get(descriptor.id) === descriptor) {
+        gitProviders.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  const getGitProviders = (): readonly GitProviderDescriptor[] => Array.from(gitProviders.values())
 
   const registerFileTreeSection = (descriptor: FileTreeSectionDescriptor): (() => void) => {
     if (fileTreeSections.has(descriptor.id)) {
@@ -1305,6 +1351,8 @@ export function createBetterSidebarService(
     getFileTreeSections,
     registerTerminalProvider,
     getTerminalProviders,
+    registerGitProvider,
+    getGitProviders,
     openTab,
     closeTab,
     subscribe,

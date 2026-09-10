@@ -47,7 +47,7 @@ describe('loadReviewPatch', () => {
 
   it('throws notRepo when the workspace is not a git repository', async () => {
     vi.spyOn(api, 'gitStatus').mockResolvedValue({ isRepo: false, root: undefined, entries: [] })
-    await expect(loadReviewPatch(scope, review(['a.ts']))).rejects.toThrow(t('notRepo'))
+    await expect(loadReviewPatch(scope, review(['a.ts']), api)).rejects.toThrow(t('notRepo'))
   })
 
   it('combines changed files in produced order (unstaged side first)', async () => {
@@ -58,7 +58,7 @@ describe('loadReviewPatch', () => {
     const gitDiff = vi.spyOn(api, 'gitDiff')
       .mockResolvedValueOnce({ diff: 'PATCH-A' })
       .mockResolvedValueOnce({ diff: 'PATCH-C' })
-    const result = await loadReviewPatch(scope, review(['src/a.ts', 'src/c.ts']))
+    const result = await loadReviewPatch(scope, review(['src/a.ts', 'src/c.ts']), api)
     expect(result.diff).toBe('PATCH-A\nPATCH-C')
     expect(gitDiff).toHaveBeenCalledTimes(2)
     expect(gitDiff).toHaveBeenNthCalledWith(1, { sessionId: 's', cwd: '/repo' }, '/repo/src/a.ts', false, undefined)
@@ -69,7 +69,7 @@ describe('loadReviewPatch', () => {
     const gitDiff = vi.spyOn(api, 'gitDiff')
       .mockResolvedValueOnce({ diff: '' })
       .mockResolvedValueOnce({ diff: 'STAGED-PATCH' })
-    const result = await loadReviewPatch(scope, review(['src/staged.ts']))
+    const result = await loadReviewPatch(scope, review(['src/staged.ts']), api)
     expect(result.diff).toBe('STAGED-PATCH')
     expect(gitDiff).toHaveBeenNthCalledWith(1, { sessionId: 's', cwd: '/repo' }, '/repo/src/staged.ts', false, undefined)
     expect(gitDiff).toHaveBeenNthCalledWith(2, { sessionId: 's', cwd: '/repo' }, '/repo/src/staged.ts', true, undefined)
@@ -79,7 +79,7 @@ describe('loadReviewPatch', () => {
     vi.spyOn(api, 'gitStatus').mockResolvedValue(status([{ path: 'src/new.ts', xy: '??' }]))
     vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: 'hello\n', truncated: false })
     const gitDiff = vi.spyOn(api, 'gitDiff').mockResolvedValue({ diff: 'SHOULD-NOT-HAPPEN' })
-    const result = await loadReviewPatch(scope, review(['src/new.ts']))
+    const result = await loadReviewPatch(scope, review(['src/new.ts']), api)
     const parsed = parseUnifiedDiff(result.diff)
     expect(parsed.files).toHaveLength(1)
     expect(parsed.files[0]!.newPath).toBe('b/src/new.ts')
@@ -91,13 +91,13 @@ describe('loadReviewPatch', () => {
   it('skips produced paths that carry no uncommitted change', async () => {
     vi.spyOn(api, 'gitStatus').mockResolvedValue(status([]))
     vi.spyOn(api, 'gitDiff').mockResolvedValue({ diff: '' })
-    const result = await loadReviewPatch(scope, review(['src/clean.ts']))
+    const result = await loadReviewPatch(scope, review(['src/clean.ts']), api)
     expect(result.diff).toBe('')
   })
 
   it('surfaces the first failure when every path fails', async () => {
     vi.spyOn(api, 'gitStatus').mockResolvedValue(status([{ path: 'src/broken.ts', xy: ' M' }]))
     vi.spyOn(api, 'gitDiff').mockRejectedValue(new Error('boom'))
-    await expect(loadReviewPatch(scope, review(['src/broken.ts']))).rejects.toThrow('boom')
+    await expect(loadReviewPatch(scope, review(['src/broken.ts']), api)).rejects.toThrow('boom')
   })
 })

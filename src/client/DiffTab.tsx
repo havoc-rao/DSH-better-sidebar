@@ -14,6 +14,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from './api.ts'
 import { api } from './api.ts'
+import { useGitSource, type GitDataSource } from './git-source.ts'
+import type { Context } from '../context-types.ts'
 import type { SidebarDiffRef } from './state.ts'
 import { DiffView } from './DiffView.tsx'
 import { joinRoot, toPosix } from './git-status.ts'
@@ -70,12 +72,13 @@ export function synthesizeAdditionPatch(path: string, content: string, root?: st
 export async function loadReviewPatch(
   scope: SessionScope,
   diff: Extract<SidebarDiffRef, { kind: 'review' }>,
+  git: GitDataSource,
 ): Promise<{ diff: string }> {
   const base = diff.repoRoot ?? diff.worktree ?? scope.cwd
   const paths = diff.paths.map(path => resolveSidebarPath(base, path))
   if (paths.length === 0) return { diff: '' }
   const scopeWithRepo = { ...scope, ...(diff.repoRoot !== undefined ? { repoRoot: diff.repoRoot } : {}) }
-  const status = await api.gitStatus(scopeWithRepo, diff.worktree)
+  const status = await git.gitStatus(scopeWithRepo, diff.worktree)
   if (!status.isRepo || status.root === undefined || status.root === '') {
     throw new Error(t('notRepo'))
   }
@@ -93,13 +96,13 @@ export async function loadReviewPatch(
         if (text.kind === 'text' && text.content !== '') patches.push(synthesizeAdditionPatch(path, text.content, status.root))
         continue
       }
-      const result = await api.gitDiff(scopeWithRepo, path, false, diff.worktree)
+      const result = await git.gitDiff(scopeWithRepo, path, false, diff.worktree)
       if (result.diff !== '') {
         patches.push(result.diff)
         continue
       }
       // The change may sit on the OTHER side (staged after the tab opened).
-      const other = await api.gitDiff(scopeWithRepo, path, true, diff.worktree)
+      const other = await git.gitDiff(scopeWithRepo, path, true, diff.worktree)
       if (other.diff !== '') patches.push(other.diff)
     } catch (reason) {
       failures += 1
@@ -113,12 +116,18 @@ export async function loadReviewPatch(
   return { diff: patches.join('\n') }
 }
 
-export function DiffTab(props: { sessionId: string; cwd: string | undefined; diff: SidebarDiffRef }) {
-  const { sessionId, cwd, diff } = props
+export function DiffTab(props: { sessionId: string; cwd: string | undefined; diff: SidebarDiffRef; ctx?: Context }) {
+  const { sessionId, cwd, diff, ctx } = props
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<DiffData | null>(null)
   const [tick, setTick] = useState(0)
+
+  /** The session's git data source (feature 'gitSource', v0.23.0+): a
+   *  registered provider owns this tab's git reads; no provider → the
+   *  local host `git.*` routes, byte for byte (api is structurally a
+   *  GitDataSource). */
+  const git: GitDataSource = useGitSource(ctx, sessionId, cwd) ?? api
 
   const refresh = useCallback((): void => { setTick(value => value + 1) }, [])
 
@@ -131,22 +140,22 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     const load = async (): Promise<void> => {
       try {
         if (diff.kind === 'review') {
-          const result = await loadReviewPatch(scope, diff)
+          const result = await loadReviewPatch(scope, diff, git)
           if (!cancelled) setData({ diff: result.diff })
           return
         }
         if (diff.kind === 'commit') {
-          const result = await api.gitCommitDiff(scope, diff.hashFull, diff.worktree)
+          const result = await git.gitCommitDiff(scope, diff.hashFull, diff.worktree)
           if (!cancelled) setData({ diff: result.diff })
           return
         }
-        let result = await api.gitDiff(scope, diff.path, diff.staged, diff.worktree)
+        let result = await git.gitDiff(scope, diff.path, diff.staged, diff.worktree)
         if (result.diff === '') {
           // The requested side is empty — try the OTHER side once: the ref
           // may predate the staged-flag fix, or the change moved sides (a
           // file staged after its tab opened). Both sides empty means the
           // file genuinely has no text changes.
-          const other = await api.gitDiff(scope, diff.path, !diff.staged, diff.worktree)
+          const other = await git.gitDiff(scope, diff.path, !diff.staged, diff.worktree)
           if (other.diff !== '') result = other
         }
         if (result.diff !== '') {
@@ -174,7 +183,7 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     }
     void load()
     return () => { cancelled = true }
-  }, [sessionId, cwd, diff, tick])
+  }, [sessionId, cwd, diff, tick, git])
 
   const title = diff.kind === 'review'
     ? `${t('review')} · ${diff.paths.length}`

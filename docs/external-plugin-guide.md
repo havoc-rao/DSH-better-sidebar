@@ -669,6 +669,75 @@ export function apply(ctx: Context): void {
 
 ---
 
+### 7.2 Git 数据源槽位（v0.23.0+，`features.includes('gitSource')`）
+
+**它是什么**：全部 Git 数据面（GitView 面板的读取与变更操作、explorer 的 git 状态装饰、diff 标签页）的数据源注入槽位——参照 file-tree / terminal 的 data-source 槽位，让外部插件（如 dsh-remote）按会话接管 git 数据：provider 的 `GitDataSource` 是宿主 `git.*` 路由的**逐方法同签名影子面**，有匹配 provider 时宿主表面把每个 `api.gitX(...)` 换成 `source.gitX(...)`；UI（面板 / 装饰 / diff 视图）保持原样。
+
+**核心契约**：`GitDataSource` 的每个方法签名与宿主 `api` 的对应路由函数**逐字节一致**（参数含完整 `SessionScope`，`repoRoot` 原样透传）。**无适配层**——`api` 本身是合法的默认数据源，消费侧一行回退（`useGitSource(...) ?? api`）。同样**不发明第二套协议**：provider 的实现就是照抄 api 调用面、换成自己的 git（如远端主机上的 git 命令）。
+
+```ts
+import type { GitProviderDescriptor, GitDataSource } from 'dsh-better-sidebar/client/service'
+
+// 覆盖宿主表面的全部方法（读取面）
+interface GitDataSource {
+  gitStatus(scope, worktree?, signal?): Promise<GitStatusResult>   // git.status
+  gitWorktrees(scope, signal?): Promise<GitWorktree[]>             // git.worktrees
+  gitBranch(scope, worktree?, signal?): Promise<{ current, names }>
+  gitBranchStatus(scope, worktree?, signal?): Promise<GitBranchStatus>
+  gitBranchTips(scope, branches, worktree?, signal?): Promise<{ tips }>
+  gitLogGraph(scope, count?, skip?, worktree?, signal?): Promise<GitGraphEntry[]>
+  gitDiff(scope, path | undefined, staged, worktree?, signal?): Promise<{ diff }>
+  gitCommitDiff(scope, hash, worktree?, signal?): Promise<{ diff }>
+  // 变更面
+  gitStage / gitUnstage(scope, path?, worktree?): Promise<{ ok: true }>
+  gitCommit(scope, message, worktree?): Promise<{ ok: true }>
+  gitCheckout(scope, branch, worktree?): Promise<{ ok: true }>
+  gitFetch(scope, worktree?, prune?, signal?): Promise<{ ok: true }>
+  gitDiscard(scope, path, worktree?): Promise<{ ok: true }>
+  gitRevert / gitCherryPick(scope, hash, worktree?): Promise<{ ok: true }>
+  subscribe?(listener): () => void   // 可选推送：远端仓库在宿主表面外变化时 bump
+}
+
+interface GitProviderDescriptor {
+  id: string                                // 唯一 id（重复注册抛错）
+  match(sessionId: string, cwd: string | undefined): boolean   // first match wins
+  createSource(sessionId: string, cwd: string | undefined): GitDataSource | undefined
+}
+```
+
+**解析规则**（与 file-tree / terminal 槽位逐条对齐，`tests/git-source.spec.tsx` 守护）：
+
+1. 按**注册顺序**遍历；第一个 `match(...) === true` 的 provider 胜出。
+2. `match` / `createSource` 抛错 → `console.error` + 跳过该 provider。
+3. `createSource` 返回 `undefined` → 视为按会话拒绝，下一个继续。
+4. **无人匹配 / 全部拒绝 / 未注册 → 宿主 `git.*` 路由**，行为与未接入槽位时逐字节一致（回归安全）。
+5. 覆盖范围：GitView 面板（status / worktrees / branch / upstream / tips / 历史 / fetch / stage / commit / checkout / discard / revert / cherry-pick）、explorer git 装饰（`gitStatus`）、diff 标签页（status / diff / commit-diff）。`git.commit-draft`（AI 提交信息生成）保持宿主 agent 路由。provider 声明 `subscribe` 时，其 bump 会触发所有已挂载消费面的即时刷新。
+6. 可以编程式解析：`resolveGitSource(providers, sessionId, cwd)`（主入口导出）。
+
+**最小对接示例**（dsh-remote 形态）：
+
+```ts
+// dsh-remote/src/client/index.ts
+import type {} from 'dsh-better-sidebar'                       // 触发 ctx.betterSidebar 类型合并
+import type { GitProviderDescriptor } from 'dsh-better-sidebar/client/service'
+
+export function apply(ctx: Context): void {
+  ctx.effect(() =>
+    ctx.betterSidebar.registerGitProvider({
+      id: 'dsh-remote',
+      // 只接管远程会话的 git 数据面（cwd 是本地镜像路径）
+      match: (sessionId, cwd) => isRemoteSession(cwd),
+      createSource: (sessionId, cwd): GitDataSource =>
+        makeRemoteGitSource(sessionId, cwd),  // 每个方法 = 一条远端 git 命令
+    })
+  )
+}
+```
+
+> explorer 装饰门：file-tree provider 的 `capabilities.git` 声明为 `true` 时，provider 会话的远端树行装饰数据由本槽位供给（两条件都满足才装饰；未声明保持现状关闭）。
+
+---
+
 ## 8. 声明式设置（v0.4.1+）
 
 每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码）：

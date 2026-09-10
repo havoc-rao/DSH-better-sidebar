@@ -18,6 +18,8 @@ import {
 import { VscChevronRight, VscListFlat, VscListTree, VscStarEmpty, VscStarFull } from 'react-icons/vsc'
 import type { GitBranchStatus, GitBranchTip, GitGraphEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api, SidebarApiError } from './api.ts'
+import { useGitSource, type GitDataSource } from './git-source.ts'
+import type { Context } from '../context-types.ts'
 import { notifyGitStatusChanged, subscribeGitStatusChanged } from './git-status.ts'
 import { GitGraphSvg } from './GitGraph.tsx'
 import { computeGraphRows } from './git-graph.ts'
@@ -136,15 +138,20 @@ const REVEAL_PAGE_CAP = 8
  *  single column, exactly the symptom we saw when an MR review toggled the
  *  worktree selector onto a dirty linked checkout. */
 const historyPage = async (
+  git: GitDataSource,
   scope: SessionScope,
   count: number,
   skip: number,
   worktree: string | undefined,
 ): Promise<GitGraphEntry[]> =>
-  api.gitLogGraph(scope, count, skip, worktree).catch(() => [] as GitGraphEntry[])
+  git.gitLogGraph(scope, count, skip, worktree).catch(() => [] as GitGraphEntry[])
 
 export function GitView(props: {
   scope: SessionScope
+  /** The client cordis context (v0.23.0+): resolves the session's git
+   *  data source (feature 'gitSource'); absent (isolated tests) → the
+   *  local host git.* routes. */
+  ctx?: Context
   /** Optional (v0.17.0): absent → static prefs (isolated tests / previewers). */
   store?: SidebarStore
   onOpenFile: (path: string) => void
@@ -153,7 +160,7 @@ export function GitView(props: {
   /** Poll only while the tab is actually visible. */
   visible?: boolean
 }) {
-const { scope, store, onOpenFile, onOpenDiff, visible } = props
+const { scope, ctx, store, onOpenFile, onOpenDiff, visible } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
   const [selectedWorktree, setSelectedWorktree] = useState<string | undefined>()
@@ -271,13 +278,19 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
 
   const gitScope: SessionScope = repoRoot === undefined ? scope : { ...scope, repoRoot }
 
+  /** The session's git data source (feature 'gitSource', v0.23.0+): a
+   *  registered provider owns EVERY git read and mutation of this panel —
+   *  no provider (or none matching) → the local host `git.*` routes, byte
+   *  for byte (api is structurally a GitDataSource). */
+  const git: GitDataSource = useGitSource(ctx, scope.sessionId, scope.cwd) ?? api
+
   /** The watched branches' tips for one checkout ([] when nothing is
    *  watched — no network round-trip). Failures degrade to []: markers are
    *  decoration, never an error surface. */
   const fetchTipsFor = async (target: string | undefined): Promise<GitBranchTip[]> => {
     const names = watchedRef.current
     if (names.length === 0) return []
-    return api.gitBranchTips(gitScope, names, target)
+    return git.gitBranchTips(gitScope, names, target)
       .then(result => result.tips, () => [])
   }
 
@@ -291,14 +304,14 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
     setError(null)
     try {
       const [statusResult, branchResult, logResult, upstreamResult, tipsResult] = await Promise.all([
-        api.gitStatus(gitScope, target),
-        api.gitBranch(gitScope, target).catch(() => ({ current: '', names: [] as string[] })),
+        git.gitStatus(gitScope, target),
+        git.gitBranch(gitScope, target).catch(() => ({ current: '', names: [] as string[] })),
         // The first history page only; the rest arrives via "load more". The
         // graph flavor carries parent hashes (topo-ordered) for the lane layout.
-        historyPage(gitScope, LOG_BATCH, 0, target),
+        historyPage(git, gitScope, LOG_BATCH, 0, target),
         // The upstream/ahead-behind relationship; a failure (e.g. no git
         // branch config) never hides the rest of the panel.
-        api.gitBranchStatus(gitScope, target).catch(() => null),
+        git.gitBranchStatus(gitScope, target).catch(() => null),
         // The watched tips ride the same consistency unit as the rows they
         // mark: never mix markers from one checkout into another's graph.
         fetchTipsFor(target),
@@ -324,7 +337,7 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
     } finally {
       if (options.loading && options.generation === refreshGeneration.current) setLoading(false)
     }
-  }, [scope.sessionId, scope.cwd, repoRoot])
+  }, [scope.sessionId, scope.cwd, repoRoot, git])
 
   const refresh = useCallback(async (silent = false): Promise<void> => {
     if (refreshInFlight.current) {
@@ -338,7 +351,7 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
     refreshInFlight.current = true
     let generation = refreshGeneration.current
     try {
-      const listed = await api.gitWorktrees(scope)
+      const listed = await git.gitWorktrees(scope)
       if (generation !== refreshGeneration.current) return
       setWorktrees(listed)
       const selectedStillExists = listed.some(entry => entry.path === selectedRef.current)
@@ -376,8 +389,8 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
       // a manual refresh, and the cost is two sub-second ref lookups.
       if (silent && !targetChanged) {
         const [statusResult, upstreamResult, tipsResult] = await Promise.all([
-          api.gitStatus(gitScope, target),
-          api.gitBranchStatus(gitScope, target).catch(() => null),
+          git.gitStatus(gitScope, target),
+          git.gitBranchStatus(gitScope, target).catch(() => null),
           fetchTipsFor(target),
         ])
         if (generation === refreshGeneration.current) {
@@ -469,6 +482,16 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
     void refresh(true)
   }), [refresh])
 
+  /** A provider's push channel (feature 'gitSource', v0.23.0+): the
+   *  provider bumps the listener when the repository state changed OUTSIDE
+   *  the host surfaces (e.g. external remote mutations), and this panel
+   *  refreshes immediately — the provider-change twin of the shared bus
+   *  above, which only covers host-side mutation broadcasts. */
+  useEffect(() => {
+    const off = git.subscribe === undefined ? undefined : git.subscribe(() => { void refresh(true) })
+    return () => { off?.() }
+  }, [git, refresh])
+
   /** The poll pauses while the tab is hidden (`visible` gate above); the
    *  moment it becomes visible again the panel pulls a FRESH snapshot
    *  immediately — changes made while hidden must appear the instant the
@@ -487,7 +510,7 @@ const { scope, store, onOpenFile, onOpenDiff, visible } = props
     const target = selectedRef.current
     setLogLoadingMore(true)
     try {
-const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
+const next = await historyPage(git, gitScope, LOG_BATCH, logEntries.length, target)
       // A worktree switch clears the old history and increments generation.
       // Never append a late page from that checkout into the new one.
       if (generation !== refreshGeneration.current || target !== selectedRef.current) return
@@ -525,8 +548,8 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
   const stageEntry = async (entry: GitStatusEntry, staged: boolean): Promise<void> => {
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(gitScope, entry.path, selectedWorktree)
-      else await api.gitStage(gitScope, entry.path, selectedWorktree)
+      if (staged) await git.gitUnstage(gitScope, entry.path, selectedWorktree)
+      else await git.gitStage(gitScope, entry.path, selectedWorktree)
       await refresh()
     } finally {
       setBusy(false)
@@ -536,8 +559,8 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
   const stageAll = async (staged: boolean): Promise<void> => {
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(gitScope, undefined, selectedWorktree)
-      else await api.gitStage(gitScope, undefined, selectedWorktree)
+      if (staged) await git.gitUnstage(gitScope, undefined, selectedWorktree)
+      else await git.gitStage(gitScope, undefined, selectedWorktree)
       await refresh()
     } finally {
       setBusy(false)
@@ -564,7 +587,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCommit(gitScope, message, selectedWorktree)
+      await git.gitCommit(gitScope, message, selectedWorktree)
       setCommitMsg('')
       await refresh()
     } catch (reason) {
@@ -615,7 +638,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCheckout(gitScope, branch, selectedWorktree)
+      await git.gitCheckout(gitScope, branch, selectedWorktree)
       await refresh()
     } catch (reason) {
       setCommitError(`${t('checkoutError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
@@ -634,7 +657,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitFetch(gitScope, selectedWorktree, prune)
+      await git.gitFetch(gitScope, selectedWorktree, prune)
       await refresh()
     } catch (reason) {
       const code = reason instanceof SidebarApiError ? reason.code : undefined
@@ -678,14 +701,14 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
       const next = watched.filter(item => item !== name)
       setWatched(next)
       if (store !== undefined) updatePluginSettings(store, 'git', blob => ({ ...blob, [WATCHED_BRANCHES_KEY]: next }))
-      void api.gitBranchTips(gitScope, next, selectedWorktree).then(result => setTips(result.tips), () => {})
+      void git.gitBranchTips(gitScope, next, selectedWorktree).then(result => setTips(result.tips), () => {})
       return
     }
     if (watched.length >= WATCHED_BRANCHES_MAX) return
     const next = [...watched, name]
     setWatched(next)
     if (store !== undefined) updatePluginSettings(store, 'git', blob => ({ ...blob, [WATCHED_BRANCHES_KEY]: next }))
-    void api.gitBranchTips(gitScope, next, selectedWorktree).then(result => setTips(result.tips), () => {})
+    void git.gitBranchTips(gitScope, next, selectedWorktree).then(result => setTips(result.tips), () => {})
   }
 
   /** Page the history down until a watched tip's commit row is loaded (the
@@ -698,7 +721,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
     try {
       let skip = logEntries.length
       for (let i = 0; i < REVEAL_PAGE_CAP; i += 1) {
-        const page = await historyPage(gitScope, LOG_BATCH, skip, target)
+        const page = await historyPage(git, gitScope, LOG_BATCH, skip, target)
         if (generation !== refreshGeneration.current || target !== selectedRef.current) return
         if (page.length === 0) return
         skip += page.length
@@ -1179,7 +1202,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                   title: t('discardTitle'),
                   description: t('discardDesc', { path: target.entry.path }),
                   confirmLabel: t('discard'),
-                  onConfirm: () => api.gitDiscard(gitScope, target.entry.path, selectedWorktree),
+                  onConfirm: () => git.gitDiscard(gitScope, target.entry.path, selectedWorktree),
                 })
                 return
               }
@@ -1233,7 +1256,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                   title: t('revertTitle'),
                   description: t('revertDesc', { subject: target.entry.subject }),
                   confirmLabel: t('revertCommit'),
-                  onConfirm: () => api.gitRevert(gitScope, target.entry.hashFull, selectedWorktree),
+                  onConfirm: () => git.gitRevert(gitScope, target.entry.hashFull, selectedWorktree),
                 })
                 return
               }
@@ -1242,7 +1265,7 @@ const next = await historyPage(gitScope, LOG_BATCH, logEntries.length, target)
                   title: t('cherryPickTitle'),
                   description: t('cherryPickDesc', { subject: target.entry.subject }),
                   confirmLabel: t('cherryPickCommit'),
-                  onConfirm: () => api.gitCherryPick(gitScope, target.entry.hashFull, selectedWorktree),
+                  onConfirm: () => git.gitCherryPick(gitScope, target.entry.hashFull, selectedWorktree),
                 })
               }
             }}

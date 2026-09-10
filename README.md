@@ -67,6 +67,12 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="33%" alt="添加插件截图" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
+### v0.23.0
+
+**✨ 新功能**
+
+- 🌿 **Git 数据源槽位**（能力清单 `gitSource`）：`ctx.betterSidebar.registerGitProvider` —— 外部插件（如 dsh-remote）可以按会话接管**全部 Git 数据面**（GitView 面板的读取与变更操作、explorer 的 git 状态装饰、diff 标签页）：provider 的 `GitDataSource` 是宿主 `git.*` 路由的**逐方法同签名影子面**（`gitStatus` / `gitWorktrees` / `gitBranch` / `gitBranchStatus` / `gitBranchTips` / `gitLogGraph` / `gitDiff` / `gitCommitDiff` / `gitStage` / `gitUnstage` / `gitCommit` / `gitCheckout` / `gitFetch` / `gitDiscard` / `gitRevert` / `gitCherryPick` + 可选 `subscribe` 推送通道），无匹配 provider 的会话保持宿主路由逐字节不变（`api` 本身即合法的默认数据源）；资源管理器装饰门的 `capabilities.git` 与数据源解耦——file-tree provider 声明 `git: true` 后，远端行的装饰数据由 git 数据源槽位供给（[设计文档](docs/plans/2026-09-10-git-source-slot-design.md)）
+
 ### v0.14.0
 
 **✨ 新功能**
