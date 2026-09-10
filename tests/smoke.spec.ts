@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -69,6 +69,47 @@ async function rmTempDirAfterPtyExit(handle: { exited: boolean }, dir: string): 
       if (!busy || attempt >= 4) throw error
       await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)))
     }
+  }
+}
+
+/** A minimal settings seam: register/describe/update with the revision guard.
+ *  Shared by the route-mount helpers of both describes (a pre-seeded aionui
+ *  namespace survives registration because register keeps existing entries). */
+const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
+  const namespaces = new Map<string, {
+    schema: unknown
+    value: Record<string, unknown> | undefined
+    revision: number
+  }>()
+  for (const [ns, value] of Object.entries(pre ?? {})) {
+    namespaces.set(ns, { schema: (input: unknown) => input, value, revision: 0 })
+  }
+  const resolve = (entry: { schema: unknown; value: Record<string, unknown> | undefined }): unknown => {
+    const schema = entry.schema as (input: unknown) => unknown
+    return entry.value === undefined ? schema(undefined) : schema(entry.value)
+  }
+  return {
+    register(ns: string, schema: unknown) {
+      namespaces.set(ns, { schema, value: undefined, revision: 0 })
+      return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
+    },
+    describe() {
+      return [...namespaces.entries()].map(([ns, entry]) => ({
+        ns,
+        value: resolve(entry),
+        applies: 'live' as const,
+        revision: entry.revision,
+      }))
+    },
+    async update(ns: string, patch: Record<string, unknown>, expectedRevision?: number) {
+      const entry = namespaces.get(ns)
+      if (entry === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
+      if (expectedRevision !== undefined && expectedRevision !== entry.revision) {
+        throw new SettingsConflictError(settingsNamespace(ns), expectedRevision, entry.revision)
+      }
+      entry.value = { ...entry.value, ...patch }
+      entry.revision += 1
+    },
   }
 }
 
@@ -485,6 +526,9 @@ describe('git destructive operations (scratch repository)', () => {
 describe('session cwd resolution over the API route', () => {
   interface CtxOverrides {
     sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
+    /** A fake settings service face (createFakeSettings); when given, the
+     *  settings inject callback runs so the side-card prefs are resolvable. */
+    settings?: unknown
   }
 
   const mountAll = (overrides: CtxOverrides = {}): SidebarWebRoute[] => {
@@ -499,8 +543,12 @@ describe('session cwd resolution over the API route', () => {
       tools: { register: () => () => {} },
       // The vendored cordis runs registration effects immediately.
       effect: (fn: () => void | (() => void)) => { fn() },
-      // No settings service: the namespace registration never runs.
-      inject: () => () => {},
+      // The settings inject callback runs only when a settings face is given
+      // (mirror of cordis' service-less inject: absent → never called).
+      inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
+        if (deps.includes('settings') && overrides.settings !== undefined) callback({ settings: overrides.settings })
+        return () => {}
+      },
       // No jobs/agents services in the smoke context: the routes degrade.
       get: () => undefined,
     }
@@ -672,6 +720,80 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  it('opens fs.read paths outside the session workspace when allowOpenOutsideWorkspace is on', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-outside-open-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    const outsideFile = join(outside, 'secret.txt')
+    writeFileSync(outsideFile, 'secret')
+    try {
+      const settings = createFakeSettings()
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) }, settings })
+      // The pref is OFF by default: the same path is still refused until the
+      // user flips the switch.
+      const before = await invoke(route, 'fs.read', { sessionId: 'security', path: outsideFile })
+      expect(before).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
+      const after = await invoke(route, 'fs.read', { sessionId: 'security', path: outsideFile })
+      expect(after.ok).toBe(true)
+      expect(after.value).toMatchObject({ kind: 'text', content: 'secret' })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('lists fs.tree paths outside the session workspace when the read boundary is open', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-outside-tree-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    try {
+      const settings = createFakeSettings()
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) }, settings })
+      await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'security', path: outside })
+      expect(tree.ok).toBe(true)
+      // The listing's path is the realpath (macOS /var → /private/var).
+      expect(tree.value).toMatchObject({ path: realpathSync(outside), entries: [] })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps fs.write fenced outside the workspace even when the read boundary is open', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-outside-write-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    try {
+      const settings = createFakeSettings()
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) }, settings })
+      await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
+      const write = await invoke(route, 'fs.write', { sessionId: 'security', path: join(outside, 'written.txt'), content: 'hack' })
+      expect(write).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('opens repo-root-relative fs.read paths outside a nested session workspace when the read boundary is open', async () => {
+    const settings = createFakeSettings()
+    const route = mount({
+      sessions: { get: () => ({ header: { cwd: join(process.cwd(), 'src') } }) },
+      settings,
+    })
+    await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
+    const result = await invoke(route, 'fs.read', { sessionId: 's-sub', path: 'package.json' })
+    expect(result.ok).toBe(true)
+    const value = result.value as unknown as { kind: string; content: string }
+    expect(value.kind).toBe('text')
+    expect(value.content).toContain('"name"')
+  })
+
   it('rejects media and HTML reads through a workspace symlink', async () => {
     if (!canCreateSymlink) return
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-security-'))
@@ -697,6 +819,32 @@ describe('session cwd resolution over the API route', () => {
       expect(JSON.parse(mediaResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
       expect(htmlResult).toMatchObject({ status: 403 })
       expect(JSON.parse(htmlResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!canCreateSymlink)('serves media and HTML outside the workspace when the read boundary is open', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-open-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.png'), 'not an image')
+    writeFileSync(join(outside, 'secret.html'), '<p>secret</p>')
+    try {
+      const settings = createFakeSettings()
+      symlinkSync(outside, join(workspace, 'link'))
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) }, settings })
+      await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const html = routes.find(route => route.path === '/sidebar/html')!
+      const mediaResult = await invokeGet(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(join(workspace, 'link', 'secret.png'))}`)
+      const htmlResult = await invokeGet(html, encodeHtmlUrl('security', join(workspace, 'link', 'secret.html')))
+      expect(mediaResult.status).toBe(200)
+      expect(mediaResult.body).toBe('not an image')
+      expect(htmlResult.status).toBe(200)
+      expect(htmlResult.body).toContain('secret')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -767,46 +915,7 @@ describe('session cwd resolution over the API route', () => {
 })
 
 describe('side card settings routes', () => {
-  /** A minimal settings seam: register/describe/update with the revision guard. */
-  const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
-    const namespaces = new Map<string, {
-      schema: unknown
-      value: Record<string, unknown> | undefined
-      revision: number
-    }>()
-    for (const [ns, value] of Object.entries(pre ?? {})) {
-      namespaces.set(ns, { schema: (input: unknown) => input, value, revision: 0 })
-    }
-    const resolve = (entry: { schema: unknown; value: Record<string, unknown> | undefined }): unknown => {
-      const schema = entry.schema as (input: unknown) => unknown
-      return entry.value === undefined ? schema(undefined) : schema(entry.value)
-    }
-    return {
-      register(ns: string, schema: unknown) {
-        namespaces.set(ns, { schema, value: undefined, revision: 0 })
-        return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
-      },
-      describe() {
-        return [...namespaces.entries()].map(([ns, entry]) => ({
-          ns,
-          value: resolve(entry),
-          applies: 'live' as const,
-          revision: entry.revision,
-        }))
-      },
-      async update(ns: string, patch: Record<string, unknown>, expectedRevision?: number) {
-        const entry = namespaces.get(ns)
-        if (entry === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
-        if (expectedRevision !== undefined && expectedRevision !== entry.revision) {
-          throw new SettingsConflictError(settingsNamespace(ns), expectedRevision, entry.revision)
-        }
-        entry.value = { ...entry.value, ...patch }
-        entry.revision += 1
-      },
-    }
-  }
-
-  const mountWithSettings = (settings?: unknown): SidebarWebRoute => {
+  const mountWithSettings = (settings?: unknown, sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }): SidebarWebRoute => {
     const routes: SidebarWebRoute[] = []
     const ctx = {
       webRuntime: { trustedHosts: [] },
@@ -814,7 +923,7 @@ describe('side card settings routes', () => {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
-      sessions: { get: () => undefined },
+      sessions: sessions ?? { get: () => undefined },
       tools: { register: () => () => {} },
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
@@ -896,6 +1005,7 @@ describe('side card settings routes', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
+        allowOpenOutsideWorkspace: false,
         producedFilesWrap: true,
         editorExplorer: false,
         sidebarLayout: 'docked',

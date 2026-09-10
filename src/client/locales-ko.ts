@@ -19,6 +19,8 @@ export const ko: Record<string, string> = {
   editorExplorerMergedDesc: '파일이 같은 창에서 그 자리로 전환됩니다. 새 창은 기본으로 파일 트리가 펼쳐집니다',
   editorExplorerSplit: '분리',
   editorExplorerSplitDesc: '경로가 없는 창은 파일 탐색기(파일 트리만)입니다. 파일은 각자 새 창(파일 트리 포함, 기본 접힘)으로 열립니다',
+  allowOpenOutside: '작업 영역 밖의 파일 열기 허용',
+  allowOpenOutsideDesc: '켜면 편집기·미리 보기·파일 트리가 세션 작업 영역 밖의 경로도 열 수 있습니다(읽기·탐색만). 저장과 업로드는 계속 작업 영역 안으로 제한됩니다. 기본 꺼짐 — 파일 API 작업 영역 경계 유지',
   fileTreeSplitter: '상하 영역 비율을 드래그로 조정(더블 클릭 시 초기화)',
   editorTreeToggle: '파일 트리 패널',
   editorPathPlaceholder: '파일 경로 입력(세션 디렉터리 기준 상대 경로 또는 절대 경로), Enter로 열기',

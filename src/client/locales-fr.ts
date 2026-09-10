@@ -20,6 +20,8 @@ export const fr: Record<string, string> = {
   editorExplorerMergedDesc: 'Les fichiers se remplacent dans la même fenêtre ; les nouvelles fenêtres ouvrent l’arborescence par défaut',
   editorExplorerSplit: 'Séparé',
   editorExplorerSplitDesc: 'Les fenêtres sans chemin sont l’explorateur autonome (arborescence uniquement) ; chaque fichier ouvre sa propre fenêtre (avec arborescence, réduite par défaut)',
+  allowOpenOutside: 'Autoriser l’ouverture de fichiers hors de l’espace de travail',
+  allowOpenOutsideDesc: 'Activé, l’éditeur, les aperçus et l’arborescence peuvent ouvrir des chemins hors de l’espace de travail de la session (lecture et navigation uniquement) ; l’enregistrement et l’envoi restent confinés à l’espace de travail. Désactivé par défaut — la frontière de l’API fichier est conservée',
   fileTreeSplitter: 'Faites glisser pour ajuster la repartition haut/bas ; double-clic pour reinitialiser',
   editorTreeToggle: 'Panneau d’arborescence',
   editorPathPlaceholder: 'Saisissez un chemin de fichier (relatif au répertoire de session ou absolu), Entrée pour ouvrir',

@@ -69,6 +69,17 @@ export interface SidebarPrefs {
    */
   interceptOpenPath: boolean
   /**
+   * Whether the editor / previewers / file tree may OPEN files outside the
+   * session workspace (absolute paths the host would otherwise refuse with
+   * 403 `forbidden`). READ-ONLY relaxation: fs.read / fs.tree / the media
+   * route / the HTML preview route skip the workspace containment check
+   * while it is on. Writes (fs.write, uploads) stay confined to the
+   * workspace REGARDLESS — this switch never lifts the write fence. Off by
+   * default so the file API keeps its session-workspace boundary unless
+   * explicitly opened.
+   */
+  allowOpenOutsideWorkspace: boolean
+  /**
    * Whether the intercepted produced-files row WRAPS its chips onto multiple
    * lines (on, the default — the original behavior). Off renders the row as
    * a single line that scrolls horizontally when the chips overflow, with
@@ -301,6 +312,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
+  allowOpenOutsideWorkspace: false,
   producedFilesWrap: true,
   editorExplorer: false,
   sidebarLayout: 'docked',

@@ -280,6 +280,29 @@ function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): {
 }
 
 /**
+ * Resolve the side-card prefs through the settings seam. An absent settings
+ * service, an unregistered namespace, or a malformed document all fall back
+ * to the schema defaults — a settings-less deployment keeps the exact
+ * default behavior (the same contract as the client's parsePrefs).
+ */
+function resolvedPrefs(getSettings: () => SidebarSettingsFace | undefined): SidebarPrefs {
+  const view = getSettings()?.get()
+  const value = view?.value
+  if (value !== null && typeof value === 'object') return value as SidebarPrefs
+  return SIDEBAR_PREFS_DEFAULTS
+}
+
+/**
+ * Whether the user opened the read boundary: `allowOpenOutsideWorkspace`
+ * (default off) lets READ routes (fs.tree / fs.read / media / HTML preview)
+ * resolve paths outside the session workspace. The WRITE fence is never
+ * lifted — this flag only ever feeds read-side containment decisions.
+ */
+function openOutsideAllowed(getSettings: () => SidebarSettingsFace | undefined): boolean {
+  return resolvedPrefs(getSettings).allowOpenOutsideWorkspace === true
+}
+
+/**
  * Parse the browser tab's `browserAllowedLoopback` allowlist into a matcher
  * over host:port (same contract as the client-side helper in
  * src/client/browser.ts — kept in sync). Bare hosts (`localhost`,
@@ -339,7 +362,9 @@ function buildApi(
     'fs.tree': async (payload) => {
       const { cwd } = cwdOf(payload)
       const record = payload as { path?: unknown }
-      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
+      // allowOpenOutsideWorkspace (default off) lifts the containment check
+      // for READ-only browsing; writes never follow.
+      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'), openOutsideAllowed(getSettings))
       return listDirectory(target, resolved.listLimit)
     },
     'fs.search': async (payload) => {
@@ -357,7 +382,7 @@ function buildApi(
       // child-repo path is relative to the selected repoRoot, not the session
       // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected), openOutsideAllowed(getSettings))
       const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
@@ -912,13 +937,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
             ctx,
             agentOpenRegistry,
             (sessionId) => sessionCwdOf(ctx, sessionId),
-            () => {
-              const view = settingsFace?.get()
-              const value = view?.value
-              return value !== null && typeof value === 'object'
-                ? value as SidebarPrefs
-                : SIDEBAR_PREFS_DEFAULTS
-            },
+            () => resolvedPrefs(() => settingsFace),
           )
         }
       } else if (openToolsDisposers !== null) {
@@ -1035,7 +1054,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = await ensureWorkspacePath(cwd, raw)
+        // The read-side opt-out (allowOpenOutsideWorkspace) applies here too:
+        // with it on, media outside the session workspace previews normally.
+        const path = await ensureWorkspacePath(cwd, raw, openOutsideAllowed(() => settingsFace))
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
@@ -1094,7 +1115,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // real-path guard, with the same semantics as the media route's
         // fallback.
         const cwd = sessionCwdOf(ctx, sessionId)
-        const absolute = await ensureWorkspacePath(cwd, path)
+        const absolute = await ensureWorkspacePath(cwd, path, openOutsideAllowed(() => settingsFace))
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)

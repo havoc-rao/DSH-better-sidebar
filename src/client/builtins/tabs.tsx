@@ -187,6 +187,15 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
             },
           ],
         }, {
+          // v0.23.0+: read-side workspace boundary opt-out. Off by default —
+          // the file API keeps its session-workspace fence. When on, the
+          // editor / previewers / file tree may open absolute paths outside
+          // the workspace (the host read routes skip containment); saving and
+          // uploading remain confined to the workspace no matter what.
+          key: 'allowOpenOutsideWorkspace',
+          title: () => t('allowOpenOutside'),
+          desc: () => t('allowOpenOutsideDesc'),
+        }, {
           // The active file-icon theme picker (v0.16.0+): options resolve
           // from the LIVE icon-theme registry (function form) — "built-in
           // outline icons" plus every registered theme by `order`; the row

@@ -127,6 +127,11 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   interceptOpenPath: z.boolean().default(true),
+  // When on, READ routes (fs.tree / fs.read / media / HTML preview) skip the
+  // session-workspace containment check — the user explicitly opens the
+  // boundary for opening/browsing files. The WRITE fence (fs.write / upload)
+  // is never lifted by this switch.
+  allowOpenOutsideWorkspace: z.boolean().default(false),
   producedFilesWrap: z.boolean().default(true),
   editorExplorer: z.boolean().default(false),
   sidebarLayout: z.union([z.const('docked'), z.const('vscode')]).default('docked'),

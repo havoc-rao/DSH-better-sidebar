@@ -10,6 +10,8 @@ export const pt: Record<string, string> = {
   editorExplorerMergedDesc: 'Arquivos alternam no mesmo lugar na mesma janela; novas janelas começam com a árvore de arquivos aberta',
   editorExplorerSplit: 'Separado',
   editorExplorerSplitDesc: 'Janelas sem caminho são o explorador independente (somente árvore de arquivos); cada arquivo abre sua própria janela (com árvore encaixada, fechada por padrão)',
+  allowOpenOutside: 'Permitir abrir arquivos fora do espaço de trabalho',
+  allowOpenOutsideDesc: 'Quando ativado, o editor, os visualizadores e a árvore de arquivos podem abrir caminhos fora do espaço de trabalho da sessão (somente leitura e navegação); salvar e enviar continuam restritos ao espaço de trabalho. Desativado por padrão — mantém o limite da API de arquivos',
   fileTreeSplitter: 'Arraste para ajustar a divisao superior/inferior; clique duas vezes para redefinir',
   editorTreeToggle: 'Painel da árvore de arquivos',
   editorPathPlaceholder: 'Caminho do arquivo (relativo ao diretório da sessão ou absoluto), Enter para abrir',

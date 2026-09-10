@@ -10,6 +10,8 @@ export const sv: Record<string, string> = {
   editorExplorerMergedDesc: 'Filer växlas på plats i samma fönster; nya fönster startar med trädet öppet',
   editorExplorerSplit: 'Separat',
   editorExplorerSplitDesc: 'Fönster utan sökväg är den fristående utforskaren (endast träd); varje fil öppnar ett eget fönster (träd dockat, stängt som standard)',
+  allowOpenOutside: 'Tillåt att öppna filer utanför arbetsytan',
+  allowOpenOutsideDesc: 'När det är på kan redigeraren, förhandsvisningar och filtret öppna sökvägar utanför sessionens arbetsyta (endast läsning och bläddring); spara och ladda upp förblir begränsade till arbetsytan. Av som standard — fil-API:ets arbetsytegräns behålls',
   fileTreeSplitter: 'Dra för att justera upp/ner-delningen; dubbelklicka för att återställa',
   editorTreeToggle: 'Filträdspanel',
   editorPathPlaceholder: 'Filsökväg (relativ sessionskatalogen eller absolut), Enter för att öppna',

@@ -27,6 +27,8 @@ export const vi: Record<string, string> = {
   editorExplorerMergedDesc: 'Tệp chuyển tại chỗ trong cùng cửa sổ; cửa sổ mới mặc định mở cây tệp',
   editorExplorerSplit: 'Riêng biệt',
   editorExplorerSplitDesc: 'Cửa sổ không đường dẫn là trình khám phá (chỉ cây tệp); mỗi tệp mở cửa sổ riêng (có cây tệp, mặc định thu gọn)',
+  allowOpenOutside: 'Cho phép mở tệp ngoài không gian làm việc',
+  allowOpenOutsideDesc: 'Khi bật, trình soạn thảo, bản xem trước và cây tệp có thể mở đường dẫn ngoài không gian làm việc của phiên (chỉ đọc & duyệt); lưu và tải lên vẫn giới hạn trong không gian làm việc. Tắt theo mặc định — giữ ranh giới không gian làm việc của API tệp',
   fileTreeSplitter: 'Kéo để điều chỉnh tỷ lệ trên/dưới; bấm đúp để đặt lại',
   editorTreeToggle: 'Panel cây tệp',
   editorPathPlaceholder: 'Nhập đường dẫn tệp (tương đối thư mục phiên hoặc tuyệt đối), Enter để mở',

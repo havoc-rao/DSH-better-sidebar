@@ -392,6 +392,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 
 **✨ 新功能**
 
+- 🔓 **允许打开工作区外的文件（读侧可开关）**：新增「文件」卡设置 `allowOpenOutsideWorkspace`（**默认关闭**）——开启后编辑器 / 预览 / 文件树可以打开会话工作区之外的绝对路径（`fs.tree` / `fs.read` / 媒体路由 / HTML 预览路由跳过工作区包含检查，Git 面板里 linked worktree 等越界文件也可「在编辑器中打开」）；保存与上传仍限定在工作区内，**写侧围栏永不放宽**
 - 🪟 **自由窗口**（[#354](https://github.com/omdsh-dev/DSH-better-sidebar/pull/354)）：把标签栏的任意 tab（内置或插件注册）**拖到主会话区域**——会话列出现虚线提示浮层，松开即成为悬浮窗口（默认 390×780，手机竖屏比例，创建时按视口钳制后居中于松点）；窗口支持头部拖动移动、右下角 SE 缩放（≥320×200）、点击任意处置顶、头部右键「回到侧边栏 / 关闭」、X 走 `closeTab` 正常关闭生命周期（释放终端等）；拖到侧边栏 pane 上时该 pane 高亮、松开即**停靠**合并回该 pane；`floats` 随会话持久化（刷新原样恢复，宽容 sanitize + 几何钳入视口）；服务语义：`features` 新增 `'floatWindows'`——`openTab` 的 dedupe/id 聚焦命中浮动 tab = **置顶窗口**（不重复开、不展开面板），`closeTab` / `activateTab` 对浮窗正常关窗 / 置顶并照常触发回调，浮窗内 tab `visible` 恒 true，agent 终端 reconcile 覆盖浮窗；tab 内容复用常规渲染、插件 tab 与 pane 完全同契约；附带文件二级页面 8px 网格间距规整（[设计文档](docs/plans/2026-08-23-free-window-design.md)）
 - 📂 **模型主动打开（`sidebar_open` 工具）**（[#353](https://github.com/omdsh-dev/DSH-better-sidebar/pull/353)）：侧边栏新增全局设置 `agentOpenTools`（**默认关闭**），开启后向模型注入**一个**工具——模型可在调用方会话的侧边栏打开本地**文件**（editor tab，按 path 去重）、**文件夹**（全窗树窗口，以该目录为根，`meta.dir`）与 **HTTP(S) 网页**（browser tab，URL 预填）；关闭设置即注销工具并清空未投递队列，已打开 tab 保留；非激活会话的打开排队、下次可见时重放（`/sidebar/ws/agent-opens` 推送，同一 trust fence）；无新增公共 API、不改变 `BetterSidebarService`（[设计文档](docs/plans/2026-08-23-agent-open-tools-design.md)）
 - 📝 **Markdown README 级内嵌 HTML + 目录大纲（TOC）**（[#360](https://github.com/omdsh-dev/DSH-better-sidebar/pull/360)）：Markdown 预览现在真实渲染**块级内嵌 HTML**——徽章墙 `<div align=center>`、`<details>` 折叠块内嵌 markdown、表格单元格 `<br/>`/`<sub>`/`<img>`、`<video>`/`<picture>` 全部经 DOMPurify 白名单消毒（`<script>` 等活性内容剥除、`<a>` 强制 `_blank rel=noopener`），本地媒体 src 重写为会话媒体路由；≥3 标题出现浮动**目录大纲**按钮，点击平滑滚动并自动展开折叠 `<details>`，HTML 段内标题同样收录；渲染器仍是宿主 `MarkdownText`（shiki / KaTeX / GFM 保留），纯 markdown（零 HTML）文档走原路径零回归（[设计文档](docs/plans/2026-08-24-markdown-html-toc-design.md)）
@@ -591,7 +592,7 @@ pnpm watch        # tsdown --watch
 
 ## 🔐 安全
 
-- 路由受 Host 头信任围栏保护（与 `/api` 一致）；`fs.write` 原子写入；媒体/预览路由仅限会话 cwd 内文件；git 只调 CLI、绝不设置身份
+- 路由受 Host 头信任围栏保护（与 `/api` 一致）；`fs.write` 原子写入；媒体/预览路由仅限会话 cwd 内文件（默认；「文件」卡设置 `allowOpenOutsideWorkspace` 可放开**只读**侧的工作区边界——工作区外路径可打开/预览/浏览，保存与上传始终限定在工作区内）；git 只调 CLI、绝不设置身份
 - HTML 预览与浏览器 tab 的内容在**不透明源沙箱 iframe** 中渲染（无 `allow-same-origin`/`allow-top-navigation`、`no-referrer`、权限策略全禁）；`/sidebar/html` 路由带 CSP `sandbox` + 大小/路径边界；地址栏拒绝 `javascript:`/`data:`/`file:` 与 localhost 等本机地址
 - 界面实时显示沙箱状态（关闭时红色警示），可临时解锁当前页面；设置页可按功能关闭沙箱（默认关闭该设置，带警告文案）——关闭后内容与界面同源，仅建议对完全可信内容使用
 

@@ -108,6 +108,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     interceptOpenPath: typeof record.interceptOpenPath === 'boolean'
       ? record.interceptOpenPath
       : SIDEBAR_PREFS_DEFAULTS.interceptOpenPath,
+    allowOpenOutsideWorkspace: typeof record.allowOpenOutsideWorkspace === 'boolean'
+      ? record.allowOpenOutsideWorkspace
+      : SIDEBAR_PREFS_DEFAULTS.allowOpenOutsideWorkspace,
     producedFilesWrap: typeof record.producedFilesWrap === 'boolean'
       ? record.producedFilesWrap
       : SIDEBAR_PREFS_DEFAULTS.producedFilesWrap,

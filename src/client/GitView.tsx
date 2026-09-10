@@ -193,6 +193,11 @@ const { scope, ctx, store, onOpenFile, onOpenDiff, visible } = props
     useCallback((callback: () => void) => store?.subscribe(callback) ?? (() => { /* no store: static prefs */ }), [store]),
     useCallback(() => store?.getSnapshot().prefs ?? SIDEBAR_PREFS_DEFAULTS, [store]),
   )
+  /** Whether the user opened the read boundary: with
+   *  `allowOpenOutsideWorkspace` on, git rows whose real path escapes the
+   *  session workspace (linked worktrees, selected sibling repos) may open
+   *  in the editor — the host read routes skip containment in that mode. */
+  const allowOpenOutside = prefs.allowOpenOutsideWorkspace === true
 
   /** The watched (重点关注) branches — user-picked local branches whose tips
    *  get divergence markers in the history (row rings + top/bottom bubbles).
@@ -1163,10 +1168,12 @@ const next = await historyPage(git, gitScope, LOG_BATCH, logEntries.length, targ
             onClose={() => { setFileMenu(null) }}
             items={[
               // A linked worktree outside the session workspace cannot be
-              // opened in the editor: the host's workspace fence rejects
-              // every path under it. Hide the action for that checkout so
-              // the menu does not offer a no-op that confuses the user.
-              ...(fileMenu !== null && isWithinWorkspace(scope.cwd ?? '', resolveSidebarPath(repoRoot ?? selectedWorktree ?? scope.cwd, fileMenu.entry.path))
+              // opened in the editor while the read fence is up: the host's
+              // workspace fence rejects every path under it. Hide the action
+              // for that checkout so the menu does not offer a no-op that
+              // confuses the user — unless `allowOpenOutsideWorkspace` is
+              // on (the fence is lifted for reads).
+              ...(fileMenu !== null && (allowOpenOutside || isWithinWorkspace(scope.cwd ?? '', resolveSidebarPath(repoRoot ?? selectedWorktree ?? scope.cwd, fileMenu.entry.path)))
                 ? [{ id: 'open', label: t('openEditor'), icon: <IconCodeOutline16 size={14} /> }]
                 : []),
               fileMenu?.staged === true
@@ -1186,10 +1193,11 @@ const next = await historyPage(git, gitScope, LOG_BATCH, logEntries.length, targ
               if (id === 'open') {
                 const resolved = resolveSidebarPath(repoRoot ?? selectedWorktree ?? scope.cwd, target.entry.path)
                 // Defense-in-depth: the menu hides this action when the
-                // resolved path escapes the session workspace, but a
-                // racing repo switch could still reach here with a path
-                // the host would reject. No-op in that case.
-                if (!isWithinWorkspace(scope.cwd ?? '', resolved)) return
+                // resolved path escapes the session workspace (unless the
+                // read boundary is opened), but a racing repo switch could
+                // still reach here with a path the host would reject.
+                // No-op in that case.
+                if (!allowOpenOutside && !isWithinWorkspace(scope.cwd ?? '', resolved)) return
                 onOpenFile(resolved)
                 return
               }

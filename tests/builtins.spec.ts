@@ -95,7 +95,7 @@ it('the global tab records the instance-level global info page (single, + menu v
   it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'sidebarLayout', 'sideBarSide', 'fileIconTheme'])
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'sidebarLayout', 'sideBarSide', 'allowOpenOutsideWorkspace', 'fileIconTheme'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.
@@ -115,10 +115,14 @@ it('the global tab records the instance-level global info page (single, + menu v
     // The file-icon theme picker (v0.16.0+) resolves its options from the
     // LIVE registry (function form) and hides entirely with no theme
     // installed (`when`) — a stock install keeps the old popup unchanged.
-    expect(toggles[3]?.type).toBe('select')
-    expect(typeof toggles[3]?.options).toBe('function')
-    expect(toggles[3]?.when).toBeDefined()
-    expect(toggles[3]?.when!({ betterSidebar: { getIconThemes: () => [] } } as unknown as Context)).toBe(false)
+    expect(toggles[4]?.type).toBe('select')
+    expect(typeof toggles[4]?.options).toBe('function')
+    expect(toggles[4]?.when).toBeDefined()
+    expect(toggles[4]?.when!({ betterSidebar: { getIconThemes: () => [] } } as unknown as Context)).toBe(false)
+    // The read-boundary switch sits between the layout rows and the theme
+    // picker: a plain on/off switch bound to the host pref by key.
+    expect(toggles[3]?.key).toBe('allowOpenOutsideWorkspace')
+    expect((toggles[3]?.type ?? 'switch') as string).toBe('switch')
     // The open-with configuration (SSH host + custom editors) is the custom
     // panel rendered below the declarative rows.
     expect(service.getTab('editor')?.settings?.render).toBeDefined()

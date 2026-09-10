@@ -18,6 +18,8 @@ export const it: Record<string, string> = {
   editorExplorerMergedDesc: 'I file cambiano sul posto nella stessa finestra; le nuove finestre avviano l’albero espanso',
   editorExplorerSplit: 'Separato',
   editorExplorerSplitDesc: 'Le finestre senza percorso sono l’esplora risorse autonomo (solo albero dei file); ogni file apre la propria finestra (albero agganciato, chiuso per impostazione predefinita)',
+  allowOpenOutside: 'Consenti apertura di file fuori dallo spazio di lavoro',
+  allowOpenOutsideDesc: 'Se attivo, editor, anteprime e albero file possono aprire percorsi fuori dallo spazio di lavoro della sessione (solo lettura e navigazione); salvataggio e caricamento restano confinati allo spazio di lavoro. Disattivato per impostazione predefinita — mantiene il confine dell’API file',
   fileTreeSplitter: 'Trascina per regolare la divisione superiore/inferiore; doppio clic per ripristinare',
   editorTreeToggle: 'Pannello dell’albero dei file',
   editorPathPlaceholder: 'Percorso del file (relativo alla directory della sessione o assoluto), Invio per aprire',

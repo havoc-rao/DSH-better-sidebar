@@ -25,15 +25,21 @@ function assertWithinWorkspace(workspace: string, target: string): void {
  *
  * @param cwd - Session workspace directory.
  * @param target - Client-supplied absolute path.
+ * @param allowOutside - When true, the containment check is SKIPPED and the
+ *   target may resolve anywhere on disk (read-only routes only: fs.tree /
+ *   fs.read / media / HTML preview). The canonical symlink resolution is
+ *   kept either way, so symlinked paths still resolve to their real target
+ *   instead of being joined literally. The WRITE fence never passes true —
+ *   the caller contract is "reads may escape, writes never do".
  * @returns The canonical absolute path used for the filesystem operation.
  */
-export async function ensureWorkspacePath(cwd: string, target: string): Promise<string> {
+export async function ensureWorkspacePath(cwd: string, target: string, allowOutside = false): Promise<string> {
   const absolute = requireAbsolute(target)
   const [realCwd, realTarget] = await Promise.all([
     resolveRealPath(cwd, 'workspace'),
     resolveRealPath(absolute, 'target'),
   ])
-  assertWithinWorkspace(realCwd, realTarget)
+  if (!allowOutside) assertWithinWorkspace(realCwd, realTarget)
   return realTarget
 }
 
