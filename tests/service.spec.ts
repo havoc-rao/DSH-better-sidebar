@@ -1130,18 +1130,22 @@ describe('independent CR follow-up fixes', () => {
 
 describe('workspace-bound window routing (workspace windows)', () => {
   const makeWindows = (): { store: ReturnType<typeof createSidebarStore>; windows: WorkspaceWindowsStore; service: ReturnType<typeof createBetterSidebarService> } => {
-    const ctx = {
-      workspaces: {
-        openPath: async () => {},
-        list: {
-          getSnapshot: () => ({
-            items: [
-              { workspaceId: 'aaaaaaaa-1111-0000-0000-000000000001', path: '/ws', title: 'WS', sessionIds: ['s1', 's2'], createdAt: '', updatedAt: '' },
-            ],
-          }),
-          subscribe: () => () => {},
-        },
+    const workspaces = {
+      openPath: async () => {},
+      list: {
+        getSnapshot: () => ({
+          items: [
+            { workspaceId: 'aaaaaaaa-1111-0000-0000-000000000001', path: '/ws', title: 'WS', sessionIds: ['s1', 's2'], createdAt: '', updatedAt: '' },
+          ],
+        }),
+        subscribe: () => () => {},
       },
+    }
+    // attachSidebarStore reads the optional workspaces service through
+    // ctx.get (the cordis-safe path — never a bare ctx.workspaces access).
+    const ctx = {
+      workspaces,
+      get: (name: string) => (name === 'workspaces' ? workspaces : undefined),
     } as unknown as Context
     const store = createSidebarStore()
     const windows = createWorkspaceWindowsStore(ctx)

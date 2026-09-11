@@ -19,7 +19,7 @@
  * back-propagation).
  *
  * The store resolves session → workspace through the client runtime's
- * workspaces list feed (`ctx.workspaces.list`, mirror of
+ * workspaces list feed (`ctx.get('workspaces')?.list`, mirror of
  * `WorkspaceRuntime.list`): a session belongs to the workspace whose
  * `sessionIds` contains it; sessions outside any workspace have no
  * workspace-bound windows (the bind menu is disabled for them). GLOBAL
@@ -79,13 +79,6 @@ export interface WorkspaceWindowsSnapshot {
   global: readonly WorkspaceWindow[]
 }
 
-/** The client runtime's workspaces list feed (structural subset; the full
- *  service may be absent on older runtimes — degrade to no windows). */
-type WorkspaceListFeed = {
-  getSnapshot(): SidebarWorkspaceListState
-  subscribe(fn: () => void): () => void
-}
-
 export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
   private readonly blobs = new Map<string, WorkspaceWindowsBlob>()
   /** The instance-level GLOBAL windows blob (the "all projects" shared
@@ -120,7 +113,13 @@ export class WorkspaceWindowsStore implements WorkspaceWindowsSource {
     this.sidebarStore = store
     store.attachWorkspaceWindows(this)
     this.dispose.push(store.subscribe(() => this.refreshSnapshot()))
-    const feed = (this.ctx.workspaces as { list?: WorkspaceListFeed }).list
+    // The workspaces service is OPTIONAL in the client runtime: a bare
+    // `this.ctx.workspaces` access throws `cannot get property "workspaces"
+    // without inject` on runtimes where the service is not visible to this
+    // plugin's entry (cordis reflect guard), taking the whole plugin down.
+    // `ctx.get` reads it without the inject requirement and yields
+    // undefined when absent — the documented degrade-to-no-windows path.
+    const feed = this.ctx.get('workspaces')?.list
     if (feed !== undefined) {
       this.workspaceList = feed.getSnapshot()
       this.dispose.push(feed.subscribe(() => {

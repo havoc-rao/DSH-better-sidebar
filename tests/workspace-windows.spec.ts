@@ -17,19 +17,24 @@ import type { Context } from '../src/context-types.ts'
 
 /** A fake client workspaces list feed (structural mirror of WorkspaceRuntime.list). */
 function fakeCtx(): Context {
-  return {
-    workspaces: {
-      openPath: async () => {},
-      list: {
-        getSnapshot: () => ({
-          items: [
-            { workspaceId: '11111111-aaaa-0000-0000-000000000001', path: '/ws-a', title: 'Workspace A', sessionIds: ['a', 'b'], createdAt: '', updatedAt: '' },
-            { workspaceId: '22222222-bbbb-0000-0000-000000000002', path: '/ws-b', title: 'Workspace B', sessionIds: ['c'], createdAt: '', updatedAt: '' },
-          ],
-        }),
-        subscribe: () => () => {},
-      },
+  const workspaces = {
+    openPath: async () => {},
+    list: {
+      getSnapshot: () => ({
+        items: [
+          { workspaceId: '11111111-aaaa-0000-0000-000000000001', path: '/ws-a', title: 'Workspace A', sessionIds: ['a', 'b'], createdAt: '', updatedAt: '' },
+          { workspaceId: '22222222-bbbb-0000-0000-000000000002', path: '/ws-b', title: 'Workspace B', sessionIds: ['c'], createdAt: '', updatedAt: '' },
+        ],
+      }),
+      subscribe: () => () => {},
     },
+  }
+  // attachSidebarStore reads the optional workspaces service through
+  // ctx.get (the cordis-safe path — a bare ctx.workspaces access throws
+  // "without inject" when the runtime does not expose it).
+  return {
+    workspaces,
+    get: (name: string) => (name === 'workspaces' ? workspaces : undefined),
   } as unknown as Context
 }
 

@@ -59,14 +59,18 @@ function mountSidebar(): MountedSidebar {
       { workspaceId: '11111111-aaaa-0000-0000-000000000001', path: '/ws-a', title: 'Workspace A', sessionIds: ['s1', 's2'], createdAt: '', updatedAt: '' },
     ],
   }
+  const workspaces = {
+    openPath: async () => {},
+    list: { subscribe: () => () => {}, getSnapshot: () => workspacesSnapshot },
+  }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
-    workspaces: {
-      openPath: async () => {},
-      list: { subscribe: () => () => {}, getSnapshot: () => workspacesSnapshot },
-    },
+    workspaces,
     betterSidebar: service,
+    // attachSidebarStore reads the optional workspaces service through
+    // ctx.get (the cordis-safe path — never a bare ctx.workspaces access).
+    get: (name: string) => (name === 'workspaces' ? workspaces : undefined),
   } as unknown as Context
   const windows = createWorkspaceWindowsStore(ctx)
   windows.attachSidebarStore(store)
