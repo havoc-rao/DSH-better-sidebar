@@ -22,29 +22,14 @@
 import type { ReactNode } from 'react'
 import type { Context } from '../context-types.ts'
 import {
-  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, closeFloatByTab, floatWithTab,
-  isBoundTabId, leafWithTab, openTabInActivePane, openTabInBottomPane, patchTab, raiseFloat, tabOpenIn, togglePanel, treeOf,
-  type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode, type TabType,
-  type WorkspaceWindow,
+  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer,
+  leafWithTab, openTabInBottomPane, patchTab, tabOpenIn,
+  type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab, type TabType,
 } from './state.ts'
-import type { WorkspaceWindowsStore } from './workspace-windows.ts'
-import { isNarrowWidth } from './breakpoints.ts'
-import { extOf } from './paths.ts'
+import { baseName, extOf } from './paths.ts'
+import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
-import { KeybindingRuntime, setFocusedTabId, type KeybindingDescriptor } from './keybindings.ts'
-import { focusTabStripElement } from './tab-surface.ts'
-import {
-  buildIconThemeIndex, injectThemeFonts,
-  matchFileIcon as matchFileIconOf,
-  type FileIconContext, type FileIconRef, type IconThemeDescriptor, type IconThemeDocument,
-  type IconThemeIndex,
-} from './icon-theme.ts'
-import type { CommandDescriptor, CommandRunPayload } from './commands.ts'
-import type { FileTreeProviderDescriptor } from './file-tree-source.ts'
-import type { FileTreeSectionDescriptor } from './file-tree-section.ts'
-import type { TerminalProviderDescriptor } from './terminal-source.ts'
-import type { GitProviderDescriptor } from './git-source.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -62,23 +47,6 @@ export type {
 } from './state.ts'
 export type { SessionScope } from './api.ts'
 export type { SidebarPrefs } from '../prefs-shared.ts'
-export type { KeybindingDescriptor, KeybindingEventLike, KeySpec, SidebarKeybindingContext } from './keybindings.ts'
-export type {
-  FileIconContext, FileIconRef, IconThemeDescriptor, IconThemeDocument, IconThemeIconDefinition, IconThemeIndex,
-} from './icon-theme.ts'
-export type {
-  CommandDescriptor, CommandMenuContext, CommandMenuContribution, CommandMenuRow, CommandMenuWhere,
-  CommandRunPayload, CommandRunWhere,
-} from './commands.ts'
-export type { FsEntry } from './api.ts'
-export type {
-  FileTreeDataSource, FileTreeEntry, FileTreeListResult, FileTreeProviderCapabilities,
-  FileTreeProviderDescriptor, FileTreeProviderRoot, FileTreeSearchResult,
-  ResolvedFileTreeRoot, ResolvedFileTreeSource,
-} from './file-tree-source.ts'
-export type { FileTreeSectionDescriptor, FileTreeSectionScope, FileTreeSectionSourceDescriptor } from './file-tree-section.ts'
-export type { TerminalProviderDescriptor } from './terminal-source.ts'
-export type { GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -124,22 +92,11 @@ export interface SidebarSettingToggle {
   placeholder?: string
   /** Unit suffix rendered after the input (e.g. 'px' for a size row). */
   unit?: string
-  /** Options of a `type: 'select'` row. A FUNCTION (v0.16.0+) resolves the
-   *  options from the live registries at render time — e.g. the file-icon
-   *  theme picker lists everything registered so far. Throwing functions
-   *  degrade to the empty list (the settings UI must never break). */
-  options?: readonly SidebarSettingSelectOption[] | ((ctx: Context) => readonly SidebarSettingSelectOption[])
+  /** Options of a `type: 'select'` row. */
+  options?: readonly SidebarSettingSelectOption[]
   /** Whether a `type: 'select'` row allows picking several options (the
    *  stored value is then an array of option values); defaults to false. */
   multi?: boolean
-  /**
-   * Row visibility predicate (v0.16.0+): the row renders only while this
-   * returns true (e.g. the icon-theme picker hides when no theme plugin is
-   * installed). Errors are swallowed and the row STAYS VISIBLE (fail-open —
-   * a broken predicate must never hide a user's settings). Defaults to
-   * always visible.
-   */
-  when?: (ctx: Context) => boolean
 }
 
 /** Props of a descriptor's custom settings panel (`settings.render`). */
@@ -192,29 +149,6 @@ export interface TabComponentProps {
   visible: boolean
   /** The explorer's expanded directory set (ExplorerView). */
   expanded?: string[]
-/** The instance-level GLOBAL-shared windows (the "all projects" stubs,
-   *  host-side extra: the renderer feeds them from the workspace windows
-   *  store). Absent for external hosts that do not pass it — the global
-   *  info tab falls back to an empty list. */
-  globalWindows?: readonly WorkspaceWindow[]
-  /** Attach a GLOBAL-shared window (`gb:` id) into the Global Workspace's
-   *  own bottom workbench (the virtual `global-workspace` session — the
-   *  special session the full-page view renders): the window's stub lands in
-   *  its bottom tree and is focused, attaching to the shared pty. NO real
-   *  session is touched. Built-in global-tab usage; absent when the host
-   *  does not expose the workspace windows store. */
-  onAttachGlobal?: (tabId: string) => void
-  /** Create a NEW global-shared terminal directly in the Global Workspace
-   *  (the tabby-style quick-add: no session, no right-click bind — the
-   *  terminal lands in the Global Workspace's own bottom workbench, started
-   *  at the project dir or, unset, at the user's home). Built-in global-tab
-   *  usage; absent when the host does not expose the workspace windows store. */
-  onNewGlobalTerminal?: () => void
-  /** Unbind a GLOBAL-shared window (`gb:` id) from the whole instance
-   *  (closes it everywhere, releasing its shared pty). Built-in global-tab
-   *  usage; absent when the host does not expose the workspace windows
-   *  store. */
-  onUnbindGlobal?: (tabId: string) => void
   /** The explorer's reveal-highlight set (ExplorerView; "Show in folder" targets). */
   revealed?: string[]
   onToggleDir?: (path: string) => void
@@ -232,7 +166,7 @@ export interface TabDescriptor {
   /**
    * One-line description of what this tab shows, rendered under the title in
    * the host's new-tab list (DSH's native right Sidebar guide page). DSH
-   * 0.1.5-rc.1 renders descriptions only while the guide lists at most 4
+   * 0.1.5-rc.1+ renders descriptions only while the guide lists at most 4
    * entries — a longer list drops every description and shows titles alone —
    * and a descriptor that declares none renders the title by itself (the
    * host no longer substitutes a generic fallback, so declare the real
@@ -401,12 +335,74 @@ export interface FileViewerDescriptor {
   component: (props: FileViewerProps) => ReactNode
 }
 
+/**
+ * Describes one external file-icon registration (feature `fileIcons`).
+ * Registrations override the built-in per-extension glyph map for their
+ * extensions; unlike the built-ins (monochrome `currentColor` per the skin
+ * contract), a registration's icon may be ANY ReactNode — colored included —
+ * and the registering plugin owns how its colors behave across skins.
+ */
+export interface FileIconDescriptor {
+  /** Unique id (`'my-plugin:icons'`). */
+  id: string
+  /**
+   * Lowercase extensions without leading dot (`['csv','tsv']`). `[]` = the
+   * global default (catch-all): it only claims files the built-in glyph map
+   * does not cover — registered specifics and built-in glyphs always outrank
+   * it. OMITTED = no extension rule at all (a `names`-only registration is
+   * NOT a catch-all). Two values are RESERVED for directory rows (never
+   * matched against real file extensions): `'folder'` (a closed directory)
+   * and `'folder-open'` (an expanded directory) — see `FOLDER_EXT`.
+   */
+  exts?: readonly string[]
+  /**
+   * Exact FILE names (basename, case-insensitive — `['package.json',
+   * 'Dockerfile']`), the `fileNames` half of an icon theme. Name matches
+   * outrank extension matches, so a theme can color `package.json` apart
+   * from every other `.json`. Omitted/`[]` = no name rule.
+   */
+  names?: readonly string[]
+  /**
+   * Exact DIRECTORY names (basename, case-insensitive — `['node_modules',
+   * 'src']`), the `folderNames` half of an icon theme. A name match outranks
+   * the reserved `'folder'`/`'folder-open'` exts, and a descriptor with
+   * `folderNames` only claims the directories it names (never every folder —
+   * that is what the reserved exts are for). Omitted/`[]` = no name rule.
+   */
+  folderNames?: readonly string[]
+  /** Higher wins; default 0. Registered icons always outrank the built-in map. */
+  priority?: number
+  /**
+   * Size-aware icon factory (the tree and file tabs render at 14 today).
+   * `open` is the directory's expanded state for a DIRECTORY row and
+   * `undefined` for a file row — a folder icon uses it to pick between the
+   * closed and opened glyph.
+   */
+  icon: (path: string, size: number, open?: boolean) => ReactNode
+}
+
+/**
+ * Reserved `exts` values that claim DIRECTORY rows instead of file
+ * extensions: `'folder'` matches a closed directory, `'folder-open'` an
+ * expanded one (`folderIcon(path, open)` resolves them). They are filtered out of
+ * real-extension matching, so a file literally named `x.folder` is NOT
+ * claimed by a folder registration.
+ */
+export const FOLDER_EXT = 'folder' as const
+export const FOLDER_OPEN_EXT = 'folder-open' as const
+
 /** One `openTab` request. */
 export interface OpenTabSeed {
   type: string
   /** Overrides the descriptor's title when given (the editor tab shows the file name). */
   title?: string
-  /** A file path (the editor tab's content seed). */
+  /**
+   * A file path. Meaning follows the type: the `editor` kind (the only one
+   * claiming `dsh-resource://file/**`) opens its path seeds as file
+   * resources; every other kind treats the path as component state — it
+   * rides the navigation params onto the tab record's `path` (v0.19.2+; on
+   * v0.19.0/v0.19.1 every path seed was rerouted into a file open).
+   */
   path?: string
   /** A diff reference (the diff tab's content seed). */
   diff?: SidebarTab['diff']
@@ -432,7 +428,7 @@ export interface OpenTabSeed {
 export interface NativeTabParams {
   /** Overrides the descriptor's title for this instance. */
   title?: string
-  /** A file path (the editor window's content seed). */
+  /** A file path (the editor window's content seed; component kinds carry their own). */
   path?: string
   /** A URL the tab navigates to on mount (the browser tab's seed). */
   url?: string
@@ -475,8 +471,50 @@ export interface SidebarSurface {
 export interface BetterSidebarService {
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
+  registerFileIcon(descriptor: FileIconDescriptor): () => void
   getTabs(): readonly TabDescriptor[]
   getFileViewers(): readonly FileViewerDescriptor[]
+  getFileIcons(): readonly FileIconDescriptor[]
+  /**
+   * Find a SPECIFIC registered file icon for a path (priority desc, then
+   * registration order): a `names` match first, then an `exts` match.
+   * Catch-alls (`exts: []`) and folder registrations (`'folder'`/
+   * `'folder-open'`) are not consulted — this answers "did a registration
+   * claim this exact name or extension". Consumers should prefer
+   * `fileIcon`/`folderIcon`, which run the whole fallback chain.
+   */
+  matchFileIcon(path: string): FileIconDescriptor | undefined
+  /**
+   * Find the registered icon for DIRECTORY rows (priority desc, then
+   * registration order): a `folderNames` match on `name` first (pass the
+   * directory's basename), then the `'folder'`/`'folder-open'` reserved
+   * exts by `open`. Undefined = fall back to the built-in VSCodicons folder
+   * glyphs.
+   */
+  matchFolderIcon(open: boolean, name?: string): FileIconDescriptor | undefined
+  /**
+   * The authoritative FILE icon for a path (feature `fileIcons`), running
+   * the whole chain with per-factory crash isolation:
+   * 1. a specific registered name or extension (priority desc, registration
+   *    order),
+   * 2. the best registered global default (`exts: []`, priority desc) — an
+   *    external plugin that registers a catch-all owns every row the host's
+   *    classifier would otherwise draw,
+   * 3. the host's own `FileTypeIcon` artwork (feature `fileIcons`, DSH's
+   *    classifier and glyphs — the plugin ships no extension table).
+   * A throwing factory is logged (console.error) and skipped — the caller
+   * always gets a valid ReactNode.
+   */
+  fileIcon(path: string, size: number): ReactNode
+  /**
+   * The authoritative DIRECTORY icon for a tree row: the registered
+   * `folderNames`/`'folder'`/`'folder-open'` icon (priority desc), else the
+   * built-in `VscFolder`/`VscFolderOpened`. `path` is the directory's own
+   * path (a theme may vary icons per directory); `open` reaches the factory
+   * so one descriptor can render both states. Same crash isolation as
+   * `fileIcon`.
+   */
+  folderIcon(path: string, open: boolean, size: number): ReactNode
   /** Find a tab descriptor by id (undefined if not registered). */
   getTab(id: string): TabDescriptor | undefined
   /**
@@ -493,142 +531,6 @@ export interface BetterSidebarService {
    * Disabled viewers are skipped, so files fall through to the next match.
    */
   matchFileViewer(path: string, head?: Uint8Array): FileViewerDescriptor | undefined
-  /**
-   * Register an icon theme (v0.16.0+): a VSCode-style file/folder icon
-   * theme whose assets are `data:` URLs (the official VSIX converter emits
-   * exactly this). Registers a duplicate id throws, like tabs/viewers; the
-   * returned disposer unregisters (HMR-safe through `ctx.effect`).
-   * Registration validates the document FAIL-FAST: a malformed definition
-   * or a non-data asset throws instead of rendering broken rows later.
-   */
-  registerIconTheme(descriptor: IconThemeDescriptor): () => void
-  /** The registered icon themes (registration order). */
-  getIconThemes(): readonly IconThemeDescriptor[]
-  /** Find an icon theme by id (undefined when not registered). */
-  getIconTheme(id: string): IconThemeDescriptor | undefined
-  /**
-   * The ACTIVE icon theme: the registry hit for prefs `fileIconTheme`.
-   * `''` (the default) or an unknown id resolves undefined — the caller
-   * renders the built-in outline icons (an uninstalled theme must never
-   * break the tree, matching VSCode's fallback to the default theme).
-   */
-  getActiveIconTheme(): IconThemeDescriptor | undefined
-  /**
-   * Resolve a file/folder row's icon under the ACTIVE theme (v0.16.0+);
-   * undefined when no theme is active or nothing matches — the caller then
-   * keeps its built-in outline icon. The ref is render-ready (SVG data URL
-   * or theme-scoped font family); font faces are injected by the renderer.
-   */
-  matchFileIcon(context: FileIconContext): FileIconRef | undefined
-  /**
-   * Register a command (v0.16.0+): an action that may attach to the
-   * existing context menus (file-tree rows, the tab bar) through
-   * `menus` and/or run programmatically via {@link executeCommand} —
-   * the VSCode `contributes.commands` + `menus` + `executeCommand`
-   * triangle scoped to the sidebar's surfaces. A duplicate id throws;
-   * the disposer unregisters (HMR-safe through `ctx.effect`).
-   */
-  registerCommand(descriptor: CommandDescriptor): () => void
-  /** The registered commands (registration order). */
-  getCommands(): readonly CommandDescriptor[]
-  /**
-   * Run a registered command (v0.16.0+). An unknown id is a strict
-   * no-op returning false; a throwing `run` is swallowed (console.error)
-   * and still returns true — the command was found and invoked.
-   */
-  executeCommand(id: string, payload?: CommandRunPayload): boolean
-  /**
-   * Register a file-tree data source provider (v0.17.0+): the explorer's
-   * data-source injection slot. A provider owns the tree of every session
-   * its `match` accepts — the root listing and each expansion then run
-   * through the provider's `list` instead of the local host `fs.tree`
-   * route; sessions no provider matches keep the local host path byte for
-   * byte. The declared `capabilities` tell the tree which local-only
-   * abilities (upload / download / search / git / openWith) remain
-   * available in provider mode — anything undeclared degrades OFF (hidden
-   * menu entries, inert drag-drop, no git decorations). Resolution is
-   * registration-order, FIRST match wins; a throwing `match`/`createSource`
-   * skips that provider. Multi-root (v0.18.0+): a provider may also
-   * declare `roots` — when a matched provider's `roots` settles non-empty,
-   * the session's tree renders the local cwd root (full local semantics,
-   * never taken over) plus one expandable root row per declared remote
-   * root (browsed through that provider's `list`); providers merge in
-   * registration order, duplicate root ids keep the first registration.
-   * A duplicate id throws; the disposer unregisters (HMR-safe through
-   * `ctx.effect`). See `file-tree-source.ts`.
-   */
-  registerFileTreeProvider(descriptor: FileTreeProviderDescriptor): () => void
-  /** The registered file-tree providers (registration order). */
-  getFileTreeProviders(): readonly FileTreeProviderDescriptor[]
-  /**
-   * Register a terminal data-source provider: the DEFAULT terminal tab's
-   * connection-layer injection slot. A provider owns the terminal tabs of
-   * every session its `match` accepts — the built-in terminal descriptor
-   * resolves the tab's transport through this registry, and a matching
-   * provider's `createTransport` result flows verbatim into TerminalView's
-   * existing `transport` prop (the TerminalTransport contract — no second
-   * wire protocol); tabs no provider matches keep the default
-   * localTransport (the local pty WS) byte for byte. Resolution is
-   * registration-order, FIRST match wins; a throwing `match` /
-   * `createTransport` — or an explicit `undefined` factory result (a
-   * per-tab refusal) — skips that provider. A duplicate id throws; the
-   * disposer unregisters (HMR-safe through `ctx.effect`). TerminalView
-   * reads `transport` once at mount, so the resolved source applies to
-   * terminals mounted afterwards (new tabs / remounts). Pinned virtual
-   * terminals resolve against their HOME session's scope; the instance-
-   * level `gb:` global-shared terminals are not resolved here and stay
-   * local. See `terminal-source.ts`.
-   */
-  registerTerminalProvider(descriptor: TerminalProviderDescriptor): () => void
-  /** The registered terminal providers (registration order). */
-  getTerminalProviders(): readonly TerminalProviderDescriptor[]
-  /**
-   * Register a git data-source provider (v0.23.0+): the GIT surfaces'
-   * data-source injection slot. A provider owns every git read AND
-   * mutation of the sessions its `match` accepts — the GitView panel,
-   * the explorer's git-status decorations and the diff tabs route their
-   * `api.git*` calls through the provider's `GitDataSource` (a shadow
-   * of the host `git.*` route surface, same signatures verbatim);
-   * sessions no provider matches keep the local host routes byte for
-   * byte. A provider may additionally declare an optional `subscribe`
-   * push channel on its source: bumps trigger an immediate refresh on
-   * every mounted consumer (provider-side mutations made outside the
-   * host surfaces). Resolution is registration-order, FIRST match wins;
-   * a throwing `match` / `createSource` — or an explicit `undefined`
-   * factory result (a per-session refusal) — skips that provider. A
-   * duplicate id throws; the disposer unregisters (HMR-safe through
-   * `ctx.effect`). See `git-source.ts` and
-   * docs/plans/2026-09-10-git-source-slot-design.md.
-   */
-  registerGitProvider(descriptor: GitProviderDescriptor): () => void
-  /** The registered git providers (registration order). */
-  getGitProviders(): readonly GitProviderDescriptor[]
-  /**
-   * Register a file-tree SECTION (v0.19.0+): the UPPER-MODULE slot of the
-   * Files panel's tree area. A section is an independent component region
-   * rendered ABOVE the local tree (the lower module keeps every existing
-   * capability and the v0.17/v0.18 provider/multi-root logic untouched);
-   * the section's component owns its whole surface — toolbar, remote tree
-   * rows, context menus, opening remote files — and better-sidebar applies
-   * no panel-level capability (search / upload / git stay local-tree-only).
-   * Resolution is registration-order, FIRST match wins; a throwing `match`
-   * skips that section. No match → the upper region is not rendered (the
-   * exact pre-slot render path).
-   *
-   * Two descriptor forms, EXACTLY one required (validated here): `render`
-   * (v0.19, the plugin draws its own surface) or `source` (v0.20, feature
-   * `'fileTreeSectionSource'` — the HOST renders its own FileTree in the
-   * upper module bound to the plugin's data source; see
-   * `file-tree-section.ts` / `section-source-tree.tsx`). The source form
-   * needs no global provider registration, so the lower module's local
-   * tree is never affected.
-   *
-   * A duplicate id throws; the disposer unregisters (HMR-safe through
-   * `ctx.effect`). See `file-tree-section.ts`.
-   */
-  registerFileTreeSection(descriptor: FileTreeSectionDescriptor): () => void
-  /** The registered file-tree sections (registration order). */
-  getFileTreeSections(): readonly FileTreeSectionDescriptor[]
   /**
    * Open a tab (used by external tabs and the + menu). `title` overrides
    * the descriptor's title when given (the editor tab shows the file name);
@@ -661,35 +563,13 @@ export interface BetterSidebarService {
   closeTab(tabId: string, scope?: SessionScope): void
   /** Subscribe to registry changes (register/dispose). */
   subscribe(listener: () => void): () => void
-  /**
-   * Register a keybinding (v0.14.0+): the hotkey injection point. External
-   * plugins contribute shortcuts to the sidebar's shared keybinding
-   * dispatch — a document-capture listener that matches PHYSICAL keys
-   * (`event.code`, layout-independent), guards IME/AltGr/key-repeat
-   * globally, and runs the first binding whose key AND `when` context
-   * match (ties break by `priority`, higher first). A matched binding
-   * fully consumes the event (preventDefault + stopPropagation); `run`
-   * returning `false` explicitly yields to the next matching binding.
-   * Register through `ctx.effect` — the disposer unregisters on fiber
-   * disposal (HMR-safe). A duplicate id throws (like tabs/viewers).
-   *
-   * Key syntax (simple, VSCode-flavoured): `Cmd+P` / `Ctrl+Alt+B` /
-   * `Alt+1` / `F5` / `ArrowUp` / `Space` — `Cmd` matches the platform
-   * command key (⌘ on macOS, Ctrl elsewhere), `Ctrl` is the literal
-   * physical Ctrl. Physical codes (`KeyP`, `Digit1`) are accepted too.
-   * Multi-key chords (two keys) are NOT supported — keep it simple.
-   */
-  registerKeybinding(descriptor: KeybindingDescriptor): () => void
-  /** The registered keybindings in dispatch order (priority desc). */
-  getKeybindings(): readonly KeybindingDescriptor[]
   /** The plugin version this service instance was built from ('0.12.0'). */
   readonly version: string
   /**
    * Monotonic capability list (v0.12.0+): 'badge' | 'tabLifecycle' |
    * 'updateTab' | 'openFile' | 'targetedOpen' | 'stateSubscription' |
-   * 'tabMeta' | 'pluginSettings' | 'fileTreeSection' |
-   * 'fileTreeSectionSource'. Features are never
-   * removed — consumers gate new API usage on membership.
+   * 'tabMeta' | 'pluginSettings'. Features are never removed — consumers
+   * gate new API usage on membership.
    */
   readonly features: readonly string[]
   /**
@@ -754,7 +634,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.21.0'
+export const SIDEBAR_SERVICE_VERSION = '0.19.1'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -769,40 +649,14 @@ export const SIDEBAR_SERVICE_VERSION = '0.21.0'
  * - 'pluginSettings': SidebarSettingsDeclaration.pluginToggles/render
  * - 'urlTarget' (v0.13.0): TabDescriptor.urlTarget (external-link claims)
  * - 'settingSelect': SidebarSettingToggle type 'select' (options/multi)
-* - 'keybindings' (v0.14.0): registerKeybinding / getKeybindings
- * - 'iconTheme' (v0.16.0): registerIconTheme / getIconThemes /
- *   getActiveIconTheme / matchFileIcon
- * - 'commands' (v0.16.0): registerCommand / getCommands / executeCommand
- * - 'fileTreeSource' (v0.17.0): registerFileTreeProvider /
- *   getFileTreeProviders — the explorer's data-source injection slot
- *   (v0.18.0+ adds provider `roots` — multi-root sessions: local root +
- *   per-provider remote roots; v0.21.0 adds `FileTreeDataSource.reference`
- *   — the row-path → local-path mapping behind the @-reference pill)
- * - 'fileTreeSection' (v0.19.0): registerFileTreeSection /
- *   getFileTreeSections — the UPPER-module slot of the Files panel's tree
- *   area: an independently-scrolling component region rendered above the
- *   local tree, owned entirely by the injecting plugin
- * - 'fileTreeSectionSource' (v0.20.0): the SOURCE form of a file-tree
- *   section descriptor — `source: { createSource, roots?, capabilities? }`
- *   makes the HOST render its own FileTree in the upper module bound to
- *   the plugin's data source (single-source, no global provider
- *   registration; the lower module's local tree is never affected)
- * - 'terminalSource' (v0.22.0): registerTerminalProvider /
- *   getTerminalProviders — the DEFAULT terminal tab's connection-layer
- *   injection slot (the resolver flows a provider's TerminalTransport
- *   into TerminalView's existing `transport` prop; no match keeps the
- *   default local pty WS, byte for byte)
- * - 'gitSource' (v0.23.0): registerGitProvider / getGitProviders — the
- *   GIT surfaces' data-source injection slot (GitView panel + explorer
- *   decorations + diff tabs route every git read AND mutation through
- *   the provider's GitDataSource for the sessions it owns; no match
- *   keeps the host `git.*` routes byte for byte)
- * - 'floatWindows' (v0.16.0): tabs float as free windows — openTab's dedupe/
- *   id focus targets RAISE the floating window (never duplicate the tab or
- *   expand panels), closeTab on a floating tab closes it with its window.
+ * - 'fileIcons' (v0.19.0): registerFileIcon/getFileIcons/matchFileIcon —
+ *   external file-tree icons overriding the built-in glyphs, matched by
+ *   extension (`exts`), exact file name (`names`), or directory name
+ *   (`folderNames`).
  *
- * (The upstream v0.19.0 note "floatWindows removed" does NOT apply here:
- * this branch keeps the free-window feature alongside the bottom workbench.)
+ * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
+ * owns the right column, so the plugin keeps only its bottom workbench).
+ * Consumers must not gate on it any more.
  */
 export const SIDEBAR_FEATURES = [
   'badge',
@@ -815,15 +669,7 @@ export const SIDEBAR_FEATURES = [
   'pluginSettings',
   'urlTarget',
   'settingSelect',
-'keybindings',
-  'iconTheme',
-  'commands',
-  'fileTreeSource',
-  'fileTreeSection',
-  'fileTreeSectionSource',
-  'terminalSource',
-  'gitSource',
-  'floatWindows',
+  'fileIcons',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -839,42 +685,12 @@ function safeCall(fn: () => void): void {
  * Create one BetterSidebar service bound to a store. The service owns the
  * tab/viewer registries (Map + listener set) and proxies openTab/closeTab
  * to the store's reducer. One instance per client plugin activation.
- *
- * `keybindings` (v0.14.0+) is the shared keybinding runtime: when passed
- * (production), plugin `registerKeybinding` calls land on the live
- * document-capture dispatcher; without it (tests) the service spins up a
- * private runtime so the API stays fully exercisable — those bindings are
- * simply never dispatched.
  */
-export function createBetterSidebarService(
-  store: SidebarStore,
-  windows?: WorkspaceWindowsStore,
-  keybindings?: KeybindingRuntime,
-): BetterSidebarService {
+export function createBetterSidebarService(store: SidebarStore): BetterSidebarService {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
-  const iconThemes = new Map<string, IconThemeDescriptor>()
-  const iconThemeIndexes = new Map<string, IconThemeIndex>()
-  const commands = new Map<string, CommandDescriptor>()
-  const fileTreeProviders = new Map<string, FileTreeProviderDescriptor>()
-  const fileTreeSections = new Map<string, FileTreeSectionDescriptor>()
-  const terminalProviders = new Map<string, TerminalProviderDescriptor>()
-  const gitProviders = new Map<string, GitProviderDescriptor>()
+  const fileIcons = new Map<string, FileIconDescriptor>()
   const listeners = new Set<() => void>()
-  // A private runtime when none is shared (standalone/tests): the registry
-  // semantics (dup ids, disposal, listing) work the same either way, only
-  // the document dispatch is absent.
-  const bindingRuntime = keybindings ?? new KeybindingRuntime(() => ({
-    state: null,
-    narrow: false,
-    focusInSidebar: false,
-    textEditing: false,
-    plusMenuOpen: false,
-    searchActive: false,
-    activeTab: null,
-    activeTabType: '',
-    activePaneTabs: [],
-  }))
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
 
@@ -886,13 +702,6 @@ export function createBetterSidebarService(
     listeners.add(listener)
     return () => { listeners.delete(listener) }
   }
-
-  /** Keybinding register path: delegate to the shared (or private) runtime. */
-  const registerKeybinding = (descriptor: KeybindingDescriptor): (() => void) =>
-    bindingRuntime.register(descriptor)
-
-  /** The registered keybindings in dispatch order. */
-  const getKeybindings = (): readonly KeybindingDescriptor[] => bindingRuntime.list()
 
   const registerTab = (descriptor: TabDescriptor): (() => void) => {
     if (tabs.has(descriptor.id)) {
@@ -924,142 +733,110 @@ export function createBetterSidebarService(
 
   const getTabs = (): readonly TabDescriptor[] => Array.from(tabs.values())
   const getFileViewers = (): readonly FileViewerDescriptor[] => Array.from(viewers.values())
+  const getFileIcons = (): readonly FileIconDescriptor[] => Array.from(fileIcons.values())
   const getTab = (id: string): TabDescriptor | undefined => tabs.get(id)
 
-  const registerIconTheme = (descriptor: IconThemeDescriptor): (() => void) => {
-    if (iconThemes.has(descriptor.id)) {
-      throw new Error(`[dsh-better-sidebar] icon theme "${descriptor.id}" already registered`)
+  const registerFileIcon = (descriptor: FileIconDescriptor): (() => void) => {
+    if (fileIcons.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] file icons "${descriptor.id}" already registered`)
     }
-    // Fail fast on malformed documents/assets (missing iconDefinitions,
-    // non-data URLs, defs without iconPath/fontCharacter). The index is
-    // built once here; queries never allocate. Font faces (@font-face for
-    // font themes) inject into the document and ride the disposer — SVG
-    // themes inject nothing.
-    const index = buildIconThemeIndex(descriptor.theme, descriptor.id, descriptor.monochrome === true)
-    const removeFonts = injectThemeFonts(index.fonts, descriptor.id)
-    iconThemes.set(descriptor.id, descriptor)
-    iconThemeIndexes.set(descriptor.id, index)
+    fileIcons.set(descriptor.id, descriptor)
     notify()
     return () => {
-      if (iconThemes.get(descriptor.id) === descriptor) {
-        iconThemes.delete(descriptor.id)
-        iconThemeIndexes.delete(descriptor.id)
-        removeFonts()
+      if (fileIcons.get(descriptor.id) === descriptor) {
+        fileIcons.delete(descriptor.id)
         notify()
       }
     }
   }
 
-  const getIconThemes = (): readonly IconThemeDescriptor[] => Array.from(iconThemes.values())
-  const getIconTheme = (id: string): IconThemeDescriptor | undefined => iconThemes.get(id)
-  const getActiveIconTheme = (): IconThemeDescriptor | undefined => {
-    const id = store.getPrefs().fileIconTheme
-    return id === '' ? undefined : iconThemes.get(id)
-  }
+  // Registrations in ranking order: priority desc, stable for equal
+  // priorities (insertion order) — the same ranking `matchFileViewer` uses.
+  const rankedFileIcons = (): FileIconDescriptor[] =>
+    Array.from(fileIcons.values()).sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
 
-  /** Resolve a row icon under the ACTIVE theme (built-in fallback is the
-   *  caller's job: undefined means "render your default outline icon"). */
-  const matchFileIcon = (context: FileIconContext): FileIconRef | undefined => {
-    const active = getActiveIconTheme()
-    if (active === undefined) return undefined
-    const index = iconThemeIndexes.get(active.id)
-    return index === undefined ? undefined : matchFileIconOf(index, context)
-  }
-
-  const registerCommand = (descriptor: CommandDescriptor): (() => void) => {
-    if (commands.has(descriptor.id)) {
-      throw new Error(`[dsh-better-sidebar] command "${descriptor.id}" already registered`)
+  // Specific registrations only: catch-alls (`exts: []`) and folder
+  // registrations (`'folder'`/`'folder-open'`) are skipped, and the reserved
+  // folder values never match a real file's extension. Name rules (`names`)
+  // outrank extension rules. The built-in glyph map is not consulted here —
+  // an undefined result IS the "fall through" signal the `fileIcon` resolver
+  // acts on.
+  const matchFileIcon = (path: string): FileIconDescriptor | undefined => {
+    const ext = extOf(path)
+    // Reserved folder values never claim a real file: `x.folder` falls
+    // through to the built-in/catch-all chain like any unknown extension.
+    const reserved = ext === FOLDER_EXT || ext === FOLDER_OPEN_EXT
+    const name = baseName(path).toLowerCase()
+    const ranked = rankedFileIcons()
+    for (const d of ranked) {
+      if (d.names?.some(entry => entry.toLowerCase() === name) === true) return d
     }
-    commands.set(descriptor.id, descriptor)
-    notify()
-    return () => {
-      if (commands.get(descriptor.id) === descriptor) {
-        commands.delete(descriptor.id)
-        notify()
+    if (reserved) return undefined
+    for (const d of ranked) {
+      if (d.exts?.includes(ext) === true) return d
+    }
+    return undefined
+  }
+
+  // Directory rows: a `folderNames` match on the directory's own basename
+  // first, then the reserved `'folder'`/`'folder-open'` exts (a catch-all
+  // never claims a directory).
+  const matchFolderIcon = (open: boolean, name?: string): FileIconDescriptor | undefined => {
+    const ranked = rankedFileIcons()
+    if (name !== undefined) {
+      const wanted = name.toLowerCase()
+      for (const d of ranked) {
+        if (d.folderNames?.some(entry => entry.toLowerCase() === wanted) === true) return d
       }
     }
+    const want = open ? FOLDER_OPEN_EXT : FOLDER_EXT
+    for (const d of ranked) {
+      if (d.exts?.includes(want) === true) return d
+    }
+    return undefined
   }
 
-  const getCommands = (): readonly CommandDescriptor[] => Array.from(commands.values())
-
-  const registerFileTreeProvider = (descriptor: FileTreeProviderDescriptor): (() => void) => {
-    if (fileTreeProviders.has(descriptor.id)) {
-      throw new Error(`[dsh-better-sidebar] file tree provider "${descriptor.id}" already registered`)
+  /** Run one registered factory; a throw is logged and returns undefined. */
+  const safeIcon = (d: FileIconDescriptor, path: string, size: number, open?: boolean): ReactNode => {
+    try {
+      return d.icon(path, size, open)
+    } catch (error) {
+      console.error(`[dsh-better-sidebar] file icon factory "${d.id}" error:`, error)
+      return undefined
     }
-    fileTreeProviders.set(descriptor.id, descriptor)
-    notify()
-    return () => {
-      if (fileTreeProviders.get(descriptor.id) === descriptor) {
-        fileTreeProviders.delete(descriptor.id)
-        notify()
+  }
+
+  // The authoritative file-icon chain (see the interface doc): specific name
+  // or extension registration → registered catch-all → the host's own
+  // file-type artwork. The catch-all ranks by priority desc then registration
+  // order (first wins), which is what lets an external plugin own "every
+  // extension I did not name" without also owning the ones DSH draws.
+  const fileIcon = (path: string, size: number): ReactNode => {
+    const specific = matchFileIcon(path)
+    if (specific !== undefined) {
+      const icon = safeIcon(specific, path, size)
+      if (icon !== undefined) return icon
+    }
+    for (const d of rankedFileIcons()) {
+      if (d.exts !== undefined && d.exts.length === 0) {
+        const icon = safeIcon(d, path, size)
+        if (icon !== undefined) return icon
       }
     }
+    return builtinFileIcon(path, size)
   }
 
-  const getFileTreeProviders = (): readonly FileTreeProviderDescriptor[] => Array.from(fileTreeProviders.values())
-
-  const registerTerminalProvider = (descriptor: TerminalProviderDescriptor): (() => void) => {
-    if (terminalProviders.has(descriptor.id)) {
-      throw new Error(`[dsh-better-sidebar] terminal provider "${descriptor.id}" already registered`)
+  // Directory rows: registered folderNames/folder/folder-open icon, else the
+  // host's folder glyph. The row's path feeds the factory (a registration may
+  // vary icons per directory) and `open` lets one descriptor render both
+  // states.
+  const folderIcon = (path: string, open: boolean, size: number): ReactNode => {
+    const registered = matchFolderIcon(open, baseName(path))
+    if (registered !== undefined) {
+      const icon = safeIcon(registered, path, size, open)
+      if (icon !== undefined) return icon
     }
-    terminalProviders.set(descriptor.id, descriptor)
-    notify()
-    return () => {
-      if (terminalProviders.get(descriptor.id) === descriptor) {
-        terminalProviders.delete(descriptor.id)
-        notify()
-      }
-    }
-  }
-
-  const getTerminalProviders = (): readonly TerminalProviderDescriptor[] => Array.from(terminalProviders.values())
-
-  const registerGitProvider = (descriptor: GitProviderDescriptor): (() => void) => {
-    if (gitProviders.has(descriptor.id)) {
-      throw new Error(`[dsh-better-sidebar] git provider "${descriptor.id}" already registered`)
-    }
-    gitProviders.set(descriptor.id, descriptor)
-    notify()
-    return () => {
-      if (gitProviders.get(descriptor.id) === descriptor) {
-        gitProviders.delete(descriptor.id)
-        notify()
-      }
-    }
-  }
-
-  const getGitProviders = (): readonly GitProviderDescriptor[] => Array.from(gitProviders.values())
-
-  const registerFileTreeSection = (descriptor: FileTreeSectionDescriptor): (() => void) => {
-    if (fileTreeSections.has(descriptor.id)) {
-      throw new Error(`[dsh-better-sidebar] file tree section "${descriptor.id}" already registered`)
-    }
-    // The two forms are mutually exclusive AND exhaustive: exactly one of
-    // `render` (v0.19, plugin-drawn) / `source` (v0.20, host-drawn bound to
-    // the plugin's data) must be present — anything else is a contract bug.
-    if ((descriptor.render === undefined) === (descriptor.source === undefined)) {
-      throw new Error(
-        `[dsh-better-sidebar] file tree section "${descriptor.id}" must provide exactly one of `
-        + '`render` (v0.19 form) or `source` (v0.20 form)',
-      )
-    }
-    fileTreeSections.set(descriptor.id, descriptor)
-    notify()
-    return () => {
-      if (fileTreeSections.get(descriptor.id) === descriptor) {
-        fileTreeSections.delete(descriptor.id)
-        notify()
-      }
-    }
-  }
-
-  const getFileTreeSections = (): readonly FileTreeSectionDescriptor[] => Array.from(fileTreeSections.values())
-
-  const executeCommand = (id: string, payload?: CommandRunPayload): boolean => {
-    const descriptor = commands.get(id)
-    if (descriptor === undefined) return false
-    safeCall(() => descriptor.run(payload ?? { where: 'programmatic' }))
-    return true
+    return builtinFolderIcon(open, size)
   }
 
   // The enable switches come from the user's side card prefs (the shared
@@ -1114,10 +891,15 @@ export function createBetterSidebarService(
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
     // ── Native right Sidebar ──────────────────────────────────────────────
     // With the native surface installed, every open except an explicit
-    // bottom-panel one lands there: a file path becomes a resource address
-    // (the native registry routes it to the plugin's file type), a path-less
-    // editor open becomes the `files` page kind, and everything else becomes
-    // a page open carrying the seed as navigation params.
+    // bottom-panel one lands there. The path seed's meaning depends on the
+    // type: `editor` is the only kind registered with
+    // `dsh-resource://file/**` patterns (src/client/native/index.ts), so its
+    // path seeds become resource addresses (the native registry routes the
+    // address back to the editor); a path-less editor open becomes the
+    // `files` page kind. Every OTHER type keeps the page open — its path is
+    // component state, not a file to open — and rides the seed (path
+    // included) as navigation params, which the tab adapter merges onto the
+    // synthetic record's `tab.path` for the registered component.
     if (surface !== undefined && seed.target !== 'bottom') {
       const state = store.getSnapshot().state
       // The descriptor's own factory mints what a view needs beyond the seed:
@@ -1140,21 +922,27 @@ export function createBetterSidebarService(
         ...(seed.diff === undefined ? {} : { diff: seed.diff }),
         ...(seed.meta === undefined && minted?.tab.meta === undefined ? {} : { meta: seed.meta ?? minted?.tab.meta }),
       }
-      if (seed.path !== undefined) {
-        surface.openResource({
-          sessionId: targetSessionId,
-          address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
-          revealIfOpened: true,
-        })
-      } else if (seed.type === 'editor') {
-        // The path-less editor window IS the file explorer.
-        surface.openTab({ sessionId: targetSessionId, kind: 'files', params: {}, revealIfOpened: true })
+      if (seed.type === 'editor') {
+        if (seed.path !== undefined) {
+          surface.openResource({
+            sessionId: targetSessionId,
+            address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
+            revealIfOpened: true,
+          })
+        } else {
+          // The path-less editor window IS the file explorer.
+          surface.openTab({ sessionId: targetSessionId, kind: 'files', params: {}, revealIfOpened: true })
+        }
       } else {
+        // A component type's path seed stays on the page open (regression
+        // #632: rerouting every path seed into openResource sent the open to
+        // the editor, so the registered component never mounted).
         surface.openTab({
           sessionId: targetSessionId,
           kind: seed.type,
           params: {
             title,
+            ...(seed.path === undefined ? {} : { path: seed.path }),
             ...(seed.url === undefined ? {} : { url: seed.url }),
             ...(seed.diff === undefined ? {} : { diff: seed.diff }),
             ...(synthetic.meta === undefined ? {} : { meta: synthetic.meta }),
@@ -1176,11 +964,10 @@ export function createBetterSidebarService(
     // dedupe/id-safety-net focus is an ACTIVATION, not an open).
     let created: SidebarTab | undefined
     let activated: SidebarTab | undefined
-    // This branch KEEPS its own right panel alongside the bottom workbench,
-    // so an open lands in the ACTIVE pane of either tree (the local
-    // semantics; the stock upstream build lands every open in the bottom
-    // workbench only).
-    const land = openTabInActivePane
+    // A bottom-targeted open lands in the bottom workbench's own pane; the
+    // right tree it would otherwise follow is no longer rendered (DSH's
+    // native sidebar owns the right column).
+    const land = openTabInBottomPane
     const reducer = (state: SidebarState): SidebarState => {
       // Let the descriptor mint the tab (terminal's nextTerminal bump, etc.).
       let tab: SidebarTab
@@ -1213,11 +1000,11 @@ export function createBetterSidebarService(
       // tab that never closes.
       const dedupeKey = descriptor.dedupeKey ?? (descriptor.single === true ? () => descriptor.id : undefined)
       const key = dedupeKey?.(tab)
-      const inputTabs = allLeaves(state.splits).concat(allLeaves(state.bottomSplits)).flatMap(leaf => leaf.tabs)
+      const inputTabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
       const existedByKey = key !== undefined
         && inputTabs.some(candidate => candidate.type === tab.type && dedupeKey!(candidate) === key)
       const existedById = tabOpenIn(state, tab.id)
-      let isCreation = !existedByKey && !existedById
+      const isCreation = !existedByKey && !existedById
       // A URL seed pre-fills a NEWLY CREATED tab's path (the browser tab
       // navigates to it on mount); a FOCUS must never have its path
       // overwritten. An explicit seed.title still wins over a createTab-
@@ -1229,84 +1016,27 @@ export function createBetterSidebarService(
           ...(seed.title !== undefined ? { title: seed.title } : {}),
         })
       }
-      // A content open whose path matches a BOUND WINDOW of the target
-      // session's workspace focuses the shared stub instead of opening a
-      // local duplicate — the workspace windows store is the single source
-      // of truth (the stub renders its live definition). The dedupe pass
-      // above already landed the local tab, so it is dropped again here; a
-      // missing stub (paranoia) falls through to the regular open.
-      if (isCreation && seed.path !== undefined && windows !== undefined) {
-        const bound = windows.windowsOfSession(targetSessionId)
-          .find(window => window.type === tab.type && window.path === seed.path)
-        if (bound !== undefined) {
-          // Stubs live in the first leaf of the area they were bound from
-          // (right or bottom). The activate reducer moves activePane into
-          // that area's tree, so the auto-expand block below opens the
-          // hosting panel — the focus lands in sight.
-          const stubLeaf = leafWithTab(landed.splits, bound.id) ?? leafWithTab(landed.bottomSplits, bound.id)
-          if (stubLeaf !== undefined) {
-            landed = removeTabId(landed, tab.id)
-            landed = activateTabReducer(landed, stubLeaf.id, bound.id)
-            // A bound-window focus is an ACTIVATION, not a creation: flip
-            // the classification so the capture below reports the focus
-            // (the auto-expand block still opens the panel — a content
-            // open must land in sight).
-            isCreation = false
-          }
-        }
-      }
       // Lifecycle capture (before the auto-expand block, which early-returns).
       if (isCreation) {
         // Resolve the ACTUAL landed tab — the url patch mints a new object,
         // so the callback must see the tab that was really inserted.
-        const landedTabs = allLeaves(landed.splits).concat(allLeaves(landed.bottomSplits)).flatMap(leaf => leaf.tabs)
+        const landedTabs = allLeaves(landed.bottomSplits).flatMap(leaf => leaf.tabs)
         created = landedTabs.find(candidate => candidate.id === tab.id) ?? tab
       } else {
         // A focus happened: resolve the tab that is actually active now and
         // report THAT to onActivate (never the caller's un-inserted seed).
-        const candidates = allLeaves(landed.splits).concat(allLeaves(landed.bottomSplits)).flatMap(leaf => leaf.tabs)
+        const candidates = allLeaves(landed.bottomSplits).flatMap(leaf => leaf.tabs)
         activated = key !== undefined
           ? candidates.find(candidate => candidate.type === tab.type && dedupeKey!(candidate) === key)
           : candidates.find(candidate => candidate.id === tab.id)
         activated ??= tab
       }
-      // A FOCUS on a free-window (floating) tab needs no expansion — the free
-      // window renders regardless of panel state (expanding a panel for it
-      // would point the user at a pane the content is not in).
-      if (
-        !isCreation
-        && floatWithTab(landed, activated?.id ?? tab.id) !== undefined
-      ) {
-        return landed
-      }
-      // A CONTENT open (file / browser) must land in sight: when the panel
-      // hosting the landing pane is collapsed, expand it. On narrow
-      // viewports the two workbenches merge into one drawer, so the drawer
-      // (panelOpen) is the only lever; on wide viewports the landing pane's
-      // own panel opens — the bottom panel when the active pane lives in the
-      // bottom tree, else the right panel. Type-only opens (+ menu,
-      // agent-terminal auto-tabs) never expand (the panel behavior is their
-      // caller's business). The check runs on the post-dedupe state, so a
-      // content open that merely FOCUSES an existing tab expands the panel
-      // too — the open must never land out of sight. Opens targeted at an
-      // INACTIVE session never expand (nothing is in sight for the user).
-      if (
-        !targetsInactiveSession
-        && typeof window !== 'undefined'
-        && (seed.path !== undefined || seed.url !== undefined)
-      ) {
-        if (isNarrowWidth(window.innerWidth)) {
-          if (!landed.panelOpen) return togglePanel(landed)
-        } else {
-          const hostKey = treeOf(landed, landed.activePane ?? '')
-          if (hostKey === 'bottomSplits') {
-            if (!landed.bottomOpen) return { ...landed, bottomOpen: true }
-          } else if (!landed.panelOpen) {
-            return togglePanel(landed)
-          }
-        }
-      }
-      return landed
+      // Every open that lands in the workbench is visible: a creation
+      // expands it (openTabInBottomPane) and so does a FOCUS (the dedupe/id
+      // reducers only activate the tab). An open targeted at an INACTIVE
+      // session expands THAT session's workbench — it is waiting for the
+      // user when they switch to it.
+      return landed.bottomOpen ? landed : { ...landed, bottomOpen: true }
     }
     // A scope targeting ANOTHER session lands the open there without
     // switching the UI; a scope naming the active session (or no scope)
@@ -1318,16 +1048,6 @@ export function createBetterSidebarService(
     }
     if (created !== undefined) safeCall(() => descriptor.onOpen?.(created!, callbackScope))
     else if (activated !== undefined) safeCall(() => descriptor.onActivate?.(activated!, callbackScope))
-    // A tab the user just opened / focused IS the working surface: pin it
-    // so a W-close targets it even before any click lands in its content
-    // body (the focusin tracker then overrides the pin once a tab's content
-    // actually takes focus — e.g. the user reaches into another pane).
-    // Opens targeted at an INACTIVE session never pin (the pin is page-wide
-    // and would wrongly claim a tab the user cannot see).
-    if (!targetsInactiveSession) {
-      const landed = created ?? activated
-      if (landed !== undefined) setFocusedTabId(landed.id)
-    }
   }
 
   const closeTab = (tabId: string, scope?: SessionScope): void => {
@@ -1346,37 +1066,14 @@ export function createBetterSidebarService(
       }
     }
     let closed: SidebarTab | undefined
-    // The tab that takes over the closed tab's pane (its `active` pointer
-    // AFTER the close — the strip's "next landed" tab). Only for pane tabs:
-    // a float IS its own pane, so closing one has no landing tab.
-    let landingTabId: string | undefined
-    // Whether the DOM focus was inside the sidebar when the close happened:
-    // only a close from a focused sidebar should move the real focus (the
-    // user is "in the sidebar"); programmatic closes (model/agent-triggered)
-    // must never steal focus from the conversation.
-    const focusInSidebar = typeof document !== 'undefined'
-      && document.activeElement instanceof Element
-      && document.activeElement.closest?.('[data-dsh-better-sidebar]') !== null
     store.reduce((state) => {
       // Unknown tab ids are a strict no-op: no state churn, no notify, no
       // pointless localStorage rewrite (mirrors updateTab's short-circuit).
       if (!tabOpenIn(state, tabId)) return state
-      // A floating tab closes WITH its window (no pane landing tab).
-      const float = floatWithTab(state, tabId)
-      if (float !== undefined) {
-        closed = float.tab
-        return closeFloatByTab(state, tabId)
-      }
       const paneId = findPaneIdOf(state, tabId)
-      const leaf = leafWithTab(state[treeOf(state, paneId)], tabId)
+      const leaf = leafWithTab(state.bottomSplits, tabId)
       closed = leaf?.tabs.find(tab => tab.id === tabId)
-      const next = closeTabReducer(state, paneId, tabId)
-      // The pane's post-close active pointer is the landing tab. An emptied
-      // pane is REMOVED (removeLeafAt) and has no landing tab to focus.
-      const nextLeaf = allLeaves(next.splits).concat(allLeaves(next.bottomSplits))
-        .find(candidate => candidate.id === paneId)
-      if (nextLeaf !== undefined) landingTabId = nextLeaf.active ?? undefined
-      return next
+      return closeTabReducer(state, paneId, tabId)
     })
     if (closed !== undefined) {
       const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
@@ -1384,15 +1081,6 @@ export function createBetterSidebarService(
         const descriptor = tabs.get(closed.type)
         // An explicit scope (with its optional cwd) rides to the callback.
         safeCall(() => descriptor?.onClose?.(closed!, scope ?? { sessionId }))
-      }
-      // Land the working surface on the tab that takes over: pin it AND move
-      // the real DOM focus to its strip tab (only when the close happened
-      // from a focused sidebar and targets the current session) — closing one
-      // tab then immediately pressing ⌘W closes the NEXT one, in sequence.
-      if (landingTabId !== undefined && focusInSidebar
-          && (scope === undefined || scope.sessionId === store.getSnapshot().sessionId)) {
-        setFocusedTabId(landingTabId)
-        focusTabStripElement(landingTabId)
       }
     }
   }
@@ -1406,14 +1094,6 @@ export function createBetterSidebarService(
   /** Patch an open tab's display fields (a missing tab id is a no-op). */
   const updateTab = (tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void => {
     if (surface?.update(tabId, patch) === true) return
-    // A workspace-bound stub's display fields live in the workspace windows
-    // store — patching the session tree would be a no-op (stubs resolve
-    // their live definition at render). Route to the store so every session
-    // of the workspace follows (e.g. the editorExplorer in-place switch).
-    if (windows !== undefined && isBoundTabId(tabId)) {
-      windows.update(tabId, patch)
-      return
-    }
     store.reduce((state) => patchTab(state, tabId, {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
@@ -1428,14 +1108,8 @@ export function createBetterSidebarService(
     store.reduce((state) => {
       // Unknown tab ids are a strict no-op (no state churn / notify).
       if (!tabOpenIn(state, tabId)) return state
-      // A floating tab "activates" by raising its window — no pane switch.
-      const float = floatWithTab(state, tabId)
-      if (float !== undefined) {
-        activated = float.tab
-        return raiseFloat(state, float.id)
-      }
       const paneId = findPaneIdOf(state, tabId)
-      const leaf = leafWithTab(state[treeOf(state, paneId)], tabId)
+      const leaf = leafWithTab(state.bottomSplits, tabId)
       activated = leaf?.tabs.find(tab => tab.id === tabId)
       return activateTabReducer(state, paneId, tabId)
     })
@@ -1445,13 +1119,6 @@ export function createBetterSidebarService(
         const descriptor = tabs.get(activated.type)
         // An explicit scope (with its optional cwd) rides to the callback.
         safeCall(() => descriptor?.onActivate?.(activated!, scope ?? { sessionId }))
-      }
-      // Activation = the working surface (strip clicks, dedupe focuses,
-      // quick-open jumps): pin it exactly like an open does. Only the
-      // current session's activations pin (a targeted activate of another
-      // session's tab must not claim the page-wide pin).
-      if (scope === undefined || scope.sessionId === store.getSnapshot().sessionId) {
-        setFocusedTabId(activated.id)
       }
     }
   }
@@ -1466,33 +1133,21 @@ export function createBetterSidebarService(
   return {
     registerTab,
     registerFileViewer,
+    registerFileIcon,
     getTabs,
     getFileViewers,
+    getFileIcons,
+    matchFileIcon,
+    matchFolderIcon,
+    fileIcon,
+    folderIcon,
     getTab,
     isTabEnabled,
     isViewerEnabled,
     matchFileViewer,
-    registerIconTheme,
-    getIconThemes,
-    getIconTheme,
-    getActiveIconTheme,
-    matchFileIcon,
-    registerCommand,
-    getCommands,
-    executeCommand,
-    registerFileTreeProvider,
-    getFileTreeProviders,
-    registerFileTreeSection,
-    getFileTreeSections,
-    registerTerminalProvider,
-    getTerminalProviders,
-    registerGitProvider,
-    getGitProviders,
     openTab,
     closeTab,
     subscribe,
-    registerKeybinding,
-    getKeybindings,
     version: SIDEBAR_SERVICE_VERSION,
     features: SIDEBAR_FEATURES,
     getSnapshot,
@@ -1519,7 +1174,7 @@ function applyDedupe(
   const dedupeKey = descriptor.dedupeKey ?? (descriptor.single === true ? () => descriptor.id : undefined)
   const key = dedupeKey?.(tab)
   if (key !== undefined) {
-    for (const leaf of allLeaves(state.splits).concat(allLeaves(state.bottomSplits))) {
+    for (const leaf of allLeaves(state.bottomSplits)) {
       const existing = leaf.tabs.find(t => t.type === tab.type && dedupeKey!(t) === key)
       if (existing !== undefined) return activateTabReducer(state, leaf.id, existing.id)
     }
@@ -1529,31 +1184,8 @@ function applyDedupe(
 
 /** Find which pane hosts a tab id ('' if none). */
 function findPaneIdOf(state: SidebarState, tabId: string): string {
-  for (const leaf of allLeaves(state.splits).concat(allLeaves(state.bottomSplits))) {
+  for (const leaf of allLeaves(state.bottomSplits)) {
     if (leaf.tabs.some(t => t.id === tabId)) return leaf.id
   }
   return state.activePane ?? ''
-}
-
-/**
- * Remove every tab with `tabId` from both trees (the bound-window focus
- * path drops the local duplicate the dedupe pass just landed). A dangling
- * `active` (it pointed at the removed tab) is nulled — the same rule as
- * closeTab's cleanup, minus the emptied-leaf removal.
- */
-function removeTabId(state: SidebarState, tabId: string): SidebarState {
-  const walk = (node: SplitNode): SplitNode => {
-    if (node.kind === 'leaf') {
-      const tabs = node.tabs.filter(tab => tab.id !== tabId)
-      if (tabs === node.tabs) return node
-      const active = node.active !== null && !tabs.some(tab => tab.id === node.active) ? null : node.active
-      return { ...node, tabs, active }
-    }
-    return { ...node, children: node.children.map(walk) }
-  }
-  const splits = walk(state.splits)
-  const bottomSplits = walk(state.bottomSplits)
-  return splits === state.splits && bottomSplits === state.bottomSplits
-    ? state
-    : { ...state, splits, bottomSplits }
 }

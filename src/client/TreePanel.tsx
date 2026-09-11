@@ -7,13 +7,6 @@
  * the tree cache. EditorHost docks it as the tab's right panel (wrapped in
  * a drag-resize handle) and provides the file context-menu open escapes.
  *
-* Keyboard-first (v0.14.0+): the search box navigates like a quick-open
- * list — ArrowDown/ArrowUp move a highlighted result (wrap-around), Enter
- * opens the highlighted result, Escape clears the query (an empty query
- * blurs the input). The input also registers itself as THE live files
- * search input (only while `visible`) so the global ⌘P / ⌘F keybindings
- * can focus it from anywhere.
- *
  * Uploads (header pickers, the tree's drag-drop and "upload here" menu)
  * all funnel through here: one session at a time, shown in a full-window
  * progress overlay with cancel, followed by a tree refresh and a one-line
@@ -22,25 +15,17 @@
  * drop over the file window uploads here and never reaches DSH's chat
  * intake.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
-import { IconFolderOpen16, IconRefreshOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { api, type GitStatusResult } from './api.ts'
-import { FileTree, gitKindCss } from './FileTree.tsx'
-import { fileTreeCapabilityOn, useFileTreeRoots, useFileTreeSource } from './file-tree-source.ts'
-import { useGitSource } from './git-source.ts'
-import { useFileTreeSection, type FileTreeSectionDescriptor, type FileTreeSectionScope } from './file-tree-section.ts'
-import { SectionSourceTree } from './section-source-tree.tsx'
-import { persistFileTreeSplitRatio, readFileTreeSplitRatio } from './file-tree-splitter.ts'
-import { FileTreeSplitter } from './FileTreeSplitter.tsx'
-import type { Context } from '../context-types.ts'
-import { buildGitStatusMap, subscribeGitStatusChanged } from './git-status.ts'
+import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { api } from './api.ts'
+import type { BetterSidebarService } from './service.ts'
+import type { SidebarStore } from './state.ts'
+import { FileTree } from './FileTree.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
-import { searchKeyAction, clampSearchIndex } from './search-keys.ts'
-import { setSearchActive, setSearchInputElement } from './keybindings.ts'
 import { UploadOverlay } from './UploadOverlay.tsx'
 import {
   summarizeResults, uploadHintText, uploadItemsFromFiles, uploadToDir,
@@ -61,11 +46,10 @@ interface UploadSession {
 export function TreePanel(props: {
   sessionId: string
   cwd: string | undefined
+  /** The sidebar store (passed through to the tree's fence-refusal notice). */
+  store: SidebarStore
   expanded: string[]
-/** Passed through to FileTree (v0.16.0+): enables icon-theme row icons. */
-  ctx?: Context
-  /** Files highlighted by a "Show in folder" reveal (absolute paths). */
-  revealed?: string[]
+  revealed: string[]
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
   /** File context-menu "open in a new tab" (passed through to FileTree). */
@@ -79,120 +63,37 @@ export function TreePanel(props: {
   openWithSsh?: boolean
   onOpenWith?: (targetId: string, path: string) => void
   onToggleOpenWithPin?: (targetId: string) => void
-  onReferenceFile: (path: string) => void
+  onReferenceFile: (path: string, isDir: boolean) => void
+  /** A tree rename landed (passed through to FileTree for tab retargeting). */
+  onPathRenamed?: (oldPath: string, newPath: string) => void
+  /** A tree delete landed (passed through to FileTree for tab closing). */
+  onPathDeleted?: (path: string, isDir: boolean) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
-  /** Whether this tab is the ACTIVE, VISIBLE one (v0.14.0+): only a visible
-   *  tree panel registers itself as the global search-focus target, so a
-   *  hidden tab's docked panel can never swallow ⌘P / ⌘F. */
-  visible?: boolean
+  /** The sidebar registry service (file-icon registrations; passed through to FileTree). */
+  service?: BetterSidebarService
 }) {
-const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full, visible } = props
+  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, full, service } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
-/** The highlighted result row (keyboard navigation). */
-  const [activeIndex, setActiveIndex] = useState(0)
-  const [focused, setFocused] = useState(false)
-  const inputRef = useRef<HTMLInputElement | null>(null)
 
-  // ── File-tree data source (v0.17.0+) ────────────────────────────────────
-  // The provider resolved for this session (undefined = local host). It
-  // gates the panel's local-only chrome: search, upload pickers and git
-  // status all ride the provider's declared capabilities — undeclared
-  // abilities degrade OFF in provider mode, local sessions keep everything.
-  const fileSource = useFileTreeSource(ctx, sessionId, cwd)
-  // Multi-root (v0.18.0+): the session's resolved REMOTE roots. Panel-level
-  // capabilities stay LOCAL whenever the local root exists — the search box
-  // serves the LOCAL starting point, uploads land in local dirs, git
-  // decorations describe the local repo — so multi-root mode keeps every
-  // panel surface exactly as a local session has it. Remote-root
-  // degradation is per-ROOT inside the tree (FileTree receives this same
-  // resolution, so the provider's `roots` is consulted once per change).
-  const resolvedRoots = useFileTreeRoots(ctx, sessionId, cwd)
-  const multiRoot = (resolvedRoots?.length ?? 0) > 0
-  const localMode = fileSource === undefined || multiRoot
-  const uploadOn = localMode || fileTreeCapabilityOn(fileSource, 'upload')
-  const gitOn = localMode || fileTreeCapabilityOn(fileSource, 'git')
-  const searchOn = localMode
-    || (fileSource.capabilities.search === true && fileSource.source.search !== undefined)
-
-  // ── Upper-module slot (v0.19.0+): the FIRST section whose `match`
-  //    accepts this session renders in an independent region ABOVE the
-  //    local tree; no match → undefined, and the tree renders exactly as
-  //    before (no wrapper, no extra DOM). Live: re-resolves on registry
-  //    ticks (a plugin activating/deactivating shows/hides the section
-  //    immediately) and on session/cwd changes.
-  const section = useFileTreeSection(ctx, sessionId, cwd)
-
-  // ── Git status decorations (VSCode-style) ───────────────────────────────
-  // Fetched per panel on mount / session change / the refresh button, plus
-  // every time the git panel bumps the shared change bus (stage, commit,
-  // discard…) — and, when a git data-source provider (feature 'gitSource',
-  // v0.23.0+) owns this session, on the provider's own push channel.
-  // Failures degrade silently to a clean tree — the git panel is the place
-  // that surfaces git errors.
-  const gitSource = useGitSource(ctx, sessionId, cwd)
-  const [gitStatus, setGitStatus] = useState<GitStatusResult | null>(null)
-  const gitRequest = useRef(0)
-  const loadGitStatus = useCallback(() => {
-    // Provider tree sessions: decorations only exist when the provider
-    // declared git support (the local host's git.status cannot describe
-    // remote paths); the DATA then comes from the git data-source slot —
-    // a matching git provider's status snapshot describes the tree rows'
-    // own (remote) path namespace. Local / multi-root sessions keep every
-    // ability; multi-root fetches through the git provider too so the
-    // REMOTE roots decorate from the remote repo. No git provider → the
-    // host route, byte for byte. The map stays null → clean tree, footer
-    // hidden otherwise.
-    if (!gitOn) {
-      setGitStatus(null)
-      return
-    }
-    if (cwd === undefined || cwd === '') {
-      setGitStatus(null)
-      return
-    }
-    const request = ++gitRequest.current
-    const fetch = gitSource !== undefined
-      ? gitSource.gitStatus({ sessionId, cwd })
-      : api.gitStatus({ sessionId, cwd })
-    fetch.then((result) => {
-      if (gitRequest.current !== request) return
-      setGitStatus(result)
-    }).catch(() => {
-      if (gitRequest.current !== request) return
-      setGitStatus(null)
-    })
-  }, [sessionId, cwd, gitOn, gitSource])
-  useEffect(() => { loadGitStatus() }, [loadGitStatus, refreshTick])
-  // Re-colors the explorer when the git panel refreshes/mutates.
+  // The tree caches loaded directories per refresh tick, so content changed
+  // outside DSH (another editor, a sync tool) stays stale until the manual
+  // refresh click. Re-focusing the window bumps the tick automatically, and
+  // integrations can force a refresh by dispatching a bubbling
+  // `dsh-sidebar:refresh-files` event on `window`.
   useEffect(() => {
-    const dispose = subscribeGitStatusChanged(loadGitStatus)
+    const bump = (): void => { setRefreshTick(tick => tick + 1) }
+    window.addEventListener('focus', bump)
+    window.addEventListener('dsh-sidebar:refresh-files', bump)
     return () => {
-      dispose()
-      // Invalidate any in-flight status (unmount / session switch).
-      gitRequest.current += 1
+      window.removeEventListener('focus', bump)
+      window.removeEventListener('dsh-sidebar:refresh-files', bump)
     }
-  }, [loadGitStatus])
-  // A git provider's push channel (feature 'gitSource'): the provider
-  // bumps the listener when the remote repository changed outside the host
-  // surfaces, and every mounted explorer re-fetches immediately.
-  useEffect(() => {
-    if (gitSource === undefined || gitSource.subscribe === undefined) return
-    return gitSource.subscribe(loadGitStatus)
-  }, [gitSource, loadGitStatus])
-  // Provider-fed status carries the provider's OWN root (remote-absolute
-  // paths); the overlay must scope to it so its rows match. Local status
-  // keeps the session-cwd scope byte for byte.
-  const overlay = useMemo(
-    () => buildGitStatusMap(gitStatus, gitSource !== undefined ? gitStatus?.root ?? cwd : cwd),
-    [gitStatus, cwd, gitSource],
-  )
-
-  // ── Uploads (header pickers; the tree receives its own drag-drop) ──────
+  }, [])
   /** One-line upload status under the search row ('' hides the hint). */
   const [uploadStatus, setUploadStatus] = useState('')
   /** Whether the status line is a failure/cancel (error color, stays visible). */
@@ -209,9 +110,7 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
 
   /** Start one upload session into `dir` (absolute, inside the workspace). */
   const startUpload = (dir: string, items: UploadItem[]): void => {
-    // Provider sessions without declared upload support never upload (the
-    // local upload route cannot write remote paths).
-    if (items.length === 0 || cwd === undefined || upload !== null || !uploadOn) return
+    if (items.length === 0 || cwd === undefined || upload !== null) return
     cancelledRef.current = false
     const controller = new AbortController()
     setUploadFailed(false)
@@ -258,244 +157,115 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
     if (needle === '') {
       setResults(null)
       setError(null)
-      setActiveIndex(0)
-      return
-    }
-    // Provider sessions without a declared provider search never hit the
-    // local host search route (it cannot see remote paths); the box is
-    // hidden anyway — this guard keeps a stale query from fetching.
-    if (!searchOn) {
-      setResults(null)
-      setError(null)
-      setActiveIndex(0)
       return
     }
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      const request: Promise<{ matches: string[]; truncated: boolean }> = (async () => {
-        // Provider search only serves v0.17 SINGLE-provider sessions; in
-        // multi-root mode the box always acts on the LOCAL root, so the
-        // local host route owns every query (a remote root's listing
-        // namespace would need its own search surface — v0.18 keeps the
-        // box local-only).
-        if (!multiRoot && fileSource !== undefined && fileSource.source.search !== undefined) {
-          const found = await fileSource.source.search(needle, controller.signal)
-          if ('error' in found) throw new Error(found.error)
-          return { matches: found.matches, truncated: found.truncated === true }
-        }
-        return api.fsSearch({ sessionId, cwd }, needle, controller.signal)
-      })()
-      request.then((found) => {
+      api.fsSearch({ sessionId, cwd }, needle, controller.signal).then((found) => {
         setResults(found)
         setError(null)
-        setActiveIndex(0)
       }).catch((failure: unknown) => {
         if (controller.signal.aborted) return
         setResults(null)
         setError(failure instanceof Error ? failure.message : String(failure))
-        setActiveIndex(0)
       })
     }, 300)
     return () => {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [sessionId, cwd, needle, searchOn, fileSource, multiRoot])
-
-// Publish the transient UI markers the keybinding context reads: the
-  // active state (query or focus) and — only while VISIBLE — this input as
-  // the global search-focus target (an invisible tab's docked panel must
-  // never claim it). The marker lives module-level and is cleared on
-  // unmount / hidden, so ⌘P / ⌘F always reach the panel the user sees.
-  useEffect(() => { setSearchActive(searchOn && (needle !== '' || focused)) }, [needle, focused, searchOn])
-  useEffect(() => {
-    if (visible === false || !searchOn) return
-    setSearchInputElement(inputRef.current)
-    return () => { setSearchInputElement(null) }
-  }, [visible, searchOn])
-
-  const matches = results?.matches ?? []
-  const rowCount = matches.length
-
-  /** Keep the highlighted row in view after a keyboard move. */
-  const revealActive = (index: number): void => {
-    if (rowCount <= 0) return
-    requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(`[data-search-row="${index}"]`)?.scrollIntoView({ block: 'nearest' })
-    })
-  }
-
-  /** The search box keydown: quick-open list semantics (see search-keys.ts). */
-  const onSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
-    const action = searchKeyAction({
-      key: event.key,
-      isComposing: event.nativeEvent.isComposing,
-      keyCode: event.keyCode,
-    }, query, rowCount, activeIndex)
-    switch (action.type) {
-      case 'move':
-        event.preventDefault()
-        setActiveIndex(action.index)
-        revealActive(action.index)
-        break
-      case 'open':
-        event.preventDefault()
-        onOpenFile(resolveSidebarPath(cwd, matches[action.index]!))
-        break
-      case 'clear':
-        event.preventDefault()
-        setQuery('')
-        setActiveIndex(0)
-        break
-      case 'blur':
-        event.preventDefault()
-        inputRef.current?.blur()
-        break
-      case 'none':
-        break
-    }
-  }
+  }, [sessionId, cwd, needle])
 
   const busy = upload !== null
-
-  // The LOCAL tree (the lower module — every panel-level capability above
-  // keeps serving only this surface). Hoisted so the no-match path renders
-  // it DIRECTLY (byte-for-byte the pre-slot DOM); a matched section wraps
-  // it in the dual-module stack instead.
-  const localTree = (
-    <FileTree
-      sessionId={sessionId}
-      cwd={cwd}
-      expanded={expanded}
-      /* Multi-root (v0.18.0+): the panel's own resolution — the tree's
-         row-level gates (per-root capability faces) must stay in step
-         with the panel-level gates above. Passed down so `roots` is
-         consulted exactly once per registry change. */
-      roots={resolvedRoots}
-      ctx={ctx}
-      revealed={revealed}
-      onToggle={onToggle}
-      onOpenFile={onOpenFile}
-      onOpenFileNewTab={onOpenFileNewTab}
-      onOpenFileSide={onOpenFileSide}
-      openWithTargets={openWithTargets}
-      openWithPinned={openWithPinned}
-      openWithSsh={openWithSsh}
-      onOpenWith={onOpenWith}
-      onToggleOpenWithPin={onToggleOpenWithPin}
-      onReferenceFile={onReferenceFile}
-      refreshTick={refreshTick}
-      gitStatus={overlay.map}
-      onUploadRequest={startUpload}
-      busy={busy}
-    />
-  )
 
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
       <div className={css.editorTreeSearch}>
-        {searchOn ? (
-          <input
-            ref={inputRef}
-            className={css.editorSearchInput}
-            value={query}
-            placeholder={t('editorSearchPlaceholder')}
-            spellCheck={false}
-            data-dsh-sidebar-search=""
-            onChange={(event) => { setQuery(event.target.value) }}
-            onFocus={() => { setFocused(true) }}
-            onBlur={() => { setFocused(false) }}
-            onKeyDown={onSearchKeyDown}
-          />
-        ) : null}
-<Tooltip label={t('refresh')} side="bottom" delayMs={500}>
-          <button
-            type="button"
-            className={css.iconButton}
-            aria-label={t('refresh')}
-            title={t('refresh')}
-            onClick={() => { setRefreshTick(tick => tick + 1) }}
-          >
-            <IconRefreshOutline16 size={14} />
-          </button>
-        </Tooltip>
-        {uploadOn && (
-          <>
-            <button
-              type="button"
-              className={css.iconButton}
-              aria-label={t('uploadFiles')}
-              title={t('uploadFiles')}
-              disabled={busy}
-              onClick={() => { fileInputRef.current?.click() }}
-            >
-              <IconUploadOutline16 size={14} />
-            </button>
-            <button
-              type="button"
-              className={css.iconButton}
-              aria-label={t('uploadFolder')}
-              title={t('uploadFolder')}
-              disabled={busy}
-              onClick={() => { folderInputRef.current?.click() }}
-            >
-              <IconFolderOpen16 size={14} />
-            </button>
-          </>
-        )}
-        {uploadOn && (
-          <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              style={{ display: 'none' }}
-              onChange={(event) => {
-                if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
-                event.target.value = ''
-              }}
-            />
-            <input
-              ref={folderInputRef}
-              type="file"
-              multiple
-              {...folderInputProps}
-              style={{ display: 'none' }}
-              onChange={(event) => {
-                if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
-                event.target.value = ''
-              }}
-            />
-          </>
-        )}
+        <input
+          className={css.editorSearchInput}
+          value={query}
+          placeholder={t('editorSearchPlaceholder')}
+          spellCheck={false}
+          onChange={(event) => { setQuery(event.target.value) }}
+        />
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('refresh')}
+          title={t('refresh')}
+          onClick={() => { setRefreshTick(tick => tick + 1) }}
+        >
+          <IconRefreshOutline16 size={14} />
+        </button>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('uploadFiles')}
+          title={t('uploadFiles')}
+          disabled={busy}
+          onClick={() => { fileInputRef.current?.click() }}
+        >
+          <IconUploadOutline16 size={14} />
+        </button>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('uploadFolder')}
+          title={t('uploadFolder')}
+          disabled={busy}
+          onClick={() => { folderInputRef.current?.click() }}
+        >
+          <IconFolderOpen16 size={14} />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
+            event.target.value = ''
+          }}
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          {...folderInputProps}
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
+            event.target.value = ''
+          }}
+        />
       </div>
       {uploadStatus !== '' && (
         <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
       )}
       {needle === '' ? (
-        /* Dual-module (v0.19.0+, splitter v0.19.1+): with a matched section
-           the tree area is a vertical stack — the injected upper module
-           (independent scroll region, height driven by the SPLITTER's ratio,
-           default 4:1 upper:lower, clamped so neither module can vanish)
-           over the draggable divider strip (FileTreeSplitter.tsx) over the
-           LOCAL tree, which keeps its own scroll context and every existing
-           capability. The wrapper exists ONLY on the matched path;
-           sectionless renders the local tree directly (byte-for-byte the
-           pre-slot DOM). While the local search box is active the results
-           list REPLACES the whole tree area (both modules), so the section
-           renders exclusively in tree mode. The section is only ever the
-           match winner's — `section.render` receives the session scope;
-           better-sidebar applies no panel capability to it. */
-        section === undefined
-          ? localTree
-          : (
-            <ExplorerDual
-              section={section}
-              scope={{ sessionId, cwd, ctx: ctx! }}
-              localTree={localTree}
-              onReferenceFile={onReferenceFile}
-            />
-          )
+        <FileTree
+          sessionId={sessionId}
+          cwd={cwd}
+          store={store}
+          expanded={expanded}
+          revealed={revealed}
+          onToggle={onToggle}
+          onOpenFile={onOpenFile}
+          onOpenFileNewTab={onOpenFileNewTab}
+          onOpenFileSide={onOpenFileSide}
+          openWithTargets={openWithTargets}
+          openWithPinned={openWithPinned}
+          openWithSsh={openWithSsh}
+          onOpenWith={onOpenWith}
+          onToggleOpenWithPin={onToggleOpenWithPin}
+          onReferenceFile={onReferenceFile}
+          onPathRenamed={onPathRenamed}
+          onPathDeleted={onPathDeleted}
+          refreshTick={refreshTick}
+          onUploadRequest={startUpload}
+          busy={busy}
+          service={service}
+        />
       ) : (
         <div className={css.explorerBody}>
           {error !== null && <div className={clsx(css.editorSearchHint, css.editorError)}>{error}</div>}
@@ -503,45 +273,20 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
           {error === null && results !== null && results.matches.length === 0 && (
             <div className={css.editorSearchHint}>{t('editorSearchNoResults')}</div>
           )}
-          {error === null && results !== null && results.matches.map((rel, index) => {
-            const active = index === clampSearchIndex(activeIndex, results.matches.length)
-            return (
-              <button
-                key={rel}
-                type="button"
-                data-search-row={index}
-                className={clsx(css.editorSearchResult, active && css.editorSearchResultActive)}
-                aria-current={active ? 'true' : undefined}
-                title={rel}
-                onMouseEnter={() => { setActiveIndex(index) }}
-                onClick={() => { onOpenFile(resolveSidebarPath(cwd, rel)) }}
-              >
-                {rel}
-              </button>
-            )
-          })}
-          {error === null && results !== null && results.matches.length > 0 && (
-            <div className={clsx(css.editorSearchHint, css.editorSearchNavHint)}>{t('searchNavHint')}</div>
-          )}
+          {error === null && results !== null && results.matches.map(rel => (
+            <button
+              key={rel}
+              type="button"
+              className={css.editorSearchResult}
+              title={rel}
+              onClick={() => { onOpenFile(resolveSidebarPath(cwd, rel)) }}
+            >
+              {rel}
+            </button>
+          ))}
           {error === null && results?.truncated === true && (
             <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
           )}
-        </div>
-      )}
-{/*
-        The VSCode-style status footer: changed-file counts under the tree
-        root, colored by status family (most severe first). Only in a repo
-        with changes; hidden rows/dirs never count twice — the counts are
-        the changed FILES, the same set the badges decorate.
-      */}
-      {overlay.counts.length > 0 && (
-        <div className={css.explorerGitFooter} title={t('explorerGitFooter')}>
-          {overlay.counts.map(count => (
-            <span key={count.letter} className={clsx(css.explorerGitFooterItem, gitKindCss[count.kind])}>
-              <span className={css.explorerGitFooterLetter}>{count.letter}</span>
-              {count.count}
-            </span>
-          ))}
         </div>
       )}
       {upload !== null && (
@@ -554,54 +299,6 @@ const { sessionId, cwd, expanded, ctx, revealed, onToggle, onOpenFile, onOpenFil
           cancelling={cancelling}
         />
       )}
-    </div>
-  )
-}
-
-/**
- * The dual-module stack (v0.19.0+, splitter v0.19.1+): the matched section
- * (upper) over the local tree (lower), joined by the draggable splitter
- * strip. Owns the split ratio: lazy-read from localStorage ONCE at mount —
- * this component mounts only on the matched path, so a sectionless panel
- * never touches storage — live-updated while dragging, persisted on the
- * drag's release. The section's flex-basis IS the ratio (default 80%);
- * the splitter's CSS min-heights guard the stored-ratio edge cases (a
- * persisted value from a taller container), and the tree keeps its own
- * flex:1 + scroll context below.
- *
- * The upper module renders by SECTION FORM (v0.20.0): the v0.19 `render`
- * (plugin-drawn surface) or, when the descriptor carries `source`, the
- * host's own FileTree bound to the plugin's data source
- * (`SectionSourceTree`).
- */
-function ExplorerDual(props: {
-  section: FileTreeSectionDescriptor
-  scope: FileTreeSectionScope
-  localTree: ReactElement
-  /** The panel's @-reference handler, passed through to the SOURCE-form
-   *  section tree (v0.21.0) so its pill appends to the same composer
-   *  draft the local tree uses. */
-  onReferenceFile: (path: string) => void
-}) {
-  const { section, scope, localTree, onReferenceFile } = props
-  /** The upper module's share of the stack (0–1); the splitter mutates it
-   *  live during a drag. */
-  const [splitRatio, setSplitRatio] = useState(() => readFileTreeSplitRatio())
-  const commitRatio = useCallback((next: number): void => {
-    setSplitRatio(next)
-    persistFileTreeSplitRatio(next)
-  }, [])
-  return (
-    <div className={css.explorerDual}>
-      <div
-        className={css.explorerSection}
-        style={{ flex: `0 1 ${splitRatio * 100}%` }}
-        data-dsh-file-tree-section={section.id}
-      >
-        {section.source !== undefined ? <SectionSourceTree section={section} scope={scope} onReferenceFile={onReferenceFile} /> : section.render?.(scope)}
-      </div>
-      <FileTreeSplitter ratio={splitRatio} onRatio={setSplitRatio} onCommit={commitRatio} />
-      {localTree}
     </div>
   )
 }

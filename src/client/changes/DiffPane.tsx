@@ -121,9 +121,7 @@ function MdReadingView(props: { text: string }) {
   )
 }
 
-/** The diff tab a git preview expands into (the shell owns placement).
- *  REVIEW refs (this branch's produced-files review surface) expand into a
- *  dedicated review tab like any other diff ref. */
+/** The diff tab a git preview expands into (the shell owns placement). */
 export function diffTabOf(ref: SidebarDiffRef): SidebarTab {
   if (ref.kind === 'worktree') {
     return {
@@ -133,18 +131,10 @@ export function diffTabOf(ref: SidebarDiffRef): SidebarTab {
       diff: ref,
     }
   }
-  if (ref.kind === 'commit') {
-    return {
-      id: `diff:c:${encodeURIComponent(ref.worktree ?? '')}:${ref.hashFull}`,
-      type: 'diff',
-      title: `${ref.hash} ${ref.subject}`,
-      diff: ref,
-    }
-  }
   return {
-    id: `diff:r:${ref.paths.join('|')}`,
+    id: `diff:c:${encodeURIComponent(ref.worktree ?? '')}:${ref.hashFull}`,
     type: 'diff',
-    title: `${ref.paths.length} files`,
+    title: `${ref.hash} ${ref.subject}`,
     diff: ref,
   }
 }
@@ -200,12 +190,6 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
         if (gitRef.kind === 'commit') {
           const result = await api.gitCommitDiff(paneScope, gitRef.hashFull, gitRef.worktree)
           if (!cancelled) setDiffText(result.diff)
-          return
-        }
-        // REVIEW refs never surface in the changes preview (it mints
-        // worktree/commit targets only) — nothing to load for them.
-        if (gitRef.kind !== 'worktree') {
-          if (!cancelled) setDiffText('')
           return
         }
         let result = await api.gitDiff(paneScope, gitRef.path, gitRef.staged, gitRef.worktree)
@@ -275,9 +259,8 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
           return ofSides(oldSide.content, newSide.content)
         }
         // Worktree change: staged is HEAD vs index, unstaged is index vs
-        // worktree (the worktree side reads the live file). A REVIEW ref has
-        // no single staged side — treat it as unstaged.
-        const staged = effectiveStaged ?? (gitRef.kind === 'worktree' ? gitRef.staged : false)
+        // worktree (the worktree side reads the live file).
+        const staged = effectiveStaged ?? gitRef.staged
         if (staged) {
           const [oldSide, newSide] = await Promise.all([
             file.oldPath === '/dev/null'
@@ -463,11 +446,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
 
   const title = target.kind === 'op'
     ? target.path
-    : target.ref.kind === 'worktree'
-      ? target.ref.path
-      : target.ref.kind === 'commit'
-        ? `${target.ref.hash} ${target.ref.subject}`
-        : t('review')
+    : target.ref.kind === 'worktree' ? target.ref.path : `${target.ref.hash} ${target.ref.subject}`
   const stats = gitStats ?? (target.kind === 'op' && op !== null && op.kind !== 'read' && !op.isError ? opStats : null)
 
   return (

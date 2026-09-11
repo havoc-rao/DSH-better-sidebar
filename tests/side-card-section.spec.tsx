@@ -30,9 +30,7 @@ beforeAll(() => {
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import type { TabDescriptor } from '../src/client/service.ts'
 import { FeatureSettingsRows, mergePluginSetting, SettingsBody, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
-import { registerBuiltins } from '../src/client/builtins/index.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
-import type { Context } from '../src/context-types.ts'
 
 /** One tab + one viewer + the subagent-style nested toggle under a tab. */
 function mount(): { store: SidebarStore; service: BetterSidebarService } {
@@ -178,7 +176,7 @@ describe('SideCardSection declarative inventory', () => {
     // <select>).
     expect(html).toContain('Position compatibility mode')
     expect(html).toContain('Pick the title-bar compatibility scheme: auto-detect (default, conservative) / DSH official web / known desktop shells / custom (shift distance + custom CSS)')
-    expect(html).not.toMatch(/<select[^>]*aria-label="Position compatibility mode"/)
+    expect(html).not.toContain('<select')
     expect(html).toContain('>Auto-detect<')
     // One general-row switch remains (agentOpenTools), off by default — the
     // scheme row is a dropdown, not a switch.
@@ -209,7 +207,6 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('renders one switch row per declared toggle with its current value', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
-      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles,
       prefs,
       onToggle: () => {},
@@ -224,7 +221,6 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('checks the row when the pref is on', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
-      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles,
       prefs: { ...prefs, autoOpenSubagent: true },
       onToggle: () => {},
@@ -234,7 +230,6 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('renders a text row as an input seeded with the pref value (empty = theme default)', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
-      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [{
         key: 'terminalFontFamily',
         type: 'text',
@@ -255,7 +250,6 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('renders a number row with the pref value, the declared bounds and a unit suffix', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
-      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [{
         key: 'terminalFontSize',
         type: 'number',
@@ -279,7 +273,6 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
 
   it('renders the title-bar strip row: the pref value, the 0–120 bounds and the px suffix', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
-      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [{
         key: 'titleBarStripPx',
         type: 'number',
@@ -331,7 +324,6 @@ describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => 
     // valueOf returns undefined (the plugin never wrote this key): the row
     // must render UNCHECKED even though the host pref agentOpenTools is true.
     let html = renderToString(createElement(FeatureSettingsRows, {
-      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [toggle],
       prefs,
       onToggle: () => {},
@@ -340,7 +332,6 @@ describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => 
     expect(html).not.toContain('checked=""')
     // The plugin wrote `true` into its own blob: the row is checked.
     html = renderToString(createElement(FeatureSettingsRows, {
-      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [toggle],
       prefs,
       onToggle: () => {},
@@ -349,7 +340,6 @@ describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => 
     expect(html).toContain('checked=""')
     // Without valueOf the row falls back to the prefs face (host semantics).
     html = renderToString(createElement(FeatureSettingsRows, {
-      ctx: { betterSidebar: undefined } as unknown as Context,
       toggles: [toggle],
       prefs,
       onToggle: () => {},
@@ -359,24 +349,6 @@ describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => 
 })
 
 describe('SettingsBody rows + custom render panel (open-with seam)', () => {
-  it('renders the Git commit LLM settings directly below the plugin version', () => {
-    const store = createSidebarStore()
-    const service = createBetterSidebarService(store)
-    const dispose = registerBuiltins({} as Context, service)
-
-    const sectionHtml = renderSection(store, service)
-    expect(sectionHtml).toContain('data-git-commit-settings')
-    expect(sectionHtml.indexOf('data-git-commit-settings')).toBeLessThan(sectionHtml.indexOf('>General<'))
-    expect(sectionHtml).toContain('Git Commit agent')
-    expect(sectionHtml).toContain('LLM provider')
-    expect(sectionHtml).toContain('Model')
-    expect(sectionHtml).toContain('Commit template')
-    expect(sectionHtml).not.toContain('Source Control Feature settings')
-    expect(service.getTab('git')?.settings).toBeUndefined()
-
-    dispose()
-  })
-
   it('renders the declarative rows AND the custom panel when both are declared', () => {
     const { store, service } = mount()
     const feature = {

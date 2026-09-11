@@ -57,6 +57,7 @@ async function mountTree(busy = false): Promise<Harness> {
     root.render(createElement(FileTree, {
       sessionId: 's1',
       cwd: '/tmp',
+      store: createSidebarStore(),
       expanded: [],
       revealed: [],
       onToggle: () => {},

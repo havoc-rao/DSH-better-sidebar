@@ -5,11 +5,12 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { apply, mediaTypeForPath } from '../src/index.ts'
+import { apply, mediaTypeForPath, wsCloseReasonOf } from '../src/index.ts'
+import { SidebarError } from '../src/wire.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
@@ -38,8 +39,9 @@ interface FakeContext {
   }
   sessions: { get: (id: string) => { header: { cwd?: string } } | undefined }
   tools: { register: (tool: unknown) => () => void }
-  on: (event: string, listener: (payload: unknown) => void) => () => void
   effect: (fn: () => void | (() => void), label?: string) => void
+  /** The session/agent event feeds: nothing emits in these tests. */
+  on: (event: string, listener: (payload: never) => void) => () => void
   /** The settings service never appears in the smoke context: the inject
    *  callback must never run (mirror of cordis' service-less inject). */
   inject: (deps: readonly string[], callback: (sctx: never) => void) => () => void
@@ -73,47 +75,6 @@ async function rmTempDirAfterPtyExit(handle: { exited: boolean }, dir: string): 
   }
 }
 
-/** A minimal settings seam: register/describe/update with the revision guard.
- *  Shared by the route-mount helpers of both describes (a pre-seeded aionui
- *  namespace survives registration because register keeps existing entries). */
-const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
-  const namespaces = new Map<string, {
-    schema: unknown
-    value: Record<string, unknown> | undefined
-    revision: number
-  }>()
-  for (const [ns, value] of Object.entries(pre ?? {})) {
-    namespaces.set(ns, { schema: (input: unknown) => input, value, revision: 0 })
-  }
-  const resolve = (entry: { schema: unknown; value: Record<string, unknown> | undefined }): unknown => {
-    const schema = entry.schema as (input: unknown) => unknown
-    return entry.value === undefined ? schema(undefined) : schema(entry.value)
-  }
-  return {
-    register(ns: string, schema: unknown) {
-      namespaces.set(ns, { schema, value: undefined, revision: 0 })
-      return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
-    },
-    describe() {
-      return [...namespaces.entries()].map(([ns, entry]) => ({
-        ns,
-        value: resolve(entry),
-        applies: 'live' as const,
-        revision: entry.revision,
-      }))
-    },
-    async update(ns: string, patch: Record<string, unknown>, expectedRevision?: number) {
-      const entry = namespaces.get(ns)
-      if (entry === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
-      if (expectedRevision !== undefined && expectedRevision !== entry.revision) {
-        throw new SettingsConflictError(ns as SettingsNamespace, expectedRevision, entry.revision)
-      }
-      entry.value = { ...entry.value, ...patch }
-      entry.revision += 1
-    },
-  }
-}
-
 describe('host plugin smoke', () => {
   it('serves PDF with the browser-native content type', () => {
     expect(mediaTypeForPath('/work/report.PDF')).toBe('application/pdf')
@@ -132,7 +93,6 @@ describe('host plugin smoke', () => {
       },
       sessions: { get: () => undefined },
       tools: { register: () => () => {} },
-      on: () => () => {},
       // The DSH-vendored cordis runs the registration effect immediately and
       // keeps its cleanup for disposal.
       effect: (fn) => {
@@ -142,6 +102,7 @@ describe('host plugin smoke', () => {
       // No settings service in the smoke context: the registration callback
       // never runs (cordis' service-less inject behaves the same).
       inject: () => () => {},
+      on: () => () => {},
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
     }
@@ -153,7 +114,7 @@ describe('host plugin smoke', () => {
       '/sidebar/file',
       '/sidebar/html',
     ])
-    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals', '/sidebar/ws/agent-opens', '/sidebar/ws/cmd-w'])
+    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals', '/sidebar/ws/agent-opens'])
     // Teardown runs without throwing (pty manager has nothing open).
     for (const cleanup of effects) cleanup()
   })
@@ -173,12 +134,12 @@ describe('host plugin smoke', () => {
       },
       sessions: { get: () => ({ header: { cwd: directory } }) },
       tools: { register: () => () => {} },
-      on: () => () => {},
       effect: (fn) => {
         const cleanup = fn()
         if (typeof cleanup === 'function') effects.push(cleanup)
       },
       inject: () => () => {},
+      on: () => () => {},
       get: () => undefined,
     }
     try {
@@ -453,6 +414,12 @@ describe('git destructive operations (scratch repository)', () => {
   const makeScratchRepo = (): string => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-'))
     gitRun(dir, ['init', '-q'])
+    // Pin the eol policy: Git for Windows defaults to core.autocrlf=true
+    // (system gitconfig on the CI runner, and many dev machines), which
+    // smudges LF→CRLF on every index restore and breaks the byte-exact
+    // assertions below. The destructive-op behavior under test is orthogonal
+    // to the machine's eol policy.
+    gitRun(dir, ['config', 'core.autocrlf', 'false'])
     gitRun(dir, ['checkout', '-q', '-b', 'main'])
     writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree\n')
     gitRun(dir, ['add', '-A'])
@@ -529,9 +496,7 @@ describe('git destructive operations (scratch repository)', () => {
 describe('session cwd resolution over the API route', () => {
   interface CtxOverrides {
     sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
-    /** A fake settings service face (createFakeSettings); when given, the
-     *  settings inject callback runs so the side-card prefs are resolvable. */
-    settings?: unknown
+    sessionPersistence?: { open: (id: string, access: 'read' | 'write') => Promise<{ header: { cwd?: string }; read: () => Promise<{ events: never[] }>; close: () => Promise<void> }> }
   }
 
   const mountAll = (overrides: CtxOverrides = {}): SidebarWebRoute[] => {
@@ -544,17 +509,14 @@ describe('session cwd resolution over the API route', () => {
       },
       sessions: overrides.sessions ?? { get: () => undefined },
       tools: { register: () => () => {} },
-      on: () => () => {},
       // The vendored cordis runs registration effects immediately.
       effect: (fn: () => void | (() => void)) => { fn() },
-      // The settings inject callback runs only when a settings face is given
-      // (mirror of cordis' service-less inject: absent → never called).
-      inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
-        if (deps.includes('settings') && overrides.settings !== undefined) callback({ settings: overrides.settings })
-        return () => {}
-      },
+      // No settings service: the namespace registration never runs.
+      inject: () => () => {},
+      // The session/agent event feeds: nothing emits in these tests.
+      on: () => () => {},
       // No jobs/agents services in the smoke context: the routes degrade.
-      get: () => undefined,
+      get: (key: string) => key === 'sessionPersistence' ? overrides.sessionPersistence : undefined,
     }
     apply(ctx as never)
     return routes
@@ -606,6 +568,53 @@ describe('session cwd resolution over the API route', () => {
   it('falls back to the process cwd with no summary cwd', async () => {
     const route = mount()
     const result = await invoke(route, 'session.cwd', { sessionId: 's-unknown' })
+    expect(result.ok).toBe(true)
+    expect(result.value?.cwd).toBe(process.cwd())
+  })
+
+  it('resolves a cold (detached) session cwd through the persistence index', async () => {
+    // Regression: a detached first request (session not yet attached, no
+    // client cwd) must resolve the cwd from the session-persistence index
+    // instead of the host process cwd. On Windows the host process cwd is
+    // the DSH source root (dsh.cmd's `pushd`), so every user-project path
+    // was misclassified as "outside workspace" by the realpath guard.
+    const coldCwd = resolvePath('/cold-project-cwd')
+    const route = mount({
+      sessionPersistence: {
+        open: async (id) => ({
+          header: id === 's-cold' ? { cwd: coldCwd } : {},
+          read: async () => ({ events: [] }),
+          close: async () => {},
+        }),
+      },
+    })
+    const result = await invoke(route, 'session.cwd', { sessionId: 's-cold' })
+    expect(result.ok).toBe(true)
+    expect(result.value?.cwd).toBe(coldCwd)
+  })
+
+  it('rejects a relative cwd from the persistence index', async () => {
+    // A buggy / corrupt persistence layer that stored a relative cwd must
+    // be rejected by requireAbsolute instead of flowing into the workspace
+    // guard, where it would be resolved against the host process cwd and
+    // potentially recreate the original "outside workspace" misclassification.
+    const route = mount({
+      sessionPersistence: {
+        open: async () => ({ header: { cwd: 'relative/path' }, read: async () => ({ events: [] }), close: async () => {} }),
+      },
+    })
+    const result = await invoke(route, 'session.cwd', { sessionId: 's-bad' })
+    expect(result.ok).toBe(false)
+    expect(result.error?.message).toMatch(/invalid working directory/)
+  })
+
+  it('falls back to the process cwd when persistence has no cwd for the session', async () => {
+    const route = mount({
+      sessionPersistence: {
+        open: async () => ({ header: {}, read: async () => ({ events: [] }), close: async () => {} }),
+      },
+    })
+    const result = await invoke(route, 'session.cwd', { sessionId: 's-blank' })
     expect(result.ok).toBe(true)
     expect(result.value?.cwd).toBe(process.cwd())
   })
@@ -724,80 +733,6 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
-  it('opens fs.read paths outside the session workspace when allowOpenOutsideWorkspace is on', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-outside-open-'))
-    const workspace = join(root, 'workspace')
-    const outside = join(root, 'outside')
-    mkdirSync(workspace)
-    mkdirSync(outside)
-    const outsideFile = join(outside, 'secret.txt')
-    writeFileSync(outsideFile, 'secret')
-    try {
-      const settings = createFakeSettings()
-      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) }, settings })
-      // The pref is OFF by default: the same path is still refused until the
-      // user flips the switch.
-      const before = await invoke(route, 'fs.read', { sessionId: 'security', path: outsideFile })
-      expect(before).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
-      await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
-      const after = await invoke(route, 'fs.read', { sessionId: 'security', path: outsideFile })
-      expect(after.ok).toBe(true)
-      expect(after.value).toMatchObject({ kind: 'text', content: 'secret' })
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('lists fs.tree paths outside the session workspace when the read boundary is open', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-outside-tree-'))
-    const workspace = join(root, 'workspace')
-    const outside = join(root, 'outside')
-    mkdirSync(workspace)
-    mkdirSync(outside)
-    try {
-      const settings = createFakeSettings()
-      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) }, settings })
-      await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
-      const tree = await invoke(route, 'fs.tree', { sessionId: 'security', path: outside })
-      expect(tree.ok).toBe(true)
-      // The listing's path is the realpath (macOS /var → /private/var).
-      expect(tree.value).toMatchObject({ path: realpathSync(outside), entries: [] })
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('keeps fs.write fenced outside the workspace even when the read boundary is open', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-outside-write-'))
-    const workspace = join(root, 'workspace')
-    const outside = join(root, 'outside')
-    mkdirSync(workspace)
-    mkdirSync(outside)
-    try {
-      const settings = createFakeSettings()
-      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) }, settings })
-      await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
-      const write = await invoke(route, 'fs.write', { sessionId: 'security', path: join(outside, 'written.txt'), content: 'hack' })
-      expect(write).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('opens repo-root-relative fs.read paths outside a nested session workspace when the read boundary is open', async () => {
-    const settings = createFakeSettings()
-    const route = mount({
-      sessions: { get: () => ({ header: { cwd: join(process.cwd(), 'src') } }) },
-      settings,
-    })
-    await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
-    const result = await invoke(route, 'fs.read', { sessionId: 's-sub', path: 'package.json' })
-    expect(result.ok).toBe(true)
-    const value = result.value as unknown as { kind: string; content: string }
-    expect(value.kind).toBe('text')
-    expect(value.content).toContain('"name"')
-  })
-
   it('rejects media and HTML reads through a workspace symlink', async () => {
     if (!canCreateSymlink) return
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-security-'))
@@ -823,32 +758,6 @@ describe('session cwd resolution over the API route', () => {
       expect(JSON.parse(mediaResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
       expect(htmlResult).toMatchObject({ status: 403 })
       expect(JSON.parse(htmlResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it.skipIf(!canCreateSymlink)('serves media and HTML outside the workspace when the read boundary is open', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-open-'))
-    const workspace = join(root, 'workspace')
-    const outside = join(root, 'outside')
-    mkdirSync(workspace)
-    mkdirSync(outside)
-    writeFileSync(join(outside, 'secret.png'), 'not an image')
-    writeFileSync(join(outside, 'secret.html'), '<p>secret</p>')
-    try {
-      const settings = createFakeSettings()
-      symlinkSync(outside, join(workspace, 'link'))
-      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) }, settings })
-      await settings.update('dsh-better-sidebar', { allowOpenOutsideWorkspace: true })
-      const media = routes.find(route => route.path === '/sidebar/file')!
-      const html = routes.find(route => route.path === '/sidebar/html')!
-      const mediaResult = await invokeGet(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(join(workspace, 'link', 'secret.png'))}`)
-      const htmlResult = await invokeGet(html, encodeHtmlUrl('security', join(workspace, 'link', 'secret.html')))
-      expect(mediaResult.status).toBe(200)
-      expect(mediaResult.body).toBe('not an image')
-      expect(htmlResult.status).toBe(200)
-      expect(htmlResult.body).toContain('secret')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -919,7 +828,49 @@ describe('session cwd resolution over the API route', () => {
 })
 
 describe('side card settings routes', () => {
-  const mountWithSettings = (settings?: unknown, sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }): SidebarWebRoute => {
+  /** A minimal settings seam: register/describe/update with the revision guard. */
+  const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
+    const namespaces = new Map<string, {
+      schema: unknown
+      value: Record<string, unknown> | undefined
+      revision: number
+    }>()
+    for (const [ns, value] of Object.entries(pre ?? {})) {
+      namespaces.set(ns, { schema: (input: unknown) => input, value, revision: 0 })
+    }
+    const resolve = (entry: { schema: unknown; value: Record<string, unknown> | undefined }): unknown => {
+      const schema = entry.schema as (input: unknown) => unknown
+      return entry.value === undefined ? schema(undefined) : schema(entry.value)
+    }
+    return {
+      register(ns: string, schema: unknown) {
+        // Preserve a pre-seeded value: tests stage prefs through the `pre`
+        // map before the plugin mounts and registers the same namespace.
+        const existing = namespaces.get(ns)
+        namespaces.set(ns, { schema, value: existing?.value ?? undefined, revision: 0 })
+        return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
+      },
+      describe() {
+        return [...namespaces.entries()].map(([ns, entry]) => ({
+          ns,
+          value: resolve(entry),
+          applies: 'live' as const,
+          revision: entry.revision,
+        }))
+      },
+      async update(ns: string, patch: Record<string, unknown>, expectedRevision?: number) {
+        const entry = namespaces.get(ns)
+        if (entry === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
+        if (expectedRevision !== undefined && expectedRevision !== entry.revision) {
+          throw new SettingsConflictError(ns as SettingsNamespace, expectedRevision, entry.revision)
+        }
+        entry.value = { ...entry.value, ...patch }
+        entry.revision += 1
+      },
+    }
+  }
+
+  const mountWithSettings = (settings?: unknown): SidebarWebRoute => {
     const routes: SidebarWebRoute[] = []
     const ctx = {
       webRuntime: { trustedHosts: [] },
@@ -927,14 +878,15 @@ describe('side card settings routes', () => {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
-      sessions: sessions ?? { get: () => undefined },
+      sessions: { get: () => undefined },
       tools: { register: () => () => {} },
-      on: () => () => {},
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings') && settings !== undefined) callback({ settings })
         return () => {}
       },
+      // The session/agent event feeds: nothing emits in these tests.
+      on: () => () => {},
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
     }
@@ -995,33 +947,61 @@ describe('side card settings routes', () => {
     expect(String((result.value as { name: unknown }).name).length).toBeGreaterThan(0)
   })
 
+  it('shell.get reflects the settings-page override with the quotes stripped', async () => {
+    const route = mountWithSettings(createFakeSettings({
+      'dsh-better-sidebar': {
+        terminalShell: '"C:\\Program Files\\PowerShell\\7\\pwsh.exe"',
+        terminalShellArgs: '-NoLogo',
+      },
+    }))
+    const result = await invoke(route, 'shell.get', {})
+    expect(result.ok).toBe(true)
+    expect(result.value).toMatchObject({
+      shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      name: 'pwsh',
+    })
+  })
+
+  it('maps a shell-not-found failure to the machine-readable close reason', async () => {
+    expect(wsCloseReasonOf(new SidebarError(
+      'shell-not-found',
+      'shell executable not found: "C:\\Program Files\\PowerShell\\7\\pwsh.exe"',
+      400,
+      { shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' },
+    ))).toBe('shell-not-found:pwsh')
+    expect(wsCloseReasonOf(new Error('boom'))).toBe('boom')
+    expect(wsCloseReasonOf('plain')).toBe('plain')
+  })
+
+  it('caps the close reason by UTF-8 bytes so the ws 123-byte limit holds', () => {
+    // 200 CJK characters are ~600 bytes: a character-count slice would still
+    // overflow the cap `ws` enforces with Buffer.byteLength.
+    const reason = wsCloseReasonOf(new SidebarError(
+      'shell-not-found',
+      'shell executable not found',
+      400,
+      { shell: `/bin/${'终'.repeat(200)}` },
+    ))
+    expect(reason.startsWith('shell-not-found:')).toBe(true)
+    expect(Buffer.byteLength(reason)).toBeLessThanOrEqual(123)
+  })
+
   it('reads the resolved prefs and writes a patch through the seam', async () => {
     const route = mountWithSettings(createFakeSettings())
     const read = await invoke(route, 'settings.get', {})
     expect(read.ok).toBe(true)
     expect(read.value).toEqual({
       value: {
-        openByDefault: false,
-        defaultWidthPercent: 35,
         autoOpenSubagent: true,
         autoOpenJobs: true,
         agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
         terminalFontSize: 13,
-        interceptOpenPath: true,
-        allowOpenOutsideWorkspace: false,
-        producedFilesWrap: true,
         editorExplorer: false,
-        sidebarLayout: 'docked',
-        sideBarSide: 'right',
-        fileIconTheme: '',
         workspaceFence: true,
         terminalShell: '',
         terminalShellArgs: '',
-        // The scheme trio (titleBarScheme/presetId/customCss) is deliberately
-        // absent from the SCHEMA defaults: an old document resolves without
-        // them and the client migrates instead of silently flipping.
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -1041,20 +1021,48 @@ describe('side card settings routes', () => {
       externalDisable: false,
     })
 
-    const written = await invoke(route, 'settings.update', { patch: { openByDefault: true } })
+    const written = await invoke(route, 'settings.update', { patch: { agentOpenTools: true } })
     expect(written.ok).toBe(true)
-    const view = written.value as { value: { openByDefault: boolean; defaultWidthPercent: number }; revision: number }
-    expect(view.value.openByDefault).toBe(true)
-    expect(view.value.defaultWidthPercent).toBe(35)
+    const view = written.value as { value: { agentOpenTools: boolean; terminalFontSize: number }; revision: number }
+    expect(view.value.agentOpenTools).toBe(true)
+    expect(view.value.terminalFontSize).toBe(13)
     expect(view.revision).toBe(1)
+  })
+
+  it('disarms the workspace fence for the fs routes when the pref is off', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fence-off-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.txt'), 'global instructions')
+    try {
+      const route = mountWithSettings(createFakeSettings())
+      // Default (fence on): the outside read is refused as usual…
+      const refused = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(refused).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      // …then the settings-page switch (or the fence notice's one-click off)
+      // disarms every fs route for paths outside the workspace.
+      const off = await invoke(route, 'settings.update', { patch: { workspaceFence: false } })
+      expect(off.ok).toBe(true)
+      const read = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(read).toMatchObject({ ok: true, value: { kind: 'text', content: 'global instructions' } })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'fence', cwd: workspace, path: outside })
+      expect(tree).toMatchObject({ ok: true })
+      const write = await invoke(route, 'fs.write', { sessionId: 'fence', cwd: workspace, path: join(outside, 'written.txt'), content: 'ok' })
+      expect(write).toMatchObject({ ok: true })
+      expect(readFileSync(join(outside, 'written.txt'), 'utf8')).toBe('ok')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('refuses a stale write with settings-conflict (409)', async () => {
     const route = mountWithSettings(createFakeSettings())
-    await invoke(route, 'settings.update', { patch: { openByDefault: false } })
+    await invoke(route, 'settings.update', { patch: { agentOpenTools: false } })
     // The second write carries the pre-write revision: the seam refuses it.
     const stale = await invoke(route, 'settings.update', {
-      patch: { defaultWidthPercent: 40 },
+      patch: { terminalFontSize: 15 },
       expectedRevision: 0,
     })
     expect(stale.ok).toBe(false)
@@ -1163,12 +1171,13 @@ describe('agent terminal tool gating', () => {
       },
       sessions: { get: () => undefined },
       tools: { register: () => { registered += 1; return () => { disposed += 1 } } },
-      on: () => () => {},
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings')) callback({ settings })
         return () => {}
       },
+      // The session/agent event feeds: nothing emits in these tests.
+      on: () => () => {},
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
     }
@@ -1221,12 +1230,13 @@ describe('agent sidebar-open tool gating', () => {
       },
       sessions: { get: () => undefined },
       tools: { register: () => { registered += 1; return () => { disposed += 1 } } },
-      on: () => () => {},
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings')) callback({ settings })
         return () => {}
       },
+      // The session/agent event feeds: nothing emits in these tests.
+      on: () => () => {},
       get: () => undefined,
     }
     apply(ctx as never)

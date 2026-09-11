@@ -1,13 +1,20 @@
 /**
  * Built-in shell-preset data tests: registry integrity (unique ids, non-empty
- * titles, pure strip/left/detect functions) and the anywhere-labs DSH Desktop
- * entry's strip values (darwin advanced 20px, win32 advanced 32px as the
- * no-WCO fallback, compatibility/plain browser nothing) plus the IDE-mode
- * left reservation (darwin advanced 90px traffic-light zone).
+ * titles, non-empty localized descs, pure strip/detect functions) and the
+ * anywhere-labs DSH Desktop entry's strip values (darwin advanced 20px,
+ * win32 advanced 32px as the no-WCO fallback, compatibility/plain browser
+ * nothing).
  */
 import { describe, expect, it } from 'vitest'
-import { getShellPreset, getShellPresets, presetLeftFor, presetStripFor } from '../src/client/shell-presets.ts'
+import { getShellPreset, getShellPresets, presetStripFor } from '../src/client/shell-presets.ts'
 import type { DesktopEnv } from '../src/client/desktop-env.ts'
+
+/** Resolve an i18n-friendly string-or-function value (mirror of textOf).
+ *  Preset descs went through the same union as the plugin catalog's texts,
+ *  so they resolve through t() in the active (test: en) locale. */
+function textOf(value: string | (() => string)): string {
+  return typeof value === 'function' ? value() : value
+}
 
 const env = (partial: Partial<DesktopEnv>): DesktopEnv => ({
   desktop: false,
@@ -17,11 +24,8 @@ const env = (partial: Partial<DesktopEnv>): DesktopEnv => ({
   ...partial,
 })
 
-/** Resolve an i18n-friendly desc (string or () => string) to its text. */
-const textOf = (desc: string | (() => string)): string => typeof desc === 'function' ? desc() : desc
-
 describe('shell presets', () => {
-  it('keeps the registry well-formed (unique ids, titles, pure strip/left functions)', () => {
+  it('keeps the registry well-formed (unique ids, titles, pure strip functions)', () => {
     const presets = getShellPresets()
     expect(presets.length).toBeGreaterThan(0)
     const ids = new Set<string>()
@@ -29,13 +33,12 @@ describe('shell presets', () => {
       expect(ids.has(preset.id)).toBe(false)
       ids.add(preset.id)
       expect(preset.title.length).toBeGreaterThan(0)
+      // Descs are i18n-friendly now (string or () => string) — resolve first.
       expect(textOf(preset.desc).length).toBeGreaterThan(0)
-      // The strip/left functions must be total — an unknown environment
-      // yields undefined, never a throw.
-      const plain = env({ desktop: false, mode: null, platform: null })
-      expect(() => presetStripFor(preset, plain)).not.toThrow()
-      expect(() => presetLeftFor(preset, plain)).not.toThrow()
-      expect(() => preset.detect?.(plain)).not.toThrow()
+      // The strip function must be total — an unknown environment yields
+      // undefined, never a throw.
+      expect(() => presetStripFor(preset, env({ desktop: false, mode: null, platform: null }))).not.toThrow()
+      expect(() => preset.detect?.(env({ desktop: false, mode: null, platform: null }))).not.toThrow()
     }
   })
 
@@ -54,17 +57,6 @@ describe('shell presets', () => {
 
     it('reserves 32px on win32 advanced as the no-WCO fallback', () => {
       expect(presetStripFor(preset, env({ desktop: true, mode: 'advanced', platform: 'win32' }))).toBe(32)
-    })
-
-    it('reserves 90px on darwin advanced (the IDE-fullscreen traffic-light zone)', () => {
-      expect(presetLeftFor(preset, env({ desktop: true, mode: 'advanced', platform: 'darwin' }))).toBe(90)
-    })
-
-    it('reserves no left inset on win32 / compatibility / unknown environments', () => {
-      expect(presetLeftFor(preset, env({ desktop: true, mode: 'advanced', platform: 'win32' }))).toBeUndefined()
-      expect(presetLeftFor(preset, env({ desktop: true, mode: 'compatibility', platform: 'darwin' }))).toBeUndefined()
-      expect(presetLeftFor(preset, env({ desktop: true, mode: 'advanced', platform: 'linux' }))).toBeUndefined()
-      expect(presetLeftFor(preset, env({ desktop: false, mode: null, platform: null }))).toBeUndefined()
     })
 
     it('reserves nothing in compatibility mode or on unknown platforms', () => {

@@ -9,10 +9,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
-import { GitView } from '../src/client/GitView.tsx'
-import { api, type GitGraphEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
+import { GitLens } from '../src/client/changes/GitLens.tsx'
+import { createSidebarStore } from '../src/client/state.ts'
+import { api, type GitLogEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 const MAIN = 'C:/repo/main'
 const AGENT = 'C:/repo/agent'
@@ -28,7 +30,7 @@ function statusFor(target?: string): GitStatusResult {
     : { isRepo: true, branch: 'main', entries: [{ path: 'main-change.ts', xy: ' M' }] }
 }
 
-function logFor(target?: string, index = 0): GitGraphEntry[] {
+function logFor(target?: string, index = 0): GitLogEntry[] {
   const agent = target === AGENT
   const digit = agent ? 'a' : 'b'
   const suffix = index.toString(16).padStart(8, '0')
@@ -38,12 +40,7 @@ function logFor(target?: string, index = 0): GitGraphEntry[] {
     subject: agent ? `Agent checkout commit ${index}` : `Main checkout commit ${index}`,
     author: 'Test',
     date: '2026-08-20 00:00:00 +0800',
-    refs: agent ? 'HEAD -> refs/heads/agent' : 'HEAD -> refs/heads/main',
-    // GitGraphEntry requires parents; the lane algorithm treats the empty
-    // list as a single-column chain (every commit on col 0). The graph
-    // controller is therefore happy with [] and the assertions below stay
-    // focused on the worktree-selection consistency they were meant to guard.
-    parents: [],
+    refs: agent ? 'HEAD -> agent' : 'HEAD -> main',
   }]
 }
 
@@ -51,9 +48,6 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolvePromise!: (value: T) => void
   const promise = new Promise<T>((resolve) => { resolvePromise = resolve })
   return { promise, resolve: resolvePromise }
-}
-function lateGraphPage(): GitGraphEntry[] {
-  return logFor(AGENT, 99)
 }
 
 async function flushEffects(): Promise<void> {
@@ -63,7 +57,7 @@ async function flushEffects(): Promise<void> {
 
 afterEach(() => { vi.restoreAllMocks() })
 
-describe('GitView linked-worktree consistency', () => {
+describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
   it('refreshes status, branches and history together on auto and manual selection', async () => {
     vi.spyOn(api, 'gitWorktrees').mockResolvedValue(inventories)
     vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
@@ -71,20 +65,19 @@ describe('GitView linked-worktree consistency', () => {
       current: target === AGENT ? 'agent' : 'main',
       names: target === AGENT ? ['agent'] : ['main'],
     }))
-    vi.spyOn(api, 'gitBranchStatus').mockResolvedValue({ upstream: undefined, ahead: 0, behind: 0, gone: false })
-    const log = vi.spyOn(api, 'gitLogGraph').mockImplementation(
-      async (_scope, _count, _skip, worktree) => logFor(worktree),
-    )
+    const log = vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
 
     const container = document.createElement('div')
     document.body.append(container)
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(GitView, {
+        root.render(createElement(GitLens, {
           scope: { sessionId: 'session', cwd: MAIN },
+          store: createSidebarStore(),
           onOpenFile: () => {},
-          onOpenDiff: () => {},
+          onPreview: () => {},
+          selectedRef: null,
           visible: false,
         }))
       })
@@ -99,8 +92,6 @@ describe('GitView linked-worktree consistency', () => {
       expect(container.textContent).toContain('Agent checkout commit')
       expect(container.textContent).not.toContain('Main checkout commit')
       expect(branch).toHaveBeenCalledWith(expect.anything(), AGENT)
-      // gitLogGraph is now the single history route — its worktree arg pins
-      // the same checkout every other git.* call landed on.
       expect(log).toHaveBeenCalledWith(expect.anything(), 20, 0, AGENT)
 
       await act(async () => {
@@ -122,17 +113,16 @@ describe('GitView linked-worktree consistency', () => {
   })
 
   it('drops a late history page when the selected worktree changes', async () => {
-    const lateAgentPage = deferred<GitGraphEntry[]>()
+    const lateAgentPage = deferred<GitLogEntry[]>()
     vi.spyOn(api, 'gitWorktrees').mockResolvedValue(inventories)
     vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
     vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
       current: target === AGENT ? 'agent' : 'main',
       names: target === AGENT ? ['agent'] : ['main'],
     }))
-    vi.spyOn(api, 'gitBranchStatus').mockResolvedValue({ upstream: undefined, ahead: 0, behind: 0, gone: false })
-    vi.spyOn(api, 'gitLogGraph').mockImplementation(async (_scope, _count, skip, worktree) => {
-      if (worktree === AGENT && skip === 20) return lateAgentPage.promise
-      if (worktree === AGENT) return Array.from({ length: 20 }, (_value, index) => logFor(AGENT, index)[0]!)
+    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, skip, target) => {
+      if (target === AGENT && skip === 20) return lateAgentPage.promise
+      if (target === AGENT) return Array.from({ length: 20 }, (_value, index) => logFor(AGENT, index)[0]!)
       return logFor(MAIN)
     })
 
@@ -141,10 +131,12 @@ describe('GitView linked-worktree consistency', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(GitView, {
+        root.render(createElement(GitLens, {
           scope: { sessionId: 'session', cwd: MAIN },
+          store: createSidebarStore(),
           onOpenFile: () => {},
-          onOpenDiff: () => {},
+          onPreview: () => {},
+          selectedRef: null,
           visible: false,
         }))
       })
@@ -163,7 +155,7 @@ describe('GitView linked-worktree consistency', () => {
       await flushEffects()
       expect(container.textContent).toContain('Main checkout commit 0')
 
-      lateAgentPage.resolve(lateGraphPage())
+      lateAgentPage.resolve(logFor(AGENT, 99))
       await flushEffects()
       expect(container.textContent).toContain('Main checkout commit 0')
       expect(container.textContent).not.toContain('Agent checkout commit 99')

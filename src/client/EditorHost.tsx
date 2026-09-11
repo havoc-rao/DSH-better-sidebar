@@ -25,10 +25,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { api, mediaUrl, type SessionScope } from './api.ts'
+import { api, isOutsideWorkspaceMessage, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
+import { FenceErrorNotice } from './FenceErrorNotice.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
@@ -36,12 +37,12 @@ import { openSidebarFile } from './intercept.tsx'
 import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
 import { TreePanel } from './TreePanel.tsx'
-import { useNarrowViewport } from './breakpoints.ts'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
+import { closePathTabs, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
-import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, areaOfTab, type SidebarStore, type SidebarTab } from './state.ts'
+import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -98,15 +99,11 @@ export function EditorHost(props: {
   scope: SessionScope
   tab: SidebarTab
   expanded: string[]
-  revealed?: string[]
+  revealed: string[]
   onToggleDir: (path: string) => void
-  onReferenceFile: (path: string) => void
-  /** Whether this tab is the active, visible one (v0.14.0+): forwarded to
-   *  the tree panel so only a visible search box claims the global
-   *  search-focus keybindings (⌘P / ⌘F). */
-  visible?: boolean
+  onReferenceFile: (path: string, isDir: boolean) => void
 }) {
-const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile, visible } = props
+  const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile } = props
   const path = tab.path ?? ''
   const title = tab.title
   // A folder window: the model's `sidebar_open` (or any caller) opens a
@@ -138,7 +135,7 @@ const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot().prefs.editorExplorer, [store]),
   )
-// The file tree's "open with" configuration (pluginSettings['editor']): a
+  // The file tree's "open with" configuration (pluginSettings['editor']): a
   // blob subscription, so a pin click or a settings-page edit re-renders the
   // menu immediately. The parsed config also drives which targets are shown
   // (SSH mode hides the host-local ones).
@@ -148,57 +145,30 @@ const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile
   )
   const openWithConfig = useMemo(() => parseOpenWithConfig(editorBlob.openWith), [editorBlob])
   const openWithTargets = useMemo(() => resolveOpenWithTargets(openWithConfig), [openWithConfig])
-  // The VSCode layout is read directly from the prefs (like editorExplorer
-  // above) — the shell does not thread a flag through the tab props. Narrow
-  // viewports fall back to the docked drawer, so the effective flag is
-  // `sidebarLayout === 'vscode' && !narrow`.
-  const layout = useSyncExternalStore(
-    useCallback((callback: () => void) => store.subscribe(callback), [store]),
-    useCallback(() => store.getSnapshot().prefs.sidebarLayout, [store]),
-  )
-  // IDE FULLSCREEN (⌘⌥⇧B) forces the vscode window arrangement even for
-  // docked-layout users: the editor tab drops its docked tree (the explorer
-  // lives in the fullscreen panel's left column) and path-less tabs show the
-  // empty hint instead of the standalone explorer.
-  const ideMode = useSyncExternalStore(
-    useCallback((callback: () => void) => store.subscribe(callback), [store]),
-    useCallback(() => store.getSnapshot().state?.rightMaximized === true, [store]),
-  )
-  const narrow = useNarrowViewport()
-  const vscode = !narrow && (layout === 'vscode' || ideMode)
   // A path-less tab shows the empty-state hint in merged mode — and in split
   // mode it is the standalone explorer (tree-only, see the render below). A
   // folder tab is a folder window in BOTH modes: the tree rooted at the
   // folder, no editor chrome.
   const showEmpty = path === ''
-  const treeOnly = showEmpty && !inPlace && !vscode
+  const treeOnly = showEmpty && !inPlace
   const folderRoot = isDir ? path : undefined
-
-  // The panel this files window lives in: tree-originated opens must land in
-  // the SAME panel ("click in the right → open in the right"), not wherever
-  // the global activePane last pointed. Computed once per render; a stale
-  // value degrades to the right panel (the pre-bottom fallback).
-  const hostState = store.getSnapshot().state
-  const hostArea = hostState === undefined ? 'right' : areaOfTab(hostState, tab.id)
 
   /**
    * Open a file from THIS window (tree click / search row / path input):
    * merged mode switches this tab in place (stable id, meta survives);
-   * split mode opens a per-path dedupe tab through openSidebarFile, pinned
-   * to this window's panel (a keyboard activation never fires the pane's
-   * pointerdown-focus, so the pin is what keeps the open in sight).
+   * split mode opens a per-path dedupe tab through openSidebarFile.
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
       ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
     } else {
-      openSidebarFile(ctx, store, scope.sessionId, absolute, hostArea)
+      openSidebarFile(ctx, store, scope.sessionId, absolute)
     }
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
-    openSidebarFile(ctx, store, scope.sessionId, absolute, hostArea)
+    openSidebarFile(ctx, store, scope.sessionId, absolute)
   }
 
   /**
@@ -208,8 +178,7 @@ const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile
    */
   const openFileSide = (absolute: string): void => {
     store.reduce((state) => {
-      const key = treeOf(state, tab.id)
-      const pane = leafWithTab(state[key], tab.id) ?? firstLeaf(state[key])
+      const pane = leafWithTab(state.bottomSplits, tab.id) ?? firstLeaf(state.bottomSplits)
       const fresh: SidebarTab = {
         id: mintTabId(),
         type: 'editor',
@@ -217,16 +186,17 @@ const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile
         path: absolute,
         meta: { treeOpen: false },
       }
-      const { node, leafId } = insertLeafAt(state[key], pane.id, 'row', fresh, false)
-      return { ...state, [key]: node, activePane: leafId }
+      const { node, leafId } = insertLeafAt(state.bottomSplits, pane.id, 'row', fresh, false)
+      return { ...state, bottomSplits: node, activePane: leafId }
     })
   }
 
   /** The context menu's "open with" action: reveal the path in the OS file
-   *  manager, or hand the target's URL (a local `file` URL, or the SSH-remote
-   *  form for VSCode-family editors in remote mode) to the host's external
-   *  opener. Failures are logged only — a missing handler is the OS's
-   *  dialog, not a sidebar error. */
+   *  manager, or hand the target's URL to its opener — local `file` URLs go
+   *  to the host's external opener, while the SSH-remote form for
+   *  VSCode-family editors launches on the browser/client machine (see
+   *  api.openExternal). Failures are logged only — a missing handler is the
+   *  OS's/browser's dialog, not a sidebar error. */
   const openWith = (targetId: string, absolute: string): void => {
     const target = openWithTargets.find(item => item.id === targetId)
     if (target === undefined) return
@@ -253,6 +223,16 @@ const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile
         : [...config.pinned, targetId]
       return { ...blob, openWith: { ...config, pinned } }
     })
+  }
+
+  // Tree mutations reconcile the OPEN tabs (both split trees, the bottom
+  // panel, free windows): a rename retargets its tab to the new path; a
+  // delete closes tabs at or under the removed path. See tree-mutations.ts.
+  const onPathRenamed = (oldPath: string, newPath: string): void => {
+    retargetPathTabs(ctx, store, oldPath, newPath)
+  }
+  const onPathDeleted = (path: string): void => {
+    closePathTabs(ctx, store, path)
   }
 
   // The viewer's toolbar, hoisted into THIS header: the text editor reports
@@ -368,6 +348,9 @@ const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile
     }
     apply(planFirstMatch(ctx.get('betterSidebar')?.matchFileViewer(path), mediaUrlOf))
     return () => { cancelled = true; controller.abort() }
+    // The deps are deliberately granular: the scope object's identity churns,
+    // only its sessionId / cwd fields gate the (re)fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd, path, ctx, showEmpty, isDir, reloadSeq])
 
   // Save-then-refresh in preview mode (issue #167 part C): the edge into
@@ -386,13 +369,6 @@ const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
   const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
-  // The docked tree mounts LAZILY on its first open, then stays mounted
-  // while collapsed (width 0, clipped) — the CSS width transition animates
-  // the collapse/expand and the tree keeps its state (scroll / expanded
-  // dirs / search query) across toggles. Before the first open nothing is
-  // mounted, so a tree that is never opened costs no fetch.
-  const [everOpened, setEverOpened] = useState(treeOpen)
-  useEffect(() => { if (treeOpen) setEverOpened(true) }, [treeOpen])
   const saveLabel = toolbar === null ? ''
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')
@@ -408,8 +384,8 @@ const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile
       <div className={css.editor}>
         <TreePanel
           full
+          store={store}
           sessionId={scope.sessionId}
-ctx={ctx}
           cwd={folderRoot ?? scope.cwd}
           expanded={expanded}
           revealed={revealed}
@@ -423,7 +399,9 @@ ctx={ctx}
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
-          visible={visible}
+          onPathRenamed={onPathRenamed}
+          onPathDeleted={onPathDeleted}
+          service={ctx.get('betterSidebar')}
         />
       </div>
     )
@@ -462,21 +440,20 @@ ctx={ctx}
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
         {toolbar?.editable === true && (
-          <Tooltip label={`${t('save')} (Ctrl/Cmd+S)`} side="bottom" delayMs={500}>
-            <button
-              type="button"
-              className={css.iconButton}
-              aria-label={t('save')}
-              onClick={() => { controlsRef.current?.save() }}
-            >
-              <IconCheckOutline16 size={14} />
-            </button>
-          </Tooltip>
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('save')}
+            title={`${t('save')} (Ctrl/Cmd+S)`}
+            onClick={() => { controlsRef.current?.save() }}
+          >
+            <IconCheckOutline16 size={14} />
+          </button>
         )}
         {saveLabel !== '' && (
           <span className={clsx(css.editorStatus, toolbar?.saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>
         )}
-{toolbar !== null && (
+        {toolbar !== null && (
           <button
             type="button"
             className={css.iconButton}
@@ -487,25 +464,24 @@ ctx={ctx}
             <IconRefreshOutline14 size={14} />
           </button>
         )}
-        {!vscode && (
-          <Tooltip label={t('editorTreeToggle')} side="bottom" delayMs={500}>
-            <button
-              type="button"
-              className={clsx(css.iconButton, treeOpen && css.editorTreeToggleActive)}
-              aria-label={t('editorTreeToggle')}
-              aria-pressed={treeOpen}
-              onClick={toggleTree}
-            >
-              <IconFolderOpen16 size={14} />
-            </button>
-          </Tooltip>
-        )}
+        <button
+          type="button"
+          className={clsx(css.iconButton, treeOpen && css.editorTreeToggleActive)}
+          aria-label={t('editorTreeToggle')}
+          title={t('editorTreeToggle')}
+          aria-pressed={treeOpen}
+          onClick={toggleTree}
+        >
+          <IconFolderOpen16 size={14} />
+        </button>
       </div>
       <div className={css.editorBody}>
         <div className={css.editorMain}>
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
           {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
-          {!showEmpty && load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
+          {!showEmpty && load.status === 'error' && (isOutsideWorkspaceMessage(load.message)
+            ? <FenceErrorNotice store={store} onDisabled={() => { setReloadSeq(sequence => sequence + 1) }} />
+            : <div className={css.editorError}>{load.message}</div>)}
           {!showEmpty && load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
           {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {
             ctx, store, scope, path, title,
@@ -520,15 +496,8 @@ ctx={ctx}
             onToolbarControls,
           })}
         </div>
-        {!vscode && (
-          <div
-            className={clsx(
-              css.editorTreeDock,
-              !treeOpen && css.editorTreeDockCollapsed,
-              dragWidth !== null && css.editorTreeDockDragging,
-            )}
-            style={{ width: treeOpen ? treeWidth : 0 }}
-          >
+        {treeOpen && (
+          <div className={css.editorTreeDock} style={{ width: treeWidth }}>
             <div
               className={css.editorTreeResize}
               role="separator"
@@ -539,26 +508,26 @@ ctx={ctx}
               onPointerUp={onResizeEnd}
               onPointerCancel={onResizeEnd}
             />
-{(treeOpen || everOpened) && (
-              <TreePanel
-                sessionId={scope.sessionId}
-                ctx={ctx}
-                cwd={folderRoot ?? scope.cwd}
-                expanded={expanded}
-                revealed={revealed}
-                onToggle={onToggleDir}
-                onOpenFile={openFile}
-                onOpenFileNewTab={openFileNewTab}
-                onOpenFileSide={openFileSide}
-                openWithTargets={openWithTargets}
-                openWithPinned={openWithConfig.pinned}
-                openWithSsh={openWithSshActive(openWithConfig)}
-                onOpenWith={openWith}
-                onToggleOpenWithPin={toggleOpenWithPin}
-                onReferenceFile={onReferenceFile}
-                visible={visible}
-              />
-            )}
+            <TreePanel
+              store={store}
+              sessionId={scope.sessionId}
+              cwd={scope.cwd}
+              expanded={expanded}
+              revealed={revealed}
+              onToggle={onToggleDir}
+              onOpenFile={openFile}
+              onOpenFileNewTab={openFileNewTab}
+              onOpenFileSide={openFileSide}
+              openWithTargets={openWithTargets}
+              openWithPinned={openWithConfig.pinned}
+              openWithSsh={openWithSshActive(openWithConfig)}
+              onOpenWith={openWith}
+              onToggleOpenWithPin={toggleOpenWithPin}
+              onReferenceFile={onReferenceFile}
+              onPathRenamed={onPathRenamed}
+              onPathDeleted={onPathDeleted}
+              service={ctx.get('betterSidebar')}
+            />
           </div>
         )}
       </div>

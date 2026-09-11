@@ -12,16 +12,6 @@
  */
 import { defineConfig } from 'vitest/config'
 
-// Opt-in local-environment exemption. These spec files exercise things the
-// local sandbox / OS-locale cannot provide — spawning a real PTY
-// (agent-pty, smoke), MutationObserver flush timing in jsdom
-// (host-sidebar-keeper), and English-copy assertions under a zh_CN locale
-// (side-card-section). They pass on CI (which runs the FULL suite) but fail
-// deterministically on a zh_CN + no-PTY machine. Set DSH_SKIP_ENV_TESTS=1
-// (or use `pnpm test:local`) to exclude them for a green local run.
-// Default (absent): nothing is skipped — CI keeps running everything.
-const skipEnvTests = process.env.DSH_SKIP_ENV_TESTS === '1'
-
 export default defineConfig({
   test: {
     // Bridge Node's `localStorage` accessor to jsdom's store (see the file).
@@ -31,22 +21,21 @@ export default defineConfig({
         inline: [/@deepseek-ai\/dsh-client-ui-primitives/],
       },
     },
+    // A handful of suites drive REAL processes (git, powershell, node-pty),
+    // and vitest's 5000 ms default is simply below what a loaded 2-core CI
+    // runner needs for a single cold spawn: the 2026-09-09/10 window lost
+    // cases in tests/agent-pty.spec.ts (a PowerShell + ConPTY pair per
+    // terminal), tests/install-powershell.spec.ts (12.1 s for one
+    // powershell.exe start) and tests/git.spec.ts (9.6 s to build a
+    // pathological untracked set) — three different files, one cause. Raise
+    // the default to cover them; the pty and PowerShell suites still declare
+    // their own 30 s budgets, and a genuinely hung test still fails.
+    testTimeout: 15_000,
     // The Playwright headless-render lane lives in tests/e2e (specs named
     // *.e2e.ts). Keep vitest from ever collecting it, both by naming (the
     // default include only matches *.test.* / *.spec.*) and by an explicit
     // exclude. NOTE: `exclude` REPLACES vitest's defaults, so the standard
     // node_modules/dist/etc. excludes must be restated here.
-    // The real-git / real-PTY specs (git.spec, git-worktree.spec, smoke.spec)
-    // spawn many child processes; under a fully parallel run macOS's
-    // per-exec signature/linkage checks queue up and a single `git` can take
-    // far longer than the 5s default test timeout (visible as "Test timed
-    // out in 5000ms", not an assertion failure). Cap the worker pool and give
-    // the child-process-heavy specs breathing room; a real regression still
-    // fails deterministically within the longer window.
-    maxWorkers: 8,
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
-    retry: 1,
     exclude: [
       'tests/e2e/**',
       // Local dev worktrees (pnpm/DSH-style task branches) may carry stale
@@ -57,14 +46,6 @@ export default defineConfig({
       '**/cypress/**',
       '**/.{idea,git,cache,output,temp}/**',
       '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*',
-      // Only these 4 environment-limited files are dropped under the flag;
-      // every other spec keeps running, so regressions elsewhere still gate.
-      ...(skipEnvTests ? [
-        'tests/agent-pty.spec.ts',          // node-pty can't allocate a PTY here
-        'tests/smoke.spec.ts',              // 同上 (pty-manager spawns)
-        'tests/host-sidebar-keeper.spec.tsx', // jsdom MutationObserver timing
-        'tests/side-card-section.spec.tsx',   // asserts EN copy; local is zh_CN
-      ] : []),
     ],
   },
 })

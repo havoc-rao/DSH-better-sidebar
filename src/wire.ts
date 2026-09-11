@@ -15,7 +15,6 @@ export type SidebarErrorCode =
   | 'too-large'
   | 'fs-error'
   | 'git-error'
-  | 'git-no-remote'
   | 'pty-error'
   | 'pty-deps-missing'
   | 'shell-not-found'
@@ -24,11 +23,6 @@ export type SidebarErrorCode =
   | 'subagents-unavailable'
   | 'settings-rejected'
   | 'settings-conflict'
-  | 'no-changes'
-  /** Legacy client compatibility; new commit-draft routes use no-changes. */
-  | 'no-staged-changes'
-  | 'llm-unavailable'
-  | 'llm-error'
   | 'internal'
 
 /** One API failure with its wire code and HTTP status. */

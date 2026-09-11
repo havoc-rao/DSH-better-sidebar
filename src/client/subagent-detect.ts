@@ -10,13 +10,6 @@
  *   totals (mirror of the official `indexSubagentDescendants` over the
  *   plugin's own summary rows).
  *
-* Two row classes never register as topology (both are excluded from every
- * count/trigger here): Side Chat threads, recognized by their durable
- * 'Side: ' title, and hidden one-shot helpers like the Git commit-draft
- * agent, recognized structurally by their session-id prefix ({@link
- * isHiddenHelperSummary}) — they never pin a 'Side: ' TITLE, so the title
- * check alone cannot see them.
- *
  * The lineage walks themselves ({@link isSideThreadSummary}, {@link
  * rootAncestor}, {@link countSubagentDescendants}) live in
  * ./subagent-lineage.ts — the single shared walk implementation — and are
@@ -26,9 +19,9 @@ import type {
   SidebarSessionList,
   SidebarSubagentCatalog,
 } from '../context-types.ts'
-import { countSubagentDescendants, isHiddenHelperSummary, isSideThreadSummary, rootAncestor } from './subagent-lineage.ts'
+import { countSubagentDescendants, isSideThreadSummary, rootAncestor } from './subagent-lineage.ts'
 
-export { countSubagentDescendants, isHiddenHelperSummary, isSideThreadSummary, rootAncestor }
+export { countSubagentDescendants, isSideThreadSummary, rootAncestor }
 export type { SubagentDescendantTotals } from './subagent-lineage.ts'
 
 /** Count the direct subagent children of one session (durable `origin` rows). */
@@ -39,7 +32,7 @@ export function directSubagentCount(
   let count = 0
   for (const summary of Object.values(byId)) {
     if (summary.origin === 'subagent' && summary.parentId === sessionId
-      && !isSideThreadSummary(summary) && !isHiddenHelperSummary(summary)) count += 1
+      && !isSideThreadSummary(summary)) count += 1
   }
   return count
 }

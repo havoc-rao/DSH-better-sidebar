@@ -104,9 +104,8 @@ describe('layout-push variable cleanup', () => {
     const htmlStyle = document.documentElement.style
     // A fresh session seeds the bottom workbench collapsed: the push is 0.
     expect(htmlStyle.getPropertyValue('--dsh-sidebar-height')).toBe('0px')
-    // A collapsed panel writes 0px for the width push (it owns the variable;
-    // the push is released only on unmount).
-    expect(htmlStyle.getPropertyValue('--dsh-sidebar-width')).toBe('0px')
+    // The right column is DSH's native Sidebar — this shell writes no width.
+    expect(htmlStyle.getPropertyValue('--dsh-sidebar-width')).toBe('')
     // Any unmount (boundary swap, plugin disable, HMR) must release the push.
     unmount()
     expect(htmlStyle.getPropertyValue('--dsh-sidebar-height')).toBe('')
@@ -156,10 +155,9 @@ describe('tab crash containment', () => {
     // is still there and the layout push is still live (the content open
     // expanded the panel).
     expect(container.querySelector(`[aria-label="${t('collapseBottomPanel')}"]`)).not.toBeNull()
-    // A CRASHING tab renders in-pane without driving the layout push (the
-    // boundary strip keeps the panel collapsed at the 0px push — the push
-    // itself stays owned and correct).
-    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-width')).toBe('0px')
+    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe(
+      `${store.getSnapshot().state!.bottomHeight}px`,
+    )
   })
 
   it('the retry button recovers a tab whose crash has since been fixed', () => {

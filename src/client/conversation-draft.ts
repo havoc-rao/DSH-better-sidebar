@@ -1,10 +1,9 @@
 /**
  * Insert text into the current session's composer draft through the
  * conversation service — the shared path behind the explorer's @-reference
- * button, the terminal/selection "add to conversation" pills and the
- * viewer selection popup. The service is resolved lazily through `ctx.get`
- * (the inject-free read the app's own plugins use); a missing service or
- * scope degrades to a logged no-op, never a crash.
+ * button and the viewer selection popup. The service is resolved lazily
+ * through `ctx.get` (the inject-free read the app's own plugins use); a
+ * missing service or scope degrades to a logged no-op, never a crash.
  *
  * File references additionally use DSH's own structured insert event
  * (`slash/input-insert-reference`, see `insertFileReference`) instead of
@@ -166,7 +165,6 @@ export function placeComposerCaretAfterInsert(expectedDraft: string, caretIndex:
  * caret (see {@link probeComposerCaret}), falling back to appending at the
  * end when the caret cannot be resolved. Returns false — and logs — when the
  * conversation service or the session scope is unavailable.
->>>>>>> offical/main
  */
 export function appendToDraft(ctx: Context, sessionId: string, text: string): boolean {
   try {

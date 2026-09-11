@@ -10,21 +10,18 @@
  * state.ts; this file is pure presentation over them.
  */
 import { Fragment, useEffect, useRef, useState } from 'react'
-import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import type { SidebarState, SidebarTab, SplitNode } from './state.ts'
 import type { DropZone } from './state.ts'
 import { TabBar, type NewTabOption, parseDrag, type TabDragPayload } from './TabBar.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
-import { tabSurfaceProps } from './tab-surface.ts'
 import css from './sidebar.module.css'
 
 /** Actions the workbench needs (bound to the store by the sidebar shell). */
 export interface WorkbenchActions {
   closeTab: (paneId: string, tabId: string) => void
   activateTab: (paneId: string, tabId: string) => void
-  /** Commit a tab's renamed label (persisted with the layout). */
-  renameTab: (paneId: string, tabId: string, title: string) => void
   /** Make a pane the target of newly opened tabs (click focus). */
   focusPane: (paneId: string) => void
   /** VSCode drag gesture: edge → split the target pane, center → merge. */
@@ -32,9 +29,6 @@ export interface WorkbenchActions {
   /** Reorder within a pane (drop onto another tab inserts before it). */
   moveTabBefore: (payload: TabDragPayload, toPane: string, beforeTabId: string) => void
   resizeSplit: (splitId: string, index: number, deltaFrac: number) => void
-  /** Float a docked tab out as a free window (tab context menu entry); the
-   *  tab context menu hides the entry when undefined (legacy callers). */
-  floatTab?: (tabId: string) => void
   /**
    * Pin/unpin a terminal tab (v0.17.0+). The shell snapshots the home cwd
    * at pin time; null clears the pin. Optional: when undefined the tab
@@ -159,27 +153,10 @@ function LeafView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
-  /** Workspace-bound stub detection (pinned strip partition; absent → none). */
-  isBoundTabId?: (tabId: string) => boolean
-  /** Resolve a workspace-bound stub to its LIVE definition (title/path/meta
-   *  from the workspace windows store); absent → identity. */
-  resolveTab?: (tab: SidebarTab) => SidebarTab
-  /** Right-click on a tab (the shell positions its workspace menu). */
-  onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
-  /** Suppress this pane's own tab strip (the VSCode layout hosts the active
-   *  pane's tabs in the panel header instead — see Sidebar's vscodeHeader). */
-  hideTabBar?: boolean
-  /** Which tabs may be renamed inline (double-click their label). */
-  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
-  const {
-    leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab,
-  } = props
+  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
-  const resolve = (tab: SidebarTab): SidebarTab => resolveTab?.(tab) ?? tab
-  const tabs = leaf.tabs.map(resolve)
-  const activeTab = tabs.find(tab => tab.id === leaf.active) ?? tabs[tabs.length - 1]
+  const activeTab = leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
 
   useEffect(() => {
     const clear = (): void => { setDropZone(null) }
@@ -221,34 +198,25 @@ function LeafView(props: {
       {/*
         The tab strip renders even for an empty pane: the + menu must stay
         reachable when the pane has no tabs (fresh split, or the last tab was
-        dragged out), so a new tab can always be created or dragged in. The
-        VSCode layout suppresses this per-pane strip — the active pane's tabs
-        live in the panel header instead (hideTabBar).
+        dragged out), so a new tab can always be created or dragged in.
       */}
-{!hideTabBar && (
-        <TabBar
-          paneId={leaf.id}
-          tabs={tabs}
-          active={leaf.active}
-          onActivate={(tabId) => { actions.activateTab(leaf.id, tabId) }}
-          onClose={(tabId) => { actions.closeTab(leaf.id, tabId) }}
-          onRename={(tabId, title) => { actions.renameTab(leaf.id, tabId, title) }}
-          canRenameTab={canRenameTab}
-          onNewTab={onNewTab}
-          newTabOptions={newTabOptions}
-          getTabIcon={getTabIcon}
-          getTabBadge={getTabBadge}
-          isBoundTabId={isBoundTabId}
-          onTabContextMenu={onTabContextMenu}
-          onDropTab={(payload, before) => {
-            if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
-            else actions.moveTabBefore(payload, leaf.id, before)
-          }}
-          onFloatTab={actions.floatTab}
-          onPinTab={actions.pinTab}
-        />
-      )}
-      {tabs.length > 0 ? (
+      <TabBar
+        paneId={leaf.id}
+        tabs={leaf.tabs}
+        active={leaf.active}
+        onActivate={(tabId) => { actions.activateTab(leaf.id, tabId) }}
+        onClose={(tabId) => { actions.closeTab(leaf.id, tabId) }}
+        onNewTab={onNewTab}
+        newTabOptions={newTabOptions}
+        getTabIcon={getTabIcon}
+        getTabBadge={getTabBadge}
+        onDropTab={(payload, before) => {
+          if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
+          else actions.moveTabBefore(payload, leaf.id, before)
+        }}
+        onPinTab={actions.pinTab}
+      />
+      {leaf.tabs.length > 0 ? (
         /*
           Every tab stays MOUNTED (inactive ones hidden), so switching tabs
           never tears down the content: a terminal keeps its pty connection
@@ -257,10 +225,9 @@ function LeafView(props: {
           terminal's close frame) happens only when a tab is truly closed.
         */
         <div className={css.paneContent}>
-          {tabs.map(tab => (
+          {leaf.tabs.map(tab => (
             <div
               key={tab.id}
-              {...tabSurfaceProps(tab.id)}
               className={clsx(css.paneTab, tab.id !== activeTab?.id && css.paneTabHidden)}
             >
               {renderTab(tab, tab.id === activeTab?.id, leaf.id)}
@@ -284,16 +251,8 @@ function NodeView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
-  isBoundTabId?: (tabId: string) => boolean
-  resolveTab?: (tab: SidebarTab) => SidebarTab
-  onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
-  hideTabBar?: boolean
-  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
-  const {
-    node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab,
-  } = props
+  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
   if (node.kind === 'leaf') {
     return (
       <LeafView
@@ -304,11 +263,6 @@ function NodeView(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
-        isBoundTabId={isBoundTabId}
-        resolveTab={resolveTab}
-        onTabContextMenu={onTabContextMenu}
-        hideTabBar={hideTabBar}
-        canRenameTab={canRenameTab}
       />
     )
   }
@@ -336,11 +290,6 @@ function NodeView(props: {
               renderTab={renderTab}
               getTabIcon={getTabIcon}
               getTabBadge={getTabBadge}
-              isBoundTabId={isBoundTabId}
-              resolveTab={resolveTab}
-              onTabContextMenu={onTabContextMenu}
-              hideTabBar={hideTabBar}
-              canRenameTab={canRenameTab}
             />
           </div>
         </Fragment>
@@ -362,22 +311,12 @@ export function Workbench(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
-  isBoundTabId?: (tabId: string) => boolean
-  resolveTab?: (tab: SidebarTab) => SidebarTab
-  onTabContextMenu?: (tab: SidebarTab, event: ReactMouseEvent) => void
-  /** Suppress per-pane tab strips (the VSCode layout hosts the active pane's
-   *  tabs in the panel header — see Sidebar's vscodeHeader). */
-  hideTabBar?: boolean
-  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
-  const {
-    state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge,
-    isBoundTabId, resolveTab, onTabContextMenu, hideTabBar, canRenameTab,
-  } = props
+  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
   return (
     <div className={css.workbench}>
       <NodeView
-        node={tree ?? state.splits}
+        node={tree ?? state.bottomSplits}
         state={state}
         newTabOptions={newTabOptions}
         actions={actions}
@@ -385,11 +324,6 @@ export function Workbench(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
-        isBoundTabId={isBoundTabId}
-        resolveTab={resolveTab}
-        onTabContextMenu={onTabContextMenu}
-        hideTabBar={hideTabBar}
-        canRenameTab={canRenameTab}
       />
     </div>
   )

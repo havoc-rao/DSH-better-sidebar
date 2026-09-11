@@ -8,10 +8,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
-import { createNativeTabRecords, NativeTabBody } from '../src/client/native/tab-adapter.tsx'
+import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
 import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
-import { createSidebarStore } from '../src/client/state.ts'
+import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 const scope = { sessionId: 's1', cwd: '/work' }
 
@@ -117,6 +117,53 @@ describe('service routing into the native surface', () => {
     const { service, calls } = mount()
     service.openTab({ type: 'editor' }, scope)
     expect(calls).toEqual([{ op: 'openTab', sessionId: 's1', kind: 'files', params: {}, revealIfOpened: true }])
+  })
+
+  it('keeps a component type path seed on the page open (no resource reroute)', () => {
+    // Regression #632: a path seed on a component type was rerouted into
+    // openResource, so the editor (the dsh-resource://file/** claimant)
+    // received the open and the registered component never mounted.
+    const { service, calls } = mount()
+    service.registerTab({ id: 'my-plugin:doc', title: 'Doc', component: () => null })
+    service.openTab({ type: 'my-plugin:doc', path: '/work/spec.md', title: 'Spec' }, scope)
+    expect(calls).toEqual([{
+      op: 'openTab',
+      sessionId: 's1',
+      kind: 'my-plugin:doc',
+      params: { title: 'Spec', path: '/work/spec.md' },
+      revealIfOpened: true,
+    }])
+  })
+
+  it('carries the path seed and meta on a multi-instance component open', () => {
+    const { service, calls } = mount()
+    service.registerTab({
+      id: 'my-plugin:console',
+      title: 'Console',
+      createTab: (state) => ({
+        tab: { id: `console:${state.nextTerminal}`, type: 'my-plugin:console', title: 'Console' },
+        patch: { nextTerminal: state.nextTerminal + 1 },
+      }),
+      component: () => null,
+    })
+    service.openTab({ type: 'my-plugin:console', path: '/work/x.md', meta: { k: 1 } }, scope)
+    expect(calls).toEqual([{
+      op: 'openTab',
+      sessionId: 's1',
+      kind: 'my-plugin:console',
+      params: { title: 'Console', path: '/work/x.md', meta: { k: 1 } },
+      // Multi-instance kinds mint a fresh tab per open: no forced reveal.
+      revealIfOpened: false,
+    }])
+  })
+
+  it('reports a component path seed to onOpen on the synthetic tab', () => {
+    const { service } = mount()
+    const seen: Array<SidebarTab | undefined> = []
+    service.registerTab({ id: 'my-plugin:doc', title: 'Doc', onOpen: (tab) => { seen.push(tab) }, component: () => null })
+    service.openTab({ type: 'my-plugin:doc', path: '/work/spec.md' }, scope)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ type: 'my-plugin:doc', path: '/work/spec.md' })
   })
 
   it('keeps a bottom-targeted open in the plugin layout', () => {
@@ -231,7 +278,7 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
     // not the only one with a blank icon slot.
     const filesGuide = filesType?.guide as Array<{ icon?: unknown; title: () => string; description?: () => string }> | undefined
     expect(filesGuide?.[0]?.icon).toBeDefined()
-    // DSH 0.1.5-rc.1 restored the guide `description` as an optional
+    // DSH 0.1.5-rc.1+ restored the guide `description` as an optional
     // `() => string` (rendered only while the guide lists at most 4
     // entries). The takeover IS the editor's page, so its guide line is the
     // EDITOR descriptor's description (the takeover reuses it, exactly as it
@@ -308,5 +355,113 @@ describe('NativeTabBody full-height host wrapper', () => {
     expect(wrapper!.childElementCount).toBe(1)
     act(() => { root?.unmount() })
     host.remove()
+  })
+})
+
+/**
+ * The native tab CHIP: the host's tab definition carries no icon field, so
+ * the plugin draws the glyph itself inside the `sidebar.right.pane.tab.title`
+ * slot (which IS the chip's content). These cases pin the placement rule —
+ * an editor tab with a path shows the FILE's glyph, every other tab shows its
+ * descriptor's glyph — and the accessible-name boundary: the glyph is
+ * decorative, so the chip's name stays exactly the title the e2e lane matches
+ * with `getByRole('tab', { name })`.
+ */
+describe('NativeTabTitle (the chip glyph)', () => {
+  const renderTitle = (
+    records: ReturnType<typeof createNativeTabRecords>,
+    service: ReturnType<typeof createBetterSidebarService>,
+    info: unknown,
+    descriptorId: string,
+  ): { host: HTMLDivElement; unmount: () => void } => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    let root: Root | undefined
+    act(() => {
+      root = createRoot(host)
+      root.render(createElement(NativeTabTitle, {
+        records,
+        service,
+        descriptorId,
+        useTabInfo: () => info as never,
+      }))
+    })
+    return {
+      host,
+      unmount: () => {
+        act(() => { root?.unmount() })
+        host.remove()
+      },
+    }
+  }
+
+  const nativeInfo = (id: string, kind: string, title: string) => ({
+    tab: {
+      id,
+      kind,
+      title,
+      contentId: `sidebar://${id}`,
+      visible: true,
+      navigation: { address: `sidebar://${id}`, params: undefined, revision: 0 },
+      signal: new AbortController().signal,
+    },
+  })
+
+  it('draws the descriptor glyph before the live title', () => {
+    const records = createNativeTabRecords()
+    const service = createBetterSidebarService(createSidebarStore())
+    service.registerTab({
+      id: 'stub-tab',
+      title: () => 'Stub',
+      icon: (size: number) => createElement('i', { 'data-stub-icon': size }),
+      component: () => createElement('div'),
+    })
+    records.ensure({ id: 'chip-1', kind: 'stub-tab', title: 'Stub', params: undefined, scope })
+
+    const { host, unmount } = renderTitle(records, service, nativeInfo('chip-1', 'stub-tab', 'Stub'), 'stub-tab')
+    const chip = host.querySelector('[aria-hidden="true"]')
+    expect(chip, 'the chip must carry a decorative glyph').not.toBeNull()
+    expect(chip!.querySelector('[data-stub-icon="14"]'), 'the descriptor icon renders at the chip scale').not.toBeNull()
+    expect(host.textContent, 'the title follows the glyph').toBe('Stub')
+    expect(host.querySelector('[role="tab"]'), 'the chip itself is the host’s element, not the plugin’s').toBeNull()
+    unmount()
+  })
+
+  it('an editor tab with a path shows the FILE glyph instead of the type glyph', () => {
+    const records = createNativeTabRecords()
+    const service = createBetterSidebarService(createSidebarStore())
+    service.registerTab({
+      id: 'editor',
+      title: () => 'Files',
+      icon: (size: number) => createElement('i', { 'data-type-icon': size }),
+      component: () => createElement('div'),
+    })
+    records.ensure({
+      id: 'chip-2',
+      kind: 'editor',
+      title: 'notes.md',
+      params: { path: '/work/notes.md' },
+      scope,
+    })
+
+    const { host, unmount } = renderTitle(records, service, nativeInfo('chip-2', 'editor', 'notes.md'), 'editor')
+    expect(host.querySelector('[data-type-icon]'), 'the type glyph must NOT be used for a file tab').toBeNull()
+    // The file glyph is the host's own FileTypeIcon (its component identity is
+    // asserted through the resolver tests); here the point is that a glyph is
+    // drawn and the title is intact.
+    expect(host.querySelector('[aria-hidden="true"]')).not.toBeNull()
+    expect(host.textContent).toBe('notes.md')
+    unmount()
+  })
+
+  it('falls back to the title alone when the type is gone (unregistered descriptor)', () => {
+    const records = createNativeTabRecords()
+    const service = createBetterSidebarService(createSidebarStore())
+    records.ensure({ id: 'chip-3', kind: 'ghost', title: 'Ghost', params: undefined, scope })
+
+    const { host, unmount } = renderTitle(records, service, nativeInfo('chip-3', 'ghost', 'Ghost'), 'ghost')
+    expect(host.querySelector('[aria-hidden="true"]')).toBeNull()
+    expect(host.textContent).toBe('Ghost')
+    unmount()
   })
 })

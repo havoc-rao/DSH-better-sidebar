@@ -6,15 +6,17 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
-import {
-  branchStatus, branchTips, fetch, graphLog, parseGraphLines, parseLogLines, parsePorcelainZ, repoRoots, status,
-} from '../src/git.ts'
+import { parseLogLines, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
 
 const execFileAsync = promisify(execFile)
 const normalizePath = (path: string): string => path.replaceAll('\\', '/')
 // macOS tmpdir() is the /var symlink while git reports the resolved
-// /private/var prefix — canonicalize both sides before comparing.
-const canonical = (path: string): string => normalizePath(realpathSync(path))
+// /private/var prefix; on Windows TEMP is often the 8.3 short form
+// (C:\Users\RUNNER~1\...) while git reports the long path. The NATIVE
+// realpath resolves both aliasings (libuv canonicalizes on Windows via
+// GetFinalPathNameByHandle, which expands 8.3 names) — canonicalize both
+// sides before comparing.
+const canonical = (path: string): string => normalizePath(realpathSync.native(path))
 
 describe('git parsing', () => {
   it('discovers and selects direct child repositories under a workspace directory', async () => {
@@ -232,36 +234,6 @@ describe('git parsing', () => {
     ])
   })
 
-  it('parses graph log rows with parent hashes (first-parent first, root = empty)', () => {
-    const full = 'abc1234def5678abc1234def5678abc1234def5678'
-    const parent1 = 'def5678abc1234def5678abc1234def5678abc1234'
-    const parent2 = 'fedcba9876543210fedcba9876543210fedcba98'
-    const rows = parseGraphLines(
-      `${full}\x1f${parent1} ${parent2}\x1fMerge branch\x1fAlice\x1f2024-01-01 10:00:00 +0800\x1fHEAD -> refs/heads/main, tag: refs/tags/v1, refs/remotes/origin/main\n`
-      + `${parent1}\x1f\x1fRoot commit\x1fBob\x1f2024-01-02 10:00:00 +0800\x1f\n`,
-    )
-    expect(rows).toEqual([
-      {
-        hash: full.slice(0, 7),
-        hashFull: full,
-        subject: 'Merge branch',
-        author: 'Alice',
-        date: '2024-01-01 10:00:00 +0800',
-        refs: 'HEAD -> refs/heads/main, tag: refs/tags/v1, refs/remotes/origin/main',
-        parents: [parent1, parent2],
-      },
-      {
-        hash: parent1.slice(0, 7),
-        hashFull: parent1,
-        subject: 'Root commit',
-        author: 'Bob',
-        date: '2024-01-02 10:00:00 +0800',
-        refs: '',
-        parents: [],
-      },
-    ])
-  })
-
   it('keeps mode/rename-only sections hunkless', () => {
     const parsed = parseUnifiedDiff([
       'diff --git a/run.sh b/run.sh',
@@ -282,136 +254,5 @@ describe('git parsing', () => {
   it('parses an empty or junk diff into no files', () => {
     expect(parseUnifiedDiff('').files).toEqual([])
     expect(parseUnifiedDiff('no diff here\n').files).toEqual([])
-  })
-})
-
-/** A bare remote + a local clone with `main` pushed and tracking `origin/main`. */
-function remoteClonePair(): { root: string; local: string; remote: string } {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-git-fetch-'))
-  const remote = join(root, 'remote.git')
-  const local = join(root, 'local')
-  try {
-    execFileSync('git', ['init', '-q', '--bare', '--initial-branch=main', remote])
-    // The bare repo must accept deleting its checked-out branch (the deleted
-    // remote branch is what makes the local tracking ref prunable).
-    execFileSync('git', ['-C', remote, 'config', 'receive.denyDeleteCurrent', 'ignore'])
-    execFileSync('git', ['clone', '-q', remote, local])
-    execFileSync('git', ['-C', local, 'config', 'user.email', 't@t'])
-    execFileSync('git', ['-C', local, 'config', 'user.name', 't'])
-    execFileSync('git', ['-C', local, 'commit', '-q', '--allow-empty', '-m', 'init'])
-    execFileSync('git', ['-C', local, 'push', '-q', '-u', 'origin', 'main'])
-  } catch (error) {
-    rmSync(root, { recursive: true, force: true })
-    throw error
-  }
-  return { root, local, remote }
-}
-
-describe('git fetch and branch status', () => {
-  it('reports no upstream for a branch that tracks nothing', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-git-no-upstream-'))
-    try {
-      execFileSync('git', ['init', '-q'], { cwd: root })
-      execFileSync('git', ['-C', root, 'config', 'user.email', 't@t'])
-      execFileSync('git', ['-C', root, 'config', 'user.name', 't'])
-      execFileSync('git', ['-C', root, 'commit', '-q', '--allow-empty', '-m', 'init'])
-      await expect(branchStatus(root)).resolves.toEqual({ upstream: undefined, ahead: 0, behind: 0, gone: false })
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('tracks the upstream relationship: up to date → ahead → diverged', async () => {
-    const { root, local, remote } = remoteClonePair()
-    try {
-      await expect(branchStatus(local)).resolves.toEqual({ upstream: 'origin/main', ahead: 0, behind: 0, gone: false })
-      execFileSync('git', ['-C', local, 'commit', '-q', '--allow-empty', '-m', 'local'])
-      await expect(branchStatus(local)).resolves.toEqual({ upstream: 'origin/main', ahead: 1, behind: 0, gone: false })
-      // A second clone commits and pushes on the remote side…
-      const other = join(root, 'other')
-      execFileSync('git', ['clone', '-q', remote, other])
-      execFileSync('git', ['-C', other, 'config', 'user.email', 't@t'])
-      execFileSync('git', ['-C', other, 'config', 'user.name', 't'])
-      execFileSync('git', ['-C', other, 'commit', '-q', '--allow-empty', '-m', 'remote'])
-      execFileSync('git', ['-C', other, 'push', '-q', 'origin', 'main'])
-      // …then a fetch brings the remote refs in: local is 1 ahead AND 1 behind.
-      await fetch(local)
-      await expect(branchStatus(local)).resolves.toEqual({ upstream: 'origin/main', ahead: 1, behind: 1, gone: false })
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('reports a configured upstream as gone when the remote branch is pruned', async () => {
-    const { root, local } = remoteClonePair()
-    try {
-      execFileSync('git', ['-C', local, 'push', '-q', 'origin', '--delete', 'main'])
-      // Plain fetch would keep the stale tracking ref; prune drops it, and the
-      // panel must then say `gone` instead of silently showing an old ref.
-      await fetch(local, undefined, true)
-      await expect(branchStatus(local)).resolves.toEqual({ upstream: 'origin/main', ahead: 0, behind: 0, gone: true })
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('fails fetch cleanly when the repository has no remote configured', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-git-no-remote-'))
-    try {
-      execFileSync('git', ['init', '-q'], { cwd: root })
-      await expect(fetch(root)).rejects.toMatchObject({ code: 'git-no-remote' })
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('emits full ref decorations in the graph log (unambiguous local/remote/tag)', async () => {
-    const { root, local } = (() => {
-      const pair = remoteClonePair()
-      return { root: pair.root, local: pair.local }
-    })()
-    try {
-      execFileSync('git', ['-C', local, 'tag', 'v1'])
-      // The refs field must carry FULL names so the client can classify
-      // `main` (local) vs `origin/main` (remote) vs `v1` (tag) by prefix.
-      const rows = await graphLog(local, 10)
-      expect(rows[0]!.refs).toContain('HEAD -> refs/heads/main')
-      expect(rows[0]!.refs).toContain('refs/remotes/origin/main')
-      expect(rows[0]!.refs).toContain('tag: refs/tags/v1')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-})
-
-describe('git watched-branch tips (branchTips)', () => {
-  it('reports the tips relative to the checkout HEAD (ahead, behind, current 0/0)', async () => {
-    const { root, local } = remoteClonePair()
-    try {
-      // feature forks off main with two commits; main then moves on alone.
-      execFileSync('git', ['-C', local, 'checkout', '-q', '-b', 'feature'])
-      execFileSync('git', ['-C', local, 'commit', '-q', '--allow-empty', '-m', 'f1'])
-      execFileSync('git', ['-C', local, 'commit', '-q', '--allow-empty', '-m', 'f2'])
-      execFileSync('git', ['-C', local, 'checkout', '-q', 'main'])
-      execFileSync('git', ['-C', local, 'commit', '-q', '--allow-empty', '-m', 'm1'])
-
-      const tips = await branchTips(local, ['feature', 'main', 'ghost-branch'])
-      expect(tips.find(tip => tip.name === 'feature')).toMatchObject({ ahead: 2, behind: 1 })
-      expect(tips.find(tip => tip.name === 'main')).toMatchObject({ ahead: 0, behind: 0 })
-      // Stale watch entries (deleted / renamed branches) are silently dropped.
-      expect(tips.some(tip => tip.name === 'ghost-branch')).toBe(false)
-      for (const tip of tips) expect(tip.hash).toMatch(/^[0-9a-f]{40}$/)
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('is a strict [] for an empty watch list', async () => {
-    const { root, local } = remoteClonePair()
-    try {
-      await expect(branchTips(local, [])).resolves.toEqual([])
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
   })
 })

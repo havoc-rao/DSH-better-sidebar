@@ -8,11 +8,10 @@
  * of the contract range) falls back to the schema defaults — the side card
  * must keep working exactly as composed when the settings surface is missing.
  */
-import { api } from './api.ts'
+import type { api } from './api.ts'
 import {
   clampTerminalFontSize,
   clampTitleBarStrip,
-  clampWidthPercent,
   SIDEBAR_PREFS_DEFAULTS,
   TITLE_BAR_SCHEMES,
   TITLE_BAR_STRIP_DEFAULT,
@@ -32,35 +31,6 @@ export type { SidebarPrefs, TitleBarScheme }
 /** The settings wire face the preferences need (a subset of the plugin api). */
 export type SidebarSettingsClient = Pick<typeof api, 'settingsGet' | 'settingsUpdate'>
 
-/** The store face {@link flipBooleanPref} needs (the SidebarStore prefs API;
- *  kept structural here so prefs.ts stays free of a state.ts import). */
-export interface PrefsStore {
-  getPrefs(): SidebarPrefs
-  setPrefs(prefs: SidebarPrefs): void
-}
-
-/** The boolean pref the layout toggle flips (the produced-files row wrap). */
-export type WrapPrefKey = 'producedFilesWrap'
-
-/**
- * Optimistically flip one boolean layout pref and persist it — the same
- * contract as the Side Bar side toggle: the store updates first so
- * store-subscribing UI (the produced row, the tab strips) re-renders
- * immediately, then the settings route persists (best-effort — a failed
- * write keeps the in-memory value; a reload reverts to whatever the server
- * holds).
- */
-export function flipBooleanPref(store: PrefsStore, key: WrapPrefKey): void {
-  const current = store.getPrefs()
-  const next = !(current[key] as boolean)
-  store.setPrefs({ ...current, [key]: next })
-  void api.settingsUpdate({ [key]: next }).then((view) => {
-    store.setPrefs(parsePrefs(view.value))
-  }).catch(() => {
-    // The optimistic value stays; a reload falls back to the persisted one.
-  })
-}
-
 /** Validate one raw resolved value into {@link SidebarPrefs}. Used for the
  * settings.get payload AND the settings.update response (both carry the
  * layered resolved value); any malformed field falls back to its default.
@@ -71,12 +41,6 @@ export function parsePrefs(value: unknown): SidebarPrefs {
   if (value === null || typeof value !== 'object') return { ...SIDEBAR_PREFS_DEFAULTS }
   const record = value as Record<string, unknown>
   return {
-    openByDefault: typeof record.openByDefault === 'boolean'
-      ? record.openByDefault
-      : SIDEBAR_PREFS_DEFAULTS.openByDefault,
-    defaultWidthPercent: typeof record.defaultWidthPercent === 'number' && Number.isFinite(record.defaultWidthPercent)
-      ? clampWidthPercent(record.defaultWidthPercent)
-      : SIDEBAR_PREFS_DEFAULTS.defaultWidthPercent,
     autoOpenSubagent: typeof record.autoOpenSubagent === 'boolean'
       ? record.autoOpenSubagent
       : SIDEBAR_PREFS_DEFAULTS.autoOpenSubagent,
@@ -104,23 +68,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     terminalFontSize: typeof record.terminalFontSize === 'number' && Number.isFinite(record.terminalFontSize)
       ? clampTerminalFontSize(record.terminalFontSize)
       : SIDEBAR_PREFS_DEFAULTS.terminalFontSize,
-    interceptOpenPath: typeof record.interceptOpenPath === 'boolean'
-      ? record.interceptOpenPath
-      : SIDEBAR_PREFS_DEFAULTS.interceptOpenPath,
-    allowOpenOutsideWorkspace: typeof record.allowOpenOutsideWorkspace === 'boolean'
-      ? record.allowOpenOutsideWorkspace
-      : SIDEBAR_PREFS_DEFAULTS.allowOpenOutsideWorkspace,
-    producedFilesWrap: typeof record.producedFilesWrap === 'boolean'
-      ? record.producedFilesWrap
-      : SIDEBAR_PREFS_DEFAULTS.producedFilesWrap,
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
-sidebarLayout: normalizeSidebarLayout(record.sidebarLayout),
-    sideBarSide: normalizeSideBarSide(record.sideBarSide),
-    fileIconTheme: typeof record.fileIconTheme === 'string'
-      ? record.fileIconTheme
-      : SIDEBAR_PREFS_DEFAULTS.fileIconTheme,
     workspaceFence: typeof record.workspaceFence === 'boolean'
       ? record.workspaceFence
       : SIDEBAR_PREFS_DEFAULTS.workspaceFence,
@@ -171,29 +121,6 @@ sidebarLayout: normalizeSidebarLayout(record.sidebarLayout),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),
   }
-}
-
-/**
- * Validate the sidebar-layout preference. The two current values are
- * `'docked'` (the default original behavior) and `'vscode'` (the VSCode-style
- * paradigm). Legacy prototype values `'vscode-left'` / `'vscode-right'` (which
- * a few early builds persisted) migrate to `'vscode'` so an old document keeps
- * loading instead of falling back to the default. Any other value falls back
- * to the default.
- */
-function normalizeSidebarLayout(value: unknown): 'docked' | 'vscode' {
-  if (value === 'docked' || value === 'vscode' || value === 'vscode-left' || value === 'vscode-right') {
-    return value === 'docked' ? 'docked' : 'vscode'
-  }
-  return SIDEBAR_PREFS_DEFAULTS.sidebarLayout
-}
-
-/** Validate the vscode Side Bar position: only `'left'` / `'right'` are
- *  accepted (anything else — including a missing field on older documents —
- *  falls back to the default `'right'`). */
-function normalizeSideBarSide(value: unknown): 'left' | 'right' {
-  if (value === 'left' || value === 'right') return value
-  return SIDEBAR_PREFS_DEFAULTS.sideBarSide
 }
 
 /**

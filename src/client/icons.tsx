@@ -1,78 +1,11 @@
 /**
  * Icons the sidebar needs beyond the primitives set: a terminal glyph (the
- * icon library has none), a diff glyph, the two panel-toggle glyphs for
- * the top-right cluster, a pushpin for workspace-bound windows, a
- * swap-sides glyph for the Side Bar position toggle, and a
- * global-workspace glyph (a monitor showing a globe) for the `global` tab —
- * deliberately distinct from the browser tab's bare globe. Per-tab icons
- * live on the tab descriptors (`descriptor.icon`), not in a type-keyed
- * switch — the icon mapping was registry-ized with the tab types.
+ * icon library has none), a diff glyph, and the bottom-workbench toggle.
+ * Per-tab icons live on the tab descriptors
+ * (`descriptor.icon`), not in a type-keyed switch — the icon mapping was
+ * registry-ized with the tab types.
  */
 import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
-
-/**
- * Swap-sides glyph for the vscode Side Bar position toggle (the Activity
- * Bar's bottom button): two horizontal arrows pointing LEFT (top) and RIGHT
- * (bottom) — "move the whole arrangement to the other side", in the app's
- * outline style (1.5px stroke, currentColor).
- */
-export const IconSwapSides16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3.75 5.75h8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M6.25 3.25 3.75 5.75l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M3.75 10.25h8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M9.75 7.75l2.5 2.5-2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
-/**
- * Pushpin glyph for workspace-bound window stubs (the "绑定到工作区" pin),
- * in the app's outline style (1.5px stroke, currentColor).
- */
-export const IconPinOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path
-      d="M9.9 2.2 13.8 6.1a.6.6 0 0 1-.5 1l-1.3.2-2.5 2.6.4 2.5a.6.6 0 0 1-1 .5L6.2 10.3 2.9 13.6a.6.6 0 0 1-.9-.9l3.3-3.3L2.9 7a.6.6 0 0 1 .5-1l2.5.4 2.6-2.5.2-1.3a.6.6 0 0 1 1.2-.4Z"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinejoin="round"
-    />
-    <path d="m8.9 3.2 3.9 3.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-  </svg>
-)
-
-/**
- * Unpin / "remove from workspace" glyph for the tab right-click menu's
- * unbind item: the pushpin with a diagonal slash — a single glyph that
- * reads as "this window is no longer shared". Drawn in the app's outline
- * style (1.5px stroke, currentColor), mirroring IconPinOutline16 so the
- * two actions in the workspace menu stay visually paired.
- */
-export const IconPinOffOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path
-      d="M9.9 2.2 13.8 6.1a.6.6 0 0 1-.5 1l-1.3.2-2.5 2.6.4 2.5a.6.6 0 0 1-1 .5L6.2 10.3 2.9 13.6a.6.6 0 0 1-.9-.9l3.3-3.3L2.9 7a.6.6 0 0 1 .5-1l2.5.4 2.6-2.5.2-1.3a.6.6 0 0 1 1.2-.4Z"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinejoin="round"
-    />
-    <path d="m8.9 3.2 3.9 3.9M2.3 13.7l11.4-11.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-  </svg>
-)
-
-/**
- * Right-panel toggle glyph (the "侧拉" button): a frame with a filled strip
- * along its RIGHT edge, in the app's outline style (1.5px stroke,
- * currentColor).
- */
-export const IconPanelRightOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1.5" y="2" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-    <rect x="10.5" y="3.25" width="2.75" height="9.5" rx="1" fill="currentColor" stroke="none" />
-  </svg>
-)
 
 /**
  * Bottom-panel toggle glyph (the "底栏" button): a frame with a filled strip
@@ -130,7 +63,7 @@ export const IconUploadOutline16 = ({ size = 16, className }: IconProps) => (
  * tilted to the lower-right. Used by the PinnedRail and the tab context menu's
  * pin entry (v0.17.0+).
  */
-export const IconPinnedOutline16 = ({ size = 16, className }: IconProps) => (
+export const IconPinOutline16 = ({ size = 16, className }: IconProps) => (
   <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M9.5 1.5 14.5 6.5 12.5 8.5 10 6 5.5 10.5 6 12 4.5 13.5 2.5 11.5 4 10 5.5 10.5 10 6 7.5 8.5 6.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
   </svg>
@@ -184,21 +117,6 @@ export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
-/**
- * "Global-share off" glyph for the tab right-click menu's unbind-global
- * item: the globe with a diagonal slash — reads as "this terminal is no
- * longer shared across all projects". Paired with IconGlobeOutline16 the
- * same way IconPinOffOutline16 pairs with IconPinOutline16.
- */
-export const IconGlobeOffOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
-    <ellipse cx="8" cy="8" rx="2.8" ry="6.5" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M2.3 13.7l11.4-11.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-  </svg>
-)
-
 /** History glyph (thread switcher): a clock with a counterclockwise arrow,
  *  in the app's outline style — the "past conversations" mark. */
 export const IconHistoryOutline16 = ({ size = 16, className }: IconProps) => (
@@ -220,25 +138,6 @@ export const IconSaveOutline16 = ({ size = 16, className }: IconProps) => (
 )
 
 /**
-* Global-workspace glyph (the `global` tab / the official sidebar footer
- * entry / the shared-window cards): a desktop monitor showing a globe —
- * "the workspace screen for the instance-level global windows". Kept
- * visually distinct from the browser tab's bare globe (IconGlobeOutline16)
- * so the two don't read as the same entry in the + menu, tab bar, and
- * Activity Bar. App outline style (1.5px stroke, currentColor).
- */
-export const IconGlobalWorkspaceOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1.5" y="2" width="13" height="9.5" rx="1.75" stroke="currentColor" strokeWidth="1.5" />
-    <circle cx="8" cy="6.9" r="2.4" stroke="currentColor" strokeWidth="1.25" />
-    <ellipse cx="8" cy="6.9" rx="0.95" ry="2.4" stroke="currentColor" strokeWidth="1.25" />
-    <path d="M5.6 6.9h4.8" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-    <path d="M8 11.5v1.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M5.5 14h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-)
-
-/**
  * Visual Studio Code brand mark for the file-tree "open with" menu. The
  * path is the Simple Icons `visualstudiocode` glyph (CC0 1.0,
  * simple-icons@11.0.0 — later releases dropped it over Microsoft's brand
@@ -248,36 +147,5 @@ export const IconGlobalWorkspaceOutline16 = ({ size = 16, className }: IconProps
 export const IconVscode16 = ({ size = 16, className }: IconProps) => (
   <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
     <path d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z" />
-  </svg>
-)
-
-/**
- * Auto-wrap glyph for the produced-files row's layout toggle: three text
- * lines, the last one SHORT and hooking down-left — "the chips wrap onto
- * the next line instead of overflowing". App outline style (1.5px stroke,
- * currentColor).
- */
-export const IconWrapOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M1.5 3.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M1.5 6.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M1.5 9.5h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M7.5 9.5v2.5H4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
-/**
- * Single-line / horizontal-scroll glyph for the produced-files row's layout
- * toggle: three full-width lines with left/right chevrons beneath — "the
- * chips stay on one line and the row scrolls sideways when they overflow".
- * App outline style (1.5px stroke, currentColor).
- */
-export const IconScrollHOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M1.5 3.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M1.5 6.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M1.5 9.5h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M5.6 12.75L3.35 14.4l2.25 1.65" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M10.4 12.75l2.25 1.65-2.25 1.65" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 )

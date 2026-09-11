@@ -46,7 +46,6 @@ import { builtinModules, createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import type { UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
-  import { codeFinderTsdown } from '@havocrao/dsh-code-finder/tsdown'
 
 const require = createRequire(import.meta.url)
 
@@ -139,7 +138,6 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
     external: [...CLIENT_EXTERNALS],
     define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
-      'process.env.RCF_TRIAL': JSON.stringify(process.env.RCF_TRIAL ?? ''),
       'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
       // No bundled chunk uses import.meta.resolve; keep the stub so a stray
@@ -158,7 +156,7 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
     },
     // External wins for module-table entries; every other dependency inlines.
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
-    plugins: [codeFinderTsdown(), purityGatePlugin(), makeCssPlugin(pluginId)],
+    plugins: [purityGatePlugin(), makeCssPlugin(pluginId)],
     outputOptions: {
       entryFileNames: entryFile,
       sourcemapPathTransform: browserSourcePath,
@@ -217,7 +215,6 @@ function chunkBundle(name: string): UserConfig {
     },
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
     plugins: [
-      codeFinderTsdown(),
       purityGatePlugin(),
       makeCssPlugin('dsh-better-sidebar'),
       ...(name === 'mermaid' ? [mermaidChunkAliases()] : []),

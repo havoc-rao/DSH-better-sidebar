@@ -12,12 +12,15 @@
  */
 import type {} from '../src/client/service.ts'
 import {
+  FOLDER_EXT,
+  FOLDER_OPEN_EXT,
   SIDEBAR_FEATURES,
   SIDEBAR_SERVICE_VERSION,
 } from '../src/client/service.ts'
 import type {
   BetterSidebarService,
   FileFetchStrategy,
+  FileIconDescriptor,
   FileViewerDescriptor,
   FileViewerProps,
   OpenTabSeed,
@@ -28,15 +31,6 @@ import type {
   TabComponentProps,
   TabDescriptor,
 } from '../src/client/service.ts'
-import type {
-  KeybindingDescriptor,
-  KeybindingEventLike,
-  KeySpec,
-  SidebarKeybindingContext,
-} from '../src/client/service.ts'
-import type { TerminalProviderDescriptor } from '../src/client/service.ts'
-import type { TerminalTransport } from '../src/client/terminal-transport.ts'
-import type { GitDataSource, GitOkResult, GitProviderDescriptor } from '../src/client/service.ts'
 import type {
   SessionScope,
   SidebarDiffRef,
@@ -134,77 +128,25 @@ service.updateTab('tab:1', { title: 'T', path: '/p', meta: 1 })
 service.activateTab('tab:1')
 service.openFile({ sessionId: 's1', cwd: '/p' }, '/p/a.csv', 'Data')
 
-/** The v0.14.0 keybinding surface, exercised exactly as consumers call it. */
-const binding: KeybindingDescriptor = {
-  id: 'my-plugin:open-notes',
-  title: () => 'Open notes',
-  key: 'Cmd+Alt+N',
-  when: (context: SidebarKeybindingContext) => context.state !== null && !context.plusMenuOpen,
-  priority: 10,
-  run: (event: KeybindingEventLike, context: SidebarKeybindingContext) => {
-    void event; void context
+/** File-icon registration surface (feature `fileIcons`). */
+const icon: FileIconDescriptor = {
+  id: 'my-plugin:icons',
+  exts: ['csv', FOLDER_EXT, FOLDER_OPEN_EXT],
+  names: ['package.json'],
+  folderNames: ['node_modules'],
+  priority: 5,
+  icon: (path: string, size: number, open?: boolean) => {
+    void path; void size; void open
+    return null
   },
 }
-service.registerKeybinding(binding)
-service.registerKeybinding({ id: 'my-plugin:pick', title: 'Pick a file', key: ['Cmd+P', 'Ctrl+P'], run: () => true })
-const bindings: readonly KeybindingDescriptor[] = service.getKeybindings()
-void bindings
-const keySpec: KeySpec = null as unknown as KeySpec
-const eventLike: KeybindingEventLike = null as unknown as KeybindingEventLike
-void keySpec; void eventLike
-
-/** The v0.22.0 terminal source slot: the default terminal tab's
- *  connection-layer takeover, exercised exactly as consumers call it. */
-const terminalProvider: TerminalProviderDescriptor = {
-  id: 'dsh-remote',
-  match: (sessionId: string, cwd: string | undefined, tabId: string) => {
-    void sessionId; void cwd
-    return !tabId.startsWith('agent:') // UI tabs only, provider's decision
-  },
-  createTransport: (_sessionId, _cwd, _tabId) => null as unknown as TerminalTransport,
-}
-service.registerTerminalProvider(terminalProvider)
-const terminalProviders: readonly TerminalProviderDescriptor[] = service.getTerminalProviders()
-void terminalProviders
-
-/** The v0.23.0 git source slot: the full host `git.*` route surface
- *  mirrored method-for-method, exercised exactly as consumers implement
- *  it (dsh-remote: every method = one remote git command). */
-const gitSource: GitDataSource = {
-  gitStatus: (_scope, _worktree, _signal) => Promise.resolve(
-    { isRepo: true, root: '/r', branch: 'main', entries: [], repositories: ['/r'] },
-  ),
-  gitWorktrees: () => Promise.resolve([]),
-  gitBranch: () => Promise.resolve({ current: 'main', names: ['main'] }),
-  gitBranchStatus: () => Promise.resolve({ upstream: 'origin/main', ahead: 0, behind: 0, gone: false }),
-  gitBranchTips: () => Promise.resolve({ tips: [] }),
-  gitLogGraph: () => Promise.resolve([]),
-  gitDiff: () => Promise.resolve({ diff: '' }),
-  gitCommitDiff: () => Promise.resolve({ diff: '' }),
-  gitStage: () => Promise.resolve({ ok: true } as GitOkResult),
-  gitUnstage: () => Promise.resolve({ ok: true }),
-  gitCommit: () => Promise.resolve({ ok: true }),
-  gitCheckout: () => Promise.resolve({ ok: true }),
-  gitFetch: () => Promise.resolve({ ok: true }),
-  gitDiscard: () => Promise.resolve({ ok: true }),
-  gitRevert: () => Promise.resolve({ ok: true }),
-  gitCherryPick: () => Promise.resolve({ ok: true }),
-  subscribe: (listener: () => void) => {
-    void listener
-    return () => { /* provider-side disposer */ }
-  },
-}
-const gitProvider: GitProviderDescriptor = {
-  id: 'dsh-remote',
-  match: (sessionId: string, cwd: string | undefined) => {
-    void sessionId
-    return cwd !== undefined && cwd.includes('remote-workspaces')
-  },
-  createSource: () => gitSource,
-}
-service.registerGitProvider(gitProvider)
-const gitProviders: readonly GitProviderDescriptor[] = service.getGitProviders()
-void gitProviders
+service.registerFileIcon(icon)
+service.getFileIcons()
+service.matchFileIcon('/p/a.csv')
+service.matchFolderIcon(true)
+service.matchFolderIcon(true, 'node_modules')
+service.fileIcon('/p/a.csv', 14)
+service.folderIcon('/p', true, 14)
 
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }

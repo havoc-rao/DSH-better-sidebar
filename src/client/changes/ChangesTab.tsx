@@ -147,9 +147,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
   const previewKey = (target: ChangesPreview): string => target.kind === 'git'
     ? (target.ref.kind === 'worktree'
         ? `git:w:${target.ref.path}:${target.ref.staged ? 's' : 'u'}`
-        : target.ref.kind === 'commit'
-          ? `git:c:${target.ref.hashFull}`
-          : `git:r:${target.ref.paths.join('|')}`)
+        : `git:c:${target.ref.hashFull}`)
     : `op:${target.op.callId}`
 
   return (

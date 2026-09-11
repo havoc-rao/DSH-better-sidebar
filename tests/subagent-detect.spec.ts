@@ -98,42 +98,6 @@ describe('subagent detection over the sessions list feed', () => {
     expect(detectNewDirectSubagent(before, after, 'p2')).toBe(false)
   })
 
-  it('never treats hidden one-shot helpers (git-commit-*) as subagent topology', () => {
-    // The Git commit-draft agent is a transient scratch session, not a real
-    // subagent: the sessions list row carries no descriptor label (its
-    // displayTitle is the cwd basename), so the client must recognize it
-    // structurally by session id. GitView's AI-draft button must not trip
-    // the Subagent (任务管理) auto-open — a row like this appearing under an
-    // empty session never fires 0 → N, while a real child still does.
-    const byId: SidebarSessionList['byId'] = {
-      p1: { id: 'p1', displayTitle: 'P1' },
-      helper: { id: 'git-commit-abc', displayTitle: 'DSH-better-sidebar', origin: 'subagent', parentId: 'p1', running: true },
-      real: { id: 'real', displayTitle: 'Real', origin: 'subagent', parentId: 'p1' },
-    }
-    expect(directSubagentCount(byId, 'p1')).toBe(1)
-    expect(countSubagentDescendants(byId, 'p1')).toEqual({ count: 1, runningCount: 0 })
-    // A helper appearing under an empty session never trips 0 → N.
-    const before: SidebarSessionList = { current: 'p2', byId: { p2: { id: 'p2', displayTitle: 'P2' } } }
-    const after: SidebarSessionList = {
-      current: 'p2',
-      byId: {
-        p2: { id: 'p2', displayTitle: 'P2' },
-        helper: { id: 'git-commit-1234', displayTitle: 'DSH-better-sidebar', origin: 'subagent', parentId: 'p2', running: true },
-      },
-    }
-    expect(detectNewDirectSubagent(before, after, 'p2')).toBe(false)
-    // A THIRD child that is a real subagent still trips 0 → N.
-    const withReal: SidebarSessionList = {
-      current: 'p2',
-      byId: {
-        p2: { id: 'p2', displayTitle: 'P2' },
-        helper: { id: 'git-commit-1234', displayTitle: 'DSH-better-sidebar', origin: 'subagent', parentId: 'p2', running: true },
-        real: { id: 'real', displayTitle: 'Real', origin: 'subagent', parentId: 'p2' },
-      },
-    }
-    expect(detectNewDirectSubagent(before, withReal, 'p2')).toBe(true)
-  })
-
   it('documents the title-frame race the Sidebar auto-open debounce absorbs', () => {
     // The host delivers a new child's origin and title in SEPARATE frames:
     // a Side Chat thread's FIRST visible frame still shows a fallback title

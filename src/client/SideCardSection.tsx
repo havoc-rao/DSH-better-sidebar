@@ -61,9 +61,7 @@ import {
 import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
-import { GitCommitSettings } from './GitCommitSettings.tsx'
 import { t } from './locales.ts'
-import type { Context } from '../context-types.ts'
 import { parseDesktopEnv } from './desktop-env.ts'
 import { getShellPreset, getShellPresets } from './shell-presets.ts'
 import type { SidebarStore } from './state.ts'
@@ -71,7 +69,6 @@ import type {
   BetterSidebarService,
   FileViewerDescriptor,
   SidebarSettingsRenderProps,
-  SidebarSettingSelectOption,
   SidebarSettingToggle,
   TabDescriptor,
 } from './service.ts'
@@ -81,9 +78,6 @@ import css from './SideCardSection.module.css'
 export interface SideCardSectionInjected {
   store: SidebarStore
   service: BetterSidebarService
-  /** The client context (v0.16.0+): registry-driven setting rows (the
-   *  `options` function / `when` predicate forms) read it at render time. */
-  ctx: Context
 }
 
 /** Full section props: the runtime share plus the injected face. */
@@ -101,20 +95,6 @@ function messageOf(error: unknown): string {
 function textOf(value: string | (() => string) | undefined): string {
   if (value === undefined) return ''
   return typeof value === 'function' ? value() : value
-}
-
-/** Resolve a select row's options: the static form passes through; the
- *  function form (v0.16.0+) evaluates against the live registries at
- *  render time (the file-icon theme picker lists every registered theme).
- *  A throwing function degrades to the empty list — the settings UI must
- *  never break over one plugin's bad predicate. */
-function optionsOf(ctx: Context, toggle: SidebarSettingToggle): readonly SidebarSettingSelectOption[] {
-  if (typeof toggle.options !== 'function') return toggle.options ?? []
-  try {
-    return toggle.options(ctx) ?? []
-  } catch {
-    return []
-  }
 }
 
 /** Resolve a descriptor icon (ReactNode or size function). */
@@ -235,10 +215,6 @@ function Switch(props: {
  * without opening the Modal (the Modal portal renders only while open).
  */
 export function FeatureSettingsRows(props: {
-  /** The client context feeding `when` predicates / icon-select theming
-   *  (v0.16.0+). Optional for legacy callers: predicates evaluate against
-   *  undefined (fail-open when they throw). */
-  ctx?: Context
   toggles: readonly SidebarSettingToggle[]
   prefs: SidebarPrefs
   onToggle: (toggle: SidebarSettingToggle, next: boolean) => void
@@ -257,19 +233,11 @@ export function FeatureSettingsRows(props: {
    *  the latter collides with the inherited Object.prototype.valueOf.) */
   valueSource?: (key: string) => unknown
 }) {
-  const { ctx, toggles, prefs, onToggle, onCommit, onSelectValue, valueSource } = props
+  const { toggles, prefs, onToggle, onCommit, onSelectValue, valueSource } = props
   const read = valueSource ?? ((key: string): unknown => (prefs as unknown as Record<string, unknown>)[key])
   return (
     <div className={css.popupRows}>
       {toggles.map(toggle => {
-        // The when-predicate form (v0.16.0+): absent → visible; a THROWING
-        // predicate keeps the row visible (fail-open — a broken predicate
-        // must never hide a user's setting).
-        if (toggle.when !== undefined) {
-          let visible = true
-          try { visible = ctx === undefined ? true : toggle.when(ctx) !== false } catch { /* fail-open */ }
-          if (!visible) return null
-        }
         const title = textOf(toggle.title)
         if (toggle.type === 'select') {
           return (
@@ -277,7 +245,6 @@ export function FeatureSettingsRows(props: {
               key={toggle.key}
               toggle={toggle}
               title={title}
-              options={ctx === undefined ? [] : optionsOf(ctx, toggle)}
               value={read(toggle.key)}
               onSelectValue={onSelectValue}
             />
@@ -415,7 +382,7 @@ function SelectMenu(props: {
   onSelect: (next: unknown) => void
   placeholder?: string
 }) {
-const { label, value, options, multi, onSelect, placeholder } = props
+  const { label, value, options, multi, onSelect, placeholder } = props
   const [open, setOpen] = useState(false)
   const hasIcons = options.some(option => option.icon !== undefined)
   const picked: readonly unknown[] = multi ? (Array.isArray(value) ? value : []) : [value]
@@ -496,12 +463,10 @@ const { label, value, options, multi, onSelect, placeholder } = props
 function SelectRow(props: {
   toggle: SidebarSettingToggle
   title: string
-  /** The RESOLVED options (the caller evaluated the function form). */
-  options: readonly SidebarSettingSelectOption[]
   value: unknown
   onSelectValue?: (toggle: SidebarSettingToggle, next: unknown) => void
 }) {
-  const { toggle, title, options, value, onSelectValue } = props
+  const { toggle, title, value, onSelectValue } = props
   return (
     <div className={css.popupRow}>
       <span className={css.rowText}>
@@ -512,7 +477,7 @@ function SelectRow(props: {
         <SelectMenu
           label={title}
           value={value}
-          options={options}
+          options={toggle.options ?? []}
           multi={toggle.multi === true}
           onSelect={(next) => { onSelectValue?.(toggle, next) }}
         />
@@ -536,7 +501,6 @@ export function SettingsBody(props: {
   prefs: SidebarPrefs
   store: SidebarStore
   service: BetterSidebarService
-  ctx?: Context
   onToggle: (toggle: SidebarSettingToggle, next: boolean) => void
   onCommit: (toggle: SidebarSettingToggle, raw: string) => string
   onSelectValue: (toggle: SidebarSettingToggle, next: unknown) => void
@@ -546,18 +510,7 @@ export function SettingsBody(props: {
   onPluginWrite: (key: string, value: unknown) => void
   onClose: () => void
 }) {
-  const { feature, prefs, store, service, ctx, onToggle, onCommit, onSelectValue, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginWrite, onClose } = props
-  // Registry-driven rows (the icon-theme picker) must stay live while the
-  // popup is open: a theme registering/unregistering (HMR) or the theme
-  // pref changing elsewhere re-renders the body. A plain force-update
-  // subscription is enough — rows re-evaluate their options/when on render.
-  const [, force] = useState(0)
-  useEffect(() => {
-    const offs: Array<() => void> = []
-    try { offs.push(service.subscribe(() => { force(n => n + 1) })) } catch { /* registry-less stub */ }
-    try { offs.push(service.subscribeState(() => { force(n => n + 1) })) } catch { /* snapshot-less stub */ }
-    return () => { for (const off of offs) off() }
-  }, [service])
+  const { feature, prefs, store, service, onToggle, onCommit, onSelectValue, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginWrite, onClose } = props
   const render = feature.settings?.render
   const toggles = feature.settings?.toggles ?? []
   const pluginToggles = feature.settings?.pluginToggles ?? []
@@ -568,12 +521,11 @@ export function SettingsBody(props: {
   // the same name.
   const pluginBlob = prefs.pluginSettings[feature.id] ?? {}
   return (
-<div>
+    <div>
       {(toggles.length > 0 || pluginToggles.length > 0) && (
         <div className={css.popupRows}>
           {toggles.length > 0 && (
             <FeatureSettingsRows
-              ctx={ctx}
               toggles={toggles}
               prefs={prefs}
               onToggle={onToggle}
@@ -583,7 +535,6 @@ export function SettingsBody(props: {
           )}
           {pluginToggles.length > 0 && (
             <FeatureSettingsRows
-              ctx={ctx}
               toggles={pluginToggles}
               prefs={prefs}
               onToggle={onPluginToggle}
@@ -616,7 +567,7 @@ export function SettingsBody(props: {
  * @param props - composed slot props (runtime share + injected store/service).
  * @returns the section element tree.
  */
-export function SideCardSection({ store, service, ctx }: SideCardSectionProps) {
+export function SideCardSection({ store, service }: SideCardSectionProps) {
   const [prefs, setPrefs] = useState<SidebarPrefs>(() => store.getPrefs())
   const [error, setError] = useState<string | null>(null)
   // Which feature's secondary settings popup is open (null = closed).
@@ -887,19 +838,6 @@ export function SideCardSection({ store, service, ctx }: SideCardSectionProps) {
         <span className={css.versionBadgeTag}>v{service.version}</span>
       </div>
 
-      {/* Git commit agent is a first-class plugin setting rather than a
-          secondary Source Control tab setting: keep provider/model/template
-          visible at the top of the Side card settings page. Values still
-          live in pluginSettings.git, the same blob GitView reads at draft
-          time, and every edit rides the normal optimistic settings writer. */}
-      <div className={css.group} data-git-commit-settings>
-        <div className={css.groupHeading}>{t('gitCommitSettingsTitle')}</div>
-        <GitCommitSettings
-          pluginSettings={prefs.pluginSettings.git ?? {}}
-          updatePluginSetting={(key, value) => { applyPluginSetting('git', key, value) }}
-        />
-      </div>
-
       {/* 常规: the DSH settings-row recipe — title/desc left, control right. */}
       <div className={css.group}>
         <div className={css.groupHeading}>{t('settingsGeneralTitle')}</div>
@@ -1081,7 +1019,6 @@ export function SideCardSection({ store, service, ctx }: SideCardSectionProps) {
             onClose={() => { setSettingsFor(null) }}
             store={store}
             service={service}
-            ctx={ctx}
           />
         </Modal>
       )}
@@ -1105,9 +1042,8 @@ export function SideCardSection({ store, service, ctx }: SideCardSectionProps) {
             </button>
           )}
         >
-<div className={css.popupRows}>
+          <div className={css.popupRows}>
             <FeatureSettingsRows
-              ctx={ctx}
               toggles={[{
                 key: 'titleBarStripPx',
                 type: 'number',

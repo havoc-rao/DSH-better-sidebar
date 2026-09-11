@@ -332,16 +332,8 @@ export function SideChatView(props: {
   scope: SessionScope
   tab: SidebarTab
   visible: boolean
-  /**
-   * Optional override for the HERO's start button (v0.18.0+): surfaces that
-   * mirror the chat (the IDE-fullscreen chat column) render the hero with a
-   * SYNTHETIC unbound tab and route the click through here (openTab), so the
-   * created thread is a REAL tab the surface then mirrors — the synthetic
-   * tab cannot own a thread (updateTab would no-op on its id).
-   */
-  heroAction?: () => void
 }): React.ReactNode {
-const { ctx, scope, tab, visible, heroAction } = props
+  const { ctx, scope, tab, visible } = props
   const rowLabels = useMemo<RowLabels>(() => {
     // Shared Block chrome: copy buttons reuse the sidebar's copy pair, the
     // collapse/expand family is common to every Block kind.
@@ -409,8 +401,8 @@ const { ctx, scope, tab, visible, heroAction } = props
   // loop itself stays silent on wire failures; absent service (older host)
   // reads as `undefined` = never show the banner.
   const connectionState = useSyncExternalStore(
-    useMemo(() => (callback: () => void) => ctx.connection?.state?.subscribe(callback) ?? (() => {}), [ctx]),
-    useCallback(() => ctx.connection?.state?.getSnapshot(), [ctx]),
+    useMemo(() => (callback: () => void) => ctx.connection?.state.subscribe(callback) ?? (() => {}), [ctx]),
+    useCallback(() => ctx.connection?.state.getSnapshot(), [ctx]),
   )
 
   /** The agent-identity badge of the thread header (preset · model). */
@@ -697,10 +689,7 @@ const { ctx, scope, tab, visible, heroAction } = props
             <button
               type="button"
               className={css.sidechatPrimaryBtn}
-              onClick={() => {
-                if (heroAction !== undefined) heroAction()
-                else void startThread()
-              }}
+              onClick={() => void startThread()}
             >
               {error === null ? t('sideChatNew') : t('sideChatRetry')}
             </button>

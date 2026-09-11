@@ -8,14 +8,15 @@
  * `browser:<n>` the same way (no quota). The editor IS the files window
  * (the old standalone explorer merged into it).
  */
-import { IconCodeOutline16, IconFolderOpen16, IconNewChatOutline16, IconPanelLeftOutline16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCodeOutline16, IconPanelLeftOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
-import { allLeaves, areaOfTab, isAgentTabId, type SidebarState } from '../state.ts'
+import {
+  browserTabIcon, changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
+} from './tab-icons.tsx'
+import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
-import { GlobalView } from '../GlobalView.tsx'
-import { GitView } from '../GitView.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { ChangesTab, opCountOf } from '../changes/ChangesTab.tsx'
@@ -24,11 +25,11 @@ import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
 import { api } from '../api.ts'
 import { BrowserView } from '../BrowserView.tsx'
-import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16, IconGlobalWorkspaceOutline16, IconPanelRightOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
-import { useTerminalTransport } from '../terminal-source.ts'
-import type { ComponentType, ReactNode } from 'react'
-import type { TabDescriptor, TabComponentProps } from '../service.ts'
+import type { ComponentType } from 'react'
+import type { SessionScope } from '../api.ts'
+import type { SidebarStore } from '../state.ts'
+import type { TabDescriptor } from '../service.ts'
 
 /**
  * Lazy wrapper over the terminal view: xterm (and its stylesheet) is fetched
@@ -36,53 +37,22 @@ import type { TabDescriptor, TabComponentProps } from '../service.ts'
  * wrapper keeps the descriptor contract `(props) => ReactNode` — Sidebar
  * calls it as a plain function.
  *
- * TerminalView's props are { ctx, scope, tabId, store } — `tabId` is NOT
- * part of TabComponentProps (it carries `tab: SidebarTab` instead), so the
+ * TerminalView's props are { scope, tabId, store } — `tabId` is NOT part of
+ * TabComponentProps (it carries `tab: SidebarTab` instead), so the
  * descriptor maps it explicitly; a bare pass-through would leave tabId
  * undefined and TerminalView's isAgentTabId(tabId) would crash on
  * `undefined.startsWith` (regression-pinned in tests/lazy-chunk.spec.tsx).
- * Exported for the full-page Global Workspace too: its bottom workbench
- * renders attached `gb:` terminal stubs through the same chunk-loaded
- * TerminalView the built-in terminal tab uses.
  */
-
-// The terminal view's props: the shared definition lives with the transport
-// layer (terminal-transport.ts — the `transport` slot is part of it), so
-// core-bundle code, the lazy chunk and cross-plugin consumers all agree on
-// the same shape. Re-exported here for existing importers.
-export type { TerminalViewProps } from '../terminal-transport.ts'
-import type { TerminalViewProps } from '../terminal-transport.ts'
-
-/** The chunk-loaded terminal view component (see the doc comment above). */
-export const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
+const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
   'terminal',
   (mod) => mod.TerminalView as ComponentType<TerminalViewProps> | undefined,
 )
 
-/**
- * The terminal tab's SOURCE-RESOLVING wrapper (the terminal-source slot,
- * feature 'terminalSource'): the custom transport a registered provider
- * resolved for this (session, cwd, tab) — absent → TerminalView keeps its
- * default localTransport, byte for byte. TerminalView reads `transport`
- * once at mount, so the resolution applies to terminals mounted after the
- * registry read; the descriptor's `component` stays a plain render
- * function (the lazy-chunk.spec contract: callable without a render
- * scope), the hook lives in this inner component.
- */
-function TerminalTabTransport(props: TabComponentProps): ReactNode {
-  const { ctx, tab, scope, store, visible } = props
-  const transport = useTerminalTransport(ctx, scope?.sessionId, scope?.cwd, tab.id)
-  return (
-    <LazyTerminal
-      ctx={ctx}
-      scope={scope}
-      store={store}
-      tabId={tab.id}
-      visible={visible}
-      transport={transport}
-      onTitleChange={(title) => { ctx.betterSidebar?.updateTab(tab.id, { title }) }}
-    />
-  )
+/** The terminal view's props (mirror of TerminalView's own signature). */
+interface TerminalViewProps {
+  scope: SessionScope
+  tabId: string
+  store: SidebarStore
 }
 
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
@@ -119,18 +89,15 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       // explorer (empty hint + docked tree); with a path it previews/edits
       // the file. Visible in the + menu in the explorer's old slot.
       title: () => t('files'),
-      icon: (size: number) => <IconFolderOpen16 size={size} />,
+      icon: filesTabIcon,
       order: 10,
       hidden: false,
       dedupeKey: (tab) => tab.path,
       // Declarative settings: the file-open behavior picker (in-place switch
-      // vs per-path windows), the workbench-layout picker (docked tree vs
-      // the VSCode-style independent side bar + activity bar) and the
+      // vs per-path windows) renders as an iconed select row under the
+      // editor card's gear in the Side card settings page, followed by the
       // workspace fence switch (the host's containment guard over every
-      // sidebar filesystem route) render as rows under the editor card's
-      // gear in the Side card settings page. The layout picker's `vscode`
-      // value is the mirror arrangement (editor by the chat, activity bar
-      // on the panel edge); the "open with" configuration (SSH host +
+      // sidebar filesystem route); the "open with" configuration (SSH host +
       // custom editors) is the custom panel BELOW those rows — the settings
       // seam renders rows first, custom panel after.
       settings: {
@@ -154,76 +121,6 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
             },
           ],
         }, {
-          key: 'sidebarLayout',
-          type: 'select',
-          title: () => t('sidebarLayout'),
-          desc: () => t('sidebarLayoutDesc'),
-          options: [
-            {
-              value: 'docked',
-              icon: (size: number) => <IconFolderOpen16 size={size} />,
-              title: () => t('sidebarLayoutDocked'),
-              desc: () => t('sidebarLayoutDockedDesc'),
-            },
-            {
-              value: 'vscode',
-              icon: (size: number) => <IconPanelLeftOutline16 size={size} />,
-              title: () => t('sidebarLayoutVscode'),
-              desc: () => t('sidebarLayoutVscodeDesc'),
-            },
-          ],
-        }, {
-          key: 'sideBarSide',
-          type: 'select',
-          title: () => t('sideBarSide'),
-          desc: () => t('sideBarSideDesc'),
-          options: [
-            {
-              value: 'left',
-              icon: (size: number) => <IconPanelLeftOutline16 size={size} />,
-              title: () => t('sideBarSideLeft'),
-              desc: () => t('sideBarSideLeftDesc'),
-            },
-            {
-              value: 'right',
-              icon: (size: number) => <IconPanelRightOutline16 size={size} />,
-              title: () => t('sideBarSideRight'),
-              desc: () => t('sideBarSideRightDesc'),
-            },
-          ],
-        }, {
-          // v0.23.0+: read-side workspace boundary opt-out. Off by default —
-          // the file API keeps its session-workspace fence. When on, the
-          // editor / previewers / file tree may open absolute paths outside
-          // the workspace (the host read routes skip containment); saving and
-          // uploading remain confined to the workspace no matter what.
-          key: 'allowOpenOutsideWorkspace',
-          title: () => t('allowOpenOutside'),
-          desc: () => t('allowOpenOutsideDesc'),
-        }, {
-          // The active file-icon theme picker (v0.16.0+): options resolve
-          // from the LIVE icon-theme registry (function form) — "built-in
-          // outline icons" plus every registered theme by `order`; the row
-          // hides entirely while no theme plugin is installed (`when`), so
-          // a stock install keeps the exact pre-0.16 settings popup.
-          key: 'fileIconTheme',
-          type: 'select',
-          title: () => t('iconTheme'),
-          desc: () => t('iconThemeDesc'),
-          when: (ctx) => (ctx.betterSidebar?.getIconThemes().length ?? 0) > 0,
-          options: (ctx) => {
-            const themes = [...(ctx.betterSidebar?.getIconThemes() ?? [])]
-              .sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
-            return [
-              { value: '', title: () => t('iconThemeBuiltin') },
-              ...themes.map(theme => ({
-                value: theme.id,
-                title: theme.title,
-                icon: theme.icon,
-              })),
-            ]
-          },
-        }, {
           key: 'workspaceFence',
           title: () => t('settingsFenceTitle'),
           desc: () => t('settingsFenceDesc'),
@@ -232,7 +129,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           <OpenWithSettings pluginSettings={pluginSettings} updatePluginSetting={updatePluginSetting} />
         ),
       },
-component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile, visible }) => (
+      component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile }) => (
         <EditorHost
           ctx={ctx}
           store={store}
@@ -241,8 +138,7 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
           expanded={expanded ?? []}
           revealed={revealed ?? []}
           onToggleDir={onToggleDir ?? (() => { /* no-op */ })}
-          onReferenceFile={(path) => { onReferenceFile?.(path, false) }}
-          visible={visible}
+          onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
         />
       ),
     },
@@ -256,34 +152,30 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
       id: 'git',
       title: () => t('changes'),
       description: () => t('guideDescGit'),
-      icon: (size: number) => <IconDiffOutline16 size={size} />,
+      icon: changesTabIcon,
       order: 20,
       single: true,
-      component: ({ ctx, store, scope, tab, visible, onOpenDiff }) => {
-        // The panel the git tab lives in: a context-menu "open file" must
-        // land in the SAME panel — the menu is portaled outside the pane, so
-        // no pane pointerdown focuses it and the global activePane would
-        // otherwise swallow the open into the other box.
-        const state = store.getSnapshot().state
-        const gitArea = state === undefined ? 'right' : areaOfTab(state, tab.id)
-        return (
-          <GitView
-            ctx={ctx}
-            scope={scope}
-            store={store}
-            tab={tab}
-            visible={visible}
-            onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path, gitArea) }}
-            onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
-          />
-        )
+      badge: (_ctx, scope) => {
+        const count = opCountOf(scope.sessionId)
+        return count === undefined || count === 0 ? null : count
       },
+      component: ({ ctx, store, scope, tab, visible, onOpenDiff }) => (
+        <ChangesTab
+          ctx={ctx}
+          store={store}
+          scope={scope}
+          tab={tab}
+          visible={visible}
+          onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
+          onOpenDiff={onOpenDiff}
+        />
+      ),
     },
     {
       id: 'subagent',
       title: () => t('subagent'),
       description: () => t('guideDescSubagent'),
-      icon: (size: number) => <IconThinkOutline16 size={size} />,
+      icon: tasksTabIcon,
       order: 30,
       single: true,
       // Declarative settings: the auto-open switches render under this row in
@@ -312,7 +204,7 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
       id: 'sidechat',
       title: () => t('sideChat'),
       description: () => t('guideDescSidechat'),
-      icon: (size: number) => <IconNewChatOutline16 size={size} />,
+      icon: sidechatTabIcon,
       order: 35,
       // Codex-style: EVERY side conversation is its own tab. A plain open
       // mints a fresh tab flagged `autoCreate` (the view creates the EMPTY
@@ -358,7 +250,7 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
       id: 'terminal',
       title: () => t('terminal'),
       description: () => t('guideDescTerminal'),
-      icon: (size: number) => <IconTerminalOutline16 size={size} />,
+      icon: terminalTabIcon,
       order: 40,
       available: (_ctx, _scope, state) => uiTerminalCount(state) < TERMINAL_LIMIT,
       // Declarative settings: the model-facing terminal tools switch, the
@@ -417,21 +309,13 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
-      // The default terminal tab mounts through the terminal-source slot:
-      // TerminalTabTransport resolves the connection layer from the
-      // provider registry (match on session/cwd/tab, first match wins, no
-      // match → the default localTransport) and frames it as the
-      // `transport` prop TerminalView already knows. Pinned virtual
-      // terminals render through this same component with the home
-      // session's scope, so a pinned terminal follows its home session's
-      // source; `gb:` global-shared windows are not resolved here.
-      component: (props) => <TerminalTabTransport {...props} />,
+      component: ({ tab, scope, store }) => <LazyTerminal scope={scope} store={store} tabId={tab.id} />,
     },
     {
       id: 'browser',
       title: () => t('browser'),
       description: () => t('guideDescBrowser'),
-      icon: (size: number) => <IconGlobeOutline16 size={size} />,
+      icon: browserTabIcon,
       order: 50,
       // Declarative settings: the sandbox escape hatch, the link-takeover
       // MASTER switch, and the per-protocol takeover switches (http on /
@@ -473,27 +357,15 @@ component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferen
       component: (props) => <BrowserView {...props} />,
     },
     {
-      id: 'global',
-      // The "Global info" page: records every instance-level global window
-      // (the `gb:` all-projects shared terminals and friends). Reachable from
-      // the + menu and from the official left sidebar's footer action (the
-      // plugin injects it into `sidebar.footer.action`).
-      title: () => t('globalInfo'),
-      icon: (size: number) => <IconGlobalWorkspaceOutline16 size={size} />,
-      order: 60,
-      single: true,
-      component: (props) => <GlobalView {...props} />,
-    },
-    {
       id: 'diff',
       title: () => t('changes'),
-      icon: (size: number) => <IconDiffOutline16 size={size} />,
+      icon: changesTabIcon,
       order: -1,
       hidden: true,
       dedupeKey: (tab) => tab.id,
-      component: ({ ctx, scope, tab }) => (
+      component: ({ scope, tab }) => (
         tab.diff === undefined ? null
-          : <DiffTab ctx={ctx} sessionId={scope.sessionId} cwd={scope.cwd} diff={tab.diff} />
+          : <DiffTab sessionId={scope.sessionId} cwd={scope.cwd} diff={tab.diff} />
       ),
     },
   ]

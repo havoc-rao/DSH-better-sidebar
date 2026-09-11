@@ -17,8 +17,6 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
-import { fileURLToPath } from 'node:url'
-import { homedir } from 'node:os'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { Context, SidebarHttpRequest, SidebarSessionEvent } from './context-types.ts'
 import {
@@ -43,22 +41,8 @@ import { registerBundleRoute } from './bundle-route.ts'
 import { launchExternal } from './open-external.ts'
 import * as git from './git.ts'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
-import type { LlmRuntime } from '@deepseek-ai/dsh-llm'
-import {
-  buildCommitContext,
-  catalogOf,
-  composeCommitDraftPrompt,
-  draftCommitMessage,
-  probeLlmConnection,
-  resolveCommitTemplate,
-  COMMIT_CUSTOM_TEMPLATE_MAX,
-  COMMIT_HISTORY_REFS_DEFAULT,
-  COMMIT_HISTORY_REFS_MAX,
-  COMMIT_HISTORY_REFS_MIN,
-  WATCHED_BRANCHES_MAX,
-} from './agents/index.ts'
-import { defaultShell, digestCommandInput, ensureSpawnHelper, isSharedTabId, PtyManager, ptyKeyOf, shellDisplayName, splitShellArgs, unquotePath } from './pty-manager.ts'
-import { AgentPtyRegistry, armPtyResizeGate, clampDims, tryResizePty, type AgentTerminalHandle } from './agent-pty.ts'
+import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName, splitShellArgs, unquotePath } from './pty-manager.ts'
+import { AgentPtyRegistry, armPtyResizeGate, tryResizePty, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
   depsStatus,
@@ -67,9 +51,7 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
-import { CmdWChannel, registerDesktopShortcutClaim, type CmdWSocketFace } from './desktop-cmdw.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
-import { createPtyBackpressure, type PtyBackpressure } from './backpressure.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
@@ -97,14 +79,6 @@ export type {
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
 
-/**
- * 本插件仓库根（源码搜索路由的默认 roots 之一）。
- * 注意必须用 `new URL('..')` 回退一级：本文件被打包进 lib/index.js 后，
- * `import.meta.url` 指向 lib/ 目录，`.` 会解析成 <pkg>/lib/ 导致
- * join(root, 'src') = <pkg>/lib/src（不存在，搜索永远为空——真实试用踩过）。
- */
-const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url))
-
 /** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
 export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
 
@@ -130,15 +104,6 @@ export function mediaTypeForPath(path: string): string {
 }
 
 /**
- * The reserved virtual session id of the Global Workspace (mirror of the
- * client's GLOBAL_WORKSPACE_SESSION_ID in state.ts). The full-page Global
- * Workspace owns terminals of its own, but no real conversation — its
- * freshly created terminals (the tabby-style quick-add) have no session
- * cwd to derive from.
- */
-const GLOBAL_WORKSPACE_SESSION_ID = 'global-workspace'
-
-/**
  * Resolve a session's authoritative working directory. The attached session
  * header wins; while the session is still hydrating from persistence (the
  * web client attaches the current conversation a moment after page load, so
@@ -151,11 +116,7 @@ const GLOBAL_WORKSPACE_SESSION_ID = 'global-workspace'
  * workspace"). The host process cwd is the FINAL fallback for deployments
  * without persistence (tests / stripped-down hosts); production always
  * provides persistence, so the bug-fix path (header → client → persistence)
- * always resolves the real session cwd before reaching it. The virtual
- * Global Workspace session is the one exception: its terminals start at the
- * user's home — the "root" for the Global Workspace's directly created
- * terminals (a real session's process cwd would leak the host's working
- * directory).
+ * always resolves the real session cwd before reaching it.
  */
 async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): Promise<string> {
   const session = ctx.sessions.get(sessionId)
@@ -168,7 +129,6 @@ async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string)
       throw new SidebarError('bad-request', `invalid working directory "${clientCwd}"`)
     }
   }
-  if (sessionId === GLOBAL_WORKSPACE_SESSION_ID) return homedir()
   const persistence = ctx.get('sessionPersistence')
   if (persistence !== undefined) {
     const persisted = await readPersistedSession(persistence, sessionId)
@@ -301,29 +261,6 @@ function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): {
 }
 
 /**
- * Resolve the side-card prefs through the settings seam. An absent settings
- * service, an unregistered namespace, or a malformed document all fall back
- * to the schema defaults — a settings-less deployment keeps the exact
- * default behavior (the same contract as the client's parsePrefs).
- */
-function resolvedPrefs(getSettings: () => SidebarSettingsFace | undefined): SidebarPrefs {
-  const view = getSettings()?.get()
-  const value = view?.value
-  if (value !== null && typeof value === 'object') return value as SidebarPrefs
-  return SIDEBAR_PREFS_DEFAULTS
-}
-
-/**
- * Whether the user opened the read boundary: `allowOpenOutsideWorkspace`
- * (default off) lets READ routes (fs.tree / fs.read / media / HTML preview)
- * resolve paths outside the session workspace. The WRITE fence is never
- * lifted — this flag only ever feeds read-side containment decisions.
- */
-function openOutsideAllowed(getSettings: () => SidebarSettingsFace | undefined): boolean {
-  return resolvedPrefs(getSettings).allowOpenOutsideWorkspace === true
-}
-
-/**
  * Whether the workspace fence is armed for the sidebar's filesystem routes
  * (the settings-page `workspaceFence` switch under the files card's gear).
  * An absent settings service or a missing field keeps the fence ON — the
@@ -397,9 +334,7 @@ function buildApi(
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const record = payload as { path?: unknown }
-// allowOpenOutsideWorkspace (default off) lifts the containment check
-      // for READ-only browsing; writes never follow.
-      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'), openOutsideAllowed(getSettings))
+      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'), fenceEnabledOf(getSettings))
       return listDirectory(target, resolved.listLimit)
     },
     'fs.search': async (payload) => {
@@ -417,7 +352,7 @@ function buildApi(
       // child-repo path is relative to the selected repoRoot, not the session
       // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
-const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected), openOutsideAllowed(getSettings))
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected), fenceEnabledOf(getSettings))
       const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
@@ -503,43 +438,6 @@ const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireStr
       const { cwd } = await gitCwdOf(payload)
       return git.branches(cwd, selectedRepoOf(payload))
     },
-    // The current branch's upstream relationship (ahead/behind + gone) for
-    // the header pill. Runs in the same worktree-resolved cwd as git.status,
-    // so the pill always describes the SAME checkout the rows show.
-    'git.branch-status': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      return git.branchStatus(cwd, selectedRepoOf(payload))
-    },
-    // The watched (重点关注) branches' tips relative to the checkout HEAD —
-    // the divergence data behind the graph's top/bottom bubbles and row
-    // rings. Names are allowlisted host-side against refs/heads (git.branchTips).
-    'git.branch-tips': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      const record = payload as { branches?: unknown } | null
-      const branches = Array.isArray(record?.branches)
-        ? record.branches.filter((item): item is string => typeof item === 'string' && item !== '')
-        : []
-      if (branches.length > WATCHED_BRANCHES_MAX) {
-        throw new SidebarError('bad-request', 'too many watched branches', 400)
-      }
-      return { tips: await git.branchTips(cwd, branches, selectedRepoOf(payload)) }
-    },
-    // Fetch remote refs (optionally --prune). A repository without any
-    // remote carries its own wire code — the panel maps it to friendly copy
-    // instead of the raw git fatal line.
-    'git.fetch': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      const record = payload as { prune?: unknown } | null
-      try {
-        await git.fetch(cwd, selectedRepoOf(payload), record?.prune === true)
-        return { ok: true }
-      } catch (error) {
-        if (error instanceof git.GitCommandError && error.code === 'git-no-remote') {
-          throw new SidebarError('git-no-remote', error.message)
-        }
-        throw error
-      }
-    },
     'git.checkout': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       await git.checkout(cwd, requireString(payload, 'branch'), selectedRepoOf(payload))
@@ -555,24 +453,6 @@ const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireStr
         ? record.skip
         : undefined
       return git.log(cwd, count, skip, selectedRepoOf(payload))
-    },
-    'git.log-graph': async (payload) => {
-      const { cwd } = await cwdOf(payload)
-      const record = payload as { count?: unknown; skip?: unknown; worktree?: unknown }
-      const count = typeof record.count === 'number' && Number.isInteger(record.count) && record.count > 0
-        ? record.count
-        : undefined
-      const skip = typeof record.skip === 'number' && Number.isInteger(record.skip) && record.skip >= 0
-        ? record.skip
-        : undefined
-      // Optional checkout pin (linked worktree path); an empty/missing value
-      // resolves to the session cwd via git.graphLog's resolveWorktree seam
-      // (the same allowlist that keeps every other git.* route from being
-      // aimed at an unrelated repository).
-      const worktree = typeof record.worktree === 'string' && record.worktree !== ''
-        ? record.worktree
-        : undefined
-      return git.graphLog(cwd, count, skip, worktree)
     },
     'git.commit-diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
@@ -606,70 +486,6 @@ const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireStr
       const path = requireString(payload, 'path')
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
-    },
-    // The live LLM provider/model catalog the git tab's AI commit-draft
-    // settings panel offers (advisory per the llm service: model ids that are
-    // not listed still route fine). `available: false` when the deployment
-    // lacks the llm service — the panel then shows guidance instead of rows.
-    'llm.catalog': async () => catalogOf(ctx.get('llm') as LlmRuntime | undefined),
-    // A real, minimal provider call for the settings-page "test connection"
-    // action. Catalog presence only proves registration; this proves the
-    // selected endpoint returns visible assistant text and preserves adapter
-    // failure codes such as AUTH / RATE_LIMIT / EMPTY_RESPONSE.
-    'llm.probe': async (payload) => {
-      const llm = ctx.get('llm') as LlmRuntime | undefined
-      if (llm === undefined) {
-        throw new SidebarError('llm-unavailable', 'the LLM service is not mounted in this deployment', 503)
-      }
-      return probeLlmConnection(llm, {
-        provider: requireString(payload, 'provider'),
-        model: requireString(payload, 'model'),
-      })
-    },
-    // Draft a commit message through a private one-shot DSH agent. The index
-    // wins when non-empty; otherwise the bounded working-tree status + tracked
-    // diff become a tentative summary. The agent has an exact prompt and no
-    // tools, and its hidden child session is disposed after the final message.
-    'git.commit-draft': async (payload) => {
-      const { sessionId, cwd } = await gitCwdOf(payload)
-      const record = payload as {
-        template?: unknown
-        customTemplate?: unknown
-        provider?: unknown
-        model?: unknown
-        historyRefs?: unknown
-      } | null
-      const template = typeof record?.template === 'string' && record.template !== '' ? record.template : undefined
-      const customTemplate = typeof record?.customTemplate === 'string'
-        ? record.customTemplate.slice(0, COMMIT_CUSTOM_TEMPLATE_MAX)
-        : undefined
-      const provider = requireString(payload, 'provider')
-      const model = requireString(payload, 'model')
-      const historyRefs = typeof record?.historyRefs === 'number' && Number.isFinite(record.historyRefs)
-        ? Math.min(COMMIT_HISTORY_REFS_MAX, Math.max(COMMIT_HISTORY_REFS_MIN, Math.round(record.historyRefs)))
-        : COMMIT_HISTORY_REFS_DEFAULT
-      const llm = ctx.get('llm') as LlmRuntime | undefined
-      if (llm === undefined) {
-        throw new SidebarError('llm-unavailable', 'the LLM service is not mounted in this deployment', 503)
-      }
-      const context = await buildCommitContext(cwd, historyRefs)
-      if (context === null) {
-        throw new SidebarError('no-changes', 'the index and working tree are both clean', 400)
-      }
-      const resolved = resolveCommitTemplate(template, customTemplate)
-      const prompt = composeCommitDraftPrompt(context, resolved.instructions)
-      const message = await draftCommitMessage(ctx, sessionId, cwd, { provider, model }, prompt)
-      return {
-        message,
-        source: context.source,
-        fileCount: context.fileCount,
-        insertions: context.insertions,
-        deletions: context.deletions,
-        patchTruncated: context.patchTruncated,
-        provider,
-        model,
-        template: resolved.id,
-      }
     },
     // The session's file-tool events for the changes tab's session lens
     // (and its badge): the CLIENT runtime's sessions face has no event-log
@@ -718,28 +534,7 @@ const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireStr
       const tab = requireString(payload, 'tab')
       // Degraded mode (node-pty unavailable): no live pty can exist, so a
       // no-op ok is the honest answer — never an error the client must show.
-      // The key maps shared stub ids (`ws:`) to the workspace-shared pty.
-      ptyManager?.close(ptyKeyOf(sessionId, tab))
-      return { ok: true }
-    },
-    // Re-parent a live terminal process to another tab id — the workspace
-    // bind/unbind path. Binding a terminal swaps its tab id (local →
-    // `ws:` stub) and unbinding mints a fresh local id; without
-    // re-parenting the old key's process is released (the unmount close
-    // frame) while the new key's attach spawns a fresh shell, so a
-    // long-running process dies on every pin toggle. This route moves the
-    // LIVE handle (process + transcript + command title) to the new key
-    // instead; both keys derive exactly like the attach path (`ws:` =
-    // workspace-shared, otherwise session-scoped). No-op when the source
-    // has no live process (never opened or already exited) — the new tab
-    // spawns fresh, status quo.
-    'pty.reparent': (payload) => {
-      const sessionId = requireString(payload, 'sessionId')
-      const from = requireString(payload, 'from')
-      const to = requireString(payload, 'to')
-      const fromKey = isSharedTabId(from) ? `shared:${from}` : `${sessionId}:${from}`
-      const toKey = isSharedTabId(to) ? `shared:${to}` : `${sessionId}:${to}`
-      ptyManager?.reparent(fromKey, toKey, sessionId, isSharedTabId(to))
+      ptyManager?.close(`${sessionId}:${tab}`)
       return { ok: true }
     },
     // Release an agent terminal by uuid. The WS close frame already does
@@ -750,6 +545,17 @@ const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireStr
       const uuid = requireString(payload, 'uuid')
       agentPtyRegistry?.close(uuid)
       return { ok: true }
+    },
+    // The sidebar wait banner's skip button: abort every active
+    // terminal_wait_for on one agent terminal. An unknown uuid (a terminal
+    // already closed / reaped) goes through `expect` and surfaces as 404
+    // not-found; the client tolerates that and lets the next push converge.
+    // Nothing waiting on a live terminal is not an error: 0 skipped.
+    // Degraded mode (node-pty unavailable) has no registry and no waits: an
+    // honest ok.
+    'agent-pty.skip-wait': (payload) => {
+      const uuid = requireString(payload, 'uuid')
+      return { ok: true, skipped: agentPtyRegistry?.skipWait(uuid) ?? 0 }
     },
     // Terminal dependency status (issue #140): after a WS close 1011 with
     // reason `pty-deps-missing` the client fetches the full repair details
@@ -1044,7 +850,13 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
             ctx,
             agentOpenRegistry,
             (sessionId) => sessionCwdOf(ctx, sessionId),
-            () => resolvedPrefs(() => settingsFace),
+            () => {
+              const view = settingsFace?.get()
+              const value = view?.value
+              return value !== null && typeof value === 'object'
+                ? value as SidebarPrefs
+                : SIDEBAR_PREFS_DEFAULTS
+            },
           )
         }
       } else if (openToolsDisposers !== null) {
@@ -1168,10 +980,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const sessionId = url.searchParams.get('sessionId')
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
-const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        // The read-side opt-out (allowOpenOutsideWorkspace) applies here too:
-        // with it on, media outside the session workspace previews normally.
-        const path = await ensureWorkspacePath(cwd, raw, openOutsideAllowed(() => settingsFace))
+        const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const path = await ensureWorkspacePath(cwd, raw, fenceEnabledOf(() => settingsFace))
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
@@ -1229,8 +1039,8 @@ const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? un
         // back to the process cwd and is normally refused by the workspace
         // real-path guard, with the same semantics as the media route's
         // fallback.
-const cwd = await sessionCwdOf(ctx, sessionId)
-        const absolute = await ensureWorkspacePath(cwd, path, openOutsideAllowed(() => settingsFace))
+        const cwd = await sessionCwdOf(ctx, sessionId)
+        const absolute = await ensureWorkspacePath(cwd, path, fenceEnabledOf(() => settingsFace))
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
@@ -1262,8 +1072,6 @@ const cwd = await sessionCwdOf(ctx, sessionId)
   // `{type:'close'}` releases the underlying pty (immediate for agent
   // terminals, scheduled-0 for UI tabs which keep the same reconnect grace
   // contract the host has always had).
-  // The backpressure contract (see backpressure.ts) tracks in-flight bytes
-  // through the ws send callback; no server-level tuning is needed.
   const wss = new WebSocketServer({ noServer: true })
   ctx.effect(() => ctx.webServer.registerUpgrade({
     path: '/sidebar/ws/terminal',
@@ -1322,39 +1130,6 @@ const cwd = await sessionCwdOf(ctx, sessionId)
     },
   }), 'dsh-better-sidebar: agent-opens push WebSocket')
 
-  // ── ⌘W desktop-shortcut claim WebSocket ────────────────────────────────
-  // Request/reply channel for the shell's ⌘W accelerator (see
-  // desktop-cmdw.ts): DSH Desktop's main process routes the menu's ⌘W
-  // through `ctx.desktopShortcuts` BEFORE the renderer sees the keydown, so
-  // the builtin ⌘W binding can never fire there. The claimer broadcasts a
-  // request frame to every connected view; the VIEW decides (focus in the
-  // sidebar + a closeable active tab — the builtin binding's exact
-  // when-clause) and answers, and the host resolves the shell's route from
-  // the verdict: claimed = window stays + tab closes, unclaimed = the
-  // shell keeps its existing confirm dialog. The channel is page-global and
-  // session-agnostic (each view evaluates against its current snapshot at
-  // request time).
-  const cmdWChannel = new CmdWChannel()
-  const cmdWss = new WebSocketServer({ noServer: true })
-  ctx.effect(() => ctx.webServer.registerUpgrade({
-    path: '/sidebar/ws/cmd-w',
-    handler: (req, socket, head) => {
-      if (!fence(req)) {
-        socket.destroy()
-        return
-      }
-      cmdWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
-        cmdWChannel.attach(ws as unknown as CmdWSocketFace)
-      })
-    },
-  }), 'dsh-better-sidebar: ⌘W claim WebSocket')
-
-  // The claimer on the shell's ShortcutRouter: feature-detected — a plain
-  // browser or a shell without the desktop service never intercepts ⌘W
-  // (the renderer's own binding handles it there), so this is a strict
-  // no-op in those deployments.
-  ctx.effect(() => registerDesktopShortcutClaim(ctx, cmdWChannel), 'dsh-better-sidebar: ⌘W desktop-shortcut claimer')
-
   ctx.effect(() => () => {
     toolsDisposers?.()
     openToolsDisposers?.()
@@ -1364,7 +1139,6 @@ const cwd = await sessionCwdOf(ctx, sessionId)
     wss.close()
     agentListWss.close()
     agentOpenWss.close()
-    cmdWss.close()
   }, 'dsh-better-sidebar: teardown')
 }
 
@@ -1425,21 +1199,6 @@ async function attachAgentList(
     ws.close(1011, error instanceof Error ? error.message : String(error))
   }
 }
-
-/** Sockets attached to each pty key (the command-title broadcast fan-out:
- *  a title settlement on ANY connection updates every session's tab title). */
-const terminalSockets = new Map<string, Set<WebSocket>>()
-
-/** Per-pty output backpressure: pause/resume the pty instead of dropping
- *  output when a socket's buffer backs up (see backpressure.ts). Keyed like
- *  terminalSockets — one controller per pty, shared by all its sockets. */
-const terminalBackpressure = new Map<string, PtyBackpressure>()
-
-/** Agent-terminal sockets per uuid (close cleanup mirrors terminalSockets). */
-const agentTerminalSockets = new Map<string, Set<WebSocket>>()
-
-/** Per-agent-pty output backpressure (mirror of terminalBackpressure). */
-const agentBackpressure = new Map<string, PtyBackpressure>()
 
 /**
  * The WS close reason for a failed terminal attach. A missing configured
@@ -1529,74 +1288,19 @@ async function attachTerminal(
       ws.close(1011, PTY_DEPS_MISSING)
       return
     }
-const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+    const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
     // Settings-page shell overrides win over the yaml/auto shell for
     // terminals opened from now on (existing pty handles keep their shell).
     const overrides = shellOverridesOf(getSettings)
-    // Windows pre-ready gate for the resize frames this socket may deliver
-    // (see armPtyResizeGate; inert on POSIX). The gate is armed on the
-    // handle's pty BEFORE the socket attaches, so a resize frame that
-    // arrives during attach never slips through unguarded.
     const handle = ptyManager.open(sessionId, tabId, cwd, 80, 24, overrides.shell, overrides.shellArgs)
+    // Windows pre-ready gate for the resize frames this socket may deliver
+    // (see armPtyResizeGate; inert on POSIX).
     armPtyResizeGate(handle.pty)
-    // The socket's OWN key snapshot: a workspace bind/unbind may
-    // RE-PARENT this handle to a new key while this socket is still
-    // attached (the migration is awaited before the old view unmounts).
-    // Every keyed decision of this socket — its title-registry slot, the
-    // close frame, the drop grace — must target the key it ATTACHED to,
-    // never the handle's (possibly migrated) live key: the old tab's
-    // close frame must not kill the re-parented process, and its drop
-    // must not schedule a grace close on the new key.
-    const socketKey = handle.key
-    const socketShared = handle.shared
-    // The command-title registry: every socket attached to a pty, so a
-    // title settlement (see digestCommandInput) reaches ALL connected
-    // sessions — a workspace-shared terminal's tab title updates in every
-    // session at once.
-    let sockets = terminalSockets.get(socketKey)
-    if (sockets === undefined) {
-      sockets = new Set()
-      terminalSockets.set(socketKey, sockets)
-    }
-    sockets.add(ws)
-    // The pty's output backpressure controller (shared by every socket of
-    // this pty): pause the pty when a socket backs up, resume when it drains
-    // (see backpressure.ts). Created once per key, dropped with the last
-    // socket's close.
-    const backpressure = terminalBackpressure.get(socketKey)
-      ?? (() => {
-        const created = createPtyBackpressure(
-          () => { try { handle.pty.pause() } catch { /* pty mid-dispose */ } },
-          () => { try { handle.pty.resume() } catch { /* pty mid-dispose */ } },
-        )
-        terminalBackpressure.set(socketKey, created)
-        return created
-      })()
-    backpressure.attach(ws)
-    // Replay the transcript, then follow live output. The replay rides the
-    // same in-flight accounting so a big transcript cannot blow the buffer
-    // unnoticed.
-    if (handle.transcript !== '') backpressure.send(ws, handle.transcript)
-    const broadcastTitle = (): void => {
-      if (handle.title === '' && handle.command === '') return
-      const frame = JSON.stringify({ type: 'title', title: handle.title, command: handle.command, cwd: handle.cwd })
-      for (const target of terminalSockets.get(handle.key) ?? []) {
-        if (target.readyState === WebSocket.OPEN) target.send(frame)
-      }
-    }
-    // A fresh attach replays the current title + command + cwd — the info
-    // bar needs the cwd even before any command has run.
-    ws.send(JSON.stringify({ type: 'title', title: handle.title, command: handle.command, cwd: handle.cwd }))
-    let overCeilingWarned = false
+    // Replay the transcript, then follow live output.
+    if (handle.transcript !== '') ws.send(handle.transcript)
     const onData = (data: string): void => {
-      if (ws.readyState !== WebSocket.OPEN) return
-      // Backpressure instead of dropping: in-flight bytes crossing the high
-      // watermark pause the pty so the client's WS buffer drains; only a
-      // hard-ceiling overflow (pause/resume unavailable on some exotic pty
-      // builds) drops frames, logged once per socket.
-      if (!backpressure.send(ws, data) && !overCeilingWarned) {
-        overCeilingWarned = true
-        console.warn('[dsh-better-sidebar] terminal output exceeded the hard ceiling; dropping frames until the socket drains')
+      if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 4 * 1024 * 1024) {
+        ws.send(data)
       }
     }
     const onExit = ({ exitCode }: { exitCode: number; signal?: number }): void => {
@@ -1618,11 +1322,8 @@ const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? un
         // Not JSON: terminal input.
       }
       if (control !== null && control.type === 'close') {
-        // The owning tab was closed: release the quota immediately. The
-        // socket's ATTACHED key (not the handle's live key): a bind/unbind
-        // may have re-parented the process away, and the old tab's close
-        // must not kill it.
-        ptyManager.scheduleClose(socketKey, 0)
+        // The owning tab was closed: release the quota immediately.
+        ptyManager.scheduleClose(handle.key, 0)
         return
       }
       if (control !== null && control.type === 'park') {
@@ -1643,45 +1344,19 @@ const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? un
       ) {
         tryResizePty(handle.pty, control.cols, control.rows)
       } else {
-        // Terminal input. Digest the command line for the tab title (first
-        // token) and the FULL command (the info bar's "running CLI"); a
-        // change to either is broadcast to every socket attached to this
-        // pty — shared terminals update everywhere at once.
-        const digested = digestCommandInput({ title: handle.title, line: handle.inputLine, lastCommand: handle.command }, text)
-        if (digested.title !== handle.title || digested.lastCommand !== handle.command) {
-          handle.title = digested.title
-          handle.command = digested.lastCommand
-          broadcastTitle()
-        }
-        handle.inputLine = digested.line
         handle.pty.write(text)
       }
     })
     ws.on('close', () => {
       dataSub.dispose()
       exitSub.dispose()
-// A dead socket must never hold the pty's pause; the last detach
-      // resumes it so a future attach does not inherit a frozen terminal.
-      backpressure.detach(ws)
-      // Drop this socket from the title registry; an empty registry entry
-      // is cleaned up so dead keys do not accumulate. The socket's own
-      // attached key (see socketKey above): a re-parented handle must not
-      // let a dying socket wipe the new key's registry entry.
-      sockets?.delete(ws)
-      if (sockets !== undefined && sockets.size === 0) {
-        terminalSockets.delete(socketKey)
-        terminalBackpressure.delete(socketKey)
-      }
-      // A bare socket drop (refresh, tab switch) leaves the process alive
-      // for a grace period so a quick reconnect keeps it; the reconnect's
-      // open() cancels the pending close. A SHARED pty (workspace-bound
-      // terminal) is exempt: other sessions may still be attached and the
-      // window itself keeps living — only the close frame (the window
-      // closed everywhere) or plugin teardown kills it. A PARKED pty (the
-      // user switched conversations and sent `{type:'park'}`) stays alive
-      // indefinitely — the tab is still open, do NOT start the countdown.
-      if (!socketShared && !ptyManager.isParked(socketKey)) {
-        ptyManager.scheduleClose(socketKey, resolved.reconnectGraceMs)
+      // A parked pty (the user switched conversations and sent `{type:'park'}`)
+      // stays alive indefinitely — do NOT start the grace countdown. A bare
+      // socket drop without a prior park (refresh, crash) starts the grace
+      // period so a quick reconnect keeps the process; the reconnect's open()
+      // cancels the pending close.
+      if (!ptyManager.isParked(handle.key)) {
+        ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
       }
     })
   } catch (error) {
@@ -1701,35 +1376,10 @@ function pumpAgentTerminal(
   handle: AgentTerminalHandle,
   ws: WebSocket,
 ): void {
-  // Same backpressure wiring as the UI-tab path: one controller per uuid,
-  // pause/resume the pty instead of dropping output; the sockets set mirrors
-  // terminalSockets for close-time cleanup.
-  const uuid = handle.uuid
-  let sockets = agentTerminalSockets.get(uuid)
-  if (sockets === undefined) {
-    sockets = new Set()
-    agentTerminalSockets.set(uuid, sockets)
-  }
-  sockets.add(ws)
-  const backpressure = agentBackpressure.get(uuid)
-    ?? (() => {
-      const created = createPtyBackpressure(
-        () => { try { handle.pty.pause() } catch { /* pty mid-dispose */ } },
-        () => { try { handle.pty.resume() } catch { /* pty mid-dispose */ } },
-      )
-      agentBackpressure.set(uuid, created)
-      return created
-    })()
-  backpressure.attach(ws)
-  // Replay the transcript, then follow live output (same accounting as the
-  // UI-tab path: the replay rides the in-flight byte counter).
-  if (handle.transcript !== '') backpressure.send(ws, handle.transcript)
-  let overCeilingWarned = false
+  if (handle.transcript !== '') ws.send(handle.transcript)
   const onData = (data: string): void => {
-    if (ws.readyState !== WebSocket.OPEN) return
-    if (!backpressure.send(ws, data) && !overCeilingWarned) {
-      overCeilingWarned = true
-      console.warn('[dsh-better-sidebar] agent terminal output exceeded the hard ceiling; dropping frames until the socket drains')
+    if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 4 * 1024 * 1024) {
+      ws.send(data)
     }
   }
   const onExit = ({ exitCode }: { exitCode: number; signal?: number }): void => {
@@ -1774,12 +1424,6 @@ function pumpAgentTerminal(
   ws.on('close', () => {
     dataSub.dispose()
     exitSub.dispose()
-    backpressure.detach(ws)
-    sockets.delete(ws)
-    if (sockets.size === 0) {
-      agentTerminalSockets.delete(uuid)
-      agentBackpressure.delete(uuid)
-    }
     // A bare socket drop (refresh, tab switch) leaves the agent's pty alive.
     // The agent owns the lifetime: only `terminal_close`, a `{type:'close'}`
     // frame, or plugin teardown kills it. A reconnecting view reattaches the

@@ -13,9 +13,6 @@ import {
   TITLE_BAR_STRIP_DEFAULT,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
-  WIDTH_PERCENT_DEFAULT,
-  WIDTH_PERCENT_MAX,
-  WIDTH_PERCENT_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
@@ -61,7 +58,7 @@ export interface SidebarConfig {
    * the existing default behavior is kept.
    */
   shellArgs?: string[]
-  }
+}
 
 /** Schemastery schema for the plugin configuration. */
 export const Config: z<SidebarConfig> = z.object({
@@ -112,8 +109,6 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 
 /** Schemastery schema for the user-facing preferences (validated by the settings service). */
 export const PrefsSchema: z<SidebarPrefs> = z.object({
-  openByDefault: z.boolean().default(false),
-  defaultWidthPercent: z.number().step(1).min(WIDTH_PERCENT_MIN).max(WIDTH_PERCENT_MAX).default(WIDTH_PERCENT_DEFAULT),
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
   agentTerminalTools: z.boolean().default(false),
@@ -121,19 +116,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   bottomPanelAutoTerminal: z.boolean().default(true),
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
-  interceptOpenPath: z.boolean().default(true),
-  // When on, READ routes (fs.tree / fs.read / media / HTML preview) skip the
-  // session-workspace containment check — the user explicitly opens the
-  // boundary for opening/browsing files. The WRITE fence (fs.write / upload)
-  // is never lifted by this switch.
-  allowOpenOutsideWorkspace: z.boolean().default(false),
-  producedFilesWrap: z.boolean().default(true),
   editorExplorer: z.boolean().default(false),
-  sidebarLayout: z.union([z.const('docked'), z.const('vscode')]).default('docked'),
-  sideBarSide: z.union([z.const('left'), z.const('right')]).default('right'),
-  // The active file-icon theme id ('' = built-in outline icons); unknown
-  // ids are not a schema error — the client falls back to the built-ins.
-  fileIconTheme: z.string().default(''),
   workspaceFence: z.boolean().default(true),
   terminalShell: z.string().default(''),
   terminalShellArgs: z.string().default(''),

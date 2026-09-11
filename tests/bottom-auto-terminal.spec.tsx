@@ -24,7 +24,7 @@ import { setupReactAct } from './test-utils.ts'
 setupReactAct()
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
-import { allLeaves, createSidebarStore, toggleBottomMaximized, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
+import { allLeaves, createSidebarStore, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
 
@@ -103,27 +103,11 @@ function bottomTabs(store: SidebarStore): Array<{ type: string; title: string }>
   return allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
 }
 
-/**
- * The stub terminal tab: counts renders so the test can see it actually
- * mount. Mirrors the REAL terminal descriptor's `createTab` (mints a fresh
- * unique id per open — the id safety-net's same-id focus therefore never
- * collapses two opens into one, exactly like production): a duplicate
- * openTab call in the auto-open effect would mint a SECOND tab and fail the
- * `toEqual(['terminal'])` assertions below.
- */
+/** The stub terminal tab: counts renders so the test can see it actually mount. */
 function registerStubTerminal(service: BetterSidebarService, renders: { count: number }): void {
-  let minted = 0
   service.registerTab({
     id: 'terminal',
     title: () => 'Terminal',
-    createTab: () => ({
-      tab: {
-        id: `terminal:${++minted}`,
-        type: 'terminal',
-        title: 'Terminal',
-      },
-      patch: { nextTerminal: minted + 1 },
-    }),
     component: () => {
       renders.count += 1
       return createElement('div', null, 'terminal-stub-content')
@@ -134,7 +118,6 @@ function registerStubTerminal(service: BetterSidebarService, renders: { count: n
 describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', () => {
   it('auto-opens exactly one terminal tab in the bottom workbench on the FIRST expansion', () => {
     const { container, store, service } = mountSidebar()
-
     const renders = { count: 0 }
     registerStubTerminal(service, renders)
 
@@ -156,36 +139,6 @@ describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', ()
     expect(container.querySelector(`[aria-label="${t('collapseBottomPanel')}"]`)).not.toBeNull()
     expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe(
       `${state.bottomHeight}px`,
-    )
-  })
-
-  it('⌘⇧J maximize covers the whole center column (full viewport height, push released)', () => {
-    const { container, store } = mountSidebar()
-
-    act(() => { store.reduce(toggleBottomPanel) })
-    const opened = store.getSnapshot().state!
-    const panel = container.querySelector('[data-dsh-bottom-panel]') as HTMLElement
-    expect(panel).not.toBeNull()
-    // Normal: the drag height, and the layout push squeezes the conversation.
-    expect(panel.style.height).toBe(`${opened.bottomHeight}px`)
-    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe(
-      `${opened.bottomHeight}px`,
-    )
-
-    // MAXIMIZED (⌘⇧J): the panel covers the WHOLE center column at the full
-    // viewport height and the push is released (0) — the conversation sits
-    // behind the panel instead of being squeezed to nothing.
-    act(() => { store.reduce(toggleBottomMaximized) })
-    expect(panel.style.height).toBe(`${window.innerHeight}px`)
-    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe('0px')
-
-    // The same key restores the drag height (the panel stays open).
-    act(() => { store.reduce(toggleBottomMaximized) })
-    const restored = store.getSnapshot().state!
-    expect(restored.bottomMaximized).toBe(false)
-    expect(panel.style.height).toBe(`${restored.bottomHeight}px`)
-    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe(
-      `${restored.bottomHeight}px`,
     )
   })
 

@@ -80,8 +80,6 @@ export interface SidebarWebServer {
 /** A published session's header slice the sidebar reads (authoritative cwd). */
 export interface SidebarSessionHeader {
   cwd?: string
-  /** Persisted subagent nesting depth (used when minting a Git helper child). */
-  delegationDepth?: number
 }
 
 /** The host session store face (`ctx.sessions.get(id)` returns the live session). */
@@ -354,14 +352,6 @@ export interface SidebarSessionsService {
    */
   open?(id: string): void
   /**
-* Clear the current selection into the no-session view state (mirror of the
-   * runtime ISessions.clear) — the full-page Global Workspace opens FROM the
-   * hero: clearing the active session before opening makes every session
-   * click a real open, so the page's close-on-session-open guard fires
-   * naturally (no "same session" ambiguity).
-   */
-  clear?(): void
-  /**
    * Fork a session from a completed-turn prefix of the source and resolve
    * the child session id (mirror of the runtime ISessions.fork — throws on
    * failure). The Side Chat "save as new session" action uses this to
@@ -435,62 +425,6 @@ export interface SidebarSessionInput {
 export interface SidebarConversation {
   input: {
     for(actx: Context): SidebarSessionInput
-  }
-}
-
-/** One workspace row of the client workspaces list (structural mirror of
- *  the wire `WorkspaceView`: durable registry order, header-validated
- *  session membership). */
-export interface SidebarWorkspaceView {
-  workspaceId: string
-  /** Canonical directory path (host-side realpath canon). */
-  path: string
-  /** Display title (defaults to the path basename at create). */
-  title: string
-  /** Sessions accounted under this workspace, in manually owned order. */
-  sessionIds: readonly string[]
-  createdAt: string
-  updatedAt: string
-}
-
-/** The client workspaces list snapshot (structural mirror of the runtime
- *  `WorkspaceListState` — only the slices the sidebar touches). */
-export interface SidebarWorkspaceListState {
-  /** Durable workspace rows in registry order. */
-  items: readonly SidebarWorkspaceView[]
-  /** Registry-global archive set (grouping surfaces hide these sessions). */
-  archivedSessionIds?: readonly string[]
-  state?: 'idle' | 'loading' | 'error'
-  /** True only after both workspace.list and session.list have succeeded. */
-  baselinesReady?: boolean
-  /** Most recently active Workspace (derived, never reorders `items`). */
-  recentWorkspaceId?: string | undefined
-}
-
-/**
- * The layout service face (mirror of ui-layout's ILayout): the app shell's
- * panel transitions, provided by the web app's root entry (AppFrame).
- * Resolved lazily through `ctx.get` — the inject-free read, like
- * 'conversation'.
- */
-export interface SidebarLayoutService {
-  /** Toggle the host's LEFT sidebar (closed ⟷ contract default width). */
-  toggleSidebar(): void
-}
-
-/**
- * The client workspaces service face (mirror of the runtime IWorkspaces).
- * The chat's file-open funnel uses `openPath`; the workspace-bound windows
- * feature reads the `list` feed (the runtime's `WorkspaceRuntime.list`
- * SnapshotStore) to resolve which workspace a session belongs to.
- */
-export interface SidebarWorkspacesService {
-  /** Open a filesystem path with the Host operating system's default application. */
-  openPath(path: string): Promise<void>
-  /** The workspace list feed (mirror of `WorkspaceRuntime.list`). */
-  list: {
-    getSnapshot(): SidebarWorkspaceListState
-    subscribe(fn: () => void): () => void
   }
 }
 
@@ -588,9 +522,6 @@ export interface SidebarContextShape {
   modules: { import(specifier: string): Promise<unknown> }
   /** The host background-job registry (optional; routes degrade to 503). */
   jobs: SidebarJobsService
-  /** The client workspaces service face (file-open funnel + workspace list
-   *  feed; the workspace-bound windows feature resolves membership from it). */
-  workspaces: SidebarWorkspacesService
   /** The host live-agent registry (optional; side chat thread agents). */
   agents: SidebarAgentsService
   /** The host subagent runtime (optional; live topology batch route). */

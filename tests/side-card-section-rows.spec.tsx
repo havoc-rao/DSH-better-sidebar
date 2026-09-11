@@ -12,35 +12,15 @@
  */
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { createElement, type ReactNode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
+import { renderRoot, setupReactAct } from './test-utils.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+setupReactAct()
 import type { SidebarSettingToggle } from '../src/client/service.ts'
 import { FeatureSettingsRows } from '../src/client/SideCardSection.tsx'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
-import type { Context } from '../src/context-types.ts'
-
-/** A ctx stub without a sidebar service: rows must render unchanged. */
-const ctx = { betterSidebar: undefined } as unknown as Context
-
-/** Render the rows into a detached container under React's act(). */
-function mount(node: ReactNode): { container: HTMLDivElement; rerender: (node: ReactNode) => void; unmount: () => void } {
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root: Root = createRoot(container)
-  act(() => { root.render(node) })
-  return {
-    container,
-    rerender: (next) => { act(() => { root.render(next) }) },
-    unmount: () => {
-      act(() => { root.unmount() })
-      container.remove()
-    },
-  }
-}
 
 /** Type into an input and commit it via blur (React 18: input event +
  *  focusout). The native setter bypasses React's value tracker so the
@@ -64,8 +44,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
       type: 'text',
       title: () => 'Font family',
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs,
       onToggle: () => {},
@@ -91,8 +70,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
       min: 9,
       max: 32,
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs: { ...prefs, terminalFontSize: 13 },
       onToggle: () => {},
@@ -119,8 +97,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
       min: 9,
       max: 32,
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs: { ...prefs, terminalFontSize: 13 },
       onToggle: () => {},
@@ -149,8 +126,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
     // The parent mirrors the real handler: the optimistic commit adopts the
     // typed value, and a FAILED write reverts prefs to the stored one.
     let prefsNow = { ...prefs, terminalFontFamily: 'Old' }
-    const { container, rerender, unmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
+    const { container, rerender, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs: prefsNow,
       onToggle: () => {},
@@ -164,7 +140,6 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
     // remounts with the same value — no visible reset while editing.
     prefsNow = { ...prefsNow, terminalFontFamily: 'New' }
     rerender(createElement(FeatureSettingsRows, {
-      ctx,
       toggles: [toggle],
       prefs: prefsNow,
       onToggle: () => {},
@@ -175,7 +150,6 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
     // remounts with it (the stale draft is gone).
     prefsNow = { ...prefsNow, terminalFontFamily: 'Old' }
     rerender(createElement(FeatureSettingsRows, {
-      ctx,
       toggles: [toggle],
       prefs: prefsNow,
       onToggle: () => {},
@@ -208,8 +182,7 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
       title: () => 'Editor explorer',
       options,
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       // Merged is the selected option for this scenario (the default is now
       // separate — the anchor must render whatever value the prefs carry).
@@ -244,14 +217,13 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
       options: plain,
     }
     const rows = (value: unknown) => createElement(FeatureSettingsRows, {
-      ctx,
       toggles: [toggle],
       prefs,
       onToggle: () => {},
       onSelectValue: (t, next) => { commits.push([t.key, next]) },
       valueSource: () => value,
     })
-    const { container, rerender, unmount } = mount(rows(['c', 'a']))
+    const { container, rerender, unmount } = renderRoot(rows(['c', 'a']))
     // The anchor shows the picked titles; options follow the declared order.
     const items = openSelect(container)
     expect(items.map(item => item.textContent)).toEqual(['Alpha', 'Beta', 'Gamma'])
@@ -275,102 +247,13 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
       title: () => 'Editor explorer',
       options,
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs,
       onToggle: () => {},
       valueSource: () => undefined,
     }))
     expect(container.querySelector('button[aria-haspopup="listbox"]')!.textContent).toContain('—')
-    unmount()
-  })
-})
-
-describe('FeatureSettingsRows registry-driven rows (v0.16.0)', () => {
-  it('hides a row whose when predicate is false; a THROWING predicate keeps it visible (fail-open)', () => {
-    const hidden: SidebarSettingToggle = {
-      key: 'fileIconTheme',
-      type: 'select',
-      title: () => 'Theme',
-      when: () => false,
-      options: [{ value: '', title: () => 'Built-in' }],
-    }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
-      toggles: [hidden],
-      prefs,
-      onToggle: () => {},
-    }))
-    expect(container.textContent).not.toContain('Theme')
-    unmount()
-
-    const throwing: SidebarSettingToggle = {
-      key: 'fileIconTheme',
-      type: 'select',
-      title: () => 'Theme',
-      when: () => { throw new Error('boom') },
-      options: [{ value: '', title: () => 'Built-in' }],
-    }
-    const { container: again, unmount: againUnmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
-      toggles: [throwing],
-      prefs,
-      onToggle: () => {},
-    }))
-    // Fail-open: a broken predicate must never hide a user's settings.
-    expect(again.textContent).toContain('Theme')
-    againUnmount()
-  })
-
-  it('resolves function-form options at render time and commits the picked theme id', () => {
-    const commits: Array<[string, unknown]> = []
-    const toggle: SidebarSettingToggle = {
-      key: 'fileIconTheme',
-      type: 'select',
-      title: () => 'File icon theme',
-      options: _ctx => [
-        { value: '', title: () => 'Built-in icons' },
-        {
-          value: 'material-icon-theme',
-          icon: (size: number) => createElement('i', { 'data-size': size }),
-          title: () => 'Material',
-        },
-      ],
-    }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
-      toggles: [toggle],
-      prefs,
-      onToggle: () => {},
-      onSelectValue: (t, next) => { commits.push([t.key, next]) },
-    }))
-    // The prefs default ('' = built-in) IS the built-in option, so the
-    // closed anchor shows it; the dropdown lists the RESOLVED options.
-    expect(container.textContent).toContain('Built-in icons')
-    const items = openSelect(container)
-    expect(items.map(item => item.textContent)).toEqual(['Built-in icons', 'Material'])
-    act(() => { items[1]!.click() })
-    expect(commits).toEqual([['fileIconTheme', 'material-icon-theme']])
-    unmount()
-  })
-
-  it('a THROWING options function degrades to the empty list (no crash, em dash)', () => {
-    const toggle: SidebarSettingToggle = {
-      key: 'fileIconTheme',
-      type: 'select',
-      title: () => 'File icon theme',
-      options: () => { throw new Error('boom') },
-    }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
-      ctx,
-      toggles: [toggle],
-      prefs,
-      onToggle: () => {},
-    }))
-    expect(container.querySelector('button[aria-haspopup="listbox"]')!.textContent).toContain('—')
-    const items = openSelect(container)
-    expect(items).toHaveLength(0)
     unmount()
   })
 })

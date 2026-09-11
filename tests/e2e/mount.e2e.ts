@@ -13,8 +13,8 @@
  *     plugin's `[data-dsh-better-sidebar]` host mount;
  *  3. asserts the plugin's crash markers never appear (no RenderBoundary /
  *     fail() strips, no `pageerror`, no plugin-prefixed console errors);
- *  4. expands the collapsed panel (openByDefault defaults off), sweeps every
- *     built-in tab (Files / Source Control / Tasks / Terminal / Browser) —
+ *  4. expands DSH's native right Sidebar, sweeps every built-in tab type
+ *     through its guide page (Files / Changes / Tasks / Terminal / Browser) —
  *     including the lazily-fetched terminal chunk — and then opens seeded
  *     files through the Files window's tree (separate mode: each file opens
  *     its own new tab, the seeded home "Files" tab stays the explorer),
@@ -29,14 +29,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, request, type APIRequestContext, type Page } from '@playwright/test'
-
-const rawBaseUrl = process.env.DSH_E2E_URL
-if (!rawBaseUrl) {
-  throw new Error('DSH_E2E_URL is not set — boot a DSH web instance with the plugin mounted and point this lane at it (see scripts/e2e-mount.sh)')
-}
-/** The booted DSH web base URL (guarded non-null above). */
-const BASE_URL: string = rawBaseUrl
+import { test, expect, type APIRequestContext } from '@playwright/test'
+import { PAGE_URL, createHostApi, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -63,7 +57,7 @@ const SEEDED_README_FILE = 'readme-style.md'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Side Chat (beta)', 'Terminal', 'Browser']
+const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal', 'browser']
 
 let api: APIRequestContext
 /** The seeded session id (captured by seedSession; the Side Chat smoke's parent). */
@@ -97,16 +91,7 @@ async function seedSession(): Promise<void> {
   // The README-style probe file: raw-HTML runs (badge wall div with an
   // embedded script, a <details> nesting a fence + heading) plus inline tags
   // inside a table cell. The script must be sanitized away in the preview.
-  // The document OPENS with a code fence: its sticky banner pins at the top
-  // of the preview scrollport, exactly under the pinned TOC button — the
-  // TOC probe below proves the button stays the topmost element there
-  // (regression: the DSH CodeBlock banner's sticky header used to paint
-  // over the TOC bar because its z-index 6 beat the bar's 3).
   writeFileSync(join(WORKSPACE_PATH, SEEDED_README_FILE), [
-    '```ts',
-    'export const tocStaysOnTop = true',
-    '```',
-    '',
     '# Readme Style',
     '',
     '<div align="center">',
@@ -138,81 +123,23 @@ async function seedSession(): Promise<void> {
     '[def]: https://example.com/def',
     '',
   ].join('\n'))
-  const workspace = await api.post(`${BASE_URL}/api/workspace.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-workspace', method: 'workspace.create', payload: { path: WORKSPACE_PATH } },
-  })
-  expect(workspace.ok(), `workspace.create: ${workspace.status()} ${await workspace.text()}`).toBe(true)
-  const workspaceBody = (await workspace.json()) as {
-    result: { ok: true; value: { workspace: { workspaceId: string } } } | { ok: false; error: unknown }
-  }
-  expect(workspaceBody.result.ok).toBe(true)
-  const workspaceId = (workspaceBody.result as { value: { workspace: { workspaceId: string } } }).value.workspace.workspaceId
-
-  const session = await api.post(`${BASE_URL}/api/session.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-session', method: 'session.create', payload: { workspaceId } },
-  })
-  expect(session.ok(), `session.create: ${session.status()} ${await session.text()}`).toBe(true)
-  const sessionBody = (await session.json()) as {
-    result: { ok: true; value: { sessionId: string } } | { ok: false; error: unknown }
-  }
-  expect(sessionBody.result.ok).toBe(true)
-  seededSessionId = (sessionBody.result as { value: { sessionId: string } }).value.sessionId
+  // Seeded through the lanes' dual-protocol RPC helper (./host): 0.1.1-rc.x
+  // dot endpoints first, 0.1.2-alpha.1+ slash endpoints on 404 fallback, and
+  // the request context carries the auth cookie when the launch URL had a
+  // one-time token.
+  const workspace = await hostRpc<{ workspace: { workspaceId: string } }>(api, 'workspace.create', { path: WORKSPACE_PATH })
+  const session = await hostRpc<{ sessionId: string }>(api, 'session.create', { workspaceId: workspace.value.workspace.workspaceId })
+  seededSessionId = session.value.sessionId
 }
 
 test.beforeAll(async () => {
-  api = await request.newContext({ baseURL: BASE_URL })
+  api = await createHostApi()
   await seedSession()
 })
 
 test.afterAll(async () => {
   await api?.dispose()
 })
-
-/** Dismiss the keyless-boot onboarding takeovers (Continue / Configure
- *  later), in any stacking order, until none remain. A masked click is
- *  retried next round instead of failing. */
-async function dismissOnboarding(page: Page): Promise<void> {
-  try {
-    await expect
-      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
-      .toBeGreaterThan(0)
-  } catch {
-    console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
-  }
-  for (let round = 0; round < 8; round++) {
-    let dismissed = false
-    for (const name of ['Continue', 'Configure later']) {
-      const button = page.getByRole('button', { name, exact: true }).first()
-      if ((await button.count()) === 0) continue
-      try {
-        await button.click({ timeout: 4_000 })
-        dismissed = true
-        await page.waitForTimeout(1_000)
-      } catch {
-        // Masked by the takeover stacked above it; the next round tries the
-        // other button first.
-      }
-    }
-    if (!dismissed) break
-  }
-}
-
-/** Load the shell, wait for the sidebar host, dismiss onboarding and expand
- *  the collapsed panel. Returns the sidebar locator. */
-async function loadAndExpand(page: Page): Promise<ReturnType<Page['locator']>> {
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
-  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
-  const sidebar = page.locator('[data-dsh-better-sidebar]')
-  await expect(sidebar).toBeAttached({ timeout: 90_000 })
-  await dismissOnboarding(page)
-  // A session must be active for the tab bar / panel to exist.
-  const tabBar = sidebar.locator('[title]')
-  await expect(tabBar.first()).toBeAttached({ timeout: 90_000 })
-  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
-  await expect(expandButton).toHaveCount(1)
-  await expandButton.click()
-  return sidebar
-}
 
 test('plugin mounts into the DSH shell and survives a built-in tab sweep', async ({ page }) => {
   const pageErrors: string[] = []
@@ -233,7 +160,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     (response) => response.url().includes('/sidebar/bundle/editor.js'),
     { timeout: 120_000 },
   )
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
@@ -284,7 +211,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   }
 
   // The seeded session must give the sidebar a session scope: without it the
-  // shell renders a disabled toggle cluster and the tab sweep is impossible.
+  // workbench has no pane to render and the tab sweep is impossible.
   const tabBar = sidebar.locator('[title]')
   await expect(tabBar.first()).toBeAttached({ timeout: 90_000 })
 
@@ -308,22 +235,6 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     )
     .toEqual({ overflowX: true, overflowY: true })
 
-  // openByDefault defaults OFF: a fresh session's panel starts collapsed.
-  // Expand it through the toggle cluster before the layout push can apply.
-  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
-  await expect(expandButton, 'the collapsed toggle cluster must offer the expand button').toHaveCount(1)
-  await expandButton.click()
-
-  // The skinning contract is token-driven (AGENTS.md §8): the panels consume
-  // `--dsw-alias-bg-layer-1`, so switching a skin re-skins the sidebar with
-  // no per-skin code. The layout push variable must be live once the panel
-  // mounts (its absence would mean the panel never opened with the session).
-  await expect
-    .poll(async () => (
-      await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
-    ), { timeout: 90_000 })
-    .not.toBe('')
-
   // Crash-marker assertions shared by every step.
   const assertNoCrash = async (): Promise<void> => {
     await expect
@@ -341,24 +252,149 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     expect(stripTexts, 'a dsh-better-sidebar error strip is present in the sidebar').toEqual([])
   }
 
-  // Sweep every built-in tab through the "+" menu (the sidebar's own open-tab
-  // affordance, reachable from any pane state). Each open may fetch a lazy
-  // chunk (/sidebar/bundle/client-terminal.js / client-editor.js) and mount a
-  // real viewer — the highest-risk crash surfaces. The pinned plugin must
-  // offer every listed built-in: a missing or renamed descriptor is a real
-  // regression and fails the lane loudly instead of silently narrowing the
-  // sweep. A failure anywhere surfaces as a pageerror or a console error,
-  // both of which the next assertion sees.
-  const newTabButton = sidebar.getByRole('button', { name: 'New tab' }).first()
-  for (const title of BUILTIN_TABS) {
-    await newTabButton.click()
-    const item = page.getByRole('menuitem', { name: title }).first()
-    await expect(item, `built-in tab "${title}" is not offered by the + menu — descriptor removed or its label changed`).toHaveCount(1)
-    await item.click()
-    // Let the activation commit (including any lazy-chunk fetch) before the
-    // crash assertions run.
+  // The native Sidebar's way in lives in the conversation header's corner,
+  // which DSH renders only for a session with content — the seeded session
+  // starts blank, so give it one message first.
+  await sendFirstMessage(page)
+
+  // The plugin's own surface is the bottom workbench: its expand/collapse
+  // control is registered into DSH's session-header utilities (the header's
+  // corner belongs to the native sidebar), and the workbench host itself is
+  // mounted. Both are stable addressing surfaces for user CSS / presets.
+  await expect(page.locator('[data-dsh-bottom-toggle]')).toBeAttached({ timeout: 30_000 })
+  await expect(page.locator('[data-dsh-bottom-panel]')).toBeAttached()
+
+  // DSH 0.1.5 owns the right column: the plugin contributes tab TYPES to the
+  // host's native right Sidebar instead of drawing its own panel. Open it
+  // through the host's own control (the conversation header's corner) and
+  // drive the plugin's content from the guide page the surface seeds.
+  const pane = page.locator('[data-sidebar-right-panel]')
+  const addTab = page.locator('[data-dockkit-add-tab]').first()
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await expect(pane).toBeVisible({ timeout: 30_000 })
+  await expect(
+    page.locator('[data-sidebar-right-guide]'),
+    'a freshly expanded surface shows the guide page',
+  ).toBeVisible({ timeout: 30_000 })
+
+  // Every built-in descriptor must be registered as a native tab type: the
+  // guide lists one entry per type, so a missing entry is a real regression
+  // (descriptor removed, registration failed, or the type got disabled).
+  for (const kind of NATIVE_TABS) {
+    await expect(
+      page.locator(`[data-sidebar-right-guide-entry="${kind}"]`),
+      `the plugin's native tab type "${kind}" is not offered by the guide`,
+    ).toHaveCount(1)
+  }
+
+  // Sweep every type through the guide. Each open mounts a real viewer (the
+  // terminal fetches its lazy chunk); a failure anywhere surfaces as a
+  // pageerror or a crash strip, both of which the next assertion sees. A pane
+  // holds one guide tab, so re-seed it through the strip's add control before
+  // every pick.
+  for (const kind of NATIVE_TABS) {
+    if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
+    const entry = page.locator(`[data-sidebar-right-guide-entry="${kind}"]`)
+    await expect(entry, `guide entry "${kind}" must be reachable`).toHaveCount(1, { timeout: 30_000 })
+    await entry.click()
     await page.waitForTimeout(1_500)
     await assertNoCrash()
+  }
+
+  // The sweep opened the Side Chat type, whose view auto-creates a thread and
+  // polls the transcript — that poll MUST ride the plugin's own
+  // sidechat.events route (the host transport this lane locks). The poll runs
+  // only while the tab is visible, so activate its chip first.
+  await pane.getByRole('tab', { name: /Side Chat|侧边对话|侧边聊天/ }).first().click()
+  await expect
+    .poll(
+      () => page.evaluate(() =>
+        performance.getEntriesByType('resource').some(entry => entry.name.includes('/sidebar/api/sidechat.events'))),
+      { timeout: 30_000 },
+    )
+    .toBe(true)
+
+  // The native tab body host is a BLOCK scroller with a definite height, not a
+  // flex container, so a tab root that only declares `flex: 1` collapses to its
+  // content height — exactly how the side-chat composer used to drift away from
+  // the pane bottom. The native adapter wraps every body in a full-height column
+  // host; assert the box really fills its pane and the composer sits on the
+  // pane's floor. This is the regression guard for that fill contract.
+  await expect
+    .poll(
+      () => page.evaluate(() => {
+        const hosts = [...document.querySelectorAll('[data-dsh-native-tab-host]')]
+        const host = hosts.find(element => element.getBoundingClientRect().height > 0)
+        if (host === undefined) return 'no visible native tab host'
+        // The wrapper's parent is the SLOT HOST, which renders with
+        // `display: contents` and therefore has no box of its own; the pane
+        // body is the first ancestor that actually draws one.
+        const view = host.ownerDocument.defaultView
+        let paneBody = host.parentElement
+        while (paneBody !== null && (view?.getComputedStyle(paneBody).display ?? '') === 'contents') {
+          paneBody = paneBody.parentElement
+        }
+        if (paneBody === null) return 'the native tab host has no boxed ancestor'
+        const fillGap = Math.round(paneBody.getBoundingClientRect().height - host.getBoundingClientRect().height)
+        if (Math.abs(fillGap) > 2) return `tab body does not fill its pane: gap ${fillGap}px`
+        const composer = document.querySelector('[class*="sidechatComposer"]')
+        if (composer === null) return 'the side-chat composer is not rendered'
+        // The composer's own 8px bottom margin is the only allowed gap.
+        const bottomGap = Math.round(paneBody.getBoundingClientRect().bottom - composer.getBoundingClientRect().bottom)
+        return bottomGap <= 12 ? 'filled' : `the composer sits ${bottomGap}px above the pane bottom`
+      }),
+      { timeout: 30_000 },
+    )
+    .toBe('filled')
+
+  // DSH 0.1.5-rc.1+ renders a guide entry's `description` line only while
+  // the guide lists at most 4 entries (`MAX_DESCRIBED_ENTRIES` in the host's
+  // GuideBody) — a longer list drops every description and shows titles
+  // alone. Shrink the enabled set through the plugin's OWN settings route
+  // (scratch-profile prefs only, never the user's) so three types stay
+  // enabled (files / sidechat / browser), then require the Files capsule to
+  // really grow its description line. This is the host-side proof of the
+  // rc.1 description restore: before it every entry was a title-only
+  // capsule, so no entry count could ever surface the text.
+  const settingsGet = await api.post(sidebarApi('settings.get'), { data: {} })
+  expect(settingsGet.ok(), `settings.get: ${settingsGet.status()}`).toBe(true)
+  const settingsGetBody = (await settingsGet.json()) as { value?: { tabsEnabled?: Record<string, boolean> } }
+  const originalTabsEnabled = settingsGetBody.value?.tabsEnabled ?? {}
+  /** The types this check switches off (leaving three entries, i.e. ≤4). */
+  const shrunken = ['git', 'subagent', 'terminal'] as const
+  try {
+    // Send the FULL map back (the route's patch is key-wise merged, so a
+    // full map is correct whether the host merges or replaces).
+    const tabsEnabled: Record<string, boolean> = { ...originalTabsEnabled }
+    for (const id of shrunken) tabsEnabled[id] = false
+    const tabsUpdate = await api.post(sidebarApi('settings.update'), { data: { patch: { tabsEnabled } } })
+    expect(tabsUpdate.ok(), `settings.update (tabsEnabled): ${tabsUpdate.status()} ${await tabsUpdate.text()}`).toBe(true)
+    // Re-seed the guide (a pane holds one guide tab) and wait for the
+    // shrunken list: the three remaining entries render their descriptions.
+    if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
+    const filesCapsule = page.locator('[data-sidebar-right-guide-entry="files"]')
+    await expect(filesCapsule, 'the Files entry must still be offered after the shrink').toHaveCount(1, { timeout: 30_000 })
+    await expect(
+      filesCapsule,
+      'with ≤4 guide entries the Files capsule must render its description line',
+    ).toContainText('workspace tree', { timeout: 30_000 })
+    for (const disabled of shrunken) {
+      await expect(
+        page.locator(`[data-sidebar-right-guide-entry="${disabled}"]`),
+        `the disabled "${disabled}" type must leave the guide`,
+      ).toHaveCount(0)
+    }
+  } finally {
+    // Restore the profile's original prefs even on failure. The patch merges
+    // key-wise, so sending the original map back is NOT enough — the three
+    // `false` entries written above would survive. Every key this check
+    // touched is restored explicitly (an absent key means enabled, so a key
+    // the profile never set goes back to `true`). This lane's later tests
+    // (perf.e2e.ts) sweep the guide and would otherwise find types missing.
+    const restored: Record<string, boolean> = { ...originalTabsEnabled }
+    for (const id of shrunken) restored[id] = originalTabsEnabled[id] ?? true
+    const restore = await api.post(sidebarApi('settings.update'), { data: { patch: { tabsEnabled: restored } } })
+    expect(restore.ok(), `settings.update (restore tabsEnabled): ${restore.status()} ${await restore.text()}`).toBe(true)
   }
 
   // Side Chat host-route smoke against the REAL host: create a thread child
@@ -366,268 +402,142 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // deliver a follow-up, cancel, and release it. The turn itself cannot run
   // (keyless boot has no model route), but admission + creation + the wire
   // envelope must all succeed — this is the deepest functional proof the
-  // mount lane can make without a provider.
-  const start = await api.post(`${BASE_URL}/sidebar/api/sidechat.start`, {
+  // mount lane can make without a provider, and it is what caught the 0.1.5
+  // `sessionPersistence.inspect` removal.
+  const start = await api.post(sidebarApi('sidechat.start'), {
     data: { sessionId: seededSessionId, question: 'mount lane smoke' },
   })
   expect(start.ok(), `sidechat.start: ${start.status()} ${await start.text()}`).toBe(true)
-  const startBody = (await start.json()) as {
-    ok: boolean
-    value?: { childId?: string }
-    error?: { code?: string; message?: string }
-  }
+  const startBody = (await start.json()) as { ok: boolean; value?: { childId?: string }; error?: { code?: string; message?: string } }
   expect(startBody.ok, `sidechat.start envelope: ${JSON.stringify(startBody)}`).toBe(true)
   const childId = startBody.value?.childId
   expect(childId, 'sidechat.start must return a child session id').toMatch(/^session-/)
-  // The child must be a REAL session in the host's store (provider-free
-  // proof of the custom-seed creation; the boundary message itself only
-  // becomes durable when a turn claims it, which needs a model route).
-  const list = await api.post(`${BASE_URL}/api/session.list`, {
-    data: { type: 'client-request', rpcId: 'e2e-sidechat-list', method: 'session.list', payload: {} },
-  })
-  expect(list.ok(), `session.list: ${list.status()} ${await list.text()}`).toBe(true)
-  const listBody = (await list.json()) as {
-    result: { ok: true; value: { items: Array<{ sessionId: string }> } } | { ok: false; error: unknown }
-  }
-  expect(listBody.result.ok, `session.list envelope: ${JSON.stringify(listBody)}`).toBe(true)
-  const listedItems = (listBody.result as { value: { items: Array<{ sessionId: string }> } }).value.items
+  const list = await hostRpc<{ items: Array<{ sessionId: string }> }>(api, 'session.list', {})
   expect(
-    listedItems.some(item => item.sessionId === childId),
+    list.value.items.some(item => item.sessionId === childId),
     'the thread child must appear in the host session list',
   ).toBe(true)
+  const eventsLive = await api.post(sidebarApi('sidechat.events'), { data: { childId } })
+  expect(eventsLive.ok(), `sidechat.events (live): ${eventsLive.status()} ${await eventsLive.text()}`).toBe(true)
+  const eventsLiveBody = (await eventsLive.json()) as { ok: boolean; value?: { events?: Array<{ type: string }>; live?: unknown[] } }
+  expect(eventsLiveBody.ok, `sidechat.events envelope: ${JSON.stringify(eventsLiveBody)}`).toBe(true)
+  expect(Array.isArray(eventsLiveBody.value?.events), 'sidechat.events must answer an events array').toBe(true)
+  expect(Array.isArray(eventsLiveBody.value?.live), 'sidechat.events must answer a live-delta array').toBe(true)
   for (const method of ['sidechat.prompt', 'sidechat.cancel', 'sidechat.dispose']) {
-    const response = await api.post(`${BASE_URL}/sidebar/api/${method}`, {
+    const response = await api.post(sidebarApi(method), {
       data: method === 'sidechat.prompt' ? { childId, text: 'follow-up' } : { childId },
     })
     expect(response.ok(), `${method}: ${response.status()} ${await response.text()}`).toBe(true)
   }
+  // After dispose the agent is gone: the same read must fall back to the
+  // PERSISTED log (the cold path a re-opened tab polls).
+  const eventsCold = await api.post(sidebarApi('sidechat.events'), { data: { childId } })
+  expect(eventsCold.ok(), `sidechat.events (cold): ${eventsCold.status()} ${await eventsCold.text()}`).toBe(true)
 
-  // The Codex-style immediate-create flow: a blank question creates an
-  // EMPTY thread (no prompt admitted), sidechat.info reports the live
-  // agent, and the first prompt delivers the boundary host-side.
-  const empty = await api.post(`${BASE_URL}/sidebar/api/sidechat.start`, {
-    data: { sessionId: seededSessionId, question: '' },
-  })
-  expect(empty.ok(), `sidechat.start (empty): ${empty.status()} ${await empty.text()}`).toBe(true)
-  const emptyBody = (await empty.json()) as { ok: boolean; value?: { childId?: string } }
-  const emptyChildId = emptyBody.value?.childId
-  expect(emptyChildId, 'immediate create must return a child session id').toMatch(/^session-/)
-  const info = await api.post(`${BASE_URL}/sidebar/api/sidechat.info`, {
-    data: { childId: emptyChildId },
-  })
-  expect(info.ok(), `sidechat.info: ${info.status()} ${await info.text()}`).toBe(true)
-  const infoBody = (await info.json()) as { ok: boolean; value?: { live?: boolean; preset?: string } }
-  expect(infoBody.ok, `sidechat.info envelope: ${JSON.stringify(infoBody)}`).toBe(true)
-  expect(infoBody.value?.live, 'the fresh thread must have a live agent').toBe(true)
-  for (const method of ['sidechat.prompt', 'sidechat.dispose']) {
-    const response = await api.post(`${BASE_URL}/sidebar/api/${method}`, {
-      data: method === 'sidechat.prompt' ? { childId: emptyChildId, text: 'first message' } : { childId: emptyChildId },
-    })
-    expect(response.ok(), `${method} (immediate thread): ${response.status()} ${await response.text()}`).toBe(true)
-  }
-  await assertNoCrash()
-
-  // The editor chunk (client-editor.js) only loads when a files-window tab
-  // renders. Exercise the file-open path explicitly through the Files window's
-  // own tree: the seeded home tab ("Files") is already open with its tree
-  // panel pinned — activate it from the tab strip, open the seeded file, and
-  // require the chunk round-trip (armed before goto), so a missing/corrupt
-  // editor chunk fails the lane.
-  // Tab-strip tabs carry `draggable="true"`; the always-mounted (hidden)
-  // bottom panel's empty-pane welcome cards repeat the + menu labels with
-  // `title="Files"`, so a bare `[title="Files"]` match is ambiguous.
-  const filesTab = sidebar.locator('[title="Files"][draggable="true"]').first()
-  await expect(filesTab, 'the seeded files-window home tab must be in the tab strip').toHaveCount(1)
-  await filesTab.click()
-  // Inactive tabs stay mounted (display:none); only the ACTIVE files
-  // window's tree is visible — match the visible row.
-  const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
-  await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
-  // The icon-theme system (v0.16.0+) must be INERT without a theme plugin:
-  // no themed spans render anywhere, and the file row keeps its built-in
-  // outline glyph (a plugin-less install changes nothing).
-  expect(
-    await sidebar.locator('[data-file-icon]').count(),
-    'no icon-theme spans may render while no theme is registered',
-  ).toBe(0)
-  await expect(fileRow.locator('svg'), 'the file row must keep its built-in outline icon').toHaveCount(1)
-  // The @-reference pill (v0.21.0): hovering a tree row reveals it, and
-  // clicking it appends `@<relative path>` to the HOST composer draft AND
-  // focuses the composer (the @-mention gesture — the very first keystroke
-  // after the click continues in the composer). The composer is the
-  // harness's own InputBar surface ([data-composer-card] textarea), so
-  // these assertions prove the focus contract against the REAL host DOM.
-  const composer = page.locator('[data-composer-card] textarea')
-  await expect(composer, 'the host composer must be present in the shell').toHaveCount(1)
-  await fileRow.hover()
-  const refPill = fileRow.locator('[class*="explorerRef"]')
-  await expect(refPill, 'hovering a tree row reveals its @-reference pill').toBeVisible()
-  await refPill.click()
-  await expect(composer, 'the @-reference insert must FOCUS the host composer').toBeFocused({ timeout: 10_000 })
-  // The join rule (v0.21.0): the insert carries a trailing space, so the
-  // next keystroke continues right after the @-token.
-  await expect(composer, 'the composer draft carries the referenced file').toHaveValue(new RegExp(`@${SEEDED_FILE}\\s*$`))
-  await assertNoCrash()
+  // The editor chunk (client-editor.js) only loads when the plugin's files
+  // window renders. The plugin took the built-in `files` kind over, so the
+  // guide's Files entry IS the plugin's explorer: open it and click the seeded
+  // file in its tree — the highest-risk surface (CodeMirror chunk + fs routes).
+  if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
+  await page.locator('[data-sidebar-right-guide-entry="files"]').click()
+  const fileRow = pane.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
+  await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the plugin's explorer`).toHaveCount(1, { timeout: 30_000 })
   // Click near the row's LEFT edge: hovering reveals an @-reference button at
   // the row's right end, and a center click on a narrow dock lands on it
   // (referencing the file into the composer instead of opening it).
   await fileRow.click({ position: { x: 8, y: 8 } })
   await editorChunk
-  // Separate-mode default (editorExplorer off): the tree click OPENS A NEW
-  // file tab (openSidebarFile, id `editor:<path>`) instead of rewriting the
-  // home tab in place. The seeded "Files" home tab stays put — it is the
-  // standalone explorer now, not a file window.
   await expect(
-    sidebar.locator(`[title="${SEEDED_FILE}"][draggable="true"]`),
-    'separate mode opens a new file tab for the tree click',
-  ).toHaveCount(1)
-  // The seeded home tab survives (separate mode never rewrites it). The
-  // sweep's + menu opened a SECOND path-less Files window (each is its own
-  // explorer in separate mode), so assert presence, not an exact count.
-  await expect(
-    sidebar.locator('[title="Files"][draggable="true"]').first(),
-    'the seeded files-window home tab must survive the file open',
-  ).toHaveCount(1)
-  const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
-  await expect(pathInput, 'the file tab header path input shows the opened file').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
+    pane.locator('.cm-editor').first(),
+    'the plugin editor must render the seeded file inside the native tab',
+  ).toBeVisible({ timeout: 30_000 })
   await page.waitForTimeout(1_500)
   await assertNoCrash()
 
-  // The mermaid chunk (client-mermaid.js) only loads when a previewed
-  // markdown file contains a mermaid fence. Open the seeded diagram file
-  // from the files window's tree and require the full round-trip: chunk
-  // fetch + sanitized SVG diagram in the preview, so a missing/corrupt
-  // mermaid chunk or a broken render fails the lane. In separate mode the
-  // tree click above activated the hello.txt tab, so switch back to the
-  // Files explorer first (its tree is the only one visible while active).
+  // The mermaid chunk (client-mermaid.js) only loads when a previewed markdown
+  // file contains a mermaid fence. Open the seeded diagram file from the
+  // explorer and require the full round-trip: chunk fetch + sanitized SVG
+  // diagram in the preview.
   const mermaidChunk = page.waitForResponse(
     (response) => response.url().includes('/sidebar/bundle/mermaid.js'),
     { timeout: 30_000 },
   )
-  await sidebar.locator('[title="Files"][draggable="true"]').first().click()
-  const mdRow = sidebar.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
-  await expect(mdRow, `the seeded "${SEEDED_MD_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
+  await pane.getByRole('tab', { name: /Files|文件/ }).first().click()
+  const mdRow = pane.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
+  await expect(mdRow, `the seeded "${SEEDED_MD_FILE}" file must appear in the plugin's explorer`).toHaveCount(1, { timeout: 30_000 })
   await mdRow.click({ position: { x: 8, y: 8 } })
-  // Separate mode: the md file opens its own tab (like hello.txt above).
   await expect(
-    sidebar.locator(`[title="${SEEDED_MD_FILE}"][draggable="true"]`),
-    'separate mode opens a new tab for the markdown file',
-  ).toHaveCount(1, { timeout: 30_000 })
-  // The markdown PREVIEW must render before the mermaid chunk can be
-  // requested — this assertion separates a preview/render regression from a
-  // chunk-loading one. (sidebar is already scoped to [data-dsh-better-sidebar].)
-  await expect(
-    sidebar.getByText('tail text'),
+    pane.getByText('tail text'),
     'the markdown preview must render the seeded document',
   ).toHaveCount(1, { timeout: 30_000 })
   await mermaidChunk
   await expect(
-    sidebar.locator('[data-mermaid-diagram] svg'),
+    pane.locator('[data-mermaid-diagram] svg'),
     'the mermaid fence must render into an SVG diagram in the markdown preview',
   ).toHaveCount(1, { timeout: 30_000 })
-  // Labels must survive as real SVG <text> (htmlLabels stays off so the
-  // sanitizer's foreignObject strip cannot eat the node text).
   await expect(
-    sidebar.locator('[data-mermaid-diagram]').first(),
+    pane.locator('[data-mermaid-diagram]').first(),
     'the diagram node labels must render inside the SVG',
   ).toContainText('Hello', { timeout: 30_000 })
   // Cross-fence semantics: the reference-style link [before][shared] must
   // resolve to the definition that sits AFTER the fence — proof that the
   // preview is a single markdown parse and not per-fence fragments.
   await expect(
-    sidebar.locator('a[href="https://example.com"]').first(),
+    pane.locator('a[href="https://example.com"]').first(),
     'reference-style links with definitions across a mermaid fence must resolve',
   ).toContainText('before', { timeout: 30_000 })
-  // Click-to-enlarge: clicking the diagram opens the zoom modal (portalled
-  // to document.body), Esc closes it again.
+  // Click-to-enlarge: clicking the diagram opens the zoom modal (portalled to
+  // document.body), Esc closes it again.
   const modal = page.locator('[data-mermaid-modal]')
-  await sidebar.locator('[data-mermaid-diagram] svg').first().click()
+  await pane.locator('[data-mermaid-diagram] svg').first().click()
   await expect(modal, 'clicking the diagram must open the zoom modal').toHaveCount(1, { timeout: 10_000 })
   await page.keyboard.press('Escape')
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
-  // The preview/edit toggle is mutually exclusive: in preview mode the
-  // CodeMirror surface must be hidden (regression guard — a stale css copy
-  // in the page made the editor stay visible under the preview, breaking
-  // the toggle semantics).
-  await expect(
-    sidebar.locator('.cm-editor').first(),
-    'preview mode must hide the CodeMirror editor (mutually exclusive toggle)',
-  ).toBeHidden()
   await assertNoCrash()
 
   // README-style markdown (raw-HTML runs + TOC): open the seeded file and
-  // require the full round-trip — sanitized HTML leaves (badge image as a
-  // real element, active content stripped), markdown nested inside the
-  // unclosed <details> run, the inline pass turning the table cell's <br/>
-  // into an element, the reference link resolving across the HTML run, and
-  // the TOC outline jumping into the collapsed details (auto-expanding it).
-  await sidebar.locator('[title="Files"][draggable="true"]').first().click()
-  const readmeRow = sidebar.locator(`[role="button"][title$="${SEEDED_README_FILE}"]:visible`)
+  // require the full round-trip — sanitized HTML leaves (badge image as a real
+  // element, active content stripped), markdown nested inside the unclosed
+  // <details> run, the inline pass turning the table cell's <br/> into an
+  // element, the reference link resolving across the HTML run, and the TOC
+  // outline jumping into the collapsed details (auto-expanding it).
+  await pane.getByRole('tab', { name: /Files|文件/ }).first().click()
+  const readmeRow = pane.locator(`[role="button"][title$="${SEEDED_README_FILE}"]:visible`)
   await expect(
     readmeRow,
-    `the seeded "${SEEDED_README_FILE}" file must appear in the files window's tree`,
+    `the seeded "${SEEDED_README_FILE}" file must appear in the plugin's explorer`,
   ).toHaveCount(1, { timeout: 30_000 })
   await readmeRow.click({ position: { x: 8, y: 8 } })
   await expect(
-    sidebar.locator(`[title="${SEEDED_README_FILE}"][draggable="true"]`),
-    'separate mode opens a new tab for the README-style markdown file',
-  ).toHaveCount(1, { timeout: 30_000 })
-  // The hero div renders as a sanitized leaf with the badge image as a real
-  // element (the remote src may not load in the sandboxed lane; the ELEMENT
-  // is the proof of rendering, not the bytes).
-  await expect(
-    sidebar.locator('[data-dsh-html-segment] img[src*="img.shields.io"]'),
+    pane.locator('[data-dsh-html-segment] img[src*="img.shields.io"]'),
     'the badge-wall div must render its image as a real element',
   ).toHaveCount(1, { timeout: 30_000 })
-  // Active content never survives sanitization.
   await expect(
-    sidebar.locator('script'),
+    pane.locator('script'),
     'the embedded <script> must be sanitized away',
   ).toHaveCount(0)
-  // The unclosed <details> run lowers the following markdown inside itself.
-  const details = sidebar.locator('details')
-  await expect(
-    details,
-    'the details run must render as a real element',
-  ).toHaveCount(1, { timeout: 30_000 })
+  const details = pane.locator('details')
+  await expect(details, 'the details run must render as a real element').toHaveCount(1, { timeout: 30_000 })
   await expect(details.locator('summary'), 'the details summary must render').toHaveCount(1)
   await expect(
     details.locator('h3', { hasText: 'Inside' }),
     'the heading between the details tags must nest inside the element',
   ).toHaveCount(1)
-  // The inline pass: the table cell's literal <br/> became a real element.
   await expect(
-    sidebar.locator('[data-html-inline] br'),
+    pane.locator('[data-html-inline] br'),
     'the table cell <br/> must render as a real element',
   ).toHaveCount(1, { timeout: 30_000 })
-  // The reference link resolves although its definition sits after an HTML run.
   await expect(
-    sidebar.locator('a[href="https://example.com/def"]'),
+    pane.locator('a[href="https://example.com/def"]'),
     'reference links must resolve across lifted HTML runs',
   ).toHaveCount(1, { timeout: 30_000 })
-  // TOC: the outline button appears (4 headings), must stay the topmost
-  // element over the leading code fence's sticky banner, opens the panel,
-  // and jumping into the collapsed details expands it.
-  const tocButton = sidebar.locator('[data-dsh-md-toc]')
+  const tocButton = pane.locator('[data-dsh-md-toc]')
   await expect(
     tocButton,
     'the TOC button must appear once the document has enough headings',
   ).toHaveCount(1, { timeout: 30_000 })
-  // The seed document opens with a code fence, so its sticky header is
-  // pinned under the TOC button right from the top of the preview. The
-  // button's center must hit-test back to the button (regression: the DSH
-  // banner's sticky z-index 6 used to paint over the TOC bar's 3).
-  await expect
-    .poll(async () => tocButton.evaluate((el) => {
-      const rect = el.getBoundingClientRect()
-      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-      return hit === el || (hit !== null && el.contains(hit))
-    }), {
-      message: 'the TOC button must be the topmost element at its center (not covered by the code banner)',
-    })
-    .toBe(true)
   await tocButton.click()
-  const tocPanel = sidebar.locator('[data-dsh-md-toc-panel]')
+  const tocPanel = pane.locator('[data-dsh-md-toc-panel]')
   await expect(tocPanel, 'the TOC panel must open').toHaveCount(1)
   const insideItem = tocPanel.locator('button', { hasText: 'Inside' })
   await expect(insideItem, 'the nested heading must appear in the outline').toHaveCount(1)
@@ -648,103 +558,6 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.screenshot({ path: 'test-results/mount-final.png' })
 })
 
-test('vscode layout: the independent side bar + activity bar render and open files', async ({ page }) => {
-  const pageErrors: string[] = []
-  const consoleErrors: string[] = []
-  page.on('pageerror', (error) => pageErrors.push(String(error)))
-  page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text())
-  })
-
-  // Switch the workbench layout to the VSCode style BEFORE the page loads, so
-  // the fresh session renders the side bar + activity bar from the start.
-  const pref = await api.post(`${BASE_URL}/sidebar/api/settings.update`, {
-    data: { patch: { sidebarLayout: 'vscode' } },
-  })
-  expect(pref.ok(), `settings.update: ${pref.status()} ${await pref.text()}`).toBe(true)
-
-  const sidebar = await loadAndExpand(page)
-
-  const assertNoCrash = async (): Promise<void> => {
-    await expect.poll(async () => pageErrors, { timeout: 5_000 }).toEqual([])
-    const strips = await sidebar.locator('div').evaluateAll(
-      (nodes, patterns) => nodes.filter((node) => {
-        const text = (node.textContent ?? '').trim()
-        return patterns.some((pattern) => pattern.test(text))
-      }).length,
-      CRASH_STRIP_PATTERNS,
-    )
-    expect(strips, 'a dsh-better-sidebar error strip is present in the sidebar').toBe(0)
-  }
-
-  // The Activity Bar: a vertical toolbar iconizing the built-in tabs (the
-  // mirror arrangement puts it on the panel's right edge). At least the five
-  // built-in launchers must render.
-  const activityBar = sidebar.locator('[role="toolbar"][aria-orientation="vertical"]')
-  await expect(activityBar, 'the vscode layout must render the Activity Bar toolbar').toHaveCount(1)
-  const iconLabels = await activityBar.locator('button[aria-label]').evaluateAll(
-    (buttons) => buttons.map(b => b.getAttribute('aria-label')),
-  )
-  // In the vscode layout the files-window icon is the EXPLORER drawer toggle
-  // (label "Explorer", highlight follows the drawer); the rest stay launchers.
-  for (const label of ['Explorer', 'Source Control', 'Tasks', 'Terminal', 'Browser']) {
-    expect(iconLabels, `the Activity Bar must offer the "${label}" launcher`).toContain(label)
-  }
-  // The explorer icon toggles the drawer: collapsed now, expanded again. The
-  // drawer stays MOUNTED at width 0 (animated), so visibility is the signal.
-  const explorerIcon = activityBar.locator('button[aria-label="Explorer"]')
-  await explorerIcon.click()
-  await expect(sidebar.locator('input[placeholder^="Search files"]:visible'), 'collapsing the explorer drawer must hide the Side Bar tree').toHaveCount(0)
-  await explorerIcon.click()
-  await expect(sidebar.locator('input[placeholder^="Search files"]:visible'), 're-expanding the explorer drawer must restore the Side Bar tree').toHaveCount(1)
-
-  // The independent Side Bar: the file tree column OUTSIDE the editor tab. It
-  // must show its search box (the TreePanel's full form) and the seeded file.
-  const sideBarSearch = sidebar.locator('input[placeholder^="Search files"]')
-  await expect(sideBarSearch, 'the vscode layout must render the Side Bar tree with its search box').toHaveCount(1)
-  const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
-  await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the Side Bar tree`).toHaveCount(1, { timeout: 30_000 })
-  // Same inertness contract as the docked lane: no themed spans without a
-  // registered theme (the vscode-layout tree must be equally unaffected).
-  expect(
-    await sidebar.locator('[data-file-icon]').count(),
-    'no icon-theme spans may render in vscode mode while no theme is registered',
-  ).toBe(0)
-
-  // Open the seeded file through the SIDE BAR tree (not a docked tree): a
-  // per-path editor tab opens and the path input shows the file. The editor
-  // chunk must load (armed before the click like the main lane).
-  const editorChunk = page.waitForResponse(
-    (response) => response.url().includes('/sidebar/bundle/editor.js'),
-    { timeout: 120_000 },
-  )
-  await fileRow.click({ position: { x: 8, y: 8 } })
-  await editorChunk
-  const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
-  await expect(pathInput, 'the editor tab must open the file with a path input').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
-
-  // The editor tab must NOT carry a docked tree in vscode mode: exactly ONE
-  // file-search input exists (the Side Bar's), not one per editor tab.
-  expect(
-    await sidebar.locator('input[placeholder^="Search files"]').count(),
-    'the editor tab must drop its docked tree — only the Side Bar search box remains',
-  ).toBe(1)
-
-  // Clicking the Terminal launcher opens a terminal tab (the + menu path).
-  await activityBar.locator('button[aria-label="Terminal"]').click()
-  await expect(
-    sidebar.locator('[title^="Terminal"][draggable="true"]:visible'),
-    'the Terminal launcher must open a terminal tab',
-  ).toHaveCount(1, { timeout: 30_000 })
-  await page.waitForTimeout(1_500)
-  await assertNoCrash()
-
-  const pluginErrors = consoleErrors.filter((text) => /dsh-better-sidebar|Unhandled/.test(text))
-  expect(pluginErrors, 'plugin-prefixed or unhandled console errors in vscode mode').toEqual([])
-  expect(pageErrors, 'pageerrors in vscode mode').toEqual([])
-  await page.screenshot({ path: 'test-results/mount-vscode.png' })
-})
-
 test('conservative auto: URL stamps alone never modify the layout; plugin chrome carries the stable data attributes', async ({ page }) => {
   // The official DSH Desktop shell stamps every render URL with
   // dsh-desktop-mode / dsh-desktop-platform. Under the conservative AUTO
@@ -752,7 +565,7 @@ test('conservative auto: URL stamps alone never modify the layout; plugin chrome
   // Window Controls Overlay API the layout must stay untouched (plain-web
   // semantics) — the strip/body attribute appear only for real standard
   // geometry (see the WCO scenario below) or an opt-in preset.
-  await page.goto(`${BASE_URL}?dsh-desktop-mode=advanced&dsh-desktop-platform=win32`, { waitUntil: 'domcontentloaded' })
+  await gotoPage(page, { 'dsh-desktop-mode': 'advanced', 'dsh-desktop-platform': 'win32' })
   await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
   await expect(
     page.locator('body[data-dsh-title-bar-compat]'),
@@ -761,9 +574,11 @@ test('conservative auto: URL stamps alone never modify the layout; plugin chrome
   await expect
     .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
     .toBe('')
-  // The stable addressing surface for presets / custom CSS is mounted.
-  await expect(page.locator('[data-dsh-toggle-cluster]')).toBeAttached()
-  await expect(page.locator('[data-dsh-panel]').first()).toBeAttached()
+  // The stable addressing surface for presets / custom CSS is mounted: the
+  // plugin's own host (its bottom workbench and the header toggle live in
+  // DSH's session header, which this stamp-only page has no session for —
+  // the native-surface sweep asserts those once a session exists).
+  await expect(page.locator('[data-dsh-panel-host]')).toBeAttached()
   // The plugin's interactive chrome opts out of Electron drag regions
   // (issues #103/#111) — inert in plain browsers, present in the bundle
   // (the bundler minifies the property's whitespace, so match loosely).
@@ -800,7 +615,7 @@ test('standard WCO geometry drives the strip reactively (issue #257)', async ({ 
       },
     }
   })
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
   // Real reported height (36px, not a hardcoded 32) drives the strip.
   await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached({ timeout: 90_000 })
@@ -822,12 +637,12 @@ test('opt-in shell preset applies its strip when WCO is absent (data-driven, man
   // The anywhere-labs DSH Desktop preset (shell-presets.ts) is OPT-IN: under
   // the preset scheme the win32 advanced stamp resolves to its 32px fallback
   // even without the WCO API; auto never does this.
-  const update = await request.post(`${BASE_URL}/sidebar/api/settings.update`, {
+  const update = await request.post(sidebarApi('settings.update'), {
     data: { patch: { titleBarScheme: 'preset', titleBarPresetId: 'dsh-desktop', titleBarCompat: true } },
   })
   expect(update.ok(), `settings.update: ${update.status()}`).toBe(true)
   try {
-    await page.goto(`${BASE_URL}?dsh-desktop-mode=advanced&dsh-desktop-platform=win32`, { waitUntil: 'domcontentloaded' })
+    await gotoPage(page, { 'dsh-desktop-mode': 'advanced', 'dsh-desktop-platform': 'win32' })
     await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
     await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached({ timeout: 90_000 })
     await expect
@@ -840,26 +655,26 @@ test('opt-in shell preset applies its strip when WCO is absent (data-driven, man
     await expect(page.locator('style[data-dsh-preset-css]')).toHaveCount(0)
   } finally {
     // Restore the shared server state for the lanes after this one.
-    await request.post(`${BASE_URL}/sidebar/api/settings.update`, {
+    await request.post(sidebarApi('settings.update'), {
       data: { patch: { titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false } },
     })
   }
 })
 
 test('custom scheme injects the user stylesheet live', async ({ request, page }) => {
-  const update = await request.post(`${BASE_URL}/sidebar/api/settings.update`, {
+  const update = await request.post(sidebarApi('settings.update'), {
     data: { patch: { titleBarScheme: 'custom', customCss: 'html { --dsh-e2e-marker: 1; }', titleBarCompat: true } },
   })
   expect(update.ok(), `settings.update: ${update.status()}`).toBe(true)
   try {
-    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+    await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
     await expect(page.locator('style[data-dsh-custom-css="custom"]')).toBeAttached()
     // The injected CSS is live (a custom property the page can read back).
     const marker = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--dsh-e2e-marker').trim())
     expect(marker).toBe('1')
   } finally {
-    await request.post(`${BASE_URL}/sidebar/api/settings.update`, {
+    await request.post(sidebarApi('settings.update'), {
       data: { patch: { titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false } },
     })
   }

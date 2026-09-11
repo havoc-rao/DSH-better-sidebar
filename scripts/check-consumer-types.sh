@@ -59,60 +59,6 @@ import type {
 } from 'dsh-better-sidebar/client/service'
 import type { SessionScope, SidebarSnapshot, SidebarState, SidebarStore, SidebarTab } from 'dsh-better-sidebar/client/service'
 import type { SidebarPrefs } from 'dsh-better-sidebar/client/service'
-// The terminal transport slot: the cross-plugin type surface must be every
-// bit as node-free — a remote-terminal plugin types its transport against
-// it without @types/node (and without installing @xterm/xterm: the terminal
-// surface is structural).
-import type {
-  TerminalDepsInfo, TerminalTransport, TerminalTransportHandle,
-  TerminalTransportSession, TerminalTransportSurface, TerminalViewProps,
-} from 'dsh-better-sidebar/client/terminal'
-declare const remoteTransport: TerminalTransport
-void remoteTransport.kind
-const remoteHandle: TerminalTransportHandle = null as unknown as TerminalTransportHandle
-void remoteHandle
-const remoteSession: TerminalTransportSession = null as unknown as TerminalTransportSession
-void remoteSession
-const remoteSurface: TerminalTransportSurface = null as unknown as TerminalTransportSurface
-void remoteSurface.write('x')
-declare const viewProps: TerminalViewProps
-void viewProps.transport
-declare const deps: TerminalDepsInfo
-void deps.command
-// The git source slot (v0.23.0+): the full host `git.*` route surface must
-// be every bit as node-free — a remote-git plugin types its provider
-// against it without @types/node.
-import type {
-  GitDataSource, GitOkResult, GitProviderDescriptor,
-} from 'dsh-better-sidebar/client/service'
-declare const ctxForGit: { betterSidebar: BetterSidebarService }
-const gitProviderImpl: GitProviderDescriptor = {
-  id: 'x:remote-git',
-  match: () => true,
-  createSource: () => {
-    const source: GitDataSource = {
-      gitStatus: (_scope) => Promise.resolve({ isRepo: true, root: '/r', entries: [] }),
-      gitWorktrees: () => Promise.resolve([]),
-      gitBranch: () => Promise.resolve({ current: 'main', names: [] }),
-      gitBranchStatus: () => Promise.resolve({ upstream: undefined, ahead: 0, behind: 0, gone: false }),
-      gitBranchTips: () => Promise.resolve({ tips: [] }),
-      gitLogGraph: () => Promise.resolve([]),
-      gitDiff: () => Promise.resolve({ diff: '' }),
-      gitCommitDiff: () => Promise.resolve({ diff: '' }),
-      gitStage: () => Promise.resolve({ ok: true } as GitOkResult),
-      gitUnstage: () => Promise.resolve({ ok: true }),
-      gitCommit: () => Promise.resolve({ ok: true }),
-      gitCheckout: () => Promise.resolve({ ok: true }),
-      gitFetch: () => Promise.resolve({ ok: true }),
-      gitDiscard: () => Promise.resolve({ ok: true }),
-      gitRevert: () => Promise.resolve({ ok: true }),
-      gitCherryPick: () => Promise.resolve({ ok: true }),
-    }
-    return source
-  },
-}
-ctxForGit.betterSidebar.registerGitProvider(gitProviderImpl)
-void ctxForGit.betterSidebar.getGitProviders()
 // The vendored-cordis path: `Context` from '@deepseek-ai/cordis' plus the
 // side-effect type import above must expose `ctx.betterSidebar` — the consumer
 // never needs to import this package's own Context type.
@@ -189,5 +135,5 @@ if [ "$STATUS" -ne 0 ]; then
   echo "[check-consumer-types] pass 2 note: strict mode only reports upstream declaration noise:"
   grep -v "dsh-better-sidebar\|lib/types\|check\.ts" "$WORK/strict.log" | head -5 || true
 fi
-echo "[check-consumer-types] OK: the client/service + client/terminal declaration surfaces are node-free and self-contained."
+echo "[check-consumer-types] OK: the client/service declaration surface is node-free and self-contained."
 

@@ -11,7 +11,6 @@ import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { SidebarSessionEvent } from '../context-types.ts'
 import type { BrowserProbeResult } from './browser.ts'
-import type { CommitDraftRequest, CommitDraftResult, LlmCatalog, LlmProbeRequest, LlmProbeResult } from '../agents/commit-draft-shared.ts'
 
 /** One wire failure. */
 export class SidebarApiError extends Error {
@@ -49,15 +48,6 @@ export interface FsEntry {
   isSymlink: boolean
   /** For symlinks: the target is missing or unreadable (stat failed). */
   broken: boolean
-  /** Optional stat detail (v0.20.0): a dimmed size/mtime row suffix. The
-   *  host's local fs.tree never sets it, so local rows render unchanged;
-   *  provider-fed rows (normalizeFileTreeEntries) may carry it. */
-  meta?: {
-    /** Byte size (files); absent → no size shown. */
-    size?: number
-    /** Last-modified epoch millis; absent → no time shown. */
-    mtime?: number
-  }
 }
 
 /** Git status entry (host git shape). */
@@ -70,12 +60,11 @@ export interface GitStatusEntry {
 export interface GitStatusResult {
   isRepo: boolean
   branch?: string
-  /** The repository top level (absolute), present when `isRepo`. */
-  root?: string
   entries: GitStatusEntry[]
   /** True when the host capped `entries` (huge untracked set); the panel
    *  shows a truncation notice instead of freezing (#369). */
   truncated?: boolean
+  root?: string
   repositories?: string[]
 }
 
@@ -85,35 +74,6 @@ export interface GitWorktree {
   branch: string
   current: boolean
   changes: number
-}
-
-/** The current branch's upstream relationship (the git header pill). */
-export interface GitBranchStatus {
-  /** The upstream's short name ('origin/main'); absent when the branch has
-   *  no upstream configured. */
-  upstream?: string
-  /** Commits in HEAD the upstream does not have. */
-  ahead: number
-  /** Commits in the upstream that HEAD does not have. */
-  behind: number
-  /** The configured upstream ref no longer exists (the remote branch was
-   *  deleted and a prune fetch dropped the tracking ref). */
-  gone: boolean
-}
-
-/** One watched (重点关注) branch's tip position relative to the checkout HEAD. */
-export interface GitBranchTip {
-  /** The local branch's short name. */
-  name: string
-  /** The branch tip's full 40-char hash. */
-  hash: string
-  /** Commits in the branch that HEAD does not have (tip above the graph →
-   *  the history's TOP bubble shows this count). */
-  ahead: number
-  /** Commits in HEAD that the branch does not have (tip inside HEAD's history
-   *  → the row ring marks the tip row; the BOTTOM bubble shows this count
-   *  while the tip is outside the loaded page). */
-  behind: number
 }
 
 /** One git log row. */
@@ -128,12 +88,6 @@ export interface GitLogEntry {
   date: string
   /** Ref decorations (--decorate=short), e.g. `HEAD -> main, origin/main`; '' when none. */
   refs: string
-}
-
-/** One git log row with parent hashes (graph view). `parents` are FULL
- *  40-char hashes, first-parent first; a root commit has `parents: []`. */
-export interface GitGraphEntry extends GitLogEntry {
-  parents: string[]
 }
 
 /** Text read result. */
@@ -351,20 +305,6 @@ export const api = {
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
-  /** The current branch's upstream relationship (ahead/behind counts + gone)
-   *  for the git header pill. Failures (no git config etc.) never hide the
-   *  rest of the panel — the view catches the rejection itself. */
-  gitBranchStatus: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
-    call<GitBranchStatus>('git.branch-status', gitPayload(scope, worktree, {}), signal),
-  /** Fetch remote refs (optionally `--prune`); 'git-no-remote' wire code
-   *  when the repository has no remote. */
-  gitFetch: (scope: SessionScope, worktree?: string, prune?: boolean, signal?: AbortSignal) =>
-    call<{ ok: true }>('git.fetch', gitPayload(scope, worktree, { prune: prune === true }), signal),
-  /** The watched (重点关注) local branches' tips relative to the checkout
-   *  HEAD — the divergence markers (top/bottom bubbles + row rings) data.
-   *  Stale names (deleted branches) are silently filtered host-side. */
-  gitBranchTips: (scope: SessionScope, branches: readonly string[], worktree?: string, signal?: AbortSignal) =>
-    call<{ tips: GitBranchTip[] }>('git.branch-tips', gitPayload(scope, worktree, { branches }), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
     call<{ ok: true }>('git.checkout', gitPayload(scope, worktree, { branch })),
   /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */
@@ -372,17 +312,6 @@ export const api = {
     call<GitLogEntry[]>('git.log', gitPayload(scope, worktree, {
       ...(count !== undefined ? { count } : {}),
       ...(skip !== undefined ? { skip } : {}),
-    }), signal),
-  /** Recent commit history WITH parent hashes (topo-ordered, for the graph
-   *  view's lane layout); pageable like {@link gitLog}. Pinning a linked
-   *  `worktree` keeps the lane graph for the linked checkout (was previously
-   *  a flat single-column fallback — losing parents meant the layout
-   *  collapsed, breaking the MR/merge-request review scenarios). */
-  gitLogGraph: (scope: SessionScope, count?: number, skip?: number, worktree?: string, signal?: AbortSignal) =>
-    call<GitGraphEntry[]>('git.log-graph', scopePayload(scope, {
-      ...(count !== undefined ? { count } : {}),
-      ...(skip !== undefined ? { skip } : {}),
-      ...(worktree !== undefined ? { worktree } : {}),
     }), signal),
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>
@@ -407,34 +336,20 @@ export const api = {
   gitRevert: (scope: SessionScope, hash: string, worktree?: string) =>
     call<{ ok: true }>('git.revert', gitPayload(scope, worktree, { hash })),
   /** Cherry-pick one commit onto the current branch. */
-gitCherryPick: (scope: SessionScope, hash: string, worktree?: string) =>
+  gitCherryPick: (scope: SessionScope, hash: string, worktree?: string) =>
     call<{ ok: true }>('git.cherry-pick', gitPayload(scope, worktree, { hash })),
-  /** The live LLM provider/model catalog (the AI commit-draft settings). */
-  llmCatalog: (signal?: AbortSignal) =>
-    call<LlmCatalog>('llm.catalog', {}, signal),
-  /** Make one minimal real call through a selected provider/model route. */
-  llmProbe: (request: LlmProbeRequest, signal?: AbortSignal) =>
-    call<LlmProbeResult>('llm.probe', { ...request }, signal),
-  /** Draft through the host's one-shot Git agent. A non-empty index wins;
-   *  otherwise it summarizes the current working tree. */
-  gitCommitDraft: (scope: SessionScope, request: CommitDraftRequest) =>
-    call<CommitDraftResult>('git.commit-draft', scopePayload(scope, { ...request })),
   /** Release a terminal's process immediately (tab closed; the WS close frame
    *  may be unreachable while the socket is down, so the host also accepts
    *  this explicit route). */
   ptyClose: (scope: SessionScope, tab: string) =>
     call<{ ok: true }>('pty.close', scopePayload(scope, { tab })),
-  /** Re-parent a live terminal process to another tab id — the workspace
-   *  bind/unbind path keeps the shell alive across the tab-id change
-   *  (local ↔ `ws:` stub): the host moves the process + transcript to the
-   *  new key instead of releasing + respawning. Best-effort: a no-op when
-   *  the source has no live process, so a failure degrades to the old
-   *  spawn-fresh behavior. */
-  ptyReparent: (scope: SessionScope, from: string, to: string) =>
-    call<{ ok: true }>('pty.reparent', scopePayload(scope, { from, to })),
   /** Release an agent terminal by uuid (tab closed while WS was down). */
   agentPtyClose: (uuid: string) =>
     call<{ ok: true }>('agent-pty.close', { uuid }),
+  /** Skip every active terminal_wait_for on one agent terminal (the wait
+   *  banner's skip button). Idempotent: {skipped:0} when none is active. */
+  agentSkipWait: (uuid: string) =>
+    call<{ ok: true; skipped: number }>('agent-pty.skip-wait', { uuid }),
   /** Terminal dependency status (issue #140): after a WS close 1011 with
    *  reason `pty-deps-missing` the view fetches the full repair details here
    *  (the close reason itself is capped at 123 bytes). */

@@ -6,22 +6,15 @@
  * (`git.show`-style). The header carries a refresh button because the tab
  * stays mounted while the changes tab's staging/discard operations change the
  * very content it shows. Rendering goes through the shared {@link DiffFiles}
- * renderer — the same one the changes tab's inline preview uses. A REVIEW ref
- * (opened from the intercepted produced-files row's "review" button) loads
- * the combined uncommitted diff of exactly the paths a turn produced — one
- * scrollable surface, source files expanded by default, so the user can
- * approve the turn's changes in a glance.
+ * renderer — the same one the changes tab's inline preview uses.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from './api.ts'
 import { api } from './api.ts'
-import { useGitSource, type GitDataSource } from './git-source.ts'
-import type { Context } from '../context-types.ts'
 import type { SidebarDiffRef } from './state.ts'
 import { DiffFiles } from './diff/DiffFiles.tsx'
 import { displayPath, foldRowsFromContents, type DiffFile, type DiffRow, type FoldSegment } from './diff/rows.ts'
-import { joinRoot, toPosix } from './git-status.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import css from './sidebar.module.css'
@@ -32,95 +25,8 @@ interface DiffData {
   untracked?: string
 }
 
-/** Normalized absolute-path key (separator/case tolerant, like the explorer). */
-function normKey(path: string): string {
-  return toPosix(path).toLowerCase()
-}
-
-/**
- * One untracked file rendered as a unified-diff section of pure additions —
- * the multi-file twin of DiffView's single-file `untrackedFile`. The review
- * surface concatenates one such section per untracked produced file, so the
- * plain DiffView shows them as regular "added" file rows. `root` relativizes
- * the section paths against the repository top level, matching how `git diff`
- * names tracked files (absolute produced paths would otherwise show up in the
- * header while every tracked section stays repo-relative).
- */
-export function synthesizeAdditionPatch(path: string, content: string, root?: string): string {
-  const shown = root !== undefined && normKey(path).startsWith(`${normKey(root)}/`)
-    ? toPosix(path).slice(toPosix(root).length + 1)
-    : path
-  const body = content.endsWith('\n') ? content.slice(0, -1) : content
-  const lines = body === '' ? [] : body.split('\n')
-  const head =
-    `diff --git a/${shown} b/${shown}\n` +
-    'new file mode 100644\n' +
-    'index 0000000..0000000\n' +
-    `--- /dev/null\n+++ b/${shown}\n` +
-    `@@ -0,0 +1,${lines.length} @@`
-  if (lines.length === 0) return `${head}\n`
-  return `${head}\n${lines.map(line => `+${line}`).join('\n')}\n`
-}
-
-/**
- * Load the combined review patch for a review ref: the concatenated uncommitted
- * diffs of exactly `diff.paths`, in produced order. `git status` classifies the
- * paths (untracked new files — which `git diff` never lists — render as
- * full-file additions from their content); a tracked change is fetched on the
- * unstaged side first with a staged fallback, like the per-file diff tab. A
- * produced path with NO uncommitted change anymore (already committed or
- * reverted) contributes nothing. All-failed surfaces surface the first error
- * instead of an empty diff.
- */
-export async function loadReviewPatch(
-  scope: SessionScope,
-  diff: Extract<SidebarDiffRef, { kind: 'review' }>,
-  git: GitDataSource,
-): Promise<{ diff: string }> {
-  const base = diff.repoRoot ?? diff.worktree ?? scope.cwd
-  const paths = diff.paths.map(path => resolveSidebarPath(base, path))
-  if (paths.length === 0) return { diff: '' }
-  const scopeWithRepo = { ...scope, ...(diff.repoRoot !== undefined ? { repoRoot: diff.repoRoot } : {}) }
-  const status = await git.gitStatus(scopeWithRepo, diff.worktree)
-  if (!status.isRepo || status.root === undefined || status.root === '') {
-    throw new Error(t('notRepo'))
-  }
-  const untracked = new Set<string>()
-  for (const entry of status.entries) {
-    if (entry.xy === '??') untracked.add(normKey(joinRoot(status.root, entry.path)))
-  }
-  const patches: string[] = []
-  let failures = 0
-  let firstError: string | undefined
-  for (const path of paths) {
-    try {
-      if (untracked.has(normKey(path))) {
-        const text = await api.fsRead(scopeWithRepo, path)
-        if (text.kind === 'text' && text.content !== '') patches.push(synthesizeAdditionPatch(path, text.content, status.root))
-        continue
-      }
-      const result = await git.gitDiff(scopeWithRepo, path, false, diff.worktree)
-      if (result.diff !== '') {
-        patches.push(result.diff)
-        continue
-      }
-      // The change may sit on the OTHER side (staged after the tab opened).
-      const other = await git.gitDiff(scopeWithRepo, path, true, diff.worktree)
-      if (other.diff !== '') patches.push(other.diff)
-    } catch (reason) {
-      failures += 1
-      firstError ??= reason instanceof Error ? reason.message : String(reason)
-    }
-  }
-  if (patches.length === 0) {
-    if (failures === paths.length && firstError !== undefined) throw new Error(firstError)
-    return { diff: '' }
-  }
-  return { diff: patches.join('\n') }
-}
-
-export function DiffTab(props: { sessionId: string; cwd: string | undefined; diff: SidebarDiffRef; ctx?: Context }) {
-  const { sessionId, cwd, diff, ctx } = props
+export function DiffTab(props: { sessionId: string; cwd: string | undefined; diff: SidebarDiffRef }) {
+  const { sessionId, cwd, diff } = props
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<DiffData | null>(null)
@@ -130,12 +36,6 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
   // expansion must read that side's revisions (else the sliced line numbers
   // land on the wrong contents).
   const [effectiveStaged, setEffectiveStaged] = useState<boolean | null>(null)
-
-  /** The session's git data source (feature 'gitSource', v0.23.0+): a
-   *  registered provider owns this tab's git reads; no provider → the
-   *  local host `git.*` routes, byte for byte (api is structurally a
-   *  GitDataSource). */
-  const git: GitDataSource = useGitSource(ctx, sessionId, cwd) ?? api
 
   const refresh = useCallback((): void => { setTick(value => value + 1) }, [])
 
@@ -148,23 +48,18 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     setEffectiveStaged(null)
     const load = async (): Promise<void> => {
       try {
-        if (diff.kind === 'review') {
-          const result = await loadReviewPatch(scope, diff, git)
-          if (!cancelled) setData({ diff: result.diff })
-          return
-        }
         if (diff.kind === 'commit') {
-          const result = await git.gitCommitDiff(scope, diff.hashFull, diff.worktree)
+          const result = await api.gitCommitDiff(scope, diff.hashFull, diff.worktree)
           if (!cancelled) setData({ diff: result.diff })
           return
         }
-        let result = await git.gitDiff(scope, diff.path, diff.staged, diff.worktree)
+        let result = await api.gitDiff(scope, diff.path, diff.staged, diff.worktree)
         if (result.diff === '') {
           // The requested side is empty — try the OTHER side once: the ref
           // may predate the staged-flag fix, or the change moved sides (a
           // file staged after its tab opened). Both sides empty means the
           // file genuinely has no text changes.
-          const other = await git.gitDiff(scope, diff.path, !diff.staged, diff.worktree)
+          const other = await api.gitDiff(scope, diff.path, !diff.staged, diff.worktree)
           if (other.diff !== '') {
             result = other
             if (!cancelled) setEffectiveStaged(!diff.staged)
@@ -195,11 +90,7 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     }
     void load()
     return () => { cancelled = true }
-  }, [sessionId, cwd, diff, tick, git])
-
-  const title = diff.kind === 'review'
-    ? `${t('review')} · ${diff.paths.length}`
-    : diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`
+  }, [sessionId, cwd, diff, tick])
 
   // ── On-demand git fold expansion: a fold's hidden rows come from both
   //    sides' full contents (git.show / fsRead), fetched ONCE per file so
@@ -233,9 +124,8 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
           return ofSides(oldSide.content, newSide.content)
         }
         // Worktree change: staged is HEAD vs index, unstaged is index vs
-        // worktree (the worktree side reads the live file). A REVIEW ref has
-        // no single staged side — treat it as unstaged (index vs worktree).
-        const staged = effectiveStaged ?? (diff.kind === 'worktree' ? diff.staged : false)
+        // worktree (the worktree side reads the live file).
+        const staged = effectiveStaged ?? diff.staged
         if (staged) {
           const [oldSide, newSide] = await Promise.all([
             file.oldPath === '/dev/null'
@@ -270,8 +160,8 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
   return (
     <div className={css.gitDiffTab}>
       <div className={css.gitDiffTabHeader}>
-        <span className={css.gitDiffTabTitle} title={title}>
-          {title}
+        <span className={css.gitDiffTabTitle} title={diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`}>
+          {diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`}
         </span>
         <button
           type="button"

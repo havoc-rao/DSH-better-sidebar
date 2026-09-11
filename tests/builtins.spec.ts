@@ -4,9 +4,12 @@
  * the catch-all `code` viewer, the NUL-sniffing `binary-download` viewer,
  * and the html sandbox settings pin the registry's behavior. (Office
  * previews are NOT built in — they moved to the recommended office plugin,
- * see src/client/plugins-viewers.ts.)
+ * see src/client/plugins-viewers.ts.) The git tab is the unified changes
+ * tab (git lens + session lens, PR #471's file-trace merged in).
  */
 import { describe, expect, it } from 'vitest'
+import type { ReactElement } from 'react'
+import { VscCommentDiscussion, VscGitCommit, VscGlobe, VscLayers, VscTerminal } from 'react-icons/vsc'
 // First import: browser globals before the xterm-carrying builtin graph loads.
 import './browser-globals.ts'
 
@@ -27,11 +30,60 @@ function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof cr
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 8 built-in tabs', () => {
+  it('registers the 7 built-in tabs', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'git', 'global', 'sidechat', 'subagent', 'terminal'],
+      ['browser', 'diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal'],
     )
+  })
+
+  it('the git (changes) tab is a single-instance badge-carrying visible tab', () => {
+    const { service } = setup()
+    const changes = service.getTab('git')
+    expect(changes?.single).toBe(true)
+    expect(changes?.hidden).not.toBe(true)
+    expect(changes?.badge).toBeDefined()
+    expect(changes?.component).toBeDefined()
+  })
+
+  it('every visible tab declares a non-empty, mutually distinct title', () => {
+    // The title is the tab's identity in the native new-tab list (guide
+    // page) and the tab strip: it must exist, and no two visible tabs may
+    // share one (identical capsules would be indistinguishable).
+    const { service } = setup()
+    const visible = service.getTabs().filter(descriptor => descriptor.hidden !== true)
+    expect(visible.length).toBeGreaterThan(0)
+    for (const descriptor of visible) {
+      const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
+      expect(title, `${descriptor.id} must declare a title`).toBeTruthy()
+    }
+    const titles = visible.map(descriptor =>
+      typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title)
+    expect(new Set(titles).size, 'titles must differ per tab').toBe(visible.length)
+  })
+
+  it('every visible tab declares a non-empty, mutually distinct description', () => {
+    // DSH 0.1.5-rc.1+ renders `description` under the title while the guide
+    // lists at most 4 entries (a longer list drops every description). With
+    // the host no longer substituting a generic fallback, a tab without one
+    // renders the title alone — so every visible tab declares the real
+    // purpose of its page, and no two may read identically.
+    const { service } = setup()
+    const visible = service.getTabs().filter(descriptor => descriptor.hidden !== true)
+    expect(visible.length).toBeGreaterThan(0)
+    for (const descriptor of visible) {
+      expect(descriptor.description, `${descriptor.id} must declare a description`).toBeDefined()
+      const line = typeof descriptor.description === 'function' ? descriptor.description() : descriptor.description
+      expect(line, `${descriptor.id} description must be non-empty`).toBeTruthy()
+    }
+    const lines = visible.map(descriptor =>
+      typeof descriptor.description === 'function' ? descriptor.description() : descriptor.description)
+    expect(new Set(lines).size, 'descriptions must differ per tab').toBe(visible.length)
+  })
+
+  it('the changes tab declares no settings of its own (the diff always docks)', () => {
+    const { service } = setup()
+    expect(service.getTab('git')?.settings).toBeUndefined()
   })
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
@@ -44,18 +96,9 @@ describe('built-in tab registrations', () => {
 
   it('single-instance tabs use the single sugar', () => {
     const { service } = setup()
-    for (const id of ['git', 'subagent', 'global']) {
+    for (const id of ['git', 'subagent']) {
       expect(service.getTab(id)?.single).toBe(true)
     }
-  })
-
-it('the global tab records the instance-level global info page (single, + menu visible, order 60)', () => {
-    const { service } = setup()
-    const tab = service.getTab('global')
-    expect(tab?.hidden).toBeFalsy() // reachable from the + menu
-    expect(tab?.order).toBe(60)
-    expect(tab?.single).toBe(true)
-    expect(tab?.title).toBeDefined()
   })
 
   it('the side chat tab sits between tasks and terminal in the + menu', () => {
@@ -95,34 +138,17 @@ it('the global tab records the instance-level global info page (single, + menu v
   it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'sidebarLayout', 'sideBarSide', 'allowOpenOutsideWorkspace', 'fileIconTheme', 'workspaceFence'])
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'workspaceFence'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.
     expect(toggles[0]?.type).toBe('select')
-    const options = Array.isArray(toggles[0]?.options) ? toggles[0]!.options : []
+    const options = toggles[0]?.options ?? []
     expect(options.map(o => o.value)).toEqual([true, false])
     expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
-// The vscode Side Bar position is an iconed select (left vs right).
-    expect(toggles[2]?.type).toBe('select')
-    expect((Array.isArray(toggles[2]?.options) ? toggles[2]!.options : []).map(o => o.value)).toEqual(['left', 'right'])
-    // The workbench-layout select (docked vs the VSCode-style side bar) is an
-    // iconed select over string values; both options carry icon + title.
-    expect(toggles[1]?.type).toBe('select')
-    const layoutOptions = Array.isArray(toggles[1]?.options) ? toggles[1]!.options : []
-    expect(layoutOptions.map(o => o.value)).toEqual(['docked', 'vscode'])
-    expect(layoutOptions.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
-    // The file-icon theme picker (v0.16.0+) resolves its options from the
-    // LIVE registry (function form) and hides entirely with no theme
-    // installed (`when`) — a stock install keeps the old popup unchanged.
-    expect(toggles[4]?.type).toBe('select')
-    expect(typeof toggles[4]?.options).toBe('function')
-    expect(toggles[4]?.when).toBeDefined()
-    expect(toggles[4]?.when!({ betterSidebar: { getIconThemes: () => [] } } as unknown as Context)).toBe(false)
-    // The read-boundary switch sits between the layout rows and the theme
-    // picker: a plain on/off switch bound to the host pref by key.
-    expect(toggles[3]?.key).toBe('allowOpenOutsideWorkspace')
-    expect((toggles[3]?.type ?? 'switch') as string).toBe('switch')
+    // The workspace fence switch rides the same card as a plain boolean row.
+    expect(toggles[1]?.title).toBeDefined()
+    expect(toggles[1]?.desc).toBeDefined()
     // The open-with configuration (SSH host + custom editors) is the custom
     // panel rendered below the declarative rows.
     expect(service.getTab('editor')?.settings?.render).toBeDefined()
@@ -174,7 +200,7 @@ it('the global tab records the instance-level global info page (single, + menu v
     service.openTab({ type: 'browser' })
     service.openTab({ type: 'browser' })
     const state = store.getSnapshot().state!
-    const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'browser')
+    const tabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'browser')
     expect(tabs).toHaveLength(2)
     expect(tabs[0]!.id).toBe('browser:1')
     expect(tabs[1]!.id).toBe('browser:2')
@@ -187,7 +213,7 @@ it('the global tab records the instance-level global info page (single, + menu v
     service.openTab({ type: 'terminal' })
     service.openTab({ type: 'terminal' })
     const state = store.getSnapshot().state!
-    const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'terminal')
+    const tabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'terminal')
     expect(tabs).toHaveLength(2)
     expect(tabs[0]!.title).toBe('bash')
     expect(tabs[1]!.title).toBe('bash')
@@ -201,7 +227,7 @@ it('the global tab records the instance-level global info page (single, + menu v
     store.setSession('s1')
     service.openTab({ type: 'terminal' })
     const state = store.getSnapshot().state!
-    const tab = allLeaves(state.splits).flatMap(leaf => leaf.tabs).find(t => t.type === 'terminal')
+    const tab = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).find(t => t.type === 'terminal')
     expect(tab?.title).toBe(t('terminal'))
   })
 
@@ -210,6 +236,35 @@ it('the global tab records the instance-level global info page (single, + menu v
     for (const tab of service.getTabs()) {
       expect(tab.icon, tab.id).toBeDefined()
     }
+  })
+
+  it('the tab glyphs say what the page shows (colored, token-driven)', () => {
+    const { service } = setup()
+    const iconOf = (id: string): ReactElement => {
+      const icon = service.getTab(id)?.icon
+      expect(icon, id).toBeDefined()
+      return (typeof icon === 'function' ? icon(14) : icon) as ReactElement
+    }
+    // Every colored glyph is [wrapper][glyph]; unwrap the themed wrapper.
+    const glyphOf = (id: string): unknown => {
+      const wrapper = iconOf(id) as ReactElement<{ children?: ReactElement }>
+      return (wrapper.props.children as ReactElement | undefined)?.type ?? wrapper.type
+    }
+    // Tasks lists subagent sessions AND background jobs — layered sheets say
+    // "work running in the background"; a checklist glyph would say "to-do
+    // list", which this page is not.
+    expect(glyphOf('subagent')).toBe(VscLayers)
+    expect(glyphOf('git')).toBe(VscGitCommit)
+    expect(glyphOf('sidechat')).toBe(VscCommentDiscussion)
+    expect(glyphOf('browser')).toBe(VscGlobe)
+    // The terminal glyph is the widest in the set, so it renders a step down
+    // from the strip's size. No outline: the glyphs stay exactly as the icon
+    // set draws them, only tinted through the wrapper's token.
+    const wrapper = iconOf('terminal') as ReactElement<{ children?: ReactElement }>
+    const terminal = wrapper.props.children as ReactElement<{ size?: number; style?: Record<string, unknown> }>
+    expect(terminal.type).toBe(VscTerminal)
+    expect(terminal.props.size).toBeLessThan(14)
+    expect(terminal.props.style).toBeUndefined()
   })
 })
 

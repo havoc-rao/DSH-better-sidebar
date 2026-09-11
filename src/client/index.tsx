@@ -10,14 +10,11 @@
  */
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Context, SidebarLayoutService } from '../context-types.ts'
+import type { Context } from '../context-types.ts'
 import { allLeaves, createSidebarStore, isAgentTabId } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
-import { createWorkspaceWindowsStore } from './workspace-windows.ts'
-import { revalidateChunksOnReactivate, resetChunks, setChunkModuleSystem } from './chunk-loader.ts'
+import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
-import { registerBuiltinKeybindings } from './builtins/keybindings.ts'
-import { attachCmdWClaim } from './cmd-w.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerTurnTailInterception } from './intercept.tsx'
@@ -27,72 +24,14 @@ import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { createNativeSurface } from './native/surface.ts'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
-import { KeybindingRuntime, buildKeybindingContext, registerFocusedTabTracking, type SidebarKeybindingContext } from './keybindings.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
-import { registerOfficialSidebarEntry } from './official-sidebar.tsx'
-import { loadBootDecision, loadExternalDisable, loadPrefs } from './prefs.ts'
+import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
 import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en } from './locales.ts'
 import { loadChunk } from './chunk-loader.ts'
 import css from './sidebar.module.css'
 import './layout.css'
-
-// ── Terminal transport slot (cross-plugin reuse) ─────────────────────────
-// The connection layer behind TerminalView is injectable per tab. These
-// client exports are the stable cross-plugin entry: another plugin's client
-// half (e.g. dsh-remote) resolves them through the client module system —
-// `ctx.modules.import('dsh-better-sidebar')` (rc.8+) or the
-// `__DSH_MODULES__.import('dsh-better-sidebar')` page global — which arrives
-// this bundle on demand and materializes its factory exports. A SYNCHRONOUS
-// `require('dsh-better-sidebar')` inside another plugin's client factory is
-// NOT a stable path: the loader's sync require is seed-table / registered
-// factories only, so it only resolves after THIS bundle has already executed
-// on the page (order-dependent).
-//
-//   const { loadTerminalView } = await ctx.modules.import('dsh-better-sidebar')
-//   const { TerminalView, localTransport } = await loadTerminalView()
-//
-// TerminalView (the xterm-dependent component) is NOT statically exported —
-// it lives in the lazy client-terminal.js chunk; loadTerminalView() fetches
-// it through the plugin's own chunk system on first use. Types are also
-// exported at 'dsh-better-sidebar/client/terminal' (a .d.ts subpath), so
-// consumers type against the slot without bundling xterm.
-export { loadTerminalView } from './terminal-view-loader.ts'
-export type { LoadedTerminalView } from './terminal-view-loader.ts'
-export { localTransport, parseDownlinkFrame } from './terminal-transport.ts'
-export type {
-  TerminalDepsInfo,
-  TerminalTransport,
-  TerminalTransportHandle,
-  TerminalTransportSession,
-  TerminalTransportSurface,
-  TerminalViewProps,
-} from './terminal-transport.ts'
-
-// ── Terminal source slot (default-terminal takeover) ────────────────────
-// The DEFAULT terminal tab's data-source seam (feature 'terminalSource',
-// see terminal-source.ts / docs/plans/2026-09-09-terminal-source-slot-design.md):
-// an external plugin (e.g. dsh-remote) registers a TerminalProviderDescriptor
-// through `ctx.betterSidebar.registerTerminalProvider(...)` — no module
-// import needed for registration. These exports are for consumers that
-// want to resolve the slot programmatically (pure `resolveTerminalSource`)
-// or reuse the render-side hook; the type is also importable from
-// 'dsh-better-sidebar/client/service' like every descriptor type.
-export { resolveTerminalSource, useTerminalTransport } from './terminal-source.ts'
-export type { TerminalProviderDescriptor } from './terminal-source.ts'
-
-// ── Git source slot (git surfaces takeover) ─────────────────────────────
-// The git surfaces' data-source seam (feature 'gitSource', see git-source.ts
-// / docs/plans/2026-09-10-git-source-slot-design.md): a provider registers
-// through `ctx.betterSidebar.registerGitProvider(...)` and owns every git
-// read + mutation of its sessions (GitView panel, explorer decorations,
-// diff tabs). These exports are for consumers that want to resolve the
-// slot programmatically (pure `resolveGitSource`) or reuse the render-side
-// hook; the descriptor/source types are also importable from
-// 'dsh-better-sidebar/client/service' like every descriptor type.
-export { resolveGitSource, useGitSource } from './git-source.ts'
-export type { GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
 
 /** Services required before mounting (provided by the client runtime; the
  *  locale service backs the sidebar's copy — see locales.ts). `modules`
@@ -196,32 +135,16 @@ export function apply(ctx: Context): void {
   // registrations (the official createXXXStore() factory rule — no
   // module-level singleton).
   const sidebarStore = createSidebarStore()
-  // The workspace windows store: workspace-bound windows ("pinned" content
-  // tabs shared by every session of a workspace). Attached to the sidebar
-  // store so bound windows merge into every session's first leaf and strip
-  // out of persistence; the service routes stub updates/opens through it.
-  const workspaceWindows = createWorkspaceWindowsStore(ctx)
-  workspaceWindows.attachSidebarStore(sidebarStore)
-  // The ONE keybinding runtime: every built-in shortcut (panel toggles,
-  // quick open, search focus, tab keys) and every plugin registration share
-  // this document-capture dispatcher. Its context is rebuilt per key event
-  // from the store snapshot, the DOM focus, and the transient UI markers
-  // (the + menu / search states published by the components).
-  const keybindingRuntime = new KeybindingRuntime((): SidebarKeybindingContext => buildKeybindingContext(sidebarStore))
   // The sidebar registry service: external plugins register tab types and
-  // file previewers through `ctx.betterSidebar.registerTab/registerFileViewer`,
-  // and keybindings through `registerKeybinding` — all landing on the shared
-  // runtime above. Published before the panel mounts so consumers injecting
-  // 'betterSidebar' are ready by the time the sidebar renders.
-  const service = createBetterSidebarService(sidebarStore, workspaceWindows, keybindingRuntime)
+  // file previewers through `ctx.betterSidebar.registerTab/registerFileViewer`.
+  // Published before the panel mounts so consumers injecting 'betterSidebar'
+  // are ready by the time the sidebar renders.
+  const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
-// The native right-Sidebar surface: the plugin's content is registered as
+  // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays
-  // plugin-owned. While this branch keeps its own right panel too, the
-  // native surface registration lives alongside it (the host installs its
-  // own native sidebar first; the plugin's panel backs off when the host
-  // owns the column). Both halves live for this fiber's lifetime.
+  // plugin-owned. Both halves live for this fiber's lifetime.
   const nativeRecords = createNativeTabRecords()
   const nativeSurface = createNativeSurface(ctx, nativeRecords)
   service.setSurface(nativeSurface)
@@ -262,7 +185,7 @@ export function apply(ctx: Context): void {
   // service (eating our own dogfood). The disposer unregisters them on
   // fiber disposal (HMR-safe).
   ctx.effect(
-    () => registerBuiltins(ctx, service),
+    () => registerBuiltins(ctx, service, { terminalTitle: () => terminalTitle }),
     'dsh-better-sidebar: register built-in tabs and viewers',
   )
   // A failure anywhere in the client lifecycle must never take the app down
@@ -383,24 +306,9 @@ export function apply(ctx: Context): void {
         try {
           host = document.createElement('div')
           host.setAttribute('data-dsh-better-sidebar', '')
-          // The host must NEVER occupy document flow: everything inside is
-          // fixed-positioned, but the right-click Menu (anchor wrapper span)
-          // and any future inline content would otherwise push an empty
-          // line box (≈18px) into the page and grow body → a page scrollbar.
-          // fixed + full-bleed + click-through makes the host a zero-impact
-          // root; the panels restore pointer-events on their own surfaces.
-          //
-          // z-index 40 is REQUIRED, not cosmetic: a fixed-positioned host
-          // forms its own stacking context, so the panels' z-40 lives INSIDE
-          // it and the host itself competes with the host app's UI at
-          // z-index auto (0). The app's composer sits at z-1 — without an
-          // explicit host z-index the bottom/right panels can never cover
-          // the conversation area (regression after the host became fixed;
-          // verified: even z-1000 on the panel does not win).
-          host.style.cssText = 'position: fixed; inset: 0; z-index: 40; pointer-events: none;'
           document.body.appendChild(host)
           root = createRoot(host)
-          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore, windows: workspaceWindows })))
+          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
           mounted = true
           guardAnchor()
           scheduleHostCheck()
@@ -522,70 +430,6 @@ export function apply(ctx: Context): void {
       'dsh-better-sidebar: IME composition guard',
     )
 
-    // The keybinding runtime (⌘B / ⌘J / ⌘⌥B panel toggles, ⌘P quick open,
-    // ⌘F search focus, ⌘Tab / ⌘1…9 tab keys — and every plugin
-    // registration): one document-capture dispatcher with the shared
-    // IME/AltGr/repeat guards and a per-event context. The built-ins
-    // register through the same API plugins use; the left sidebar toggle
-    // resolves ui-layout's ctx.layout lazily like 'conversation'. A strict
-    // no-op without a current session (the store reduce is the gate).
-    ctx.effect(
-      () => {
-        try {
-          const disposeBindings = registerBuiltinKeybindings(keybindingRuntime, ctx, sidebarStore)
-          const disposeAttach = keybindingRuntime.attach()
-          return () => {
-            disposeBindings()
-            disposeAttach()
-          }
-        } catch (error) {
-          fail('keybindings', error)
-          return () => { /* keybindings unavailable: the tabs still work */ }
-        }
-      },
-      'dsh-better-sidebar: keybindings',
-    )
-
-    // The focus-pinned tab tracker: keeps the id of the tab whose CONTENT
-    // holds the DOM focus (via the `data-dsh-tab-id` attribute on tab
-    // wrappers / float windows / the tab strip). The W-close keys and the
-    // desktop ⌘W claim target THAT tab, not the state's `active` highlight
-    // — typing in the bottom pane's terminal while `activePane` points at
-    // the right pane must close the BOTTOM tab.
-    ctx.effect(
-      () => {
-        try {
-          return registerFocusedTabTracking()
-        } catch (error) {
-          fail('focus tab tracking', error)
-          return () => { /* the W keys fall back to the state-active tab */ }
-        }
-      },
-      'dsh-better-sidebar: focus-pinned tab tracking',
-    )
-
-    // The ⌘W desktop-shortcut claim link: DSH Desktop intercepts the menu's
-    // ⌘W at the main process BEFORE the renderer sees the keydown, so the
-    // builtin ⌘W binding can never fire there. The host (registers on
-    // `ctx.desktopShortcuts`) asks this link over `/sidebar/ws/cmd-w`
-    // whether the sidebar would have consumed the chord; a claim closes the
-    // active tab and keeps the shell window open. The link is page-global
-    // and session-agnostic (the verdict is evaluated against the current
-    // snapshot at request time). A strict no-op in plain-browser
-    // deployments: no desktop service → the host never routes ⌘W, the
-    // endpoint just sits unused.
-    ctx.effect(
-      () => {
-        try {
-          return attachCmdWClaim(ctx, sidebarStore, service)
-        } catch (error) {
-          fail('cmd-w claim link', error)
-          return () => { /* the builtin binding still covers browsers */ }
-        }
-      },
-      'dsh-better-sidebar: ⌘W desktop-shortcut claim link',
-    )
-
     // DSH 0.1.x does not yet carry an icon through the settings.section
     // registration contract: its shell renders a generic gear for every
     // external section. Mark only this plugin's localized nav row so
@@ -606,16 +450,8 @@ export function apply(ctx: Context): void {
       id: 'better-sidebar',
       order: 100,
       label: () => t('settingsNav'),
-      inject: () => ({ store: sidebarStore, service, ctx }),
+      inject: () => ({ store: sidebarStore, service }),
     }, SideCardSection))
-
-    // The official LEFT sidebar footer action: inject the "Global info"
-    // entry into DSH's own ui-sidebar foot (the additive sidebar.footer.action
-    // seat). The button opens the `global` tab — the page recording all
-    // instance-level global info (incl. the global-shared terminals). The
-    // inject waits for the official declaration and the disposer rides the
-    // fiber (HMR-safe); a host without the slots service degrades to no-op.
-    registerOfficialSidebarEntry(ctx)
   } catch (error) {
     fail('load', error)
   }

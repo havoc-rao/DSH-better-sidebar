@@ -52,13 +52,14 @@ describe('dsh-better-sidebar plugin export shape', () => {
   })
 
   it('registers the side card preferences schema with the documented defaults', async () => {
-    const { PrefsSchema, SIDEBAR_PREFS_NS } = await import('../src/config.ts')
+    const { PrefsSchema, SIDEBAR_PREFS_NS, SIDEBAR_PREFS_DEFAULTS } = await import('../src/config.ts')
     expect(SIDEBAR_PREFS_NS).toBe('dsh-better-sidebar')
     const resolved = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })(undefined)
-    expect(resolved.openByDefault).toBe(false)
-    expect(resolved.defaultWidthPercent).toBe(35)
+    expect(resolved.openByDefault).toBeUndefined()
+    expect(resolved.defaultWidthPercent).toBeUndefined()
+    expect(resolved.changesDiffFloat).toBeUndefined()
     expect(resolved.autoOpenSubagent).toBe(true)
     // A new background job auto-opens the Jobs page too.
     expect(resolved.autoOpenJobs).toBe(true)
@@ -85,17 +86,28 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // The enable-switch maps resolve to {} (everything on) for old documents.
     expect(resolved.tabsEnabled).toEqual({})
     expect(resolved.viewersEnabled).toEqual({})
-// The separate file-window mode is the default (each file opens its own
+    // The separate file-window mode is the default (each file opens its own
     // tab; the merged editor-explorer is opt-in).
     expect(resolved.editorExplorer).toBe(false)
-    // The file-icon theme defaults to the built-in outline icons ('').
-    expect(resolved.fileIconTheme).toBe('')
+    // The workspace fence (containment over the sidebar fs routes) defaults
+    // ON — the safe default never depends on the stored document.
+    expect(resolved.workspaceFence).toBe(true)
     // A stored overridden value resolves through (the range contract is
     // enforced by the settings service on write); the new pref keeps its
     // default when the stored document predates it.
     const overridden = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
-    })({ openByDefault: false, defaultWidthPercent: 45 })
-expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, allowOpenOutsideWorkspace: false, producedFilesWrap: true, editorExplorer: false, sidebarLayout: 'docked', sideBarSide: 'right', fileIconTheme: '', workspaceFence: true, terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: '', tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    })({ openByDefault: false, defaultWidthPercent: 45, changesDiffFloat: true })
+    // Schemastery's object schema is OPEN: a document written by an older
+    // plugin version still carrying the retired keys resolves them through
+    // verbatim. They are inert — the typed value the client consumes
+    // (parsePrefs) drops them (tests/prefs.spec.ts) — and the defaults no
+    // longer declare them.
+    // titleBarScheme / titleBarPresetId / customCss are declared WITHOUT a
+    // schema default (the client's parsePrefs supplies them), so they are
+    // absent from a resolved document that never stored them.
+    const { titleBarScheme, titleBarPresetId, customCss, ...schemaDefaults } = SIDEBAR_PREFS_DEFAULTS
+    void titleBarScheme; void titleBarPresetId; void customCss
+    expect(overridden).toEqual({ ...schemaDefaults, openByDefault: false, defaultWidthPercent: 45, changesDiffFloat: true })
   })
 })

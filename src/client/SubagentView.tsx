@@ -38,7 +38,6 @@ import type {
 import {
   collectBranchIds,
   countSubagentDescendants,
-  isHiddenHelperSummary,
   isSideThreadSummary,
   rootAncestor,
 } from './subagent-detect.ts'
@@ -236,9 +235,7 @@ function CatalogRows({
   // arrive as corrupt diagnostics; they are recognized by summary title.
   const visibleEntries = (catalog?.entries ?? []).filter((entry) => {
     if (entry.kind === 'child') return !(entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false)
-    const summary = byId[entry.id]
-    if (summary === undefined) return true
-    return !(summary.displayTitle.startsWith(SIDE_LABEL_PREFIX) || isHiddenHelperSummary(summary))
+    return !(byId[entry.id]?.displayTitle.startsWith(SIDE_LABEL_PREFIX) ?? false)
   })
   return (
     <>

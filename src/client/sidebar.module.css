@@ -44,47 +44,29 @@
      page draggable left-right and up-down while any panel was collapsed.
      The host is exactly viewport-sized (inset: 0), so the clip is invisible
      until a panel slides in from the edge; internal scroll containers and
-     the app's fixed overlay stack are unaffected. */
+     the app's fixed overlay stack are unaffected. `clip`, not `hidden`: a
+     hidden box stays a PROGRAMMATICALLY scrollable container, and a
+     scrollIntoView fired from panel content (the file tree's "Show in
+     folder" reveal) scrolled the host itself — shifting the whole panel,
+     tab bar included, out of the viewport with no way to scroll back.
+     The same class covers any scroll-into-view fixup — focus moving into
+     an off-viewport region, a nested iframe/workbench claiming focus
+     while it loads — so the guard belongs on the layer itself, not per
+     call site. The `hidden` declaration BEFORE `clip` is an old-engine
+     fallback, not dead style: engines without `clip` support (Safari < 16)
+     drop the `clip` line, which would leave this box `overflow: visible`
+     — no clipping at all, and the page-draggable regression above
+     returns. With `hidden` first those engines keep the clipping (plus
+     its pre-clip scrollability) while every clip-aware engine applies
+     the later `clip`. */
   overflow: hidden;
+  overflow: clip;
 }
 
 :global([data-dsh-panel-host][data-dsh-panel-host-degraded]) {
   position: absolute;
   top: 0;
   left: 0;
-}
-
-/* The persistent expand/collapse cluster at the top-right corner: two rail
-   controls side by side (bottom panel's glyph LEFT of the right panel's).
-   Always pinned to the viewport corner — inside the right panel's top-right
-   while it is open, sitting flush in the 34px tab strip (28px buttons at
-   top: 3) whose right end it really squeezes. Host-internal z-index 45
-   (above the panels' 40); the host's global layer is z-index 25, so the
-   whole cluster stays below DSH's ui-cordis dynamic-plugin panel (30) and
-   the app's overlay stack (menus/tooltips/modals sit at 100+), so a cordis
-   approval popup is never hidden behind the workbench (issue #52). Absolute
-   within the panel host (the host's inset: 0 makes viewport coordinates
-   identical). */
-.toggleCluster {
-  position: absolute;
-  /* env() resolves to 0 on devices without a top inset (desktops). */
-  top: calc(3px + env(safe-area-inset-top));
-  right: 10px;
-  z-index: 45;
-  display: flex;
-  flex-direction: row;
-  gap: 4px;
-  /* The host root is click-through (position: fixed; pointer-events: none —
-     it must never occupy document flow): every interactive surface restores
-     pointer events on itself. */
-  pointer-events: auto;
-}
-
-/* The tab strip of the OPEN right panel reserves the cluster's width at its
-   right end, so the tabs and the + menu genuinely yield space to the cluster
-   (never hiding under it). */
-.panel:not(.panelHidden) .tabBar {
-  padding-right: 72px;
 }
 
 /* The closed-state affordance is the native rail icon control: a plain
@@ -119,456 +101,10 @@
   cursor: default;
 }
 
-.panel {
-  box-sizing: border-box;
-  position: absolute;
-  top: 0;
-  right: 0;
-  /* See .toggleCluster: the click-through host root needs every interactive
-     surface to restore pointer events explicitly. */
-  pointer-events: auto;
-  /* Full height: the bottom panel squeezes only the center column, so the
-     right panel never gives up any vertical position. */
-  bottom: 0;
-  /* Host-internal z-index 40 (sibling of the bottom panel's 40; the two
-     never overlap — the bottom panel's right edge is this panel's left
-     edge — and both sit below the toggle cluster's 45). The absolute
-     global layer comes from the host ([data-dsh-panel-host], 25) — the
-     whole stack stays above the app's in-flow content and below DSH's
-     ui-cordis dynamic-plugin panel (30) and the app's overlay stack (100+),
-     so menus/tooltips/modals always win over the panels (issue #52). The
-     corner handle is a child and stacks within the panel. */
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  /* Re-enable interaction inside the click-transparent panel host. */
-  pointer-events: auto;
-  /* The generic card surface (see the root contract above). Never
-     `--dsw-specific-sidebar-fill` — skin plugins restyle that token for the
-     app's own left nav and a panel consuming it loses its fill or clashes
-     with labels (#60/#105/#106). */
-  background: var(--dsw-alias-bg-layer-1);
-  border-left: 1px solid var(--dsw-alias-border-l2);
-  /* Bottom safe-area (notched phones): the drawer's bottom content clears
-     the home indicator; 0 on desktops. */
-  padding-bottom: env(safe-area-inset-bottom);
-  /* Expand/collapse slides the panel; fullscreen animates the width. */
-  transition:
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-
-/* Collapsed: slid off-screen, interactive nothing, hidden after the slide. */
-.panelHidden {
-  transform: translateX(102%);
-  pointer-events: none;
-  visibility: hidden;
-  transition:
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    width var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    visibility 0s linear var(--ds-transition-duration-slow);
-}
-
-/* Width drags write at pointer cadence; easing would detach the edge. */
-.panel[data-dragging] {
-  transition: none;
-}
-
-/* IDE FULLSCREEN (⌘⌥⇧B): the right panel covers the whole viewport like a
-   standalone VSCode window. The width rides the inline 100vw (the same
-   style slot as the docked width); this class adds the full-height cover,
-   drops the left border (nothing sits to its left), and raises the panel
-   above the app chrome (40/45) — the primitives' overlay stack (menus /
-   tooltips / modals at 9999) still floats above it, so approval popups are
-   never hidden. The layout push is released (see the Sidebar shell). */
-.panelMaximized {
-  height: 100vh;
-  border-left: none;
-  z-index: 1000;
-}
-
-/* The IDE-fullscreen exit control: the app's icon-button pattern (28px
-   circle), pinned to the tab strip's right end — the corner toggle cluster
-   sits UNDER the fullscreen panel, so this is the mouse way back to the
-   docked layout. The tab strips below reserve its width. */
-.ideExit {
-  position: absolute;
-  top: 3px;
-  right: 6px;
-  z-index: 4;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  flex: none;
-}
-
-.ideExit:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-/* The IDE-fullscreen chat-column toggle: the exit control's sibling — the
-   same 28px circle (reusing .toggleButton's look), pinned to the tab
-   strip's right end LEFT of the ✕. The corner toggle cluster sits UNDER
-   the fullscreen panel, and the Side Chat column no longer pops out by
-   default, so this is the always-reachable mouse way to expand/collapse it
-   (⌘⌥B / ⌘⇧B are the keyboard paths). */
-.ideChatToggle {
-  position: absolute;
-  top: 3px;
-  right: 38px;
-  z-index: 4;
-}
-
-/* Highlight follows the column's expanded state — same semantics as the
-   Activity Bar's Side Chat icon (the column collapses to width 0, so the
-   pill is the visible "the column is open" signal at the top-right). */
-.ideChatToggleActive {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-/* The IDE-fullscreen tab strips reserve the top-right controls' width at
-   their right end, so the + menu never hides under them — two circles sit
-   there now (the chat-column toggle at right: 38px + the exit ✕ at right:
-   6px; 6 + 28 + 4 + 28 = 66px, same 72px budget the docked toggle cluster
-   reserves). Their tab list ALSO
-   yields the native traffic-light zone in frameless macOS shells: the
-   fullscreen panel covers the whole viewport, so
-   every right-panel tab strip begins at the window's top-left corner — the
-   vscode layout's header strip AND the docked layout's first pane strip
-   alike — where the shell draws the caption buttons over web content. Keep
-   a fixed 90px reservation because some desktop shells do not expose a
-   reliable platform/title-bar signal. The docked BOTTOM workbench's strip
-   is a sibling panel, never matched here, and sits at the window's bottom —
-   never under the traffic lights. */
-.panelMaximized .tabBar {
-  padding-right: 72px;
-}
-
-.panelMaximized .tabList {
-  padding-left: 90px;
-}
-
-.panelResize {
-  position: absolute;
-  /* Centered on the panel edge (an 8px hit strip straddling the border, the
-     same pattern as the host's own frame handles). */
-  left: -4px;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  cursor: col-resize;
-  z-index: 2;
-  touch-action: none;
-}
-
-.panelResizeActive {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-}
-
 .panelBody {
   flex: 1;
   min-height: 0;
   min-width: 0;
-  display: flex;
-}
-
-/* ── VSCode-style title bar (sidebarLayout: 'vscode') ──────────────────── */
-
-/* The VSCode layout's title bar: a single tab-strip header across the top of
-   the panel. The corner toggle cluster (the viewport-fixed collapse/expand
-   buttons) floats over its top-right — the cluster's 28px buttons sit inside
-   this band, so they read as part of the header instead of hovering over
-   bare content. Same surface as the Activity Bar (layer-2), so the bar looks
-   like the header's continuation down the right edge. The strip hosts the
-   ACTIVE pane's tabs (the VSCode editor tab strip under the title bar), so
-   the editor panes render content only. */
-.vscodeHeader {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  background: var(--dsw-alias-bg-layer-2);
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
-  min-width: 0;
-}
-
-/* ── VSCode-style Activity Bar + Side Bar (sidebarLayout: 'vscode') ────── */
-
-/* The mirror arrangement (editor | side bar | activity bar) is laid out as a
-   row inside .panelBody: the Workbench (editor group) takes the remaining
-   space, the side bar a fixed-width column, the activity bar a 48px strip on
-   the panel's RIGHT edge. The side bar's resize handle rides its LEFT edge
-   (the editor|side-bar boundary) — dragging left widens it. All surfaces
-   follow the generic card/layer tokens; never --dsw-specific-sidebar-fill
-   (that belongs to the app's own left nav — see the skin contract). */
-.activityBar {
-  flex: 0 0 48px;
-  width: 48px;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  background: var(--dsw-alias-bg-layer-2);
-  border-left: 1px solid var(--dsw-alias-border-l2);
-  overflow: hidden;
-}
-
-.activityBarIcon {
-  position: relative;
-  flex: 0 0 48px;
-  height: 48px;
-  width: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  color: var(--dsw-alias-fg-muted);
-  cursor: pointer;
-  padding: 0;
-  transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.activityBarIcon:hover:not(:disabled) {
-  color: var(--dsw-alias-fg-base);
-}
-
-.activityBarIcon:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-/* The active view's inner-edge indicator bar (the panel-edge side: RIGHT in
-   the mirror layout, since the activity bar sits at the panel's right edge). */
-.activityBarIconActive {
-  color: var(--dsw-alias-fg-base);
-}
-
-.activityBarIconActive::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--dsw-alias-border-active, var(--dsw-alias-fg-accent));
-}
-
-.sideBarPane {
-  flex: 0 0 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--dsw-alias-bg-layer-1);
-  border-left: 1px solid var(--dsw-alias-border-l2);
-  position: relative;
-  overflow: hidden;
-  /* The explorer-drawer collapse/expand animates the width (the tree stays
-     mounted at width 0 — overflow clips it). Same easing as the panels. */
-  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-
-/* While the user drags the resize handle the width must track the pointer
-   1:1 — no transition tail on the intermediate frames. */
-.sideBarPaneDragging {
-  transition: none;
-}
-
-/* Collapsed (sideBarOpen false): width 0, no left border (a 1px hairline
-   would linger mid-panel), the handle is dropped by the component, and the
-   content is visibility-hidden so clipped descendants (the tree search box)
-   are truly unreachable/invisible — not merely clipped by overflow. */
-.sideBarPaneCollapsed {
-  border-left: 0;
-  visibility: hidden;
-}
-
-/* Flipped (sideBarSide: 'left'): the column hugs the panel's LEFT edge, so
-   the editor boundary is its RIGHT edge — the border and the resize handle
-   move there (and the collapsed state drops the right border instead). */
-.sideBarPaneFlipped {
-  border-left: 0;
-  border-right: 1px solid var(--dsw-alias-border-l2);
-}
-
-.sideBarPaneFlipped .sideBarResize {
-  left: auto;
-  right: -4px;
-}
-
-.sideBarPaneFlipped.sideBarPaneCollapsed {
-  border-right: 0;
-}
-
-/* The resize handle rides the side bar's LEFT edge (editor|side-bar
-   boundary). An 8px hit strip straddling the border, like the panel edge. */
-.sideBarResize {
-  position: absolute;
-  left: -4px;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  cursor: col-resize;
-  z-index: 3;
-  touch-action: none;
-}
-
-.sideBarResize:hover {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-}
-
-/* Flipped (sideBarSide: 'left'): the WHOLE bar mirrors to the panel's LEFT
-   edge (activity bar | side bar | editor) — the boundary against the side
-   bar moves to its RIGHT edge, and the active-view indicator rides the
-   LEFT edge (VSCode's indicator side). */
-.activityBarFlipped {
-  border-left: 0;
-  border-right: 1px solid var(--dsw-alias-border-l2);
-}
-
-.activityBarFlipped .activityBarIconActive::after {
-  right: auto;
-  left: 0;
-}
-
-/* The Side Bar position toggle sits at the BAR'S BOTTOM (the VSCode
-   activity-bar settings-gear spot): the spacer pushes the button down. */
-.activityBarSpacer {
-  flex: 1 1 auto;
-}
-
-.sideBarHeader {
-  flex: 0 0 35px;
-  height: 35px;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--dsw-alias-fg-muted);
-  font-weight: 600;
-}
-
-.sideBarBody {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-
-/* ── IDE-FULLSCREEN chat column (⌘⌥⇧B) ───────────────────────────────── */
-
-/* The chat column (the Side Chat section) docks at the panel's RIGHT edge
-   inside IDE fullscreen — the Cursor-style conversation surface of the mode.
-   The editor|chat boundary is its LEFT edge, so the resize handle rides
-   there (dragging right widens the chat, squeezing the editor group). Same
-   surface as the Side Bar (layer-1 + left hairline; skin tokens only). The
-   collapse/expand animates the width — the view stays MOUNTED at width 0
-   (overflow clips it), so a running thread keeps streaming and the
-   transcript never reloads. */
-.chatPane {
-  flex: 0 0 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--dsw-alias-bg-layer-1);
-  border-left: 1px solid var(--dsw-alias-border-l2);
-  position: relative;
-  overflow: hidden;
-  /* Same eased width transition as the explorer drawer. */
-  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-
-/* While the user drags the resize handle the width must track the pointer
-   1:1 — no transition tail on the intermediate frames. */
-.chatPaneDragging {
-  transition: none;
-}
-
-/* Collapsed (chatOpen false): width 0, no left border (a 1px hairline would
-   linger mid-panel), the handle is dropped by the component, and the content
-   is visibility-hidden so the composer/scroll area are truly unreachable —
-   not merely clipped by overflow. */
-.chatPaneCollapsed {
-  border-left: 0;
-  visibility: hidden;
-}
-
-/* The resize handle rides the column's LEFT edge (editor|chat boundary). An
-   8px hit strip straddling the border, like the side bar's handle. */
-.chatResize {
-  position: absolute;
-  left: -4px;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  cursor: col-resize;
-  z-index: 3;
-  touch-action: none;
-}
-
-.chatResize:hover {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-}
-
-/* The column header: the small-caps section title + the collapse chevron
-   (same 35px band as the Side Bar's header row). */
-.chatHeader {
-  flex: 0 0 35px;
-  height: 35px;
-  display: flex;
-  align-items: center;
-  padding: 0 8px 0 12px;
-  gap: 4px;
-}
-
-.chatHeaderTitle {
-  flex: 1;
-  min-width: 0;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--dsw-alias-fg-muted);
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chatCollapse {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--dsw-alias-fg-muted);
-  cursor: pointer;
-  transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.chatCollapse:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-fg-base);
-}
-
-.chatBody {
-  flex: 1;
-  min-height: 0;
   display: flex;
 }
 
@@ -589,9 +125,6 @@
   z-index: 40;
   display: flex;
   flex-direction: column;
-  /* See .toggleCluster: the click-through host root needs every interactive
-     surface to restore pointer events explicitly. */
-  pointer-events: auto;
   background: var(--dsw-alias-bg-layer-1);
   border-top: 1px solid var(--dsw-alias-border-l2);
   /* Re-enable interaction inside the click-transparent panel host. */
@@ -626,7 +159,6 @@
    will-change: transform is only live while a drag is (the body attribute
    toggles with the drag state), promoting the panels to their own layer
    without paying the compositing cost at rest. */
-.panel,
 .bottomPanel {
   contain: layout style;
 }
@@ -687,148 +219,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding-right: 40px;
 }
 
-/* ── Free windows ──────────────────────────────────────────────────────── */
-
-/* One floating tab: the same card surface as the panels, at viewport
-   coordinates inside the panel host (immune to shell transforms). z-index
-   42: above the panels (40) so a window drags across them, below the
-   toggle cluster (45) and the app's overlay stack (100+, issue #52).
-   Stacking among windows is the floats array order (siblings share the
-   z-index; DOM order wins). Deliberately NO box transition — the header/
-   resize drags write left/top/width/height per frame. Elevated surface,
-   so unlike the flat panels it earns a shadow token. */
-.floatWindow {
-  position: absolute;
-  z-index: 42;
-  display: flex;
-  flex-direction: column;
-  /* Re-enable interaction inside the click-transparent panel host. */
-  pointer-events: auto;
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  box-shadow: var(--dsw-shadow-lv3);
-  overflow: hidden;
-  contain: layout style;
-}
-
-.floatWindowDragging {
-  will-change: left, top, width, height;
-}
-
-/* The header: the move/dock-back drag handle, mirroring the tab strip's
-   chrome (34px, hairline bottom, secondary label). */
-.floatHeader {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 34px;
-  padding: 0 4px 0 10px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-layer-1);
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-  cursor: grab;
-  user-select: none;
-}
-
-.floatWindowDragging .floatHeader {
-  cursor: grabbing;
-}
-
-.floatTitle {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Mirrors .tabClose. */
-.floatClose {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-  flex: none;
-}
-
-.floatClose:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-/* Mirrors .paneContent's column-flex contract: the tab cell must hand its
-   child a definite WIDTH via align-stretch. A row flex (the default) sizes
-   the main axis (width) from content — intrinsic-zero hosts (e.g. a plugin
-   tab UI) collapse to a 0px-wide sliver and paint nothing (the blank
-   whale-report window). */
-.floatContent {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* The SE resize corner (mirror of .cornerHandle). */
-.floatResize {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 14px;
-  height: 14px;
-  z-index: 2;
-  cursor: nwse-resize;
-  touch-action: none;
-}
-
-.floatResize:hover {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-}
-
-/* A pane highlighted as the dock target while a float header drag hovers it
-   (the attribute is written directly by the drag at pointer cadence;
-   skin-addressable via [data-dsh-pane][data-dsh-float-dock-over]). */
-.pane[data-dsh-float-dock-over] {
-  outline: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
-  outline-offset: -2px;
-}
-
-/* The drag-out hint over the conversation column: a dashed frame marking
-   the drop zone, pointer-transparent so it never disturbs the drag it
-   describes. z-index 46: above the windows (42) for unambiguous feedback,
-   still below the app's overlay stack. */
-.floatDropHint {
-  position: absolute;
-  z-index: 46;
-  pointer-events: none;
-  border: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 12%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.floatDropHintLabel {
-  padding: 4px 12px;
-  border-radius: 999px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
-}
-
 /* ── Desktop drag-region opt-out ──────────────────────────────────────── */
 
 /* Frameless desktop shells make the top strip of the web content draggable
@@ -838,10 +228,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    `no-drag` itself — some shells (Tauri, older desktop builds, third-party
    wrappers) have no blanket button rule. The property is a no-op in plain
    browsers and in shells without drag regions — safe everywhere. */
-.toggleCluster,
 .toggleButton,
-.tabBar,
-.floatHeader {
+.tabBar {
   -webkit-app-region: no-drag;
 }
 
@@ -850,48 +238,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 /* Windows frameless / hidden-title-bar windows draw the native caption
    strip (minimize / maximize / close) at the window's top-right corner,
    OVER the web content. When the user enables the "position compatibility"
-   pref, the sidebar yields the strip: the toggle cluster drops below it and
-   the right panel's content starts below it — the panel's surface still
-   spans the full height, so the caption buttons float over empty sidebar
-   fill (the VSCode hidden-title-bar look). The strip height is user-tunable
-   (`--dsh-title-bar-strip`, written by the Sidebar shell from
-   `titleBarStripPx`; 40px fallback). The bottom panel is unaffected: it
-   sits at the window's bottom, never under the top strip. */
-:global(body[data-dsh-title-bar-compat]) .toggleCluster {
-  top: calc(var(--dsh-title-bar-strip, 40px) + 3px);
-}
-
-:global(body[data-dsh-title-bar-compat]) .panel {
-  /* The caption strip is drawn over the panel's own top edge: keep the
-     surface full-height and push the content (the tab strip) below the
-     strip instead. .panelResize is absolutely positioned and unaffected. */
-  padding-top: var(--dsh-title-bar-strip, 40px);
-}
-
-/* The shared corner (both panels open): the intersection of the right
-   panel's left edge and the bottom panel's top edge. Horizontal drags
-   resize the width, vertical drags the height — the two panels drag
-   against each other. Rendered INSIDE the right panel and positioned
-   relative to it (left edge + the bottom panel's height from the layout
-   variable), so no JS-written viewport coordinates are involved. The
-   z-index is panel-local (above the panel's content; the panel itself sits
-   at 40, below the app's overlay stack). */
-.cornerHandle {
-  position: absolute;
-  left: -6px;
-  bottom: calc(var(--dsh-sidebar-height, 0px) + 6px);
-  width: 12px;
-  height: 12px;
-  z-index: 2;
-  cursor: nwse-resize;
-  touch-action: none;
-}
-
-.cornerHandle:hover,
-.cornerHandle[data-dragging] {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-}
-
+   pref, the Sidebar shell publishes the strip height as
+   `--dsh-title-bar-strip` plus `body[data-dsh-title-bar-compat]` for the
+   user's own CSS; the plugin's remaining chrome (the bottom workbench) sits
+   at the window's bottom and is never under the top strip. */
 /* Icon button: the app's own icon-button pattern (ui-workspace) — a 28px
    circle, secondary label, hover fill; no border so the icon alone is the
    affordance. */
@@ -921,17 +271,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 /* ── Workbench / split panes ───────────────────────────────────────────── */
-
-/* The editor slot in .panelBody (the Workbench's flex host): in IDE
-   FULLSCREEN (⌘⌥⇧B) the slot's bottom margin reserves the docked bottom
-   panel's height, so the editor tabs sit fully above it — the margin is
-   written mid-drag by the shell (applyDrag) so a height drag tracks 1:1. */
-.editorSlot {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-}
 
 .workbench {
   flex: 1;
@@ -1081,6 +420,17 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow: hidden;
 }
 
+/* The native tab chip's glyph (drawn by the plugin inside the host's
+   `sidebar.right.pane.tab.title` slot, which is the chip's content): sized to
+   the text, aligned on its baseline box, and separated from the title the way
+   the workbench strip separates its own glyph from its label. */
+.chipIcon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  flex: none;
+}
+
 /* One tab's mounted content; inactive tabs stay mounted but hidden so
    switching never tears down terminals/editors (state survives). */
 .paneTab {
@@ -1134,47 +484,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .paneCard:disabled {
   opacity: 0.45;
   cursor: default;
-}
-
-/* ── + 菜单行内快捷键 chip（v0.14.0+）───────────────────────────────────────
-   菜单本体保持 primitives Menu 的原始观感；chip 经 label 注入到每一行：
-   名称 + 右侧的数字（1-9 / 0）与首字母（取自稳定 id：terminal→T）键。
-   .menuOptionLabel 同时是 flex 容器：父行若把 label 拉伸（flex:1），
-   space-between 会把 chip 推到行右缘；父行不拉伸时则紧跟在名称后。 */
-
-.menuOptionLabel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  min-width: 0;
-}
-
-.menuOptionName {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.menuOptionKeys {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-}
-
-.menuOptionKey {
-  min-width: 26px;
-  padding: 0 5px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 4px;
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xxxs-11);
-  line-height: 15px;
-  text-align: center;
-  white-space: nowrap;
 }
 
 /* ── Tab strip ─────────────────────────────────────────────────────────── */
@@ -1239,25 +548,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
-/* The inline rename editor replacing the label while a tab is being renamed
-   (double-click a renamable tab's label; Enter/blur commits, Esc cancels). */
-.tabRename {
-  flex: 1;
-  min-width: 0;
-  height: 20px;
-  padding: 0 3px;
-  border: 1px solid var(--dsw-alias-interactive-bg-hover-accent);
-  border-radius: 3px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  outline: none;
-}
-
-.tabRename:focus {
-  border-color: var(--dsw-alias-brand-primary);
-}
-
 /* One tab's descriptor badge (a count capped at 99+, or a short text). */
 .tabBadge {
   flex: none;
@@ -1293,15 +583,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
-/* The two-step close confirm on workspace-bound stubs: the first click
-   arms the button (danger ink + tint, the repo's color-mix error pattern);
-   the second click really closes the shared window. */
-.tabCloseArmed,
-.tabCloseArmed:hover {
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent);
-  color: var(--dsw-alias-state-error-primary);
-}
-
 .tabBarPlus {
   flex: none;
   align-self: center;
@@ -1326,53 +607,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tabBarPlus:hover {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
-}
-
-/* The strip's right-end control group (the + menu button): sticky at the
-   right edge of the scrollport, so the + menu stays reachable no matter how
-   many tabs are open. */
-.tabBarEnd {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  position: sticky;
-  right: 0;
-  background: var(--dsw-alias-bg-layer-1);
-}
-
-.tabBarEnd .tabBarPlus {
-  position: static;
-}
-
-/* The hairline before the workspace-bound (pinned) tab group. */
-.tabBarDivider {
-  flex: none;
-  width: 1px;
-  margin: 7px 2px;
-  background: var(--dsw-alias-border-l1);
-}
-
-/* A workspace-bound window stub: pinned after the session's own tabs.
-   Tinted (not translucent — the skin surface rule) so shared windows read
-   as a distinct group without breaking the token contract. */
-.tabBound {
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.tabBound:hover {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-.tabBound.tabActive {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-/* The pushpin glyph of a bound stub. */
-.tabPin {
-  flex: none;
-  color: var(--dsw-alias-brand-primary);
 }
 
 /* ── Pinned-terminal tab (v0.17.0+) ───────────────────────────────────── */
@@ -1425,97 +659,11 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 4px 8px 8px;
 }
 
-/* The dual-module (upper section + local tree) stack (v0.19.0+, splitter
-   v0.19.1+): a flex column that exists ONLY when a matched section renders;
-   sectionless panels keep the pre-slot DOM (explorerBody as the panel's
-   direct child). Each module keeps its own scroll context: the section
-   scrolls inside itself (its height is the splitter's ratio), the tree
-   keeps explorerBody's own rules untouched. */
-.explorerDual {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* The UPPER module: the injecting plugin's own surface (toolbar / remote
-   tree / menus), zero better-sidebar capability applied. Its flex-basis
-   comes from the splitter (inline `flex: 0 1 <ratio>%`, default 80% — the
-   4:1 requirement); definite hosts resolve it against the stack's height,
-   indefinite hosts fall back to content height (percentage basis →
-   auto). The floor below keeps a stored ratio from another container size
-   from shrinking the section out of view; overflow scrolls INSIDE the
-   section so the local tree below always has its own viewport. The
-   hairline separator lives on the splitter strip now (v0.19.1+). */
-.explorerSection {
-  flex: none;
-  /* ≥160px: the splitter's pixel clamp, mirrored here as a layout-time
-     invariant (the tree's own floor rides .explorerDual .explorerBody). */
-  min-height: 160px;
-  overflow-y: auto;
-}
-
-/* The draggable divider between the two modules (v0.19.1+): a 5px hit
-   strip whose visual is a 1px hairline centered in it (the split-pane
-   divider look — a divider line, not a thick band). Row-resize cursor on
-   the whole strip; hover/drag thickens and accents the hairline. */
-.explorerSplitter {
-  position: relative;
-  flex: none;
-  height: 5px;
-  cursor: row-resize;
-  touch-action: none;
-  z-index: 3;
-}
-
-.explorerSplitter::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1px;
-  transform: translateY(-50%);
-  background: var(--dsw-alias-border-l2);
-  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    height var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-
-.explorerSplitter:hover::after,
-.explorerSplitterActive::after {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-  height: 3px;
-}
-
-/* The LOWER module's floor inside the dual stack: the splitter's pixel
-   clamp already guarantees ≥120px in pointer space; this makes it a layout
-   invariant even for a ratio persisted on a different container size (the
-   tree may still shrink — overflow scrolls inside it either way). */
-.explorerDual .explorerBody {
-  min-height: 120px;
-}
-
-/* The SOURCE-form section's tree container (v0.20.0): a full-height flex
-   column inside the upper module — FileTree's own explorerBody flexes to
-   the remaining height and scrolls inside it, the same container
-   structure the LOCAL tree uses inside the panel. Height: 100% resolves
-   against the splitter's definite flex-basis on definite hosts and
-   degrades to content height on indefinite ones. */
-.sectionSourceTree {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
 /* One tree row: the app's session-row cell (34px, radius 8, inset, hover
    fill, 22px indent step, 14px ink) with a mount fade so expanding a
    directory reveals its children gently (stable keys keep existing rows from
    replaying it). */
 .explorerRow {
-  /* relative: anchors the clickable indent-guide bands (.explorerGuideHit)
-     to the row. */
-  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1542,103 +690,32 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/* The clickable indent-guide band: one absolutely-positioned pill per
-   expanded-ancestor column on a row (left edge set inline from the same
-   geometry constants as the guide painter), centered on the 1px stroke.
-   The VSCode indent-guide affordance — invisible at rest, hovering the ROW
-   faintly reveals every band (discoverability: the guide columns are
-   interactive), the band under the pointer lights up full with a bright
-   2px stroke (::before) while the ancestor's WHOLE vertical line lights up
-   across its subtree (the row background painter, `treeGuideBackground`'s
-   highlightCol) — the full line reads as "click collapses this whole
-   directory". Bands sit left of the row content (the deepest band's
-   outside edge stops INDENT_STEP/2 px short of the padding edge), so they
-   never overlap the icon or name. */
-.explorerGuideHit {
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  /* 2 × GUIDE_HIT_HALF (FileTree.tsx) — keep in sync. */
-  width: 16px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 26%, transparent);
-  opacity: 0;
-  cursor: pointer;
-  transition: opacity 120ms var(--ds-ease-in-out);
-}
-
-/* The bright guide stroke that replaces the faint 1px background line
-   while its band is hovered — the same look as the full-line highlight
-   (GUIDE_STROKE_HOVER, FileTree.tsx) — keep in sync. */
-.explorerGuideHit::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 2px;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 80%, transparent);
-  opacity: 0;
-  transition: opacity 120ms var(--ds-ease-in-out);
-}
-
-.explorerRow:hover > .explorerGuideHit {
-  opacity: 0.5;
-}
-
-.explorerRow:hover > .explorerGuideHit:hover {
-  opacity: 1;
-}
-
-.explorerGuideHit:hover::before {
-  opacity: 1;
-}
-
 /* A "Show in folder" reveal highlight: the target row stays tinted until
-   the transient reveal set is cleared (a reload starts unhighlighted). */
+   the transient reveal set is cleared (a reload starts unhighlighted).
+   The DSH business-blue surface (the same source the host's nav items use
+   for their active accent) — a flat tint, deliberately no left bar. */
 .explorerRowRevealed {
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 18%, transparent);
-  box-shadow: inset 2px 0 0 var(--dsw-alias-interactive-bg-hover-accent);
+  background: var(--dsw-alias-state-business-tertiary);
+}
+
+/* Reveal sets usually list sibling files — consecutive tinted rows merge
+   into ONE rounded block: the touching edges square off, so a multi-file
+   highlight has no per-row radius notches. A solo revealed row (or the
+   first/last of a run) keeps its full radius. Rows are flat siblings in
+   the tree body (depth is inline padding), so the sibling combinator sees
+   every adjacency. */
+.explorerRowRevealed + .explorerRowRevealed {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.explorerRowRevealed:has(+ .explorerRowRevealed) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .explorerDir {
   font: var(--dsw-font-s-strong-14);
-}
-
-/* Multi-root (v0.18.0+): a top-of-tree starting-point row (the local cwd
-   root plus each provider-contributed remote root). Distinct from plain
-   directory rows — a faint resting fill — so the starting points read as
-   their own layer above the browsable entries (the rows also carry a
-   chevron, which directory rows never do). */
-.explorerRootRow {
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 40%, transparent);
-}
-
-.explorerRootRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-/* The root row's expand/collapse chevron (inline transform rotates it
-   90deg while the root is open). */
-.explorerRootChevron {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  transition: transform 120ms var(--ds-ease-in-out);
-}
-
-/* The dimmed stat suffix on provider-fed rows (v0.20.0): small type in
-   tertiary ink, flex-none (never pushes the trailing row actions), with
-   the same ellipsis guards as the row name. Local rows never carry meta,
-   so this class never appears on the local render path. */
-.explorerMeta {
-  flex: none;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
 }
 
 .explorerHidden {
@@ -1666,9 +743,94 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
+/* ── Inline rename editor ─────────────────────────────────────────────────
+   The row swaps its name span for a plain input (same row metrics: 34px
+   height, 6px gap, xxs type); only tokens, no hardcoded colors. */
+.explorerRenaming {
+  cursor: text;
+}
+
+.explorerRenameInput {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-state-business-primary);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.explorerRenameInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+/* The dismissable mutation-failure strip above the root row (rename/delete
+   refusals — raw server text, same policy as the fence notice). */
+.explorerActionError {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.explorerActionErrorText {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.explorerActionErrorClose {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.explorerActionErrorClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The delete-confirmation modal's description paragraph (the git lens's
+   .gitConfirmDesc sibling — same quiet single-question look). */
+.explorerConfirmDesc {
+  margin: 0;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
 /* The hover-revealed @-reference button at the row's far right (and the
-   transient "copied" label that replaces it after a copy). Hidden rows
-   keep the name at full width; hovering or focusing the row reveals it. */
+   transient "copied" label that replaces it after a copy). The only auto
+   margin in the row absorbs the filename's spare width, so a short name
+   cannot leave either affordance stranded in the middle. */
+.explorerRef,
+.explorerCopied {
+  margin-left: auto;
+}
+
+/* Hidden rows keep the name at full width; hovering or focusing the row
+   reveals the reference button. */
 .explorerRef {
   flex: none;
   display: none;
@@ -1699,90 +861,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-tertiary);
 }
 
-/* VSCode-style git status decorations: the row NAME is tinted by the status
-   family (the primary VSCode signal — modified amber, added/renamed green,
-   deleted red, untracked green, ignored gray) with a colored letter badge
-   beside it (files carry their own status, folders the descendant
-   aggregate). The color families map the VSCode git-decoration palette onto
-   DSH semantic tokens: modified/type → warn, added/renamed/copied/untracked
-   → success, deleted/conflict → error, ignored → muted. */
-.explorerGitBadge {
-  flex: none;
-  min-width: 18px;
-  height: 16px;
-  padding: 0 3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font: var(--dsw-font-xxxs-strong-11);
-}
-
-.explorerGitWarn {
-  color: var(--dsw-alias-state-warn-primary);
-}
-
-.explorerGitSuccess {
-  color: var(--dsw-alias-state-success-primary);
-}
-
-.explorerGitError {
-  color: var(--dsw-alias-state-error-primary);
-}
-
-.explorerGitMuted {
-  color: var(--dsw-alias-label-tertiary);
-}
-
-/* A deleted file row: the name is struck through (the git color family —
-   error red — rides the same .explorerGitError class as the badge). The row
-   stays clickable — the editor surfaces the read failure. */
-.explorerDeleted .explorerName {
-  text-decoration: line-through;
-}
-
-/* The tree panel's git status footer: changed-file counts under the tree
-   root, colored by status family (most severe first). */
-.explorerGitFooter {
-  flex: none;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 2px 10px;
-  padding: 4px 10px 6px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.explorerGitFooterItem {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 2px;
-}
-
-.explorerGitFooterLetter {
-  font: var(--dsw-font-xxxs-strong-11);
-}
-
 .explorerError {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
   cursor: default;
-}
-
-/* The in-flight level row (v0.20.0): a spinning glyph + dimmed label, so a
-   slow subfolder listing reads as working instead of a frozen gap (the
-   expand commit lands the level placeholder before the listing resolves).
-   The glyph spins via the shared git-spin keyframes above. */
-.explorerLoadingSpin {
-  flex: none;
-  animation: git-spin 900ms linear infinite;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.explorerLoading {
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
 }
 
 /* Mount fade for tree rows (the app's session-row reveal). */
@@ -2067,31 +1149,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   min-height: 0;
   display: flex;
   border-left: 1px solid var(--dsw-alias-border-l1);
-  overflow: hidden;
-  /* The docked tree's collapse/expand animates the width (the tree stays
-     mounted at width 0 once opened — overflow clips it, so re-expanding
-     never reloads it). Same easing as the Side Bar drawer / panels;
-     visibility flips immediately on expand but only AFTER the slide on
-     collapse (the content stays visible while the drawer shuts). */
-  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    visibility 0s;
-}
-
-/* While the user drags the resize handle the width must track the pointer
-   1:1 — no transition tail on the intermediate frames. */
-.editorTreeDockDragging {
-  transition: none;
-}
-
-/* Collapsed (treeOpen false): width 0, no left border (a 1px hairline would
-   linger mid-panel), and the content is visibility-hidden once the slide
-   completes so clipped descendants (the tree search box) are truly
-   unreachable/invisible — not merely clipped by overflow. */
-.editorTreeDockCollapsed {
-  border-left: 0;
-  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    visibility 0s linear var(--ds-transition-duration-slow);
-  visibility: hidden;
 }
 
 .editorTreeResize {
@@ -2178,21 +1235,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/* The keyboard-highlighted search result row (v0.14.0+): a strong accent
-   so the ↑↓-selected row is obvious without a mouse. */
-.editorSearchResultActive,
-.editorSearchResultActive:hover {
-  background: var(--dsw-alias-interactive-bg-active);
-  color: var(--dsw-alias-label-primary);
-}
-
-/* The search keyboard-navigation hint line (v0.14.0+). */
-.editorSearchNavHint {
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  padding-top: 6px;
-  margin-top: 4px;
-}
-
 .editorStatus {
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-label-tertiary);
@@ -2272,6 +1314,18 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .editorError {
   padding: 12px 16px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* The workspace-fence refusal row (FenceErrorNotice): reason text plus the
+ * one-click global-off button share one baseline, wrapping when narrow. */
+.fenceError {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
 }
@@ -2546,6 +1600,19 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xs-13);
 }
 
+/* The DSH CodeBlock banner is position:sticky (top:0, z-index:6) so a block
+   keeps its copy action reachable inside a per-message scroll container —
+   the right call in chat, where each block owns its scroll box. In the file
+   preview every fence shares one `.editorMd` scroll container, so that sticky
+   banner pins to the top of the viewport until the *whole block* scrolls
+   past, which reads as a floating header over the document. Neutralize the
+   stickiness here (bannerWrap is the first element child of `.md-code-block`;
+   mermaid mounts are excluded since their own chrome replaces the banner). */
+.editorMd :global(.md-code-block:not([data-mermaid-processed])) > :global(div):first-child {
+  position: static;
+  z-index: auto;
+}
+
 /* ── Mermaid diagram block (markdown preview, mermaid lazy chunk) ────────
    Mirrors the md-code-block chrome the DSH CodeBlock renders, so a diagram
    reads as a peer of the surrounding fences: hairline border, layer-2
@@ -2812,47 +1879,11 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .terminal {
   flex: 1;
   min-height: 0;
-  position: relative; /* containing block for the block layer overlay */
   padding: 6px 4px 6px 8px;
 }
 
 .terminal :global(.xterm) {
   height: 100%;
-}
-
-/* The block layer: absolutely fills the terminal host, pointer-transparent
-   (only the pill inside receives clicks). Dividers/highlight/pill positions
-   are computed per render from the xterm screen's live geometry. */
-.terminalBlockLayer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 5;
-}
-
-/* One hairline per CLI block boundary (at each block's echo row). */
-.terminalBlockDivider {
-  position: absolute;
-  height: 1px;
-  background: var(--dsw-alias-border-l1);
-  pointer-events: none;
-}
-
-/* The hovered block's span, tinted under the text (text stays readable). */
-.terminalBlockHover {
-  position: absolute;
-  background: var(--dsw-alias-interactive-bg-hover);
-  opacity: 0.35;
-  pointer-events: none;
-}
-
-/* The per-block "add to conversation" pill: the shared selectionPopup
-   chrome, anchored at the hovered row instead of a selection. */
-.terminalBlockPill {
-  position: absolute;
-  transform: none;
-  pointer-events: auto;
-  z-index: 6;
 }
 
 .terminalBanner {
@@ -2875,82 +1906,26 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   opacity: 0.85;
 }
 
-/* The terminal box's info bar (the Global Workspace's workbench): the box's
-   header strip above the xterm showing the project dir + running CLI, fed
-   live by the host's title frames. Styled after the file tree's DIRECTORY
-   ROW (the explorerRow/explorerDir recipe — folder icon + strong name) so
-   the box reads as "the project dir it runs in"; the running CLI trails as
-   a dimmed mono segment. */
-.terminalInfoBar {
+/* The "Agent 正在等待 {needle}" wait banner: a warn-toned strip above the
+   terminal surface while the model blocks in terminal_wait_for; the needle
+   ellipsizes inline and the full text rides the title tooltip. */
+.terminalWaitBanner {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
-  box-sizing: border-box;
-  width: 100%;
-  height: 34px;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-2);
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-  white-space: nowrap;
-  overflow: hidden;
+  gap: 8px;
+  padding: 3px 10px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-state-warn-label);
+  background: var(--dsw-alias-state-warn-tertiary);
 }
 
-.terminalInfoBar:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-/* The project dir segment: the tree's dir-row anatomy — folder icon +
-   strong name (explorerDir). Capped so a long path never squeezes the CLI
-   segment out. */
-.terminalInfoCwd {
-  flex: none;
-  max-width: 55%;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow: hidden;
-  font: var(--dsw-font-s-strong-14);
-  color: var(--dsw-alias-label-primary);
-}
-
-.terminalInfoCwd svg {
-  flex: none;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.terminalInfoCwdName {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* The running CLI segment: dimmed mono, taking the remaining width. */
-.terminalInfoCli {
+.terminalWaitNeedle {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  overflow: hidden;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.terminalInfoCli svg {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.terminalInfoCliText {
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .boundaryError {
@@ -3062,183 +2037,27 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* ── Git ───────────────────────────────────────────────────────────────── */
-
-.git {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
+/* ── Native right-Sidebar tab-body host ──────────────────────────────────
+   DSH's native tab body host (`.paneBody` in dsh-client-ui-dockkit) is a
+   BLOCK scroller with a definite height, not a flex container — the host's
+   own tab bodies (TextPreview, FilesBody) declare `height: 100%` on their
+   root for exactly this reason. Our tab roots declare `flex: 1; min-height:
+   0`, which collapses to content height in that block host (the side-chat
+   composer would float mid-pane). A column flex host of `height: 100%`
+   restores the `flex: 1` semantics our tab roots rely on, and gives
+   third-party descriptors' components the same box inside the native pane.
+   The wrapper div carries `data-dsh-native-tab-host` so the e2e lane can
+   assert the fill (mirroring `data-dsh-better-sidebar`). */
+.nativeTabHost {
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  /* Tab pages never scroll horizontally: content wraps or truncates to the
-     panel width instead of panning sideways. */
-  overflow-x: hidden;
-  /* The watched-branch (重点关注) accent: the dot ring, the bubbles' star
-     and counts, and the header watch button's lit state. Panel-rooted so
-     every git surface can reference it. */
-  --gg-watched: var(--dsw-alias-state-warn-primary);
+  height: 100%;
+  min-height: 0;
 }
 
-.gitHeader {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 8px 0 12px;
-}
-
-.gitWorktreeRow {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 0 12px;
-}
-
-.gitWorktreeLabel {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xxxs-11);
-}
-
-.gitBranchSelect {
-  flex: 1;
-  min-width: 0;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxs-12);
-}
-
-/* The current branch's upstream relationship pill (e.g. `origin/main ↑1 ↓2`):
-   compact, truncating, and never pushing the branch select off the header. */
-.gitUpstream {
-  flex: none;
-  max-width: 168px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xxs-12);
-  cursor: default;
-}
-
-.gitSection {
-  border-top: 1px solid var(--dsw-alias-border-l1);
-}
-
-.gitSectionHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px 4px;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-label-tertiary);
-  text-transform: uppercase;
-}
-
-.gitLink {
-  border: none;
-  background: transparent;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-brand-primary);
-  cursor: pointer;
-  padding: 0;
-}
-
-.gitLink:hover:not(:disabled) {
-  text-decoration: underline;
-}
-
-.gitLink:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.gitRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  margin: 0 6px;
-  padding: 0 8px;
-  border-radius: 8px;
-  animation: dsh-row-in 150ms var(--ds-ease-in-out);
-}
-
-.gitRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitRowSelected {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-.gitRowMain {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  background: transparent;
-  padding: 3px 0;
-  cursor: pointer;
-  text-align: left;
-}
-
-.gitBadge {
-  flex: none;
-  width: 20px;
-  height: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  font: var(--dsw-font-xxxs-strong-11);
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.gitName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-}
-
-/* The changed-file TREE layout (grouped by directory): the director rows'
-   chevron rotates when the directory is expanded, the subtree file count
-   sits at the row's right edge (its name flexes, so the count never wraps). */
-.gitTreeChevron {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  color: var(--dsw-alias-label-tertiary);
-  transition: transform 150ms var(--ds-ease-in-out);
-}
-
-.gitTreeChevronOpen {
-  transform: rotate(90deg);
-}
-
-.gitTreeDirCount {
-  flex: none;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-}
+/* ── Diff tab (generic states + shell; the changes tab owns the rest in
+   changes.module.css, and the diff rows themselves live in
+   diff/diff.module.css) ────────────────────────────────────────────────── */
 
 .gitEmpty {
   padding: 4px 12px 8px;
@@ -3260,13 +2079,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: pre-wrap;
 }
 
-.gitDiff {
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  padding: 8px;
-}
-
-/* The diff tab (a change opened from the git panel, like VSCode's diff
-   editor): header + scrollable diff body, no horizontal panning. */
+/* The diff tab (a change expanded from the changes tab's preview, like
+   VSCode's diff editor): header + scrollable diff body, no horizontal
+   panning; rows render through the shared diff module. */
 .gitDiffTab {
   flex: 1;
   min-height: 0;
@@ -3297,772 +2112,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
-/* One changed file's section: path header, hunk headers, aligned lines. */
-.gitDiffFile {
-  width: 100%;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 8px 2px 2px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.gitDiffFile:disabled {
-  cursor: default;
-}
-
-.gitDiffFile:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitDiffFileChevron {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  transform: rotate(0deg);
-}
-
-.gitDiffFileChevronExpanded {
-  transform: rotate(90deg);
-}
-
-.gitDiffFilePath {
-  font: var(--dsw-font-xxs-strong-12);
-  color: var(--dsw-alias-label-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gitDiffFileOld {
-  flex: none;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40%;
-}
-
-.gitDiffFileTag {
-  flex: none;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.gitDiffHunk {
-  display: flex;
-  gap: 8px;
-  padding: 3px 2px;
-  font: var(--dsw-font-markdown-code-block-small);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitDiffHunkHeader {
-  flex: none;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.gitDiffHunkSection {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* One aligned diff line: old gutter / new gutter / code. Lines WRAP instead
    of scrolling horizontally (the tab-page rule: fill the width adaptively),
    with the long-token fallback breaking anywhere a space never comes. */
-.gitDiffLine {
-  display: flex;
-  align-items: stretch;
-  font: var(--dsw-font-markdown-code-block-small);
-  line-height: 20px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
 
-.gitDiffNum {
-  flex: none;
-  width: 36px;
-  padding-right: 8px;
-  text-align: right;
-  color: var(--dsw-alias-label-tertiary);
-  user-select: none;
-}
-
-.gitDiffCode {
-  flex: 1;
-  min-width: 0;
-  overflow: visible;
-}
-
-.gitDiffCtx {
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitDiffDel {
-  color: var(--dsw-alias-state-error-primary);
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
-}
-
-.gitDiffAdd {
-  color: var(--dsw-alias-state-success-primary);
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
-}
-
-.gitDiffMeta {
-  padding-left: 2px;
-}
-
-.gitDiffMetaText {
-  font: var(--dsw-font-xxxs-11);
-  font-style: italic;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitDiffExpand {
-  display: block;
-  width: 100%;
-  margin: 4px 0;
-  border: none;
-  background: transparent;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-brand-primary);
-  cursor: pointer;
-  text-align: center;
-}
-
-.gitDiffExpand:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitConfirmDesc {
-  margin: 0;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-  white-space: pre-wrap;
-}
-
-/* The commit row: a wrapping multi-line message box (auto-grows from one line
-   up to the four-line cap below, then scrolls internally) plus two icon-only
-   action buttons — AI draft + commit — each with a hover tooltip. */
-.gitCommit {
-  display: flex;
-  gap: 6px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  align-items: flex-start;
-}
-
-.gitCommitActions {
-  flex: none;
-  display: flex;
-  gap: 2px;
-  /* 2px optical nudge: the 28px icon buttons sit beside a 32px single-line
-     box, so half the height difference centers them against the first line. */
-  margin-top: 2px;
-}
-
-.gitCommitInput {
-  flex: 1;
-  min-width: 0;
-  /* The commit message wraps freely (pre-wrap + break-word). The box grows
-     from one line (32px = 22px line-height + 8px vertical padding + 2px
-     border) up to four lines (98px), then scrolls internally instead of
-     growing further. GitView's auto-grow effect reads this max-height back,
-     so the cap stays single-sourced here. */
-  box-sizing: border-box;
-  min-height: 32px;
-  max-height: 98px;
-  resize: none;
-  overflow-y: auto;
-  padding: 4px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-s-14);
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-}
-
-.gitCommitInput:focus {
-  outline: none;
-  border-color: var(--dsw-alias-brand-primary);
-}
-
-.gitCommitInput:disabled {
-  opacity: 0.6;
-}
-
-.gitCommitInput::placeholder {
-  color: var(--dsw-alias-label-dimmed);
-}
-
-/* The commit action: an icon-only primary circle — the same 28px shape as
-   .iconButton, filled so the primary action stays visually distinct. */
-.gitCommitButton {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-inverted);
-  cursor: pointer;
-}
-
-/* Sits later in the file than .iconButton:hover:not(:disabled), so the
-   primary fill wins for an element carrying both classes. */
-.gitCommitButton:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
-}
-
-.gitCommitButton:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-/* Git loading glyphs actually spin — the AI-draft / fetch / reveal spinners
-   are outline icons, and a frozen static outline reads as a bug rather than
-   as "working" (dsh-row-in has no counterpart for rotation). */
-@keyframes git-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.gitSpin {
-  animation: git-spin 900ms linear infinite;
-}
-
-/* The AI draft button while the agent is working: the spinner gets the brand
-   tint so the in-flight state reads at a glance (the idle iconButton is
-   secondary gray). */
-.gitDrafting {
-  color: var(--dsw-alias-brand-primary);
-}
-
-/* The Side card page's AI commit-draft settings section: stacked
-   rows of label + control, mirroring the popup row chrome (l2 hairline,
-   12px radius, layer-3 fill) used by the declarative settings rows. */
-.gitSettings {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: 100%;
-}
-
-.gitSettingsHint {
-  padding: 10px 12px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-layer-3);
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitSettingsRow {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.gitSettingsLabel {
-  font: var(--dsw-font-xxs-strong-12);
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitSettingsInput {
-  height: 28px;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxs-12);
-}
-
-/* Provider/model and commit-template choose boxes mirror DSH ModelSelect:
-   the trigger names the exact route, the elevated list groups models by
-   provider, and selection is a trailing check instead of a filled row. */
-.gitChooseRoot {
-  position: relative;
-  min-width: 0;
-  width: 100%;
-}
-
-.gitChooseTrigger {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  min-width: 0;
-  height: 34px;
-  padding: 0 8px 0 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  outline: none;
-  background: var(--dsw-alias-bg-layer-3);
-  color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 500;
-  text-align: left;
-  cursor: pointer;
-}
-
-.gitChooseTrigger:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitChooseTrigger:focus-visible {
-  box-shadow: 0 0 0 2px var(--dsw-alias-border-l3);
-}
-
-.gitChooseTrigger:disabled {
-  color: var(--dsw-alias-label-dimmed);
-  cursor: default;
-}
-
-.gitChooseValue {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gitChooseMeta,
-.gitChooseDot {
-  flex: 0 0 auto;
-  color: var(--dsw-alias-label-caption);
-}
-
-.gitChooseChevron {
-  flex: 0 0 auto;
-  margin-left: auto;
-  color: var(--dsw-alias-label-caption);
-  transition: transform 120ms ease;
-}
-
-.gitChooseChevronOpen {
-  transform: rotate(180deg);
-}
-
-.gitChooseMenu {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  width: min(max(320px, 100%), calc(100vw - 48px));
-  max-height: min(360px, calc(100vh - 96px));
-  overflow-y: auto;
-  padding: 4px;
-  border: 1px solid var(--dsw-alias-border-inverted);
-  border-radius: 12px;
-  background: var(--dsw-specific-menu);
-  box-shadow: var(--dsw-shadow-lv3);
-  color: var(--dsw-alias-label-primary);
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-}
-
-.gitChooseGroup + .gitChooseGroup {
-  margin-top: 4px;
-}
-
-.gitChooseGroupTitle {
-  position: sticky;
-  top: -4px;
-  z-index: 1;
-  padding: 5px 8px 3px;
-  background: var(--dsw-specific-menu);
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 500;
-}
-
-.gitChooseOption {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 38px;
-  padding: 6px 8px;
-  border: none;
-  border-radius: 10px;
-  outline: none;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.gitChooseOption:hover,
-.gitChooseOption:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitChooseSelected {
-  background: transparent;
-}
-
-.gitChooseOptionCopy {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.gitChooseOptionName {
-  overflow: hidden;
-  color: inherit;
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gitChooseOptionDesc {
-  overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gitChooseCheck {
-  display: grid;
-  place-items: center;
-  flex: 0 0 18px;
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitChooseEmpty {
-  padding: 10px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 13px;
-  line-height: 20px;
-}
-
-.gitProbeRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.gitProbeButton {
-  flex: 0 0 auto;
-  min-height: 28px;
-  padding: 3px 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xxs-strong-12);
-  cursor: pointer;
-}
-
-.gitProbeButton:hover:not(:disabled) {
-  border-color: var(--dsw-alias-label-dimmed);
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitProbeButton:disabled {
-  color: var(--dsw-alias-label-dimmed);
-  cursor: default;
-}
-
-.gitProbeResult {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font: var(--dsw-font-xxs-12);
-}
-
-.gitProbeSuccess {
-  color: var(--dsw-alias-state-success-primary);
-}
-
-.gitProbeError {
-  color: var(--dsw-alias-state-error-primary);
-}
-
-.gitSettingsTextarea {
-  min-height: 72px;
-  padding: 6px;
-  resize: vertical;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxs-12);
-}
-
-.gitSettingsDesc {
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-/* A history row: the commit-graph lane SVG on the left, body on the right
-   (line 1 = hash + subject, line 2 = ref badges + author/date). The lane
-   colors come from the `--gg-lane-N` custom properties below — defaults are
-   DSH semantic tokens, so every skin controls the palette (skin-compat rule:
-   no hardcoded colors). */
-.gitLogRow {
-  position: relative;
-  display: flex;
-  align-items: center;
-  min-height: 40px;
-  padding: 2px 12px 2px 6px;
-  cursor: pointer;
-  border-radius: 8px;
-  /* A 3px left accent slot for the local/remote marking; transparent on
-     unmarked rows so marked/unmarked rows keep identical geometry. */
-  border-left: 3px solid transparent;
-}
-
-.gitLogRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-/* Local/remote history-row marking (kind from git-graph.ts refKindOf): the
-   local/remote story lives on the ROW — a left accent border + a faint box
-   tint — not on the graph node/edges (tinted lanes drown in multi-branch
-   histories). Mirrors the ref-chip colors (gitLogRefLocal/Remote). */
-.gitLogRowLocal {
-  border-left-color: var(--dsw-alias-state-success-primary);
-  background: var(--dsw-alias-state-success-tertiary);
-}
-
-.gitLogRowRemote {
-  border-left-color: var(--dsw-alias-state-business-primary);
-  background: var(--dsw-alias-state-business-tertiary);
-}
-
-/* The commit-graph lane (see src/client/git-graph.ts for the geometry):
-   absolutely positioned so it NEVER takes part in the row's height — the
-   body alone decides it (rows grow when tag chips wrap). top/bottom stretch
-   the graph to the row's actual height; the svg inside uses
-   viewBox + preserveAspectRatio="none" so the nominal 40px geometry is
-   y-stretched to match (vertical lanes stay straight, x positions exact). */
-.gitLogGraph {
-  position: absolute;
-  left: 6px;
-  top: 0;
-  bottom: 0;
-  --gg-lane-0: var(--dsw-alias-brand-primary);
-  --gg-lane-1: var(--dsw-alias-state-success-primary);
-  --gg-lane-2: var(--dsw-alias-state-warn-primary);
-  --gg-lane-3: var(--dsw-alias-state-error-primary);
-  --gg-lane-4: var(--dsw-alias-state-business-primary);
-  --gg-lane-5: var(--dsw-alias-label-secondary);
-}
-
-.gitLogGraph svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-/* The commit dot: a CSS circle (top: 50%) so it stays a perfect circle and
-   vertically centered no matter how tall the row is (an SVG circle would
-   distort under the viewBox y-stretch). */
-.gitLogDot {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 10.4px;
-  height: 10.4px;
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-.gitLogBody {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.gitLogLine1 {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.gitLogHash {
-  flex: none;
-  font: var(--dsw-font-markdown-code-block-small);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitLogLine2 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.gitLogRef {
-  flex: none;
-  padding: 0 5px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-brand-primary);
-  white-space: nowrap;
-}
-
-/* Local vs remote branch chips: green = this checkout's own branches, blue =
-   remote-tracking refs (`origin/main`) — the split is derived from FULL ref
-   names (see GitView.refChips), so a local branch named `feature/foo` can
-   never be mistaken for a remote. Tags and odd refs keep the neutral base. */
-.gitLogRefLocal {
-  color: var(--dsw-alias-state-success-primary);
-  border-color: var(--dsw-alias-state-success-primary);
-}
-
-.gitLogRefRemote {
-  color: var(--dsw-alias-state-business-primary);
-  border-color: var(--dsw-alias-state-business-primary);
-}
-
-/* The upstream pill's remote ref name rides the same blue as remote chips. */
-.gitUpstreamRef {
-  color: var(--dsw-alias-state-business-primary);
-}
-
-.gitLogSubject {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitLogMeta {
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitLogMore {
-  display: block;
-  width: calc(100% - 24px);
-  margin: 4px 12px 8px;
-  padding: 6px 0;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: transparent;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-.gitLogMore:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-/* The watched-branch (重点关注) divergence bubbles: sticky inside the
-   scrolling panel — the TOP one (a watched branch AHEAD of HEAD, no row in
-   the graph) pins below the header while the history scrolls; the BOTTOM
-   one (a watched branch BEHIND HEAD whose tip row is below the loaded
-   page) pins above the panel's bottom edge, showing the gap and revealing
-   the tip on click. */
-.gitLogWatchBubble {
-  position: sticky;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 12px;
-  background: var(--dsw-alias-bg-base);
-}
-
-.gitLogWatchTop {
-  top: 0;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-.gitLogWatchBottom {
-  bottom: 0;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-}
-
-.gitLogWatchClickable {
-  cursor: pointer;
-}
-
-.gitLogWatchClickable:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitLogWatchRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font: var(--dsw-font-xxs-12);
-  color: var(--gg-watched);
-}
-
-.gitLogWatchBranch {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitLogWatchCount {
-  flex: none;
-  font-variant-numeric: tabular-nums;
-}
-
-/* The star next to a watched tip row's subject (the dot ring is in the
-   graph; this is the row-level echo). */
-.gitLogWatchRowMark {
-  flex: none;
-  color: var(--gg-watched);
-}
-
-/* The header watch button lights up while any branch is being watched. */
-.gitWatchActive {
-  color: var(--gg-watched);
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitLogMore:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+/* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
+   (badges live on the second line so they never crowd the subject). */
 
 /* ── Intercepted produced-files row ────────────────────────────────────── */
 
@@ -4074,43 +2129,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 4px 0;
 }
 
-/* Single-line mode (the row's layout toggle off): chips stay on one line;
-   overflow scrolls horizontally instead of wrapping. Children never shrink
-   so the scroll region is the row itself. */
-.producedRowNowrap {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
-.producedRowNowrap > * {
-  flex-shrink: 0;
-}
-
 .producedLabel {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
-}
-
-/* The row's layout toggle: auto-wrap / single-line horizontal scroll. A
-   quiet ghost button (icon-only); the two glyphs mirror the current mode. */
-.producedWrapToggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-}
-
-.producedWrapToggle:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
 }
 
 .producedChip {
@@ -4144,34 +2165,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-tertiary);
 }
 
-/* The row's primary action: the diff review of the produced files. Accent
-   treatment distinct from the open-file chips (brand text + accent border). */
-.producedReview {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-brand-primary);
-  font: var(--dsw-font-xxs-12);
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.producedReview:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-  border-color: var(--dsw-alias-brand-primary);
-}
-
-.producedReview span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ── Shared interaction rules ──────────────────────────────────────────── */
 
 /* Keyboard focus stays visible on every interactive control (the styling
@@ -4185,16 +2178,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .paneCard:focus-visible,
 .explorerRow:focus-visible,
 .explorerRef:focus-visible,
-.gitRowMain:focus-visible,
-.gitLink:focus-visible,
-.gitCommitButton:focus-visible,
-.gitLogRow:focus-visible,
-.gitLogMore:focus-visible,
-.gitDiffFile:focus-visible,
-.gitDiffExpand:focus-visible,
-.producedChip:focus-visible,
-.producedReview:focus-visible,
-.producedWrapToggle:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,
 .editorDownloadLink:focus-visible,
@@ -4206,18 +2189,13 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* Reduced motion: no slides, fades or color transitions. */
 @media (prefers-reduced-motion: reduce) {
-  .panel,
-  .panelHidden,
   .bottomPanel,
   .bottomPanelHidden,
-  .toggleCluster,
   .toggleButton,
   .tab,
   .tabBarPlus,
   .paneCard,
   .explorerRow,
-  .gitRow,
-  .gitSpin,
   .divider,
   .dividerRow::after,
   .dividerCol::after {
@@ -4229,308 +2207,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 /* ── Narrow (mobile) viewport ──────────────────────────────────────────── */
 
 /* Pairs with NARROW_MAX_WIDTH = 768 in src/client/breakpoints.ts: widths
-   strictly below 768px (i.e. max-width: 767px) switch the sidebar to the
-   mobile layout — one full-screen drawer (the bottom panel's tabs were
-   migrated into the right tree), one toggle button. The structural
-   switches (which panels render, the migration) are JS-driven via
-   useNarrowViewport; this block only adapts the pure style details. */
+   strictly below 768px (i.e. max-width: 767px) get the phone-width tab
+   rhythm; the bottom workbench keeps its own geometry (it spans the center
+   column at every width). */
 @media (max-width: 767px) {
-  /* The toggle cluster holds a single button on narrow viewports (the
-     bottom panel button is not rendered), so the open panel's tab strip
-     reserves 40px instead of the desktop 72px — the tabs and + menu still
-     yield space to the one remaining control. */
-  .panel:not(.panelHidden) .tabBar {
-    padding-right: 40px;
-  }
-
   /* Narrower tabs: a phone-width drawer fits more open tabs before the
      strip scrolls. */
   .tab {
     min-width: 48px;
     max-width: 128px;
   }
-}
-
-/* ── Official left sidebar footer action (the "Global info" entry injected
-   into `sidebar.footer.action`) ─────────────────────────────────────────────
-   Rendered inside the OFFICIAL ui-sidebar foot (outside [data-dsh-better-sidebar]),
-   so these classes must be self-contained and token-driven (skin-compatible).
-   Mirrors the official ui-settings-general settings trigger recipe so the
-   entry stacks seamlessly above Settings: wide = the 42px foot-row box
-   (r12, pad 0 10px 0 8px, label-primary, 14/22 type, hover = bg only);
-   rail = the same 36x36 circle box as the other rail controls. */
-
-.officialFooterAction {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: calc(100% + 4px);
-  height: 42px;
-  margin: 4px -2px;
-  padding: 0 10px 0 8px;
-  box-sizing: border-box;
-  border: none;
-  border-radius: 12px;
-  background: transparent;
-  cursor: pointer;
-  overflow: hidden;
-  color: var(--dsw-alias-label-primary);
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 22px;
-}
-
-.officialFooterAction:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.officialFooterActionLabel {
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.officialFooterRail {
-  width: 36px;
-  height: 36px;
-  margin: 8px 0 10px;
-  justify-content: center;
-  gap: 0;
-  padding: 0;
-  border-radius: 50%;
-}
-
-/* ── Full-page "Global info" surface (GlobalPage) ────────────────────────────
-   Rendered IN PLACE as the official `conversation` column (the chat box's
-   page area) via a dynamic priority -1 slot takeover — NOT a fixed overlay.
-   Fills the column box the layout gives it. TABBY-STYLE chrome so the page
-   reads like a global terminal, not a settings card:
-   - slim toolbar: title + one-line desc (no hero header, no window count —
-     the tab strip already shows every window — and no close button: Esc /
-     opening a session dismiss the page);
-   - the TAB STRIP below it: every global window is a tab (attached windows
-     lead; PARKED windows dim at the tail behind a divider); the trailing +
-     mints a fresh global terminal;
-   - the WORKBENCH fills everything below the strip (no fixed-height bottom
-     box — the terminal IS the page), its per-pane tab strips suppressed:
-     the page's own strip drives the tabs.
-   All visuals ride the alias tokens (skins follow). */
-
-.globalPage {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  min-width: 0;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-}
-
-/* The slim one-row toolbar: the page's only header chrome. */
-.globalToolbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-.globalToolbarText {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-
-.globalToolbarTitle {
-  flex: none;
-  font: var(--dsw-font-s-strong-14);
-  color: var(--dsw-alias-label-primary);
-}
-
-.globalToolbarDesc {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 12px/18px var(--dsw-font-family);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-/* The TAB STRIP: tabby's tab row. Tabs reuse the pane TabBar's .tab recipe
-   (capped width raised for the wide page); a divider splits the parked
-   group; the trailing + mints a new global terminal. */
-.globalStrip {
-  flex: none;
-  display: flex;
-  align-items: stretch;
-  height: 34px;
-  min-width: 0;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-2);
-}
-
-.globalStripTabs {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: stretch;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.globalStripTabs::-webkit-scrollbar {
-  display: none;
-}
-
-/* The page's strip has room: roomier tabs than the narrow pane bars. */
-.globalStripTabs .tab {
-  max-width: 240px;
-}
-
-/* The tab's main label button (click = activate / attach): transparent over
-   the .tab chrome, stretches over the label so the whole tab is clickable
-   while the trailing ✕ stays a separate control. */
-.globalStripTabMain {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-}
-
-.globalStripTabIcon {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: inherit;
-}
-
-/* A PARKED window (defined in the global blob, not attached into the
-   workbench): dimmed so the strip reads "attached first, parked at the
-   tail"; clicking brings it into the workbench. */
-.globalStripParked {
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.globalStripParked:hover {
-  color: var(--dsw-alias-label-secondary);
-}
-
-.globalStripParked .globalStripTabIcon {
-  color: var(--dsw-alias-label-tertiary);
-}
-
-/* The WORKBENCH area: everything below the strip. The workbench keeps every
-   attached terminal mounted (tab switches never drop a pty connection). */
-.globalPageMain {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  display: flex;
-}
-
-/* The hero fills the main area and centers its column. */
-.globalPageMain > .globalEmpty {
-  flex: 1;
-  justify-content: center;
-}
-
-/* The hero's primary action (the "new terminal" CTA). */
-.globalEmptyAction {
-  margin-top: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 16px;
-  height: 30px;
-  border: none;
-  border-radius: 8px;
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-inverted);
-  font: var(--dsw-font-xs-strong-12);
-  cursor: pointer;
-  transition: background 0.12s ease;
-}
-
-.globalEmptyAction:hover {
-  background: var(--dsw-alias-button-primary-hover);
-}
-
-.globalEmptyAction:focus-visible {
-  outline: 2px solid var(--dsw-alias-border-l4);
-  outline-offset: 2px;
-}
-
-/* Non-terminal tabs in the page's workbench (should not occur — only
-   terminal windows attach globally) fall back to a plain label. */
-.globalPageTabFallback {
-  padding: 16px;
-  color: var(--dsw-alias-label-tertiary);
-  font: 13px/20px var(--dsw-font-family);
-}
-
-/* ── Global info content: the settings "icon card" recipe (SideCardSection
-   sync) ─────────────────────────────────────────────────────────────────────
-   Mirrors the DSH settings inventory cards so the global TAB (the compact
-   panel face — GlobalView) reads consistently with the app's settings UI:
-   responsive auto-fill grid, small cards (icon chip + title + badge), lit
-   "on" state like an enabled settings card. (The FULL PAGE does not use the
-   grid — it shows the tabby-style strip + workbench; see GlobalPage.) */
-
-.globalGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 10px;
-}
-
-.globalCard {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  border-radius: 12px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  background: transparent;
-  font: inherit;
-  color: inherit;
-  transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
-}
-
-/* A shared window is LIVE — lit like an enabled settings card. */
-.globalCardOn {
-  border-color: var(--dsw-alias-button-primary-fill);
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-/* Hover: a gentle lift so the card reads as actionable (token-driven — no
-   hardcoded colors; the shadow stays inside the card's own surface). */
-.globalCard:hover {
-  transform: translateY(-1px);
-  border-color: var(--dsw-alias-border-l4);
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.globalCardMain {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  padding: 12px;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  font: inherit;
-  color: inherit;
 }
 
 /* The file tree "open with" menu rows: the label area is a BLOCK-level flex
@@ -4562,15 +2248,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 /* The pushpin toggle on an "open with" submenu row: brand ink once the
-   target is pinned to the menu's top level. */
+   target is pinned to the menu's top level. Sized for the compact menu's
+   26px rows (16px box, 12px glyph) — proportionate without overflowing. */
 .openWithPin {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
 }
@@ -4611,16 +2298,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* The zero-height sticky bar: occupies no layout, keeps the button visible
    while the preview scrolls, and lets pointer events pass through the bar
-   itself (only the interactive children re-enable them). */
+   itself (only the interactive children re-enable them). The bar's stacking
+   context also frames the outline panel, so its z-index must clear the DSH
+   CodeBlock banner (z-index:6) or the popover paints beneath a sticky fence
+   header. 7 sits just above that banner and below the portalled selection
+   popup (60) / mermaid modal (1000). */
 .tocBar {
   position: sticky;
   top: 0;
-  /* Above the DSH CodeBlock banner: the host's CodeBlock.module.css gives
-     .bannerWrap `position: sticky; top: 0; z-index: 6`, so a code fence at
-     the top of the scrollport pins its opaque header right under the TOC
-     button and would otherwise paint over it. The TOC chrome is the
-     topmost layer inside the preview scrollport. */
-  z-index: 8;
+  z-index: 7;
   display: flex;
   justify-content: flex-end;
   height: 0;
@@ -4644,10 +2330,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .tocButton:hover {
-  /* Border-based hover, not a fill: the button floats over the DSH code
-     banner's copy button, and the translucent interactive-bg-hover fill
-     let the copy button show through. */
-  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -4683,191 +2366,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xxs-12);
   text-align: left;
   cursor: pointer;
-}
-
-.globalCardMain:focus-visible {
-  outline: 2px solid var(--dsw-alias-border-l4);
-  outline-offset: 2px;
-}
-
-.globalCardTop {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.globalCardIconChip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  border: 1px solid var(--dsw-alias-button-primary-fill);
-  background: var(--dsw-alias-interactive-bg-active);
-  color: var(--dsw-alias-brand-primary);
-}
-
-.globalCardTitle {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: var(--dsw-font-xs-strong-12);
-  color: var(--dsw-alias-label-primary);
-}
-
-.globalCardCheck {
-  flex: none;
-  color: var(--dsw-alias-button-primary-fill);
-}
-
-/* The card's ✕ (unbind the window from the whole instance): a small
-   ghost button pinned to the card's top-right corner, revealed on hover
-   (always visible on coarse pointers) so the card face stays clean. */
-.globalCardClose {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
-}
-
-.globalCard:hover .globalCardClose,
-.globalCardClose:focus-visible {
-  opacity: 1;
-}
-
-.globalCardClose:hover {
-  background: var(--dsw-alias-interactive-bg-active);
-  color: var(--dsw-alias-label-primary);
-}
-
-.globalCardClose:focus-visible {
-  outline: 2px solid var(--dsw-alias-border-l4);
-  outline-offset: 2px;
-}
-
-@media (hover: none) {
-  .globalCardClose {
-    opacity: 1;
-  }
-}
-
-.globalCardBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  align-self: flex-start;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-layer-2);
-}
-
-/* The live dot: the window is parked/running in the Global Workspace. */
-.globalCardBadge::before {
-  content: '';
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--dsw-alias-button-primary-fill);
-}
-
-/* Empty state: centered column — icon in a soft chip, title, hint. */
-.globalEmpty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 32px 12px;
-  text-align: center;
-}
-
-.globalEmptyIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.globalEmptyTitle {
-  font: var(--dsw-font-s-strong-14);
-  color: var(--dsw-alias-label-primary);
-}
-
-.globalEmptyHint {
-  max-width: 360px;
-  font: 13px/20px var(--dsw-font-family);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-/* The global info TAB body: the card grid plus an "expand to full page"
-   link (the tab is narrower, so the grid stays but the page holds more). */
-.globalTab {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.globalTab .globalGrid {
-  flex: 1;
-  align-content: start;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 10px 10px 0;
-}
-
-.globalTab .globalEmpty {
-  padding: 20px 10px;
-}
-
-.globalTab > .gitLink {
-  flex: none;
-  align-self: flex-start;
-  margin: 4px 12px 10px;
-}
-
-/* The tab's action row: the "new terminal" quick-add and the "expand to
-   full page" link side by side at the bottom. */
-.globalTabActions {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px 10px;
-}
-
-.globalTabActions .gitLink {
-  margin: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 
 .tocItem:hover {

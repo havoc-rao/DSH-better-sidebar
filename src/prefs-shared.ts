@@ -11,10 +11,6 @@ export const SIDEBAR_PREFS_NS = 'dsh-better-sidebar'
 
 /** User-facing side card preferences. */
 export interface SidebarPrefs {
-  /** Whether a brand-new conversation opens the side card by default. */
-  openByDefault: boolean
-  /** Default panel width as a percent of the window width (20–60). */
-  defaultWidthPercent: number
   /**
    * Whether the sidebar auto-activates the Tasks page when the current
    * conversation spawns a new subagent.
@@ -61,32 +57,6 @@ export interface SidebarPrefs {
    */
   bottomPanelAutoTerminal: boolean
   /**
-   * Whether chat-side file opens (tool-row path links, the produced-files
-   * row, prose file mentions — every path that funnels through the client
-   * runtime's `ctx.workspaces.openPath`) open in the sidebar editor instead
-   * of the Host OS's default application. On by default; the editor tab's
-   * own enable switch gates it too (both must be on for the takeover).
-   */
-  interceptOpenPath: boolean
-  /**
-   * Whether the editor / previewers / file tree may OPEN files outside the
-   * session workspace (absolute paths the host would otherwise refuse with
-   * 403 `forbidden`). READ-ONLY relaxation: fs.read / fs.tree / the media
-   * route / the HTML preview route skip the workspace containment check
-   * while it is on. Writes (fs.write, uploads) stay confined to the
-   * workspace REGARDLESS — this switch never lifts the write fence. Off by
-   * default so the file API keeps its session-workspace boundary unless
-   * explicitly opened.
-   */
-  allowOpenOutsideWorkspace: boolean
-  /**
-   * Whether the intercepted produced-files row WRAPS its chips onto multiple
-   * lines (on, the default — the original behavior). Off renders the row as
-   * a single line that scrolls horizontally when the chips overflow, with
-   * the row's inline toggle flipping between the two modes.
-   */
-  producedFilesWrap: boolean
-  /**
    * Whether the editor tab runs in merged mode: a path input replaces the
    * plain header and a toggleable file-tree panel (with a global name
    * search) docks at the tab's right edge. On by default; also makes brand
@@ -95,35 +65,6 @@ export interface SidebarPrefs {
    * Side card settings; off restores the pre-merge editor exactly.
    */
   editorExplorer: boolean
-  /**
-   * The workbench layout paradigm: `'docked'` (the default, the original
-   * behavior — the file tree docks inside each editor tab) or `'vscode'`
-   * (the VSCode-style paradigm: the file tree moves into an independent
-   * Side Bar column between the editor group and a new Activity Bar on the
-   * panel's right edge). The editor group keeps its tab strip and renders
-   * file content only in vscode mode (no docked tree); `editorExplorer` is
-   * ignored while vscode is active. Narrow viewports always render the
-   * docked drawer regardless of this value.
-   */
-  sidebarLayout: 'docked' | 'vscode'
-  /**
-   * Which side of the panel the vscode layout's Side Bar (the independent
-   * file-tree column) sits on: `'right'` (the default — editor | side bar |
-   * activity bar, the editor stays by the chat) or `'left'` (side bar |
-   * editor | activity bar, the file tree hugs the panel's left edge).
-   * Ignored outside `sidebarLayout: 'vscode'`.
-   */
-  sideBarSide: 'left' | 'right'
-  /**
-   * The ACTIVE file-icon theme id (v0.16.0+): `''` (the default) renders
-   * the built-in outline icons; a non-empty value must name a registered
-   * icon theme (a plugin's `registerIconTheme` call). An unknown or
-   * uninstalled id silently falls back to the built-in icons — matching
-   * VSCode's "theme missing → default theme" behavior — the stored value
-   * is kept so reinstalling the theme restores the choice. The picker row
-   * lives under the editor card's gear (`fileIconTheme` select).
-   */
-  fileIconTheme: string
   /**
    * Whether the sidebar's filesystem routes enforce the workspace fence:
    * every client-supplied path must resolve (through symlinks) inside the
@@ -138,13 +79,6 @@ export interface SidebarPrefs {
    * one-click global off + retry.
    */
   workspaceFence: boolean
-  /**
-   * Position compatibility mode: reserves space at the top for the native
-   * Windows title bar (drawn at the window's top-right corner over the web
-   * content in frameless/hidden-title-bar windows). When on, the toggle
-   * cluster drops below the strip and the right panel's content starts
-   * below it. Off by default — the sidebar layout is untouched.
-   */
   /**
    * The shell the UI and agent terminals spawn (absolute path or bare
    * executable name). Empty (default) keeps the legacy resolution order:
@@ -191,7 +125,6 @@ export interface SidebarPrefs {
    * compatibility mode flag. The UI writes `titleBarScheme` instead; a
    * stored `true` without a scheme migrates to the `custom` scheme (with
    * `titleBarStripPx` preserved).
-
    */
   titleBarCompat: boolean
   /**
@@ -290,12 +223,6 @@ export interface SidebarPrefs {
   pluginSettings: Record<string, Record<string, unknown>>
 }
 
-/** Clamp one default-width percent into the contract range (shared by
- *  schema and client reads). */
-export function clampWidthPercent(value: number): number {
-  return Math.min(WIDTH_PERCENT_MAX, Math.max(WIDTH_PERCENT_MIN, Math.round(value)))
-}
-
 /** Range contract of {@link SidebarPrefs.terminalFontSize}. */
 export const TERMINAL_FONT_SIZE_MIN = 9
 export const TERMINAL_FONT_SIZE_MAX = 32
@@ -306,26 +233,12 @@ export const TITLE_BAR_STRIP_MIN = 0
 export const TITLE_BAR_STRIP_MAX = 120
 export const TITLE_BAR_STRIP_DEFAULT = 40
 
-/** Range contract of the vscode Side Bar width (the independent file-tree
- *  column shown in `sidebarLayout: 'vscode'`). Mirrors the docked tree's
- *  bounds so a user's привычный width carries over. */
-export const SIDEBAR_BAR_WIDTH_MIN = 160
-export const SIDEBAR_BAR_WIDTH_MAX = 480
-export const SIDEBAR_BAR_WIDTH_DEFAULT = 240
-
 /** The title-bar / shell compatibility schemes (see {@link SidebarPrefs.titleBarScheme}). */
 export const TITLE_BAR_SCHEMES = ['auto', 'web', 'preset', 'custom'] as const
 export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 
-/** Range contract of {@link SidebarPrefs.defaultWidthPercent}. */
-export const WIDTH_PERCENT_MIN = 20
-export const WIDTH_PERCENT_MAX = 60
-export const WIDTH_PERCENT_DEFAULT = 35
-
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
-  openByDefault: false,
-  defaultWidthPercent: WIDTH_PERCENT_DEFAULT,
   autoOpenSubagent: true,
   autoOpenJobs: true,
   agentTerminalTools: false,
@@ -333,20 +246,13 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   bottomPanelAutoTerminal: true,
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
-  interceptOpenPath: true,
-  allowOpenOutsideWorkspace: false,
-  producedFilesWrap: true,
   editorExplorer: false,
-  sidebarLayout: 'docked',
-  sideBarSide: 'right',
-  fileIconTheme: '',
   workspaceFence: true,
   terminalShell: '',
   terminalShellArgs: '',
   titleBarScheme: 'auto',
   titleBarPresetId: '',
   customCss: '',
-
   titleBarCompat: false,
   titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,
   htmlViewerNoSandbox: false,
@@ -369,10 +275,4 @@ export function clampTerminalFontSize(value: number): number {
 /** Clamp one title-bar strip height into the contract range (shared by schema and client reads). */
 export function clampTitleBarStrip(value: number): number {
   return Math.min(TITLE_BAR_STRIP_MAX, Math.max(TITLE_BAR_STRIP_MIN, Math.round(value)))
-}
-
-/** Clamp one vscode Side Bar width into the contract range (shared by state
- *  and the drag-resize handle). */
-export function clampSidebarBarWidth(value: number): number {
-  return Math.min(SIDEBAR_BAR_WIDTH_MAX, Math.max(SIDEBAR_BAR_WIDTH_MIN, Math.round(value)))
 }

@@ -12,7 +12,6 @@
  */
 import type { SidebarSessionList, SidebarSessionSummary } from '../context-types.ts'
 import { SIDE_LABEL_PREFIX } from '../sidechat-core.ts'
-import { GIT_COMMIT_SESSION_PREFIX } from '../agents/commit-draft-shared.ts'
 
 /**
  * Side Chat threads ride the subagent origin (main-list hiding + the RPC
@@ -22,15 +21,6 @@ import { GIT_COMMIT_SESSION_PREFIX } from '../agents/commit-draft-shared.ts'
  */
 export function isSideThreadSummary(summary: SidebarSessionSummary): boolean {
   return summary.origin === 'subagent' && summary.displayTitle.startsWith(SIDE_LABEL_PREFIX)
-}
-
-/** Hidden one-shot helper sessions (e.g. the Git commit-draft agent): they
- *  ride the subagent origin but are NOT user-visible topology, so every
- *  count/trigger here excludes them by their durable id prefix — without
- *  this the commit-draft helper reads as a genuine new subagent and trips
- *  the Subagent (任务管理) auto-open. */
-export function isHiddenHelperSummary(summary: SidebarSessionSummary): boolean {
-  return summary.id.startsWith(GIT_COMMIT_SESSION_PREFIX)
 }
 
 /**
@@ -95,7 +85,7 @@ export function countSubagentDescendants(
 ): SubagentDescendantTotals {
   const totals: SubagentDescendantTotals = { count: 0, runningCount: 0 }
   for (const descendant of Object.values(byId)) {
-    if (descendant.origin !== 'subagent' || isSideThreadSummary(descendant) || isHiddenHelperSummary(descendant)) continue
+    if (descendant.origin !== 'subagent' || isSideThreadSummary(descendant)) continue
     for (const node of subagentOriginChain(byId, descendant)) {
       if (node.parentId === sessionId) {
         totals.count += 1
