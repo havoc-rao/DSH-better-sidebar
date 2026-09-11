@@ -250,6 +250,8 @@ export const it: Record<string, string> = {
   settingsToolsDesc: 'Se attivato, il modello può creare e gestire terminali della barra laterale attraverso gli 8 strumenti terminal_* (disattivato per impostazione predefinita)',
   settingsFenceTitle: 'Controllo dei percorsi del workspace',
   settingsFenceDesc: 'Attivo, le funzioni file della barra laterale raggiungono solo i percorsi nel workspace di sessione (predefinito); disattivo, ogni file dell\'host è raggiungibile — gli script della pagina ottengono la stessa portata nel frattempo',
+  allowOpenOutside: 'Consenti apertura di file fuori dallo spazio di lavoro',
+  allowOpenOutsideDesc: 'Se attivo, editor, anteprime e albero file possono aprire percorsi fuori dallo spazio di lavoro della sessione (solo lettura e navigazione); salvataggio e caricamento restano confinati allo spazio di lavoro. Disattivato per impostazione predefinita — mantiene il confine dell’API file',
   fenceErrorReason: 'Questo percorso è fuori dal workspace di sessione ed è stato bloccato dal controllo',
   fenceDisableAction: 'Disattiva il controllo del workspace',
   settingsBottomTerminalTitle: 'Apri automaticamente un terminale alla prima espansione del pannello inferiore',

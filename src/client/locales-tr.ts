@@ -259,6 +259,8 @@ export const tr: Record<string, string> = {
   settingsToolsDesc: 'Etkinleştirildiğinde model, 8 terminal_* aracı üzerinden kenar çubuğu terminalleri oluşturup kullanabilir (varsayılan kapalı)',
   settingsFenceTitle: 'Çalışma alanı yol denetimi',
   settingsFenceDesc: 'Açıkken kenar çubuğunun dosya işlevleri yalnızca oturum çalışma alanındaki yollara erişir (varsayılan); kapatıldığında ana makinedeki her dosyaya erişilebilir — o süre boyunca sayfadaki betikler de aynı erişimi kazanır',
+  allowOpenOutside: 'Çalışma alanı dışındaki dosyaları açmaya izin ver',
+  allowOpenOutsideDesc: 'Açıkken düzenleyici, önizlemeler ve dosya ağacı oturumun çalışma alanı dışındaki yolları da açabilir (yalnızca okuma ve gezme); kaydetme ve yükleme çalışma alanıyla sınırlı kalır. Varsayılan kapalı — dosya API\'sinin çalışma alanı sınırı korunur',
   fenceErrorReason: 'Bu yol oturum çalışma alanının dışında ve denetim tarafından engellendi',
   fenceDisableAction: 'Çalışma alanı denetimini kapat',
   settingsBottomTerminalTitle: 'Alt panelin ilk genişletilmesinde otomatik terminal aç',

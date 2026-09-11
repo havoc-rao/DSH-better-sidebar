@@ -257,6 +257,8 @@ export const id: Record<string, string> = {
   settingsToolsDesc: 'Saat diaktifkan, model dapat membuat dan mengendalikan terminal sidebar melalui 8 alat terminal_* (nonaktif secara default)',
   settingsFenceTitle: 'Pemeriksaan path workspace',
   settingsFenceDesc: 'Saat aktif, fitur berkas sidebar hanya menjangkau path di dalam workspace sesi (default); saat nonaktif, berkas di mana pun di host dapat diakses — skrip halaman memperoleh jangkauan yang sama selama itu',
+  allowOpenOutside: 'Izinkan membuka berkas di luar workspace',
+  allowOpenOutsideDesc: 'Saat aktif, editor, pratinjau, dan pohon berkas dapat membuka jalur di luar workspace sesi (hanya baca & telusuri); menyimpan dan mengunggah tetap terbatas di dalam workspace. Nonaktif secara default — menjaga batas workspace API berkas',
   fenceErrorReason: 'Path ini berada di luar workspace sesi dan diblokir oleh pemeriksaan',
   fenceDisableAction: 'Matikan pemeriksaan workspace',
   settingsBottomTerminalTitle: 'Buka terminal otomatis saat panel bawah pertama kali dibentangkan',

@@ -124,6 +124,17 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           key: 'workspaceFence',
           title: () => t('settingsFenceTitle'),
           desc: () => t('settingsFenceDesc'),
+        }, {
+          // Read-side workspace boundary opt-out. Off by default — the file
+          // API keeps its session-workspace fence. When on, the editor /
+          // previewers / file tree may open absolute paths outside the
+          // workspace (the host's READ routes skip containment); saving and
+          // uploading remain confined to the workspace no matter what —
+          // unlike the workspace fence above, this switch never lifts the
+          // write fence.
+          key: 'allowOpenOutsideWorkspace',
+          title: () => t('allowOpenOutside'),
+          desc: () => t('allowOpenOutsideDesc'),
         }],
         render: ({ pluginSettings, updatePluginSetting }) => (
           <OpenWithSettings pluginSettings={pluginSettings} updatePluginSetting={updatePluginSetting} />

@@ -257,6 +257,8 @@ export const nl: Record<string, string> = {
   settingsToolsDesc: 'Indien ingeschakeld kan het model zijbalk-terminals aanmaken en besturen via de 8 terminal_*-tools (standaard uit)',
   settingsFenceTitle: 'Workspace-padcontrole',
   settingsFenceDesc: 'Aan: de bestandsfuncties van de zijbalk bereiken alleen paden binnen de sessie-workspace (standaard); uit: elk bestand op de host is bereikbaar — paginascripts krijgen dat bereik zolang het uit staat',
+  allowOpenOutside: 'Toestaan bestanden buiten de werkruimte te openen',
+  allowOpenOutsideDesc: 'Wanneer ingeschakeld kunnen editor, voorbeelden en bestandsboom paden buiten de werkruimte van de sessie openen (alleen lezen en bladeren); opslaan en uploaden blijven beperkt tot de werkruimte. Standaard uit — de werkruimtegrens van de bestands-API blijft behouden',
   fenceErrorReason: 'Dit pad ligt buiten de sessie-workspace en is geblokkeerd door de controle',
   fenceDisableAction: 'Workspace-controle uitzetten',
   settingsBottomTerminalTitle: 'Automatisch een terminal openen bij de eerste uitklap van het onderpaneel',

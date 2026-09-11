@@ -259,6 +259,8 @@ export const ja: Record<string, string> = {
   settingsToolsDesc: 'オンにすると、モデルが terminal_create 等 8 個のツールでサイドバーターミナルを作成・操作可能（デフォルトオフ）',
   settingsFenceTitle: 'ワークスペースパスガード',
   settingsFenceDesc: 'オンの場合、サイドバーのファイル機能はセッションワークスペース内のパスのみアクセス可能（デフォルト）。オフにするとホスト上の任意のファイルにアクセスできるが、オフの間はページ内スクリプトも同じ権限を得る',
+  allowOpenOutside: 'ワークスペース外のファイルを開くことを許可',
+  allowOpenOutsideDesc: 'オンにすると、エディター・プレビュー・ファイルツリーでセッションのワークスペース外のパスも開けます（読み取り・閲覧のみ）。保存とアップロードは引き続きワークスペース内に限定されます。デフォルトはオフで、ファイル API のワークスペース境界を維持します',
   fenceErrorReason: 'このパスはセッションワークスペースの外にあり、ワークスペースガードによりブロックされました',
   fenceDisableAction: 'ワークスペースガードをオフにする',
   settingsBottomTerminalTitle: '下パネル初回展開時に自動でターミナルを開く',

@@ -92,6 +92,9 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // The workspace fence (containment over the sidebar fs routes) defaults
     // ON — the safe default never depends on the stored document.
     expect(resolved.workspaceFence).toBe(true)
+    // The read-only outside-open switch defaults OFF — the file API keeps
+    // its session-workspace boundary unless explicitly opened.
+    expect(resolved.allowOpenOutsideWorkspace).toBe(false)
     // A stored overridden value resolves through (the range contract is
     // enforced by the settings service on write); the new pref keeps its
     // default when the stored document predates it.

@@ -245,6 +245,8 @@ export const de: Record<string, string> = {
   settingsToolsDesc: 'Wenn aktiviert, kann das Modell über die 8 terminal_*-Werkzeuge Terminale in der Seitenleiste erstellen und steuern (standardmäßig deaktiviert)',
   settingsFenceTitle: 'Workspace-Pfadkontrolle',
   settingsFenceDesc: 'Wenn aktiv, erreichen die Dateifunktionen der Seitenleiste nur Pfade innerhalb des Session-Workspaces (Standard); ausgeschaltet sind Dateien überall auf dem Host erreichbar — Skripte der Seite erhalten solange dieselbe Reichweite',
+  allowOpenOutside: 'Dateien außerhalb des Arbeitsbereichs öffnen',
+  allowOpenOutsideDesc: 'Aktiviert öffnen Editor, Vorschau und Dateibaum auch Pfade außerhalb des Sitzungs-Arbeitsbereichs (nur Lesen & Durchsuchen); Speichern und Hochladen bleiben auf den Arbeitsbereich beschränkt. Standardmäßig aus — die Arbeitsbereichsgrenze der Datei-API bleibt erhalten',
   fenceErrorReason: 'Dieser Pfad liegt außerhalb des Session-Workspaces und wurde von der Workspace-Kontrolle blockiert',
   fenceDisableAction: 'Workspace-Kontrolle ausschalten',
   settingsBottomTerminalTitle: 'Beim ersten Ausklappen des unteren Panels automatisch ein Terminal öffnen',

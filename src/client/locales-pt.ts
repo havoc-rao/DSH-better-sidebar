@@ -242,6 +242,8 @@ export const pt: Record<string, string> = {
   settingsToolsDesc: 'Quando ativado, o modelo pode criar e operar terminais da barra lateral por meio das 8 ferramentas terminal_* (desativado por padrão)',
   settingsFenceTitle: 'Controle de caminhos do workspace',
   settingsFenceDesc: 'Ativado, os recursos de arquivos da barra lateral só alcançam caminhos dentro do workspace da sessão (padrão); desativado, arquivos de todo o host ficam acessíveis — scripts da página ganham o mesmo alcance enquanto isso',
+  allowOpenOutside: 'Permitir abrir arquivos fora do espaço de trabalho',
+  allowOpenOutsideDesc: 'Quando ativado, o editor, os visualizadores e a árvore de arquivos podem abrir caminhos fora do espaço de trabalho da sessão (somente leitura e navegação); salvar e enviar continuam restritos ao espaço de trabalho. Desativado por padrão — mantém o limite da API de arquivos',
   fenceErrorReason: 'Este caminho está fora do workspace da sessão e foi bloqueado pelo controle',
   fenceDisableAction: 'Desativar o controle do workspace',
   settingsBottomTerminalTitle: 'Abrir um terminal automaticamente na primeira expansão do painel inferior',

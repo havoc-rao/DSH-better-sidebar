@@ -138,7 +138,7 @@ describe('built-in tab registrations', () => {
   it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'workspaceFence'])
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'workspaceFence', 'allowOpenOutsideWorkspace'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.

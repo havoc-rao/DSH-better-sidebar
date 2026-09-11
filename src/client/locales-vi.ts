@@ -259,6 +259,8 @@ export const vi: Record<string, string> = {
   settingsToolsDesc: 'Khi bật, mô hình có thể tạo và điều khiển terminal thanh bên qua 8 công cụ terminal_* (mặc định tắt)',
   settingsFenceTitle: 'Kiểm tra đường dẫn workspace',
   settingsFenceDesc: 'Khi bật, các tính năng tệp của thanh bên chỉ truy cập đường dẫn trong workspace của phiên (mặc định); khi tắt, mọi tệp trên máy chủ đều có thể truy cập — script trong trang cũng có quyền tương ứng trong thời gian đó',
+  allowOpenOutside: 'Cho phép mở tệp ngoài không gian làm việc',
+  allowOpenOutsideDesc: 'Khi bật, trình soạn thảo, bản xem trước và cây tệp có thể mở đường dẫn ngoài không gian làm việc của phiên (chỉ đọc & duyệt); lưu và tải lên vẫn giới hạn trong không gian làm việc. Tắt theo mặc định — giữ ranh giới không gian làm việc của API tệp',
   fenceErrorReason: 'Đường dẫn này nằm ngoài workspace của phiên và đã bị chặn bởi kiểm tra',
   fenceDisableAction: 'Tắt kiểm tra workspace',
   settingsBottomTerminalTitle: 'Tự động mở terminal khi panel dưới mở rộng lần đầu',

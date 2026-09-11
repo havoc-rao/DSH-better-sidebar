@@ -274,6 +274,8 @@ export const zhHK: Record<string, string> = {
   settingsToolsDesc: '開啟後，模型可透過 terminal_create 等 8 個工具建立並操作側邊欄終端（預設關閉）',
   settingsFenceTitle: '工作區路徑檢測',
   settingsFenceDesc: '開啟後，側欄的檔案功能僅能存取工作階段工作區內的路徑（預設）；關閉後可存取主機上任意檔案——關閉期間頁面內指令碼也將獲得同等存取能力',
+  allowOpenOutside: '允許開啟工作區以外的檔案',
+  allowOpenOutsideDesc: '開啟後，編輯器 / 預覽 / 檔案樹可開啟工作區以外的路徑（僅讀取與瀏覽）；儲存與上傳仍限於工作區內。預設關閉，保持檔案 API 的工作區邊界',
   fenceErrorReason: '此路徑在工作階段工作區之外，已被工作區檢測攔截',
   fenceDisableAction: '關閉工作區檢測',
   settingsBottomTerminalTitle: '底部面板首次展開自動開終端',

@@ -261,6 +261,8 @@ export const pl: Record<string, string> = {
   settingsToolsDesc: 'Po włączeniu model może tworzyć i sterować terminalami panelu bocznego przez 8 narzędzi terminal_* (domyślnie wyłączone)',
   settingsFenceTitle: 'Kontrola ścieżek obszaru roboczego',
   settingsFenceDesc: 'Włączona: funkcje plików paska bocznego sięgają tylko ścieżek w obszarze roboczym sesji (domyślnie); wyłączona: dostępny jest dowolny plik hosta — skrypty strony zyskują ten sam zasięg przez ten czas',
+  allowOpenOutside: 'Zezwalaj na otwieranie plików poza obszarem roboczym',
+  allowOpenOutsideDesc: 'Po włączeniu edytor, podglądy i drzewo plików mogą otwierać ścieżki poza obszarem roboczym sesji (tylko odczyt i przeglądanie); zapisywanie i przesyłanie pozostają ograniczone do obszaru roboczego. Domyślnie wyłączone — granica obszaru roboczego API plików zostaje zachowana',
   fenceErrorReason: 'Ta ścieżka jest poza obszarem roboczym sesji i została zablokowana przez kontrolę',
   fenceDisableAction: 'Wyłącz kontrolę obszaru roboczego',
   settingsBottomTerminalTitle: 'Automatycznie otwieraj terminal przy pierwszym rozwinięciu panelu dolnego',

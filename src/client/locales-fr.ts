@@ -252,6 +252,8 @@ export const fr: Record<string, string> = {
   settingsToolsDesc: 'Une fois activé, le modèle peut créer et piloter des terminaux de la barre latérale via les 8 outils terminal_* (désactivé par défaut)',
   settingsFenceTitle: 'Contrôle des chemins de l\'espace de travail',
   settingsFenceDesc: 'Activé, les fonctions fichiers de la barre latérale n\'atteignent que les chemins dans l\'espace de travail de la session (par défaut) ; désactivé, les fichiers de tout l\'hôte deviennent accessibles — les scripts de la page obtiennent la même portée pendant ce temps',
+  allowOpenOutside: 'Autoriser l’ouverture de fichiers hors de l’espace de travail',
+  allowOpenOutsideDesc: 'Activé, l’éditeur, les aperçus et l’arborescence peuvent ouvrir des chemins hors de l’espace de travail de la session (lecture et navigation uniquement) ; l’enregistrement et l’envoi restent confinés à l’espace de travail. Désactivé par défaut — la frontière de l’API fichier est conservée',
   fenceErrorReason: 'Ce chemin est hors de l\'espace de travail de la session et a été bloqué par le contrôle',
   fenceDisableAction: 'Désactiver le contrôle de l\'espace de travail',
   settingsBottomTerminalTitle: 'Ouvrir automatiquement un terminal au premier déploiement du panneau inférieur',

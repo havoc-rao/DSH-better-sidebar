@@ -251,6 +251,8 @@ export const ko: Record<string, string> = {
   settingsToolsDesc: '켜면 모델이 terminal_create 등 8개 도구로 사이드바 터미널을 만들고 조작할 수 있습니다(기본 꺼짐)',
   settingsFenceTitle: '워크스페이스 경로 검사',
   settingsFenceDesc: '켜면 사이드바의 파일 기능이 세션 워크스페이스 내 경로만 접근합니다(기본값). 끄면 호스트의 모든 파일에 접근할 수 있으며, 꺼져 있는 동안 페이지 내 스크립트도 동일한 권한을 얻습니다',
+  allowOpenOutside: '작업 영역 밖의 파일 열기 허용',
+  allowOpenOutsideDesc: '켜면 편집기·미리 보기·파일 트리가 세션 작업 영역 밖의 경로도 열 수 있습니다(읽기·탐색만). 저장과 업로드는 계속 작업 영역 안으로 제한됩니다. 기본 꺼짐 — 파일 API 작업 영역 경계 유지',
   fenceErrorReason: '이 경로는 세션 워크스페이스 밖에 있어 검사에 의해 차단되었습니다',
   fenceDisableAction: '워크스페이스 검사 끄기',
   settingsBottomTerminalTitle: '하단 패널을 처음 펼칠 때 터미널 자동 열기',

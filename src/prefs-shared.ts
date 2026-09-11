@@ -80,6 +80,18 @@ export interface SidebarPrefs {
    */
   workspaceFence: boolean
   /**
+   * Whether the editor / previewers / file tree may OPEN files outside the
+   * session workspace (absolute paths the host would otherwise refuse with
+   * 403 `forbidden`). READ-ONLY relaxation: while it is on, the read routes
+   * (fs.tree / fs.read / the media route / the HTML preview route) skip the
+   * workspace containment check. Writes (fs.write, rename, remove, uploads)
+   * stay confined to the workspace REGARDLESS of this switch — unlike
+   * {@link workspaceFence}, it never lifts the write fence. Off by default
+   * so the file API keeps its session-workspace boundary unless explicitly
+   * opened.
+   */
+  allowOpenOutsideWorkspace: boolean
+  /**
    * The shell the UI and agent terminals spawn (absolute path or bare
    * executable name). Empty (default) keeps the legacy resolution order:
    * `cordis.patch.yml` `config.shell`, then `$SHELL` / login shell /
@@ -248,6 +260,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   editorExplorer: false,
   workspaceFence: true,
+  allowOpenOutsideWorkspace: false,
   terminalShell: '',
   terminalShellArgs: '',
   titleBarScheme: 'auto',

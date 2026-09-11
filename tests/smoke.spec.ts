@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -1000,6 +1000,7 @@ describe('side card settings routes', () => {
         terminalFontSize: 13,
         editorExplorer: false,
         workspaceFence: true,
+        allowOpenOutsideWorkspace: false,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarCompat: false,
@@ -1052,6 +1053,35 @@ describe('side card settings routes', () => {
       const write = await invoke(route, 'fs.write', { sessionId: 'fence', cwd: workspace, path: join(outside, 'written.txt'), content: 'ok' })
       expect(write).toMatchObject({ ok: true })
       expect(readFileSync(join(outside, 'written.txt'), 'utf8')).toBe('ok')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('opens outside-workspace READS only: allowOpenOutsideWorkspace never lifts the write fence', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-outside-read-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.txt'), 'global instructions')
+    try {
+      const route = mountWithSettings(createFakeSettings())
+      // Default (off): the outside read is refused as usual…
+      const refused = await invoke(route, 'fs.read', { sessionId: 'outside', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(refused).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      // …then the files card's read-only opt-in opens the READ routes…
+      const on = await invoke(route, 'settings.update', { patch: { allowOpenOutsideWorkspace: true } })
+      expect(on.ok).toBe(true)
+      const read = await invoke(route, 'fs.read', { sessionId: 'outside', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(read).toMatchObject({ ok: true, value: { kind: 'text', content: 'global instructions' } })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'outside', cwd: workspace, path: outside })
+      expect(tree).toMatchObject({ ok: true })
+      // …while the WRITE fence stays armed: the workspace fence is still on,
+      // so writing outside the workspace remains forbidden.
+      const write = await invoke(route, 'fs.write', { sessionId: 'outside', cwd: workspace, path: join(outside, 'written.txt'), content: 'nope' })
+      expect(write).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      expect(existsSync(join(outside, 'written.txt'))).toBe(false)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

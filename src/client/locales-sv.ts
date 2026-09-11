@@ -242,6 +242,8 @@ export const sv: Record<string, string> = {
   settingsToolsDesc: 'När aktiverat kan modellen skapa och styra sidopanelsterminaler via de 8 terminal_*-verktygen (av som standard)',
   settingsFenceTitle: 'Kontroll av workspace-sökvägar',
   settingsFenceDesc: 'På: sidopanelens filfunktioner når bara sökvägar i sessionens workspace (standard); av: vilken fil som helst på värden kan nås — sidans skript får samma räckvidd så länge',
+  allowOpenOutside: 'Tillåt att öppna filer utanför arbetsytan',
+  allowOpenOutsideDesc: 'När det är på kan redigeraren, förhandsvisningar och filtret öppna sökvägar utanför sessionens arbetsyta (endast läsning och bläddring); spara och ladda upp förblir begränsade till arbetsytan. Av som standard — fil-API:ets arbetsytegräns behålls',
   fenceErrorReason: 'Denna sökväg ligger utanför sessionens workspace och blockerades av kontrollen',
   fenceDisableAction: 'Stäng av workspace-kontrollen',
   settingsBottomTerminalTitle: 'Öppna automatiskt en terminal vid bottenpanelens första expandering',

@@ -40,6 +40,7 @@ describe('side card preferences', () => {
         terminalFontSize: 13,
         editorExplorer: false,
         workspaceFence: true,
+        allowOpenOutsideWorkspace: false,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarScheme: 'auto',
@@ -71,6 +72,7 @@ describe('side card preferences', () => {
         terminalFontSize: 13,
         editorExplorer: false,
         workspaceFence: true,
+        allowOpenOutsideWorkspace: false,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarScheme: 'auto',
@@ -102,6 +104,7 @@ describe('side card preferences', () => {
         terminalFontSize: 13,
         editorExplorer: false,
         workspaceFence: true,
+        allowOpenOutsideWorkspace: false,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarScheme: 'auto',
@@ -160,6 +163,15 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ workspaceFence: 0 }))).workspaceFence).toBe(true)
     // An explicit false survives (the one-click off in the fence error notice).
     expect((await loadPrefs(wire({ workspaceFence: false }))).workspaceFence).toBe(false)
+  })
+
+  it('defaults allowOpenOutsideWorkspace to false; only an explicit true opens the read boundary', async () => {
+    // Absent or malformed → off (outside reads stay refused).
+    expect((await loadPrefs(wire({}))).allowOpenOutsideWorkspace).toBe(false)
+    expect((await loadPrefs(wire({ allowOpenOutsideWorkspace: 'yes' }))).allowOpenOutsideWorkspace).toBe(false)
+    expect((await loadPrefs(wire({ allowOpenOutsideWorkspace: 1 }))).allowOpenOutsideWorkspace).toBe(false)
+    // An explicit true survives (the files card's read-only opt-in).
+    expect((await loadPrefs(wire({ allowOpenOutsideWorkspace: true }))).allowOpenOutsideWorkspace).toBe(true)
   })
 
   it('defaults the title-bar scheme to the conservative auto with no preset or custom CSS', async () => {
