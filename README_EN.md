@@ -12,7 +12,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
   <a href="https://dshfind.com/en/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=en" /></a><br /><br />
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.19.1): 0.1.5-rc.1+ (verified on rc.2)" src="https://img.shields.io/badge/DSH-0.1.5--rc.1%2B_%28verified_rc.2%29-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.20.0): 0.1.5-rc.1+ (verified on rc.2)" src="https://img.shields.io/badge/DSH-0.1.5--rc.1%2B_%28verified_rc.2%29-4d6bfe" /></a>
   <a href="https://github.com/topics/dsh-better-sidebar"><img alt="Plugin ecosystem: GitHub topic dsh-better-sidebar" src="https://img.shields.io/badge/plugin%20ecosystem-topic%20dsh--better--sidebar-4d6bfe" /></a><br /><br />
   <img alt="File management" src="https://img.shields.io/badge/-File%20management-4d6bfe" /> <img alt="Edit &amp; preview" src="https://img.shields.io/badge/-Edit%20%26%20preview-4d6bfe" /> <img alt="Embedded browser" src="https://img.shields.io/badge/-Embedded%20browser-4d6bfe" /> <img alt="Real terminal" src="https://img.shields.io/badge/-Real%20terminal-4d6bfe" /> <img alt="Changes" src="https://img.shields.io/badge/-Changes-4d6bfe" /> <img alt="Background tasks" src="https://img.shields.io/badge/-Background%20tasks-4d6bfe" /> <img alt="Side Chat" src="https://img.shields.io/badge/-Side%20Chat-4d6bfe" /> <img alt="Plugin integration" src="https://img.shields.io/badge/-Plugin%20integration-4d6bfe" /><br /><br />
   <b>A dual workbench (right sidebar + bottom panel)</b> that opens its <code>ctx.betterSidebar</code> service to every plugin —<br />
@@ -64,7 +64,7 @@
 **Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10.
 
 **Supported DSH versions**:
-<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.19.1): 0.1.5-rc.1+ (verified on rc.2)" src="https://img.shields.io/badge/DSH-0.1.5--rc.1%2B_%28verified_rc.2%29-4d6bfe" /></a>
+<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.20.0): 0.1.5-rc.1+ (verified on rc.2)" src="https://img.shields.io/badge/DSH-0.1.5--rc.1%2B_%28verified_rc.2%29-4d6bfe" /></a>
 
 > 📌 **Stable release**: starting with `v0.19.0` the plugin targets DSH **0.1.5-rc.1+** (npm dist-tag `latest`; `v0.19.1` is verified end-to-end against **0.1.5-rc.2**, so rc.1 hosts need no DSH upgrade — the peer floor stays `^0.1.5-rc.1`). Hosts still on DSH 0.1.5-alpha.2 should stay pinned to `dsh-better-sidebar@0.19.0-alpha.1`; the 0.1.2-rc.1 stable line keeps using `dsh-better-sidebar@0.18.x`; DSH ≤ 0.1.1-rc.2 should use `dsh-better-sidebar@0.17.1`.
 
@@ -267,7 +267,15 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="33%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
 </div>
 
-**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.19.1): 0.1.5-rc.1+ (verified on rc.2)" src="https://img.shields.io/badge/DSH-0.1.5--rc.1%2B_%28verified_rc.2%29-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.20.0): 0.1.5-rc.1+ (verified on rc.2)" src="https://img.shields.io/badge/DSH-0.1.5--rc.1%2B_%28verified_rc.2%29-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+
+### v0.20.0
+
+> 🔄 **This fork's official-sync release**: merges official `omdsh-dev/DSH-better-sidebar` main (`1fcf43c`, the v0.19.1 / DSH 0.1.5-rc.2 baseline) and **unifies onto DSH's native-sidebar framework** — official's net -25k-line unification refactor (retiring the self-drawn right panel and old chrome, the old file-dir/terminal frameworks, `GitView` / `FreeWindow` / `GlobalPage` / `workspace-windows` / `keybindings` / `cmd-w`, …) lands in one step, with the tree byte-identical to official at the merge point; the local never-published `0.21.0` line is abandoned and the version continues on the official line. Two fork features migrate onto the official architecture:
+
+- 📝 **The commit-message draft persists with the tab** (migrated from fork `aaad824`): the draft is owned by the Changes tab itself (a lens switch unmounts the Git lens without losing the typing), writes back debounced (400 ms), flushes on unmount / session swap, and clears right after a successful commit. A bottom-workbench tab mirrors it into its own `tab.meta` (`store.reduceFor` targets the draft's session); a native right-Sidebar tab (whose records are memory-only) mirrors into the git card's `pluginSettings` `commitDrafts`, keyed by session, so it survives session switches and reloads.
+- 📂 **Opt-in outside-workspace read access** (migrated from fork `041815a`): the new `allowOpenOutsideWorkspace` setting (default off) lets the editor / previewers / file tree open absolute paths outside the session workspace (`fs.tree` / `fs.read` / media / HTML preview skip containment). **The write fence is untouched** — orthogonal to `workspaceFence`, saving / uploading / renaming / deleting keep reading `workspaceFence` alone. See the integration guide §8.2.
+- 🗑 **Retired with official**: the `workspace-windows` (global shared terminal windows) system and its `338a8d7` fix are dropped (official deleted the whole system); the old `GitView` worktree-row open gating is not migrated (the official `GitLens` menu already gates on `workspaceFence`).
 
 ### v0.19.1
 
