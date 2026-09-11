@@ -75,6 +75,9 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
         root.render(createElement(GitLens, {
           scope: { sessionId: 'session', cwd: MAIN },
           store: createSidebarStore(),
+          commitMsg: '',
+          onCommitMsgChange: () => {},
+          onCommitMsgCommitted: () => {},
           onOpenFile: () => {},
           onPreview: () => {},
           selectedRef: null,
@@ -134,6 +137,9 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
         root.render(createElement(GitLens, {
           scope: { sessionId: 'session', cwd: MAIN },
           store: createSidebarStore(),
+          commitMsg: '',
+          onCommitMsgChange: () => {},
+          onCommitMsgCommitted: () => {},
           onOpenFile: () => {},
           onPreview: () => {},
           selectedRef: null,

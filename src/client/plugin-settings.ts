@@ -1,10 +1,11 @@
 /**
- * Pending-writes queue for the file tree's open-with config: pin toggles and
- * (outside the settings popup) config edits land in the sidebar prefs as
- * `pluginSettings['editor']`. Writes are serialized through one promise chain
- * so a quick burst of pin clicks can never read a stale pluginSettings map
- * and drop an earlier toggle; each write pushes the whole open map patch
- * through the revision-free settings route and adopts the returned document.
+ * Pending-writes queue for plugin-owned settings blobs: the file tree's
+ * open-with config (`pluginSettings['editor']`) and the changes tab's
+ * per-session commit drafts (`pluginSettings['git']`). Writes are serialized
+ * through one promise chain so a quick burst can never read a stale
+ * pluginSettings map and drop an earlier toggle; each write pushes the whole
+ * open map patch through the revision-free settings route and adopts the
+ * returned document.
  *
  * (The settings popup has its own serialized commit — SideCardSection's —
  * so its rows and this helper rarely race; the shared route's last-write-wins

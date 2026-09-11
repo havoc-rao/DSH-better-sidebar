@@ -8,6 +8,13 @@
  * in the tab's meta, so the tab
  * reopens exactly where it was left.
  *
+ * The commit-message draft is owned HERE (not in the Git lens) so a lens
+ * switch — which unmounts the lens — cannot evaporate what the user was
+ * typing, and is mirrored to a per-session durable slot: the tab's own
+ * `meta` in the bottom workbench (the per-session persisted layout), or the
+ * git card's `pluginSettings` blob keyed by session for native right-Sidebar
+ * tabs (whose records are memory-only — see {@link isBottomTab}).
+ *
  * The session events ride the host's `changes.ops` route (the client
  * runtime exposes no event-log face): the tab pulls the delta past its
  * cursor while visible, folds it into ops, and publishes the op count to a
@@ -19,7 +26,8 @@ import type { TabComponentProps } from '../service.ts'
 import { t } from '../locales.ts'
 import { api } from '../api.ts'
 import { usePolling } from '../use-polling.ts'
-import type { SidebarDiffRef } from '../state.ts'
+import { updatePluginSettings } from '../plugin-settings.ts'
+import { allLeaves, leafWithTab, patchTab, type SidebarDiffRef, type SidebarStore, type SidebarTab } from '../state.ts'
 import { GitLens } from './GitLens.tsx'
 import { SessionLens } from './SessionLens.tsx'
 import { DiffPane, diffTabOf, type ChangesPreview } from './DiffPane.tsx'
@@ -49,6 +57,55 @@ type Lens = 'git' | 'session'
 interface ChangesMeta {
   lens?: Lens
   previewH?: number
+  /** The commit-message draft (the bottom-workbench world's mirror). */
+  commitMsg?: string
+}
+
+/** The git card's pluginSettings key holding per-session commit drafts (the
+ *  native right-Sidebar world's mirror — its tab records are memory-only). */
+const COMMIT_DRAFTS_KEY = 'commitDrafts'
+
+/** Cap on remembered per-session drafts: insertion order doubles as recency
+ *  order (a re-write deletes-then-re-appends its key), and stale sessions
+ *  beyond the cap are pruned so the settings doc stays tidy. */
+const COMMIT_DRAFTS_CAP = 16
+
+/** The tab's persisted meta object (a malformed meta reads as empty — the
+ *  same rule EditorHost's metaOf applies). */
+function metaOfTab(tab: SidebarTab): Record<string, unknown> {
+  const meta = tab.meta
+  return meta !== null && typeof meta === 'object' && !Array.isArray(meta)
+    ? meta as Record<string, unknown>
+    : {}
+}
+
+/** The per-session commit drafts recorded in the git card's settings blob. */
+function commitDraftsOf(blob: Record<string, unknown>): Record<string, string> {
+  const drafts = blob[COMMIT_DRAFTS_KEY]
+  return drafts !== null && typeof drafts === 'object' && !Array.isArray(drafts)
+    ? drafts as Record<string, string>
+    : {}
+}
+
+/** The persisted commit draft for one session: the tab's own meta first (the
+ *  bottom-workbench world, where the meta rides the per-session layout),
+ *  then the git card's settings draft (the native-right world, whose records
+ *  are memory-only). */
+function commitDraftOf(tab: SidebarTab, sessionId: string, pluginSettings: Record<string, Record<string, unknown>>): string {
+  const meta = metaOfTab(tab).commitMsg
+  if (typeof meta === 'string') return meta
+  const draft = commitDraftsOf(pluginSettings['git'] ?? {})[sessionId]
+  return typeof draft === 'string' ? draft : ''
+}
+
+/** Whether this tab object IS one of the active session's bottom-workbench
+ *  tabs — by reference identity, not id: a native right-Sidebar record with
+ *  the same id ('git' is single-instance in both surfaces) is a DIFFERENT
+ *  object, and only the bottom tab is the store-persisted one. Called at
+ *  tab-capture time (the tab is on screen, its session is the active one). */
+function isBottomTab(store: SidebarStore, tab: SidebarTab): boolean {
+  const state = store.getSnapshot().state
+  return state !== undefined && allLeaves(state.bottomSplits).some(leaf => leaf.tabs.includes(tab))
 }
 
 export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpenDiff }: TabComponentProps) {
@@ -58,6 +115,115 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
   const [paneHeight, setPaneHeight] = useState<number>(
     typeof meta.previewH === 'number' && meta.previewH >= 140 ? meta.previewH : PANE_HEIGHT_DEFAULT,
   )
+
+  // ── Commit-message draft (owned here, not in the Git lens: a lens switch
+  //    unmounts the lens, and lens-local state would evaporate the typing).
+  //    Seeded from the persisted mirrors, written back debounced (400ms),
+  //    flushed immediately on unmount / a real tab swap, and cleared right
+  //    after a successful commit. ──────────────────────────────────────────
+  const [commitMsg, setCommitMsg] = useState<string>(
+    () => commitDraftOf(tab, scope.sessionId, store.getPrefs().pluginSettings),
+  )
+  /** The tab + displayed session the current draft belongs to, read by the
+   *  flush paths (a session switch right after typing must not drop the
+   *  last keystrokes — the debounce may never fire). NEVER assigned during
+   *  render: the session-sync effect below reads them as the PREVIOUS
+   *  identity and a render-time assignment would capture the new one and
+   *  skip the flush. */
+  const draftTabRef = useRef<SidebarTab>(tab)
+  const draftSessionRef = useRef<string>(scope.sessionId)
+  /** The world the captured tab lives in — captured at tab-capture time (the
+   *  identity check is only valid while the tab is the displayed one). */
+  const draftBottomRef = useRef<boolean>(isBottomTab(store, tab))
+  const draftRef = useRef(commitMsg)
+  draftRef.current = commitMsg
+  const draftTimer = useRef<number | undefined>(undefined)
+  /** Write the draft into the durable mirror of the CAPTURED tab's world:
+   *  the bottom workbench's per-session layout (patchTab by id, targeted at
+   *  the draft's session — never the active-session updateTab route, whose
+   *  write would land a post-switch flush in the WRONG session's layout), or
+   *  the git card's pluginSettings blob keyed by the tab's session (the
+   *  native-right records are memory-only, so the settings doc is the only
+   *  durable slot the plugin owns there). */
+  const writeDraft = useCallback((sessionId: string, target: SidebarTab, draft: string, bottom: boolean): void => {
+    if (bottom) {
+      store.reduceFor(sessionId, state => {
+        // Merge into the CURRENT persisted meta, not the captured tab's: a
+        // stale capture must not clobber concurrent meta writes (lens,
+        // pane height) that landed since this draft was scheduled.
+        const current = leafWithTab(state.bottomSplits, target.id)?.tabs.find(entry => entry.id === target.id)
+        return patchTab(state, target.id, {
+          meta: { ...(current !== undefined ? metaOfTab(current) : metaOfTab(target)), commitMsg: draft },
+        })
+      })
+    } else {
+      updatePluginSettings(store, 'git', blob => {
+        const drafts = commitDraftsOf(blob)
+        delete drafts[sessionId]
+        drafts[sessionId] = draft
+        const keys = Object.keys(drafts)
+        for (const stale of keys.slice(0, Math.max(0, keys.length - COMMIT_DRAFTS_CAP))) delete drafts[stale]
+        return { ...blob, [COMMIT_DRAFTS_KEY]: drafts }
+      })
+    }
+  }, [store])
+  /** Schedule a debounced draft write; unchanged text never writes. The
+   *  captured tab/session keep the write valid even after a session switch
+   *  (the timer closure outlives the component). */
+  const persistDraft = (draft: string): void => {
+    const target = draftTabRef.current
+    const sessionId = draftSessionRef.current
+    if (draft === commitDraftOf(target, sessionId, store.getPrefs().pluginSettings)) return
+    window.clearTimeout(draftTimer.current)
+    draftTimer.current = window.setTimeout(() => {
+      writeDraft(sessionId, target, draft, draftBottomRef.current)
+    }, 400)
+  }
+  /** The single typing path: set the owned state AND schedule the write. */
+  const onCommitMsgChange = (next: string): void => {
+    setCommitMsg(next)
+    persistDraft(next)
+  }
+  /** A successful commit: clear the owned state and the persisted mirrors
+   *  immediately — not via the debounce — so a committed message never
+   *  resurrects when the tab reopens. */
+  const onCommitMsgCommitted = (): void => {
+    setCommitMsg('')
+    window.clearTimeout(draftTimer.current)
+    writeDraft(draftSessionRef.current, draftTabRef.current, '', draftBottomRef.current)
+  }
+  /** A real tab swap — the displayed session changed, or the pane handed us
+   *  a different logical tab (id/type) — flushes the pending draft into the
+   *  PREVIOUS session immediately (the debounce may never fire) and re-seeds
+   *  from the new tab. Identity-only churn within the SAME session (an
+   *  unrelated store notify re-renders the pane with fresh tab objects)
+   *  never flushes or re-seeds: the in-flight draft survives the re-render. */
+  useEffect(() => {
+    const previous = draftTabRef.current
+    const previousSession = draftSessionRef.current
+    const previousBottom = draftBottomRef.current
+    const logicalSwap = previous.id !== tab.id || previous.type !== tab.type
+    if (previousSession !== scope.sessionId || logicalSwap) {
+      if (draftRef.current !== commitDraftOf(previous, previousSession, store.getPrefs().pluginSettings)) {
+        writeDraft(previousSession, previous, draftRef.current, previousBottom)
+      }
+      window.clearTimeout(draftTimer.current)
+      setCommitMsg(commitDraftOf(tab, scope.sessionId, store.getPrefs().pluginSettings))
+    }
+    draftTabRef.current = tab
+    draftSessionRef.current = scope.sessionId
+    draftBottomRef.current = isBottomTab(store, tab)
+  }, [tab, scope.sessionId, store, writeDraft])
+  /** Unmount flush: a session switch right after typing must not lose the
+   *  pending keystrokes (the debounce may never fire). */
+  useEffect(() => () => {
+    window.clearTimeout(draftTimer.current)
+    const target = draftTabRef.current
+    const sessionId = draftSessionRef.current
+    if (draftRef.current !== commitDraftOf(target, sessionId, store.getPrefs().pluginSettings)) {
+      writeDraft(sessionId, target, draftRef.current, draftBottomRef.current)
+    }
+  }, [store, writeDraft])
 
   // ── Session-event accumulation: one pull on mount, then a 2.5s delta
   //    poll while visible (paused otherwise; the next visible tick catches
@@ -179,6 +345,9 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
           <GitLens
             scope={scope}
             store={store}
+            commitMsg={commitMsg}
+            onCommitMsgChange={onCommitMsgChange}
+            onCommitMsgCommitted={onCommitMsgCommitted}
             visible={visible}
             onOpenFile={onOpenFile ?? (() => { /* no-op */ })}
             onPreview={previewGit}

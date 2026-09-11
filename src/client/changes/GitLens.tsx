@@ -94,6 +94,14 @@ export interface GitLensProps {
   scope: SessionScope
   /** The sidebar store: reads the `workspaceFence` pref (see the open guard below). */
   store: SidebarStore
+  /** The commit-message draft (owned by {@link ChangesTab} so a lens switch —
+   *  which unmounts this lens — cannot evaporate what the user was typing). */
+  commitMsg: string
+  /** The single typing path: local state update + the debounced layout write. */
+  onCommitMsgChange: (next: string) => void
+  /** A successful commit cleared the draft — immediately, not via the
+   *  debounce: a committed message must not resurrect when the lens reopens. */
+  onCommitMsgCommitted: () => void
   onOpenFile: (path: string) => void
   /** Preview one change in the shared bottom pane (worktree or commit ref). */
   onPreview: (ref: SidebarDiffRef) => void
@@ -104,7 +112,7 @@ export interface GitLensProps {
 }
 
 export function GitLens(props: GitLensProps) {
-  const { scope, store, onOpenFile, onPreview, selectedRef, visible } = props
+  const { scope, store, commitMsg, onCommitMsgChange, onCommitMsgCommitted, onOpenFile, onPreview, selectedRef, visible } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
   const [selectedWorktree, setSelectedWorktree] = useState<string | undefined>()
@@ -113,7 +121,9 @@ export function GitLens(props: GitLensProps) {
   const [error, setError] = useState<string | null>(null)
   const [branchNames, setBranchNames] = useState<string[]>([])
   const [logEntries, setLogEntries] = useState<GitLogEntry[]>([])
-  const [commitMsg, setCommitMsg] = useState('')
+  /** The commit-message draft, lifted to {@link ChangesTab}: the lens switch
+   *  unmounts this lens, and a lens-local state would lose what the user was
+   *  typing. */
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
@@ -365,7 +375,9 @@ export function GitLens(props: GitLensProps) {
     setCommitError(null)
     try {
       await api.gitCommit(gitScope, message, selectedWorktree)
-      setCommitMsg('')
+      // Clear the draft immediately — not via the debounce: a committed
+      // message must not resurrect when the lens reopens.
+      onCommitMsgCommitted()
       await refresh()
     } catch (reason) {
       setCommitError(errorMessage(reason))
@@ -550,7 +562,7 @@ export function GitLens(props: GitLensProps) {
               placeholder={t('commitPlaceholder')}
               value={commitMsg}
               disabled={busy}
-              onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
+              onChange={(event) => { onCommitMsgChange(event.target.value); setCommitError(null) }}
               onKeyDown={(event) => {
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
               }}
