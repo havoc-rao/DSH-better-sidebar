@@ -599,6 +599,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 |---|---|
 | 保存编辑 | `Ctrl/Cmd + S` |
 | Git 提交 | `Ctrl + Enter` |
+| 关闭当前右侧栏标签（deepseek-harness Electron 壳内；无可关标签时保持壳的关闭确认） | `Cmd + W` |
 | 关闭 Tab | 鼠标中键 |
 | Tab 右键菜单 | 关闭 / 关闭其他页签 / 关闭左侧页签 / 关闭右侧页签（当前标签组） |
 | 拆分/合并分栏 | 拖 Tab 到分栏边缘 / 中间 |
@@ -616,6 +617,12 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 > 挂载右侧栏，`Cmd+Opt+B` / `Cmd+Shift+E` 也会经插件自身的兜底路径打开文件树
 > （回落底部工作台），内核 `sidebarRight` 可用后自动切回原生栏。契约全文见
 > [指南 §7.1](docs/external-plugin-guide.md)。
+>
+> **桌面壳快捷键认领**（v0.20.x，deepseek-harness Electron）：壳在主进程拦截
+> `Cmd+W` 并经 `window.dshDesktopShell` 桥把认领权交给页面——有活动标签时
+> **关标签而不是关窗口**（内核右侧栏活动 tab 优先，底部工作台兜底；皆无可关
+> 时放行给壳的「Close dsh?」确认框）。纯浏览器 / 官方壳无桥时行为不变。契约见
+> [指南 §7.1.1](docs/external-plugin-guide.md)。
 
 ## 🔌 服务化扩展
 
