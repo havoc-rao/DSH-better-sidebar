@@ -153,8 +153,11 @@ function LeafView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Maximized-over-the-chat-box mode (the tab strip's fullscreen toggle). */
+  fullscreen?: boolean
+  onToggleFullscreen?: () => void
 }) {
-  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, fullscreen, onToggleFullscreen } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const activeTab = leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
 
@@ -215,6 +218,8 @@ function LeafView(props: {
           else actions.moveTabBefore(payload, leaf.id, before)
         }}
         onPinTab={actions.pinTab}
+        fullscreen={fullscreen}
+        onToggleFullscreen={onToggleFullscreen}
       />
       {leaf.tabs.length > 0 ? (
         /*
@@ -251,8 +256,10 @@ function NodeView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  fullscreen?: boolean
+  onToggleFullscreen?: () => void
 }) {
-  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, fullscreen, onToggleFullscreen } = props
   if (node.kind === 'leaf') {
     return (
       <LeafView
@@ -263,6 +270,8 @@ function NodeView(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        fullscreen={fullscreen}
+        onToggleFullscreen={onToggleFullscreen}
       />
     )
   }
@@ -290,6 +299,8 @@ function NodeView(props: {
               renderTab={renderTab}
               getTabIcon={getTabIcon}
               getTabBadge={getTabBadge}
+              fullscreen={fullscreen}
+              onToggleFullscreen={onToggleFullscreen}
             />
           </div>
         </Fragment>
@@ -311,8 +322,10 @@ export function Workbench(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  fullscreen?: boolean
+  onToggleFullscreen?: () => void
 }) {
-  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, fullscreen, onToggleFullscreen } = props
   return (
     <div className={css.workbench}>
       <NodeView
@@ -324,6 +337,8 @@ export function Workbench(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        fullscreen={fullscreen}
+        onToggleFullscreen={onToggleFullscreen}
       />
     </div>
   )

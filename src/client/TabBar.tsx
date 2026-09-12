@@ -1,8 +1,10 @@
 /**
  * The tab strip of one pane: tabs capped at TAB_MAX_WIDTH (ellipsized),
  * overflow scrolls horizontally, a close button per tab, a four-way split
- * button cluster, and the + menu that opens new tabs (explorer / git /
- * terminal). Tabs are draggable; dropping onto another tab inserts before it,
+ * button cluster, the + menu that opens new tabs (explorer / git /
+ * terminal), and a fullscreen toggle pinned at the strip's right end
+ * (expands the workbench panel over the chat-box region — not the browser
+ * Fullscreen API). Tabs are draggable; dropping onto another tab inserts before it,
  * dropping on the strip background appends to this pane. Right-clicking a
  * tab opens the tab context menu (close / close others / close to the left /
  * close to the right, the close ones scoped to this pane).
@@ -10,13 +12,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconCloseFill14, IconPlusOutline16, Menu,
+  IconCloseFill14, IconFullscreenOutline16, IconPlusOutline16, Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
 import { isAgentTabId } from './state.ts'
 import { isPinnedVirtualTab } from './pinned.ts'
 import { useSubmenuFlip } from './menu-flip.ts'
-import { IconPinOutline16 } from './icons.tsx'
+import { IconFullscreenExitOutline16, IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
@@ -79,9 +81,20 @@ export function TabBar(props: {
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /**
+   * Maximized-over-the-chat-box mode (the strip's fullscreen toggle): when
+   * true the panel fills the chat-box region and the button shows the exit
+   * state. The expansion itself is the shell's job (it measures the chat
+   * box); the strip only renders the affordance. Optional: the button hides
+   * when unset (legacy callers).
+   */
+  fullscreen?: boolean
+  /** Toggle the chat-box-fullscreen mode. Optional like `fullscreen`. */
+  onToggleFullscreen?: () => void
 }) {
   const {
     paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onPinTab, getTabIcon, getTabBadge,
+    fullscreen, onToggleFullscreen,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   // The tab right-click context menu: the target tab plus the cursor
@@ -358,6 +371,26 @@ export function TabBar(props: {
           anchor={<span />}
         />
       </div>
+      {/*
+        The fullscreen toggle (居右): a fixed control at the strip's right
+        end — OUTSIDE the scrolling tab list, so it never scrolls with the
+        tabs (the strip reserves its width next to the panel's own strip-end
+        controls). Toggles the shell's chat-box-fullscreen mode: the panel
+        fills the chat-box region instead of using the browser Fullscreen
+        API. Hidden when the shell does not wire the toggle.
+      */}
+      {onToggleFullscreen !== undefined && (
+        <button
+          type="button"
+          className={css.tabBarFullscreen}
+          aria-label={fullscreen === true ? t('exitFullscreen') : t('fullscreen')}
+          aria-pressed={fullscreen === true}
+          title={fullscreen === true ? t('exitFullscreen') : t('fullscreen')}
+          onClick={onToggleFullscreen}
+        >
+          {fullscreen === true ? <IconFullscreenExitOutline16 size={16} /> : <IconFullscreenOutline16 size={16} />}
+        </button>
+      )}
     </div>
   )
 }

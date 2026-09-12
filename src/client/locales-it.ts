@@ -93,6 +93,8 @@ export const it: Record<string, string> = {
   pinnedRailLabel: 'Terminali Bloccati',
   closePinnedTerminal: 'Chiudi Terminale',
   collapseBottomPanel: 'Comprimi pannello inferiore',
+  fullscreen: 'Schermo intero',
+  exitFullscreen: 'Esci da schermo intero',
   expandBottomPanel: 'Espandi pannello inferiore',
   terminalError: 'Connessione del terminale non riuscita',
   terminalConnectFailed: 'Il terminale non è riuscito a connettersi più volte',

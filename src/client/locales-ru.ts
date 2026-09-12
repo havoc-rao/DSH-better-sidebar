@@ -98,6 +98,8 @@ export const ru: Record<string, string> = {
   pinnedRailLabel: 'Закреплённые терминалы',
   closePinnedTerminal: 'Закрыть терминал',
   collapseBottomPanel: 'Свернуть нижнюю панель',
+  fullscreen: 'Во весь экран',
+  exitFullscreen: 'Выйти из полноэкранного режима',
   expandBottomPanel: 'Развернуть нижнюю панель',
   terminalError: 'Сбой подключения терминала',
   terminalConnectFailed: 'Терминал не смог подключиться после нескольких попыток',

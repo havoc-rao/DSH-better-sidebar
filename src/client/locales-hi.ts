@@ -102,6 +102,8 @@ export const hi: Record<string, string> = {
   pinnedRailLabel: 'पिन किए गए टर्मिनल',
   closePinnedTerminal: 'टर्मिनल बंद करें',
   collapseBottomPanel: 'निचला पैनल संक्षिप्त करें',
+  fullscreen: 'फ़ुल स्क्रीन',
+  exitFullscreen: 'फ़ुल स्क्रीन बंद करें',
   expandBottomPanel: 'निचला पैनल विस्तृत करें',
   terminalError: 'टर्मिनल कनेक्शन विफल',
   terminalConnectFailed: 'टर्मिनल बार-बार कनेक्ट विफल',

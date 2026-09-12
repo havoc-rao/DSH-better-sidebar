@@ -85,6 +85,8 @@ export const pt: Record<string, string> = {
   pinnedRailLabel: 'Terminais Fixados',
   closePinnedTerminal: 'Fechar Terminal',
   collapseBottomPanel: 'Recolher painel inferior',
+  fullscreen: 'Tela cheia',
+  exitFullscreen: 'Sair da tela cheia',
   expandBottomPanel: 'Expandir painel inferior',
   terminalError: 'Falha na conexão do terminal',
   terminalConnectFailed: 'O terminal falhou ao conectar repetidamente',

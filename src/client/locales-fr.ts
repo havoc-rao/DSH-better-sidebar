@@ -95,6 +95,8 @@ export const fr: Record<string, string> = {
   pinnedRailLabel: 'Terminaux épinglés',
   closePinnedTerminal: 'Fermer le terminal',
   collapseBottomPanel: 'Réduire le panneau inférieur',
+  fullscreen: 'Plein écran',
+  exitFullscreen: 'Quitter le plein écran',
   expandBottomPanel: 'Déployer le panneau inférieur',
   terminalError: 'Échec de la connexion au terminal',
   terminalConnectFailed: 'Le terminal a échoué à se connecter à plusieurs reprises',

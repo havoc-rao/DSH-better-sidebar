@@ -102,6 +102,8 @@ export const ja: Record<string, string> = {
   pinnedRailLabel: '固定されたターミナル',
   closePinnedTerminal: 'ターミナルを閉じる',
   collapseBottomPanel: '下パネルを折りたたむ',
+  fullscreen: '全画面表示',
+  exitFullscreen: '全画面を終了',
   expandBottomPanel: '下パネルを展開',
   terminalError: 'ターミナル接続に失敗',
   terminalConnectFailed: 'ターミナル接続が繰り返し失敗しました',

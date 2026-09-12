@@ -104,6 +104,8 @@ export const pl: Record<string, string> = {
   pinnedRailLabel: 'Przypięte terminale',
   closePinnedTerminal: 'Zamknij terminal',
   collapseBottomPanel: 'Zwiń panel dolny',
+  fullscreen: 'Pełny ekran',
+  exitFullscreen: 'Wyjdź z trybu pełnoekranowego',
   expandBottomPanel: 'Rozwiń panel dolny',
   terminalError: 'Połączenie z terminalem nie powiodło się',
   terminalConnectFailed: 'Terminal nie mógł połączyć się wielokrotnie',

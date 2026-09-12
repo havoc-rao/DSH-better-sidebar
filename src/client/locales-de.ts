@@ -88,6 +88,8 @@ export const de: Record<string, string> = {
   pinnedRailLabel: 'Angeheftete Terminals',
   closePinnedTerminal: 'Terminal schließen',
   collapseBottomPanel: 'Unteres Panel einklappen',
+  fullscreen: 'Vollbild',
+  exitFullscreen: 'Vollbild beenden',
   expandBottomPanel: 'Unteres Panel ausklappen',
   terminalError: 'Terminalverbindung fehlgeschlagen',
   terminalConnectFailed: 'Terminal konnte wiederholt keine Verbindung herstellen',

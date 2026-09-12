@@ -100,6 +100,8 @@ export const id: Record<string, string> = {
   pinnedRailLabel: 'Terminal Tersemat',
   closePinnedTerminal: 'Tutup Terminal',
   collapseBottomPanel: 'Lipat panel bawah',
+  fullscreen: 'Layar penuh',
+  exitFullscreen: 'Keluar layar penuh',
   expandBottomPanel: 'Bentangkan panel bawah',
   terminalError: 'Koneksi terminal gagal',
   terminalConnectFailed: 'Terminal gagal terhubung berulang kali',

@@ -102,6 +102,8 @@ export const vi: Record<string, string> = {
   pinnedRailLabel: 'Terminal đã ghim',
   closePinnedTerminal: 'Đóng Terminal',
   collapseBottomPanel: 'Thu gọn panel dưới',
+  fullscreen: 'Toàn màn hình',
+  exitFullscreen: 'Thoát toàn màn hình',
   expandBottomPanel: 'Mở rộng panel dưới',
   terminalError: 'Kết nối terminal thất bại',
   terminalConnectFailed: 'Terminal kết nối thất bại nhiều lần',

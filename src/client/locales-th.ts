@@ -102,6 +102,8 @@ export const th: Record<string, string> = {
   pinnedRailLabel: 'เทอร์มินัลที่ปักหมุด',
   closePinnedTerminal: 'ปิดเทอร์มินัล',
   collapseBottomPanel: 'ย่อพาเนลด้านล่าง',
+  fullscreen: 'เต็มจอ',
+  exitFullscreen: 'ออกจากโหมดเต็มจอ',
   expandBottomPanel: 'ขยายพาเนลด้านล่าง',
   terminalError: 'การเชื่อมต่อเทอร์มินัลล้มเหลว',
   terminalConnectFailed: 'เทอร์มินัลเชื่อมต่อล้มเหลวหลายครั้ง',

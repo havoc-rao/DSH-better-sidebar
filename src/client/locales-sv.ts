@@ -85,6 +85,8 @@ export const sv: Record<string, string> = {
   pinnedRailLabel: 'Fästa terminaler',
   closePinnedTerminal: 'Stäng terminal',
   collapseBottomPanel: 'Komprimera bottenpanel',
+  fullscreen: 'Helskärm',
+  exitFullscreen: 'Avsluta helskärm',
   expandBottomPanel: 'Expandera bottenpanel',
   terminalError: 'Terminalanslutning misslyckades',
   terminalConnectFailed: 'Terminal misslyckades att ansluta upprepade gånger',

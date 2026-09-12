@@ -117,6 +117,8 @@ export const zhTW: Record<string, string> = {
   pinnedRailLabel: '固定終端',
   closePinnedTerminal: '關閉終端',
   collapseBottomPanel: '收起底部面板',
+  fullscreen: '進入全螢幕',
+  exitFullscreen: '退出全螢幕',
   expandBottomPanel: '展開底部面板',
   terminalError: '終端連線失敗',
   terminalConnectFailed: '終端多次連線失敗',

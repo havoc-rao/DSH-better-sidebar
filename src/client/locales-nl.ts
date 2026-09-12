@@ -100,6 +100,8 @@ export const nl: Record<string, string> = {
   pinnedRailLabel: 'Vastgemaakte terminals',
   closePinnedTerminal: 'Terminal sluiten',
   collapseBottomPanel: 'Onderpaneel inklappen',
+  fullscreen: 'Volledig scherm',
+  exitFullscreen: 'Volledig scherm verlaten',
   expandBottomPanel: 'Onderpaneel uitklappen',
   terminalError: 'Terminalverbinding mislukt',
   terminalConnectFailed: 'Terminalverbinding herhaaldelijk mislukt',

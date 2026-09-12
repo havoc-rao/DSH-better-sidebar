@@ -94,6 +94,8 @@ export const ko: Record<string, string> = {
   pinnedRailLabel: '고정된 터미널',
   closePinnedTerminal: '터미널 닫기',
   collapseBottomPanel: '하단 패널 접기',
+  fullscreen: '전체 화면',
+  exitFullscreen: '전체 화면 종료',
   expandBottomPanel: '하단 패널 펼치기',
   terminalError: '터미널 연결 실패',
   terminalConnectFailed: '터미널 연결이 여러 번 실패했습니다',

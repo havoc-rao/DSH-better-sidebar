@@ -609,6 +609,46 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
+/* The tab strip's fullscreen toggle (居右): a trailing control at the
+   strip's right end — OUTSIDE the scrolling tab list, so it never scrolls
+   with the tabs (plain flex child of the tab bar; the bottom strip's
+   reserved 40px keeps it clear of the panel's own strip-end controls).
+   Active state (the panel fills the chat-box region) tints the glyph with
+   the accent token. */
+.tabBarFullscreen {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: 0 6px 0 4px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.tabBarFullscreen:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.tabBarFullscreen[aria-pressed='true'] {
+  color: var(--dsw-alias-brand-primary);
+}
+
+/* While the panel fills the chat-box region (the strip's fullscreen
+   toggle) the top-edge height drag is meaningless — there is no docked
+   height to resize. Hide the strip; the panel's insets are the chat-box
+   host's own. */
+.bottomPanel[data-dsh-panel-fullscreen] .bottomResize {
+  display: none;
+}
+
 /* ── Pinned-terminal tab (v0.17.0+) ───────────────────────────────────── */
 
 /* Pinned virtual tabs (injected from other sessions) render inline in the
@@ -2175,6 +2215,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tab:focus-visible,
 .tabClose:focus-visible,
 .tabBarPlus:focus-visible,
+.tabBarFullscreen:focus-visible,
 .paneCard:focus-visible,
 .explorerRow:focus-visible,
 .explorerRef:focus-visible,

@@ -103,6 +103,8 @@ export const ar: Record<string, string> = {
   pinnedRailLabel: 'الطرفيات المثبتة',
   closePinnedTerminal: 'إغلاق الطرفية',
   collapseBottomPanel: 'طي اللوحة السفلية',
+  fullscreen: 'ملء الشاشة',
+  exitFullscreen: 'إنهاء ملء الشاشة',
   expandBottomPanel: 'توسيع اللوحة السفلية',
   terminalError: 'فشل اتصال الطرفية',
   terminalConnectFailed: 'فشل اتصال الطرفية عدة مرات',

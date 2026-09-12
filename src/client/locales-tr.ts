@@ -102,6 +102,8 @@ export const tr: Record<string, string> = {
   pinnedRailLabel: 'Sabitlenmiş Terminaller',
   closePinnedTerminal: 'Terminali Kapat',
   collapseBottomPanel: 'Alt paneli daralt',
+  fullscreen: 'Tam ekran',
+  exitFullscreen: 'Tam ekrandan çık',
   expandBottomPanel: 'Alt paneli genişlet',
   terminalError: 'Terminal bağlantısı başarısız',
   terminalConnectFailed: 'Terminal art arda bağlanamadı',
