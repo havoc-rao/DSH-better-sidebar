@@ -147,13 +147,16 @@ describe('claimCloseActiveTab: native right Sidebar path', () => {
     expect(toggleCalls).toBe(0)
   })
 
-  it('folds the column instead of falling through when the kernel refuses (sole guide)', () => {
-    // The kernel refuses only that: close() leaves the same tab active.
+  it('claims as a no-op and never folds when the kernel refuses (sole guide)', () => {
+    // The kernel refuses only that: close() silently leaves the tab. The
+    // press is still claimed — and the column is NOT folded, because the
+    // close result is deliberately not verified by re-reading (see the
+    // module header: the kernel's active() lags the store commit).
     const entry = fakeSidebar({ activeTab: 'guide', closes: false })
     const { service } = mount()
     expect(claimCloseActiveTab(makeCtx(entry.face), service)).toBe(true)
     expect(entry.closeCalls).toEqual(['guide'])
-    expect(entry.toggleCalls).toBe(1)
+    expect(entry.toggleCalls).toBe(0)
   })
 
   it('folds the column when the expanded column has no active tab', () => {
