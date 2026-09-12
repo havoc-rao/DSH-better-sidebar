@@ -14,12 +14,17 @@
  * closes the app — the shell's close confirmation is only ever reached when
  * no page-side consumer is mounted at all. The plugin's decision is:
  *
- *   1. kernel right Sidebar expanded → close its active tab (the kernel
- *      refuses only the sole docked guide: detected by re-reading the active
- *      tab — the same id still active means nothing closed);
- *   2. nothing closable in the expanded column (a refused sole guide, an
- *      empty pane, a throwing controller) → collapse the column (the kernel
- *      face's `toggleExpanded`) as the visible "nothing more to close";
+ *   1. kernel right Sidebar expanded → close its active tab. The press is
+ *      claimed unconditionally after the close call: the kernel controller's
+ *      `active()` reads a React-render-bound surface snapshot, so re-reading
+ *      it right after a close would still see the OLD layout (the store
+ *      commit lands ahead of the render) and misread a successful close as a
+ *      refusal — which once folded the whole column by mistake ([e+g] bug);
+ *   2. an expanded column with NO active tab at all (an empty pane, a
+ *      throwing controller) → collapse the column (the kernel face's
+ *      `toggleExpanded`) as the visible "nothing more to close". A close the
+ *      kernel refuses (the sole docked guide, rejected by its `canCloseTab`)
+ *      needs no feedback: the press is simply claimed as a no-op;
  *   3. a collapsed column, or windows without a native column at all
  *      (popup / detached session windows) → the bottom workbench: close its
  *      active tab; an open workbench with no tabs → collapse it (the
@@ -105,7 +110,9 @@ export function claimCloseActiveTab(
 
 /**
  * The kernel right Sidebar half of the claim: close the active tab while the
- * column is expanded; collapse the column when nothing could be closed.
+ * column is expanded (claiming unconditionally — never verified by re-reading,
+ * see the module header); collapse the column only when there was no active
+ * tab at all.
  * @param ctx - the client context face.
  * @returns `true` when the press is fully handled by this half (a tab closed
  *   or the column folded); `false` when the column is collapsed or absent and
@@ -130,25 +137,22 @@ function closeNativeActiveTab(ctx: DesktopShortcutContext): boolean {
     tab = undefined
   }
   if (tab !== undefined) {
+    // Claim unconditionally after the close call: the kernel's `active()`
+    // reads a React-render-bound surface snapshot, so re-reading it right
+    // after the store commit still sees the OLD layout — verifying a close
+    // by re-reading would misjudge a successful close as a refusal and fold
+    // the whole column ([e+g] bug). A refused close (the sole docked guide)
+    // simply lands as a claimed no-op.
     try {
       sidebar.close?.(tab.id)
     } catch {
-      // A throwing close is as good as a refused one: fall to the fold below.
+      // A throwing close still claims the press — see the module header.
     }
-    let after: { id: string } | undefined
-    try {
-      after = sidebar.active?.()
-    } catch {
-      after = undefined
-    }
-    // The kernel refuses only the sole docked guide; a refused close leaves
-    // the same tab active. Any other outcome (tab gone, or the pane moved on
-    // to a neighbor) means the close landed.
-    if (after === undefined || after.id !== tab.id) return true
+    return true
   }
-  // Nothing closable in the expanded column (the sole guide, an empty pane,
-  // a throwing controller): fold the column as the visible "nothing more to
-  // close". A missing or throwing toggle still claims the press.
+  // No active tab at all (an empty pane, a throwing controller): fold the
+  // column as the visible "nothing more to close". A missing or throwing
+  // toggle still claims the press.
   try {
     sidebar.toggleExpanded?.()
   } catch {

@@ -128,3 +128,22 @@ hover ×（`canCloseTab` 只拒绝「唯一停靠的 guide」）、右键菜单�
   Cmd+W/Ctrl+W 的 Close 加速键（杜绝菜单旁路直关窗口），保留 Cmd+Q；契约
   文档同步。桥 / router / confirmClose 逻辑本身不变——确认框只会在「页面无
   消费方」时出现（插件未装 / 未加载的保底）。
+
+## 真机修正：[e+g] 场景侧栏误折叠（回读验证不可靠）
+
+真机复测「editor + git 两个 tab 同时打开，按 Cmd+W」：tab 正常关闭，但**整
+个侧栏也随之收起**。根因（两层）：
+
+1. 插件侧初稿在 `close()` 后立即回读 `active()` 验证关闭是否落地——而内核
+   `sidebarRight` 控制器的 `active()` 读的是 **React render 绑定的 surface
+   快照**：store 的 planner/ops 提交先于 React re-render 生效，回读必然还是
+   旧布局（旧活动 tab id），被误判为「内核拒绝关闭」→ 走 `toggleExpanded`
+   折叠分支。
+2. 内核 `closeTab`（ui-sidebar-right stores.ts）在关闭**唯一停靠 tab** 时会
+   附带 `planSetExpanded(false)`（收起侧栏）——内核既有设计（关完最后一个
+   tab 自然收起），非缺陷。
+
+修正：**删除回读验证**——`close()` 调用后无条件认领；折叠只保留给「本来就
+没有活动 tab」（空 pane / 控制器抛错）的情形；「唯一 guide 被内核拒绝」改为
+无操作认领（语义 A 允许「什么都不做」）。测试同步：sole-guide 拒绝 → close
+被调 + 不折叠 + 认领。
