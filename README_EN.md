@@ -601,6 +601,20 @@ All changes since v0.14.0:
 | Reference file to input | Hover the `@file` button at end of line |
 | Copy file path | Right-click row → copy relative/absolute path |
 
+> **dsh-hotkey keyboard-shortcut plugin interop** (v0.20.x): this plugin keeps a
+> standing service + DOM contract for dsh-hotkey — `ctx.betterSidebar`
+> `getSnapshot()` carries top-level `sessionId` / `bottomOpen` / `panelOpen`,
+> `getTabs()` exposes the terminal / editor / git / subagent / sidechat ids,
+> `openTab({ type }, { sessionId })` opens by type; DOM provides
+> `[data-dsh-panel-host]`, `[data-dsh-panel-host] [class*="tab"][title]` tab
+> strip and the `[data-dsh-toggle-cluster]` expand/collapse cluster (with the
+> "collapse/expand bottom panel" and "collapse/expand sidebar" keyword
+> buttons). In **popup / detached session windows** where the kernel has not
+> mounted its right sidebar yet, `Cmd+Opt+B` / `Cmd+Shift+E` still open the
+> file tree through the plugin's own fallback (the bottom workbench), and
+> switch back to the native column automatically once `sidebarRight` is
+> available. Full contract: [guide §7.1](docs/external-plugin-guide.md).
+
 ## 🔌 Service API
 
 Since v0.4.0 the plugin exposes the `ctx.betterSidebar` service — other plugins can register sidebar pages and file viewers (the 8 built-in tabs + 6 viewers register through the same service). v0.12.1 completed the base capabilities (complete type exports, capability detection, state subscription, tab badges, lifecycle callbacks, targeted open, plugin-owned settings, etc.).

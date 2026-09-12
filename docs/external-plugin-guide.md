@@ -24,6 +24,7 @@
 | 去重 | 原生按 `(kind, 地址)` 去重：有 `createTab` 的类型每次新开一个 tab（terminal / browser / sidechat / diff），其余聚焦已有 tab；`dedupeKey` 的自定义语义不参与原生面 |
 | 布局持久化 | 原生栏的布局**只在内存**（刷新后回到折叠默认），插件自己的底部工作台仍然持久化 |
 | 跨会话打开 | 目标会话的右侧栏 store 未挂载时，打开会排队到该会话上屏后重放 |
+| 弹窗/独立会话窗口（v0.20.x） | 本插件客户端随窗口的 client runtime 一起挂载（服务、`[data-dsh-panel-host]`、底部工作台照常）。**内核未在该窗口挂 ui-sidebar-right 时**（`ctx.sidebarRight` 缺失），「right」打开不再无限排队，而是回落到插件自己的底部工作台（见 §7 / §7.1）；dsh-hotkey 的 `Cmd+Opt+B` / `Cmd+Shift+E` 等快捷键因此无需等内核改动即可打开文件树。**内核侧在弹窗窗口的 client 插件组装里包含本插件与其消费插件**仍由 DSH 负责（不属于本插件可改动范围） |
 | 内置类型接管 | 插件的 `editor` 类型以 `extension` 优先级认领 `dsh-resource://file/**`（压过内置 `ui-sidebar-documentpreview` 的 `text` 预览——即 `fallback` 带），并接管内置 `files` 页面 kind（`openTab('files')` 打开插件的文件树）；插件卸载/禁用时内置实现自动复位 |
 | path 种子的去向（v0.19.2+） | `path` seed 的含义**跟随类型**：只有 `editor`（唯一认领 `dsh-resource://file/**` 的类型）把 path 转成资源地址打开（文件落在编辑器）；**其余类型保留页面型打开**，path 随导航 params 落到合成记录的 `tab.path` 供组件消费——组件型 tab 的 path seed 不会被改道到文件编辑器（v0.19.0/0.19.1 上一切 path seed 都被改道，组件从未挂载，#632） |
 | 终端上限 | 终端 tab 的数量上限只统计插件自己底部工作台里的终端；原生栏里的终端不计入 |
@@ -638,6 +639,11 @@ interface BetterSidebarService {
    * 与之前完全一致。
    * 内容型打开（带 path/url seed）在落点面板折叠时自动展开，保证落点可见；
    * 类型型打开（+ 菜单等）不展开。
+   * 落点（v0.20.x，features 含 'panelFlags'）：非 `target: 'bottom'` 的打开默认
+   * 走原生右侧栏 surface；若该窗口没有内核 `sidebarRight` 控制器（弹窗/独立
+   * 会话窗口、未挂 ui-sidebar-right 的运行时），打开**回落到底部工作台**
+   * （创建/聚焦标签并展开），而不是无限期排队——保证 dsh-hotkey 等外部触发
+   * 在弹窗窗口里也能打开文件树。内核控制器出现后同一调用自动回到原生路径。
    */
   openTab(seed: OpenTabSeed, scope?: SessionScope): void
   /** 关闭一个 tab（未知 id 严格 no-op，无状态搅动）；scope（v0.12.0+）
@@ -651,12 +657,16 @@ interface BetterSidebarService {
   /** 能力清单（只增不删，唯一例外：v0.19.0 删除了 'floatWindows'）：
    *  'badge' | 'tabLifecycle' | 'updateTab' | 'openFile' | 'targetedOpen' |
    *  'stateSubscription' | 'tabMeta' | 'pluginSettings' | 'urlTarget' |
-   *  'settingSelect' | 'fileIcons'
-   *  ——用 `features.includes('xxx')` 按能力 gate。 */
+   *  'settingSelect' | 'fileIcons' | 'panelFlags'
+   *  ——用 `features.includes('xxx')` 按能力 gate。
+   *  'panelFlags'（v0.20.x，本节「7.1 dsh-hotkey 对接契约」）：
+   *  getSnapshot() 携带顶层 bottomOpen/panelOpen，且「right」打开在内核
+   *  sidebarRight 控制器缺失时回落到插件自己的底部工作台。 */
   readonly features: readonly string[]
-  /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
+  /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs；
+   *  v0.20.x 起另带顶层 `bottomOpen`/`panelOpen` 布尔（见 7.1）。
    *  session 未激活时 state/sessionId 为 undefined。 */
-  getSnapshot(): SidebarSnapshot
+  getSnapshot(): SidebarServiceSnapshot
   /** 订阅快照变化（会话切换/状态变更/prefs 写入）；返回 disposer */
   subscribeState(listener: () => void): () => void
   /** 更新一个已打开 tab 的显示字段（title/path/meta）；tab 不存在时 no-op */
@@ -801,6 +811,40 @@ ctx.effect(() =>
   })
 )
 ```
+
+---
+
+### 7.1 键盘快捷键插件对接契约（dsh-hotkey，v0.20.x）
+
+dsh-hotkey 等键盘优先插件按「内核 `sidebarRight` 优先、本插件兜底」的链路工作。
+本插件承诺的服务与 DOM 契约（改动必须同步 dsh-hotkey 的 `lib/client.js` 消费面）：
+
+**服务 `ctx.betterSidebar`：**
+
+- `getSnapshot()` 返回对象**顶层**携带：
+  - `sessionId: string | undefined`
+  - `bottomOpen: boolean` —— 插件底部工作台展开状态（= `state.bottomOpen`）；
+  - `panelOpen: boolean | undefined` —— 内核右侧栏展开状态：`sidebarRight
+    .isExpanded()`（有控制器时）或内核 DOM 标记 `[data-sidebar-right-open]`
+    兜底；**`undefined` = 本窗口根本没有内核右侧栏**（弹窗/独立会话窗口、未
+    挂 ui-sidebar-right 的运行时），消费方可据此启用插件自身面作为兜底。
+- `getTabs()` 返回 `{ id, ... }[]`；内置 id 稳定为 `terminal` / `editor`（文件）/
+  `git`（源代码管理）/ `subagent`（任务管理）/ `sidechat`（侧边对话）/ `browser`。
+- `openTab({ type }, { sessionId })` 按类型打开/聚焦；无内核控制器的窗口里
+  「right」打开自动落插件底部工作台（见 §7 openTab 落点说明）。
+
+**DOM（插件宿主树）：**
+
+- 面板宿主：`[data-dsh-panel-host]`（始终挂载于 `body`，无会话时为空宿主）。
+- 标签条：`[data-dsh-panel-host] [class*="tab"][title]`——每个 tab 的
+  `title` 即标签标题（如「文件」「Terminal 1」），关键词匹配可点击。
+- 折叠/展开按钮集群：`[data-dsh-toggle-cluster]`（两处：会话头部底栏开关
+  `data-dsh-bottom-toggle` 的包裹层；底部工作台 tab 条右端的按钮组）。按钮
+  aria-label/title 关键词：底栏「折叠底部面板/展开底部面板/collapse bottom
+  panel/expand bottom panel」；侧栏「折叠侧边栏/展开侧边栏/collapse sidebar/
+  expand sidebar」（`data-dsh-sidebar-toggle`，内核无控制器时行为 = 打开/收起
+  底部工作台的文件窗口）。
+- 左侧栏 `[data-side="sidebar"]` 属内核 ui-sidebar 的 DOM，本插件不产出。
 
 ---
 

@@ -131,6 +131,15 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       }
       return { type: record.tab.type, title: record.tab.title }
     },
+    // A "right" open can only ever land while the kernel provides the
+    // controller (`ctx.sidebarRight`). Without it — a popup / session window
+    // on a runtime that has not mounted ui-sidebar-right — the pending queue
+    // is a dead end: flushPending fires on session-list changes but still
+    // needs the controller to place anything. The service consults this
+    // before queueing and falls back to the bottom workbench instead.
+    canPlace() {
+      return controller() !== undefined
+    },
     update(tabId, patch) {
       if (!records.has(tabId)) return false
       records.update(tabId, patch)

@@ -264,6 +264,16 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(page.locator('[data-dsh-bottom-toggle]')).toBeAttached({ timeout: 30_000 })
   await expect(page.locator('[data-dsh-bottom-panel]')).toBeAttached()
 
+  // The dsh-hotkey DOM contract: the toggle cluster seat exists with the
+  // keyword-labelled buttons (bottom + sidebar) inside the panel host. The
+  // strip-end cluster renders inside the workbench and is only present while
+  // the workbench itself is (a session is active).
+  await expect(page.locator('[data-dsh-panel-host] [data-dsh-toggle-cluster]')).toBeAttached()
+  const stripButtons = page.locator('[data-dsh-panel-host] [data-dsh-toggle-cluster] button')
+  await expect(stripButtons).toHaveCount(2)
+  await expect(stripButtons.filter({ hasText: /collapse bottom panel|折叠底部面板/i })).toHaveCount(1)
+  await expect(page.locator('[data-dsh-panel-host] [data-dsh-sidebar-toggle]')).toBeAttached()
+
   // DSH 0.1.5 owns the right column: the plugin contributes tab TYPES to the
   // host's native right Sidebar instead of drawing its own panel. Open it
   // through the host's own control (the conversation header's corner) and

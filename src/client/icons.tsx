@@ -19,6 +19,18 @@ export const IconPanelBottomOutline16 = ({ size = 16, className }: IconProps) =>
 )
 
 /**
+ * Sidebar (right column) toggle glyph (the "侧边栏" button): a frame with a
+ * filled strip along its RIGHT edge — the bottom-panel glyph's mirror, in
+ * the same outline style.
+ */
+export const IconPanelRightOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="3.25" y="3.25" width="2.75" height="9.5" rx="1" fill="currentColor" stroke="none" />
+  </svg>
+)
+
+/**
  * Terminal glyph in the app's outline style (1.5px stroke, currentColor):
  * a rounded frame with a prompt chevron and underscore cursor.
  */

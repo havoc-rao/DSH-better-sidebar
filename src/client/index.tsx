@@ -21,6 +21,7 @@ import { registerTurnTailInterception } from './intercept.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
+import { readNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { createNativeSurface } from './native/surface.ts'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
@@ -139,7 +140,20 @@ export function apply(ctx: Context): void {
   // file previewers through `ctx.betterSidebar.registerTab/registerFileViewer`.
   // Published before the panel mounts so consumers injecting 'betterSidebar'
   // are ready by the time the sidebar renders.
-  const service = createBetterSidebarService(sidebarStore)
+  //
+  // The panel probe decorates getSnapshot() with the flat `panelOpen` flag
+  // dsh-hotkey reads. Contract: the kernel's `sidebarRight.isExpanded()`
+  // when the controller exists (DOM marker `[data-sidebar-right-open]` as
+  // fallback for a controller without `isExpanded`); `undefined` in windows
+  // without any kernel right Sidebar. Shared with the sidebar-toggle button
+  // (sidebar/use-native-column.ts) so both faces agree.
+  const service = createBetterSidebarService(sidebarStore, () => {
+    try {
+      return readNativeSidebarOpen(ctx)
+    } catch {
+      return undefined
+    }
+  })
   ctx.provide('betterSidebar', service)
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
