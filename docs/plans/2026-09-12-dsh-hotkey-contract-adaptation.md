@@ -131,7 +131,23 @@ layout 服务缺失时回退它）。本插件不产出、也不需要——在�
 
 ## 实施偏差
 
-（实施时记录，若有。）
+- **`panelOpen` 语义细化**：实现时定稿为「控制器存在 → `isExpanded()`；控制器存
+  在但无 `isExpanded` → DOM 标记；**控制器不存在 → `undefined`**」。初稿曾把
+  DOM 标记当全环境兜底，但无内核栏的窗口里标记必然缺失、读出来是 `false`，
+  会与非内核栏区分不开——`undefined` 才是「本窗口没有内核右侧栏」的信号，侧栏
+  开关按钮据此启用插件自身文件面兜底。
+- **`data-dsh-toggle-cluster` 两处**：头部底栏开关（`BottomDockToggle`）包一层
+  `inline-flex` 包裹层（`display: contents` 会让集群元素没有 client rect，
+  dsh-hotkey 的 `isVisible` 读 `getClientRects()` 会判不可见）；工作台 tab 条右
+  端按钮组（`bottomClose` + 新增侧栏开关）包一层零面积定位锚点（保持绝对定位
+  坐标不变）。两处都满足「集群元素真实有盒」。
+- **侧栏开关按钮**放在工作台 tab 条右端（`bottomClose` 左侧，`right: 40px`），
+  而非会话头部：头部右角属于内核原生栏自己的展开控件，不再加重复 chrome；
+  弹窗/无内核窗口里该按钮即 dsh-hotkey 的关键词落点。
+- **`SidebarSurface.canPlace` 为可选方法**（缺省 = 可用）：既有测试桩与外部
+  mock 无需改动；`createNativeSurface` 实现为控制器存在性判定。
+- 未 bump 版本号（发版由 release 流程负责，本次任务不含发版）；`SIDEBAR_FEATURES`
+  增补 `'panelFlags'` 作能力 gate，旧消费者不 gate 也不受影响。
 
 ## 测试
 

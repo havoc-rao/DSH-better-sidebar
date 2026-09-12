@@ -271,7 +271,14 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(page.locator('[data-dsh-panel-host] [data-dsh-toggle-cluster]')).toBeAttached()
   const stripButtons = page.locator('[data-dsh-panel-host] [data-dsh-toggle-cluster] button')
   await expect(stripButtons).toHaveCount(2)
-  await expect(stripButtons.filter({ hasText: /collapse bottom panel|折叠底部面板/i })).toHaveCount(1)
+  // Keyword matching rides the aria-label pair (the tooltip bubble renders
+  // only while hovered, so textContent is not a stable surface).
+  const stripLabels = await stripButtons.evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')))
+  expect(stripLabels.some(label => label === 'Collapse bottom panel' || label === '折叠底部面板'),
+    `the strip cluster must carry the bottom-panel toggle, got ${JSON.stringify(stripLabels)}`).toBe(true)
+  expect(stripLabels.some(label => label === 'Expand sidebar' || label === 'Collapse sidebar'
+    || label === '展开侧边栏' || label === '折叠侧边栏'),
+    `the strip cluster must carry the sidebar toggle, got ${JSON.stringify(stripLabels)}`).toBe(true)
   await expect(page.locator('[data-dsh-panel-host] [data-dsh-sidebar-toggle]')).toBeAttached()
 
   // DSH 0.1.5 owns the right column: the plugin contributes tab TYPES to the
