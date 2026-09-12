@@ -92,10 +92,39 @@ hover ×（`canCloseTab` 只拒绝「唯一停靠的 guide」）、右键菜单�
 
 ## 测试
 
-- 新增 `tests/desktop-shortcuts.spec.ts`（15 例）：桥探测三态；原生路径
-  （关闭认领 / 关闭后无活动 tab / 拒绝关闭不认领 / 折叠跳过 / 控制器抛错）；
-  工作台回退（无控制器 / 原生无活动 tab / 皆无可关 / 工作台关闭）；index
-  wiring 形状（handler 即认领函数、抛错不认领）。
+- 新增 `tests/desktop-shortcuts.spec.ts`（18 例，语义 A 修订后）：桥探测三态；
+  原生路径（关闭认领 / 关闭后无活动 tab / 唯一 guide 拒绝 → 折叠 / 空 pane →
+  折叠 / 缺 toggle 面 / 控制器抛错仍认领）；工作台回退（无控制器 / 折叠列 /
+  空工作台收起回调 / 工作台关闭不调回调 / 无操作认领 / `ctx.get` 抛错 /
+  index 注入回调折叠真实 store）；桥契约 wiring（last-wins disposer / 任何
+  状态都认领）。
 - `tests/hotkey-contract.spec.ts`、`tests/service.spec.ts` 回归。
 - harness 侧（并行）：electron 桥单测 + dockkit 中键用例 + mount 冒烟由
   deepseek-harness 仓库负责。
+
+## 语义定案（A）：Cmd+W 永不关闭应用（真机复现后修订）
+
+真机复现（带 `--inspect` / CDP 的独立实例）确认：桥、preload、页面侧注册均
+正常，`window.dshDesktopShell.onShortcut` 真实存在。用户实测「关掉 tab 的同
+时仍弹 Close dsh 确认框」——即「tab 关完后再按（或无 tab 可关时）放行给确认
+框」的初稿语义不符合预期。经确认，语义定案为 **A**：
+
+1. 有可关 tab → 关（内核右侧栏活动 tab 优先，底部工作台兜底）；
+2. 没有 → **折叠右侧栏**（唯一 guide / 空 pane / 控制器抛错路径），或收起
+   底部工作台（开着但无 tab，经 index.tsx 注入的 `collapseBottom` 回调走
+   `toggleBottomPanel` reducer）；
+3. **任何状态都认领（恒返回 true）**——插件挂载期间 Cmd+W 永不触发壳的窗
+   口关闭确认；关应用走 `Cmd+Q` / 红绿灯 / 壳菜单。
+
+实施修订（对比初稿）：
+
+- `claimCloseActiveTab(ctx, service, collapseBottom?)`：第三参可选回调，由
+  `apply` 注入（读 `service.getSnapshot().state?.bottomOpen` 后
+  `sidebarStore.reduce(toggleBottomPanel)`）；函数恒返回 true，只通过副作用
+  沟通，测试以副作用断言。
+- `SidebarRightCloseFace` 增 `toggleExpanded?`；「拒绝关闭（唯一 guide）」
+  从「回退工作台」改为「折叠右侧栏并认领」。
+- harness 侧联动（并行）：应用菜单显式接管，移除默认菜单中映射到
+  Cmd+W/Ctrl+W 的 Close 加速键（杜绝菜单旁路直关窗口），保留 Cmd+Q；契约
+  文档同步。桥 / router / confirmClose 逻辑本身不变——确认框只会在「页面无
+  消费方」时出现（插件未装 / 未加载的保底）。
