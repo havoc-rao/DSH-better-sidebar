@@ -1,19 +1,21 @@
 // @vitest-environment jsdom
 /**
- * The desktop-shell shortcut bridge (v0.20.x, deepseek-harness Electron):
+ * The desktop-shell shortcut bridge (v0.20.x, deepseek-harness Electron),
+ * semantics "A":
  *
  * 1. `readDesktopShellBridge()` resolves `window.dshDesktopShell` — the
  *    preload bridge the harness Electron shell exposes — and returns
  *    `undefined` in plain browsers / shells without it.
  * 2. `claimCloseActiveTab()` is the plugin's Cmd+W decision: close the
- *    native right Sidebar's active tab (kernel controller) while the column
- *    is expanded, else the bottom workbench's active tab (popup / session
- *    windows without a native column). Nothing closable → `false`, so an
- *    unclaimed press keeps the shell's window close-confirmation default.
+ *    native right Sidebar's active tab while the column is expanded; fold
+ *    the column when nothing more is closable there; else work the bottom
+ *    workbench (close its active tab, fold an open workbench with no tabs).
+ *    The press is ALWAYS claimed — Cmd+W never falls through to the shell's
+ *    window close confirmation while the plugin is mounted.
  */
 import { describe, expect, it, vi } from 'vitest'
 import { createBetterSidebarService } from '../src/client/service.ts'
-import { createSidebarStore, allLeaves } from '../src/client/state.ts'
+import { createSidebarStore, allLeaves, toggleBottomPanel } from '../src/client/state.ts'
 import {
   CMD_W_SHORTCUT,
   claimCloseActiveTab,
@@ -55,7 +57,7 @@ function openBottomTerminal(service: ReturnType<typeof createBetterSidebarServic
 
 /** A scriptable fake of the kernel `sidebarRight` controller face. */
 function fakeSidebar(options: {
-  expanded?: boolean
+  expanded?: boolean | 'unknown'
   activeTab?: string | null
   /** Close removes the tab (active becomes undefined afterwards). Default true. */
   closes?: boolean
@@ -65,15 +67,22 @@ function fakeSidebar(options: {
   closeThrows?: boolean
   /** `isExpanded()` throws. */
   expandedThrows?: boolean
+  /** `toggleExpanded()` throws. */
+  toggleThrows?: boolean
+  /** No `toggleExpanded` on the face at all. */
+  noToggle?: boolean
 }): {
   face: unknown
   closeCalls: string[]
+  toggleCalls: number
 } {
   const state = { activeTab: options.activeTab ?? null }
   const closeCalls: string[] = []
+  let toggleCalls = 0
   const face = {
     isExpanded: () => {
       if (options.expandedThrows === true) throw new Error('boom')
+      if (options.expanded === 'unknown') return undefined
       return options.expanded ?? true
     },
     active: () => {
@@ -85,8 +94,18 @@ function fakeSidebar(options: {
       closeCalls.push(tabId)
       if (options.closes !== false) state.activeTab = null
     },
+    ...(options.noToggle === true ? {} : {
+      toggleExpanded: () => {
+        if (options.toggleThrows === true) throw new Error('boom')
+        toggleCalls += 1
+      },
+    }),
   }
-  return { face, closeCalls }
+  return {
+    face,
+    closeCalls,
+    get toggleCalls() { return toggleCalls },
+  }
 }
 
 describe('readDesktopShellBridge', () => {
@@ -113,47 +132,53 @@ describe('readDesktopShellBridge', () => {
 
 describe('claimCloseActiveTab: native right Sidebar path', () => {
   it('closes the expanded column\'s active tab and claims the press', () => {
-    const { face, closeCalls } = fakeSidebar({ expanded: true, activeTab: 'files' })
-    const ctx = makeCtx(face)
+    const { face, closeCalls, toggleCalls } = fakeSidebar({ expanded: true, activeTab: 'files' })
     const { service } = mount()
-    expect(claimCloseActiveTab(ctx, service)).toBe(true)
+    expect(claimCloseActiveTab(makeCtx(face), service)).toBe(true)
     expect(closeCalls).toEqual(['files'])
+    expect(toggleCalls).toBe(0)
   })
 
   it('claims even when the closed tab leaves no active tab behind', () => {
-    const { face, closeCalls } = fakeSidebar({ activeTab: 'editor:1', closes: true })
+    const { face, closeCalls, toggleCalls } = fakeSidebar({ activeTab: 'editor:1', closes: true })
     const { service } = mount()
     expect(claimCloseActiveTab(makeCtx(face), service)).toBe(true)
     expect(closeCalls).toEqual(['editor:1'])
+    expect(toggleCalls).toBe(0)
   })
 
-  it('does not claim a refused close (the sole docked guide stays)', () => {
+  it('folds the column instead of falling through when the kernel refuses (sole guide)', () => {
     // The kernel refuses only that: close() leaves the same tab active.
-    const { face, closeCalls } = fakeSidebar({ activeTab: 'guide', closes: false })
+    const entry = fakeSidebar({ activeTab: 'guide', closes: false })
     const { service } = mount()
-    expect(claimCloseActiveTab(makeCtx(face), service)).toBe(false)
-    expect(closeCalls).toEqual(['guide'])
-  })
-
-  it('skips a collapsed column and falls through to the workbench', () => {
-    const entry = fakeSidebar({ expanded: false, activeTab: 'files' })
-    const { service } = mount()
-    const tabId = openBottomTerminal(service)
     expect(claimCloseActiveTab(makeCtx(entry.face), service)).toBe(true)
-    expect(entry.closeCalls).toEqual([])
-    const tabs = allLeaves(service.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
-    expect(tabs.map(tab => tab.id)).not.toContain(tabId)
+    expect(entry.closeCalls).toEqual(['guide'])
+    expect(entry.toggleCalls).toBe(1)
   })
 
-  it('treats a throwing controller as no native surface', () => {
-    const entries = [
+  it('folds the column when the expanded column has no active tab', () => {
+    const entry = fakeSidebar({ expanded: true, activeTab: null })
+    const { service } = mount()
+    expect(claimCloseActiveTab(makeCtx(entry.face), service)).toBe(true)
+    expect(entry.toggleCalls).toBe(1)
+  })
+
+  it('claims with a no-op toggle when the face lacks toggleExpanded', () => {
+    const entry = fakeSidebar({ activeTab: null, noToggle: true })
+    const { service } = mount()
+    expect(claimCloseActiveTab(makeCtx(entry.face), service)).toBe(true)
+    expect(entry.toggleCalls).toBe(0)
+  })
+
+  it('keeps claiming when the controller throws anywhere', () => {
+    for (const entry of [
       fakeSidebar({ activeThrows: true }),
       fakeSidebar({ expandedThrows: true }),
       fakeSidebar({ closeThrows: true, activeTab: 'x' }),
-    ]
-    for (const entry of entries) {
+      fakeSidebar({ toggleThrows: true, activeTab: null }),
+    ]) {
       const { service } = mount()
-      expect(claimCloseActiveTab(makeCtx(entry.face), service)).toBe(false)
+      expect(claimCloseActiveTab(makeCtx(entry.face), service)).toBe(true)
     }
   })
 })
@@ -167,26 +192,37 @@ describe('claimCloseActiveTab: bottom workbench fallback', () => {
     expect(tabs.map(tab => tab.id)).not.toContain(tabId)
   })
 
-  it('falls back to the workbench when the native active() has no tab', () => {
-    const entry = fakeSidebar({ expanded: true, activeTab: null })
+  it('closes the workbench tab from a collapsed native column', () => {
+    const entry = fakeSidebar({ expanded: false, activeTab: 'files' })
     const { service } = mount()
     const tabId = openBottomTerminal(service)
     expect(claimCloseActiveTab(makeCtx(entry.face), service)).toBe(true)
+    expect(entry.closeCalls).toEqual([])
+    expect(entry.toggleCalls).toBe(0)
     const tabs = allLeaves(service.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
     expect(tabs.map(tab => tab.id)).not.toContain(tabId)
   })
 
-  it('is false with nothing closable anywhere', () => {
-    const noNative = mount()
-    expect(claimCloseActiveTab(makeCtx(undefined), noNative.service)).toBe(false)
-    const collapsed = fakeSidebar({ expanded: false, activeTab: 'files' })
-    expect(claimCloseActiveTab(makeCtx(collapsed.face), noNative.service)).toBe(false)
+  it('folds an open workbench that has no tab to close', () => {
+    const { service, store } = mount()
+    store.reduce(state => ({ ...state, bottomOpen: true }))
+    const collapse = vi.fn(() => true)
+    expect(claimCloseActiveTab(makeCtx(undefined), service, collapse)).toBe(true)
+    expect(collapse).toHaveBeenCalledTimes(1)
   })
 
-  it('does not close anything while the workbench is closed', () => {
-    const { service, store } = mount()
-    store.reduce(state => ({ ...state, bottomOpen: false }))
-    expect(claimCloseActiveTab(makeCtx(undefined), service)).toBe(false)
+  it('never calls the collapse callback while the workbench is closed', () => {
+    const { service } = mount()
+    const collapse = vi.fn(() => true)
+    expect(claimCloseActiveTab(makeCtx(undefined), service, collapse)).toBe(true)
+    expect(collapse).not.toHaveBeenCalled()
+  })
+
+  it('claims as a no-op when nothing is closable anywhere', () => {
+    const noNative = mount()
+    expect(claimCloseActiveTab(makeCtx(undefined), noNative.service)).toBe(true)
+    const collapsed = fakeSidebar({ expanded: false, activeTab: 'files' })
+    expect(claimCloseActiveTab(makeCtx(collapsed.face), noNative.service)).toBe(true)
   })
 
   it('handles a ctx.get that throws like a missing native controller', () => {
@@ -195,6 +231,20 @@ describe('claimCloseActiveTab: bottom workbench fallback', () => {
     expect(claimCloseActiveTab(makeCtx(undefined, true), service)).toBe(true)
     const tabs = allLeaves(service.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
     expect(tabs.map(tab => tab.id)).not.toContain(tabId)
+  })
+
+  it('the mount-point collapse callback folds the real workbench (index.tsx shape)', () => {
+    // Mirrors src/client/index.tsx: the injected callback reads the snapshot
+    // and reduces toggleBottomPanel against the plugin's own store.
+    const { service, store } = mount()
+    store.reduce(state => ({ ...state, bottomOpen: true }))
+    const collapse = (): boolean => {
+      if (service.getSnapshot().state?.bottomOpen !== true) return false
+      store.reduce(toggleBottomPanel)
+      return true
+    }
+    expect(claimCloseActiveTab(makeCtx(undefined), service, collapse)).toBe(true)
+    expect(store.getSnapshot().state?.bottomOpen).toBe(false)
   })
 })
 
@@ -224,11 +274,11 @@ describe('bridge contract wiring (the shell side of the contract)', () => {
     expect(handlers.has(CMD_W_SHORTCUT)).toBe(false)
   })
 
-  it('the index wiring shape: cmd-w handler delegates to claimCloseActiveTab', () => {
-    // Mirrors src/client/index.tsx: the handler is the claim decision, and a
-    // throwing claim leaves the press unclaimed (the shell's default runs).
+  it('the index wiring shape: every press is claimed, even with nothing to close', () => {
+    // Mirrors src/client/index.tsx: the handler delegates to
+    // claimCloseActiveTab, a throwing claim stays unclaimed (the shell's
+    // default then runs), and a claim never returns false on its own.
     const { service } = mount()
-    openBottomTerminal(service)
     let handler: (() => boolean | undefined) | undefined
     const bridge: DesktopShellBridge = {
       onShortcut: (_name, fn) => {
@@ -244,7 +294,7 @@ describe('bridge contract wiring (the shell side of the contract)', () => {
       }
     })
     expect(handler!()).toBe(true)
-    expect(handler!()).toBe(false)
-    expect(handler!()).toBe(false)
+    expect(handler!()).toBe(true)
+    expect(handler!()).toBe(true)
   })
 })
