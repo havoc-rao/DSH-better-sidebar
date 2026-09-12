@@ -599,11 +599,30 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 |---|---|
 | 保存编辑 | `Ctrl/Cmd + S` |
 | Git 提交 | `Ctrl + Enter` |
+| 关闭当前右侧栏标签（deepseek-harness Electron 壳内；无可关标签时保持壳的关闭确认） | `Cmd + W` |
 | 关闭 Tab | 鼠标中键 |
 | Tab 右键菜单 | 关闭 / 关闭其他页签 / 关闭左侧页签 / 关闭右侧页签（当前标签组） |
 | 拆分/合并分栏 | 拖 Tab 到分栏边缘 / 中间 |
 | 引用文件到输入框 | 悬浮行尾 `@文件` 按钮 |
 | 复制文件路径 | 右键行 → 复制相对/绝对地址 |
+
+> **与 dsh-hotkey 键盘快捷键插件联动**（v0.20.x）：本插件长期承诺 dsh-hotkey 的
+> 服务与 DOM 契约——`ctx.betterSidebar` 的 `getSnapshot()` 顶层携带
+> `sessionId` / `bottomOpen` / `panelOpen`，`getTabs()` 暴露
+> terminal / editor / git / subagent / sidechat 五类 id，`openTab({type},
+> {sessionId})` 按类型打开；DOM 提供 `[data-dsh-panel-host]`、
+> `[data-dsh-panel-host] [class*="tab"][title]` 标签条与
+> `[data-dsh-toggle-cluster]` 折叠/展开按钮集群（含「折叠底部面板/展开底部面板」
+> 与「折叠侧边栏/展开侧边栏」关键词按钮）。**弹窗/独立会话窗口**里即使内核尚未
+> 挂载右侧栏，`Cmd+Opt+B` / `Cmd+Shift+E` 也会经插件自身的兜底路径打开文件树
+> （回落底部工作台），内核 `sidebarRight` 可用后自动切回原生栏。契约全文见
+> [指南 §7.1](docs/external-plugin-guide.md)。
+>
+> **桌面壳快捷键认领**（v0.20.x，deepseek-harness Electron）：壳在主进程拦截
+> `Cmd+W` 并经 `window.dshDesktopShell` 桥把认领权交给页面——有活动标签时
+> **关标签而不是关窗口**（内核右侧栏活动 tab 优先，底部工作台兜底；皆无可关
+> 时放行给壳的「Close dsh?」确认框）。纯浏览器 / 官方壳无桥时行为不变。契约见
+> [指南 §7.1.1](docs/external-plugin-guide.md)。
 
 ## 🔌 服务化扩展
 

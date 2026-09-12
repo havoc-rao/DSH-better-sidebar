@@ -595,11 +595,35 @@ All changes since v0.14.0:
 |---|---|
 | Save edits | `Ctrl/Cmd + S` |
 | Git commit | `Ctrl + Enter` |
+| Close the active right-sidebar tab (inside the deepseek-harness Electron shell; falls back to the shell's close confirmation when nothing is closable) | `Cmd + W` |
 | Close tab | Middle mouse button |
 | Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |
 | Split / merge panes | Drag tab to pane edge / middle |
 | Reference file to input | Hover the `@file` button at end of line |
 | Copy file path | Right-click row → copy relative/absolute path |
+
+> **dsh-hotkey keyboard-shortcut plugin interop** (v0.20.x): this plugin keeps a
+> standing service + DOM contract for dsh-hotkey — `ctx.betterSidebar`
+> `getSnapshot()` carries top-level `sessionId` / `bottomOpen` / `panelOpen`,
+> `getTabs()` exposes the terminal / editor / git / subagent / sidechat ids,
+> `openTab({ type }, { sessionId })` opens by type; DOM provides
+> `[data-dsh-panel-host]`, `[data-dsh-panel-host] [class*="tab"][title]` tab
+> strip and the `[data-dsh-toggle-cluster]` expand/collapse cluster (with the
+> "collapse/expand bottom panel" and "collapse/expand sidebar" keyword
+> buttons). In **popup / detached session windows** where the kernel has not
+> mounted its right sidebar yet, `Cmd+Opt+B` / `Cmd+Shift+E` still open the
+> file tree through the plugin's own fallback (the bottom workbench), and
+> switch back to the native column automatically once `sidebarRight` is
+> available. Full contract: [guide §7.1](docs/external-plugin-guide.md).
+>
+> **Desktop-shell shortcut claim** (v0.20.x, deepseek-harness Electron): the
+> shell intercepts `Cmd+W` in the main process and hands the claim to the
+> page through the `window.dshDesktopShell` bridge — with an active tab the
+> press **closes the tab instead of the window** (native right-sidebar active
+> tab first, bottom workbench as fallback; nothing closable passes the press
+> back to the shell's "Close dsh?" confirmation). Plain browsers / the
+> official shell have no bridge and behave unchanged. Contract:
+> [guide §7.1.1](docs/external-plugin-guide.md).
 
 ## 🔌 Service API
 

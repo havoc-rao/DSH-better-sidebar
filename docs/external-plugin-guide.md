@@ -804,6 +804,66 @@ ctx.effect(() =>
 
 ---
 
+### 7.1 键盘快捷键插件对接契约（dsh-hotkey，v0.20.x）
+
+dsh-hotkey 等键盘优先插件按「内核 `sidebarRight` 优先、本插件兜底」的链路工作。
+本插件承诺的服务与 DOM 契约（改动必须同步 dsh-hotkey 的 `lib/client.js` 消费面）：
+
+**服务 `ctx.betterSidebar`：**
+
+- `getSnapshot()` 返回对象**顶层**携带：
+  - `sessionId: string | undefined`
+  - `bottomOpen: boolean` —— 插件底部工作台展开状态（= `state.bottomOpen`）；
+  - `panelOpen: boolean | undefined` —— 内核右侧栏展开状态：`sidebarRight
+    .isExpanded()`（有控制器时）或内核 DOM 标记 `[data-sidebar-right-open]`
+    兜底；**`undefined` = 本窗口根本没有内核右侧栏**（弹窗/独立会话窗口、未
+    挂 ui-sidebar-right 的运行时），消费方可据此启用插件自身面作为兜底。
+- `getTabs()` 返回 `{ id, ... }[]`；内置 id 稳定为 `terminal` / `editor`（文件）/
+  `git`（源代码管理）/ `subagent`（任务管理）/ `sidechat`（侧边对话）/ `browser`。
+- `openTab({ type }, { sessionId })` 按类型打开/聚焦；无内核控制器的窗口里
+  「right」打开自动落插件底部工作台（见 §7 openTab 落点说明）。
+
+**DOM（插件宿主树）：**
+
+- 面板宿主：`[data-dsh-panel-host]`（始终挂载于 `body`，无会话时为空宿主）。
+- 标签条：`[data-dsh-panel-host] [class*="tab"][title]`——每个 tab 的
+  `title` 即标签标题（如「文件」「Terminal 1」），关键词匹配可点击。
+- 折叠/展开按钮集群：`[data-dsh-toggle-cluster]`（两处：会话头部底栏开关
+  `data-dsh-bottom-toggle` 的包裹层；底部工作台 tab 条右端的按钮组）。按钮
+  aria-label/title 关键词：底栏「折叠底部面板/展开底部面板/collapse bottom
+  panel/expand bottom panel」；侧栏「折叠侧边栏/展开侧边栏/collapse sidebar/
+  expand sidebar」（`data-dsh-sidebar-toggle`，内核无控制器时行为 = 打开/收起
+  底部工作台的文件窗口）。
+- 左侧栏 `[data-side="sidebar"]` 属内核 ui-sidebar 的 DOM，本插件不产出。
+
+#### 7.1.1 桌面壳快捷键认领（Cmd+W 关闭标签，v0.20.x，deepseek-harness Electron）
+
+deepseek-harness 的 Electron 壳（`apps/electron`）在主进程拦截 Cmd+W 并通过
+preload 桥把认领权交给页面：`window.dshDesktopShell`（contextBridge 暴露，
+沙箱渲染进程）：
+
+```ts
+interface DesktopShellBridge {
+  /** 注册一个快捷键的认领 handler；返回 disposer（仅当自己仍是当前注册时生效）。 */
+  onShortcut(name: 'cmd-w', handler: () => boolean | undefined): () => void
+}
+```
+
+- 页面 handler **同步**返回 `true` = 认领该次按键（壳不弹「Close dsh?」确认框）；
+  `false` / `undefined` = 放行，壳维持默认行为（窗口关闭确认）。壳保证：页面
+  无监听、handler 抛错或超时（1.5s）一律按「未认领」结算，主进程永不悬挂。
+- 本插件注册后，Cmd+W 的行为是**关闭当前活动标签**：内核右侧栏展开时关闭其
+  活动 tab（拒绝关闭的唯一场景是「唯一停靠的 guide」→ 回退底部工作台活动
+  tab）；皆无可关 → 不认领（维持壳的确认框）。纯浏览器 / 官方壳无该桥 →
+  本插件零行为。
+- 消费方按「`typeof window.dshDesktopShell?.onShortcut === 'function'`」探测，
+  不依赖 `dsh-desktop-mode` / UA；桥的实现在 deepseek-harness
+  （`apps/electron/src/preload.ts` 契约面），本指南只是消费侧承诺。
+- 便捷关闭的另一半：内核原生标签芯片的中键（鼠标中键）关闭由 harness 侧
+  ui-dockkit 提供；插件底部工作台 TabBar 的 × 与中键关闭为插件自有实现。
+
+---
+
 ## 8. 声明式设置（v0.4.1+）
 
 每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码）：

@@ -21,6 +21,7 @@ import { registerTurnTailInterception } from './intercept.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
+import { CMD_W_SHORTCUT, claimCloseActiveTab, readDesktopShellBridge } from './desktop-shortcuts.ts'
 import { createNativeSurface } from './native/surface.ts'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
@@ -157,6 +158,27 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBottomToggle(ctx, sidebarStore),
     'dsh-better-sidebar: bottom-workbench toggle',
+  )
+  // The desktop-shell shortcut bridge (the deepseek-harness Electron app):
+  // Cmd+W is intercepted by the shell and routed to the page; the plugin
+  // claims the press by closing the active tab of the native right Sidebar
+  // (or the bottom workbench's active tab in windows without a native
+  // column). An unclaimed press keeps the shell's default — the window
+  // close-confirmation dialog — so the app's own close guard never weakens.
+  // A missing bridge (plain browser, official shell) is a no-op.
+  ctx.effect(
+    () => {
+      const bridge = readDesktopShellBridge()
+      if (bridge === undefined) return () => {}
+      return bridge.onShortcut(CMD_W_SHORTCUT, () => {
+        try {
+          return claimCloseActiveTab(ctx, service)
+        } catch {
+          return undefined
+        }
+      })
+    },
+    'dsh-better-sidebar: desktop shell shortcut claims',
   )
   ctx.effect(
     () => () => { nativeSurface.dispose(); service.setSurface(undefined) },
