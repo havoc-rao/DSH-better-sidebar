@@ -42,6 +42,7 @@ import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
 import { parseDesktopEnv } from './desktop-env.ts'
+import { isFullscreenToggleShortcut } from './fullscreen-shortcut.ts'
 import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
@@ -312,11 +313,36 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // fills the panel over the whole conversation column (top edge to bottom
   // edge) and tracks its geometry per frame.
   const [fullscreen, setFullscreen] = useState(false)
+  // The strip's maximize toggle as ONE stable handler: the TabBar button
+  // (via Workbench → every pane strip) and the global shortcut below share
+  // this identity, so the chord can never drift from the button's behavior.
+  const toggleFullscreen = useCallback(() => { setFullscreen(v => !v) }, [])
   const { centerRectRef, chatRectRef, centerMeasured, measureCenter, draggingRef } =
     useCenterColumn(bottomRef, state?.bottomOpen, fullscreen)
   // Fullscreen is a transient view mode: switching conversations exits it
   // (the flag lives outside the store, so no session's layout carries it).
   useEffect(() => { setFullscreen(false) }, [sessionId])
+
+  // The global shortcut for the toggle above: Cmd+Shift+J on macOS,
+  // Ctrl+Shift+J on Windows/Linux (see fullscreen-shortcut.ts for the chord
+  // and its environment fit). Registered at the shell, NOT on the strips: a
+  // split workbench renders one TabBar per pane (up to four), and per-strip
+  // listeners would fire the toggle once per pane — the batched functional
+  // updates cancel out into a visible no-op. The workbench stays mounted
+  // while collapsed (collapse is a CSS hide), so the chord is heard both
+  // ways. A press some inner surface already claimed (a terminal, an
+  // editor — defaultPrevented) is left alone. Lifecycle is the shell's:
+  // the listener dies with the panel host (useEffect cleanup).
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented) return
+      if (!isFullscreenToggleShortcut(event)) return
+      event.preventDefault()
+      toggleFullscreen()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => { window.removeEventListener('keydown', onKeyDown) }
+  }, [toggleFullscreen])
 
   /**
    * Bottom-panel first-expansion auto terminal: the FIRST time the user
@@ -821,7 +847,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
             fullscreen={fullscreen}
-            onToggleFullscreen={() => { setFullscreen(v => !v) }}
+            onToggleFullscreen={toggleFullscreen}
           />
         </div>
       </div>
