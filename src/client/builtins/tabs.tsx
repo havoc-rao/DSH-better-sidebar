@@ -50,6 +50,7 @@ const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
 
 /** The terminal view's props (mirror of TerminalView's own signature). */
 interface TerminalViewProps {
+  ctx: Context
   scope: SessionScope
   tabId: string
   store: SidebarStore
@@ -320,7 +321,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
-      component: ({ tab, scope, store }) => <LazyTerminal scope={scope} store={store} tabId={tab.id} />,
+      component: ({ ctx, tab, scope, store }) => <LazyTerminal ctx={ctx} scope={scope} store={store} tabId={tab.id} />,
     },
     {
       id: 'browser',

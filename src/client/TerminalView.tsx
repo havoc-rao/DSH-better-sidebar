@@ -48,6 +48,16 @@ import {
   shouldActivateTerminalLink,
   openTerminalUrl,
 } from './terminal-links.ts'
+import { appendToDraft } from './conversation-draft.ts'
+import {
+  TerminalBlockTracker,
+  blockOutputText,
+  blockSpanLines,
+  buildTerminalInsert,
+  type TerminalBlock,
+} from './terminal-blocks.ts'
+import { TerminalBlockOverlay } from './TerminalBlockOverlay.tsx'
+import type { Context } from '../context-types.ts'
 import { TerminalWaitBanner } from './TerminalWaitBanner.tsx'
 import css from './sidebar.module.css'
 
@@ -71,6 +81,13 @@ const SHELL_NOT_FOUND_PREFIX = 'shell-not-found:'
 
 /** The degraded-mode payload rendered by {@link TerminalDepsBanner}. */
 type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
+
+/** The live terminal session handed to the block overlay (state, so the
+ *  overlay re-mounts per session instead of chasing refs). */
+interface TerminalSession {
+  term: Terminal
+  tracker: TerminalBlockTracker
+}
 
 /**
  * Curated ANSI palettes for the terminal. The surface colors (background,
@@ -117,8 +134,8 @@ function xtermTheme(): ITheme {
   }
 }
 
-export function TerminalView(props: { scope: SessionScope; tabId: string; store: SidebarStore }) {
-  const { scope, tabId, store } = props
+export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: string; store: SidebarStore }) {
+  const { ctx, scope, tabId, store } = props
   const hostRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
@@ -146,6 +163,31 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
     return store.subscribe(read)
   }, [agentUuid, store])
   const connectRef = useRef<(() => void) | null>(null)
+  /** The live xterm + block tracker handles (set by the mount effect, read
+   *  by the block pill's click so the payload is always built from the
+   *  CURRENT buffer state). */
+  const termRef = useRef<Terminal | null>(null)
+  const trackerRef = useRef<TerminalBlockTracker | null>(null)
+  /** The mounted terminal session (null until the mount effect ran); the
+   *  block overlay mounts on it. */
+  const [session, setSession] = useState<TerminalSession | null>(null)
+
+  /**
+   * The block overlay pill's click: build THE hovered block's payload live
+   * (command + its output rows, marker-resolved boundaries) and insert it
+   * into the composer input box — the same commit chain the text viewers'
+   * selection popup uses (TextEditor's "add to conversation" button →
+   * appendToDraft, see src/client/conversation-draft.ts).
+   */
+  const commitBlock = (block: TerminalBlock): void => {
+    const tracker = trackerRef.current
+    const term = termRef.current
+    if (tracker === null || term === null) return
+    const buffer = term.buffer.active
+    const span = blockSpanLines(tracker.blocks, block, buffer.length)
+    const output = blockOutputText(buffer, block, tracker.pending, span.end)
+    appendToDraft(ctx, scope.sessionId, buildTerminalInsert(block.command, output))
+  }
 
   useEffect(() => {
     const host = hostRef.current
@@ -164,6 +206,17 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    // The block model: every Enter in the input stream submits a command and
+    // opens a new block anchored at the shell's echo row (terminal-blocks.ts).
+    // Each block pins that row with an xterm marker — markers slide with
+    // scrollback trims and reflows, keeping the block UI honest over time.
+    const tracker = new TerminalBlockTracker((block) => {
+      const marker = term.registerMarker(0)
+      if (marker !== undefined) block.marker = marker
+    })
+    termRef.current = term
+    trackerRef.current = tracker
+    setSession({ term, tracker })
     // Ctrl+Click (Cmd+Click on mac) opens http(s) URLs printed in the
     // pty stream — a plain click is left for xterm's text-selection
     // gesture. Only http(s) is dispatched; file:// / mailto: / etc. are
@@ -302,6 +355,7 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
     connectRef.current = connect
 
     const inputSub = term.onData((data) => {
+      tracker.onData(data, term.buffer.active.length)
       if (socket !== null && socket.readyState === WebSocket.OPEN) socket.send(data)
     })
     // Resize streams fire per layout frame during panel open/close
@@ -403,6 +457,9 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
       linkProvider.dispose()
       term.dispose()
       connectRef.current = null
+      termRef.current = null
+      trackerRef.current = null
+      setSession(null)
     }
   }, [scope.sessionId, scope.cwd, tabId, store])
 
@@ -431,7 +488,22 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
         </div>
       )}
       {fatal === null && depsFatal === null && !connected && <div className={css.terminalBanner}>{t('disconnected')}</div>}
-      <div ref={hostRef} className={css.terminal} />
+      <div ref={hostRef} className={css.terminal}>
+        {/* The block layer: hairline dividers at every CLI block boundary;
+            hovering a block highlights its span and raises the per-block
+            "add to conversation" pill — clicking it inserts the block into
+            the composer input box through the same draft chain as the text
+            viewers' selection popup (see TerminalBlockOverlay). */}
+        {session !== null && (
+          <TerminalBlockOverlay
+            hostRef={hostRef}
+            term={session.term}
+            tracker={session.tracker}
+            visible={connected && fatal === null && depsFatal === null}
+            onAddBlock={commitBlock}
+          />
+        )}
+      </div>
     </div>
   )
 }
