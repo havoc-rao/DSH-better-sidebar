@@ -309,8 +309,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // without re-rendering the shell (the comments live with the hook now).
   const bottomRef = useRef<HTMLDivElement | null>(null)
   // The fullscreen flag is the strip's maximize toggle: while on, the hook
-  // fills the panel over the chat-box region (the conversation view's rect)
-  // and tracks its geometry per frame.
+  // fills the panel over the whole conversation column (top edge to bottom
+  // edge) and tracks its geometry per frame.
   const [fullscreen, setFullscreen] = useState(false)
   const { centerRectRef, chatRectRef, centerMeasured, measureCenter, draggingRef } =
     useCenterColumn(bottomRef, state?.bottomOpen, fullscreen)
@@ -740,11 +740,12 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         data-dsh-bottom-panel
         data-dsh-panel-fullscreen={fullscreen || undefined}
         style={{
-          // Fullscreen (the strip's toggle): the panel fills the chat-box
-          // region — top/bottom from the conversation view's rect (the
-          // composer stays visible below), height freed so both insets
-          // apply. Docked: the panel hangs from the bottom edge with the
-          // store's height.
+          // Fullscreen (the strip's toggle): the panel fills the ENTIRE
+          // conversation column — top/bottom from the column's own rect
+          // (top edge to bottom edge): the session-header band, the
+          // transcript, and the input bar are all the workbench's, nothing
+          // of the chat box stays visible. Docked: the panel hangs from the
+          // bottom edge with the store's height.
           ...(fullscreen
             ? { top: chatRectRef.current.top, bottom: Math.max(0, window.innerHeight - chatRectRef.current.bottom), height: 'auto' }
             : { height: bottomPanelHeight, bottom: keyboardInset > 0 ? `${keyboardInset}px` : undefined }),

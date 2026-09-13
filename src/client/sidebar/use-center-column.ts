@@ -20,29 +20,24 @@
  * React work; `centerMeasured` flips ONCE to gate the hidden→visible
  * first-paint fallback.
  *
- * MAXIMIZED MODE (the tab strip's fullscreen toggle): the workbench fills
- * the chat-box region — the conversation view the ChatView renders into
- * (`[data-slot="conversation.view"]`, inside the center column below the
- * session header and above the composer; the chat host is a `display:
- * contents` slot, so its rect is the ChatView's own box). `chatRectRef`
- * carries that host's top/bottom; while `fullscreen` is on, measureCenter
- * also writes the panel's top/bottom/height inline (same per-frame DOM-write
- * pattern), so the panel tracks the chat box (composer growth, header
- * height changes) without re-rendering the shell. The composer stays
- * visible under the panel's bottom edge.
+ * MAXIMIZED MODE (the tab strip's fullscreen toggle): the workbench owns
+ * the ENTIRE conversation column — top edge to bottom edge — while it is
+ * on. The session-header band, the transcript, and the composer (the input
+ * bar; InputBar.tsx's card) are all the workbench's: nothing of the chat
+ * box remains visible below or above the panel. The region is the center
+ * column's own rect (a REAL box) — never a DSH slot host: the slot hosts
+ * (`[data-slot="conversation.view"]`…) are `display: contents` wrappers
+ * whose getBoundingClientRect collapses to {0,0} on this host engine
+ * (empty getClientRects), and anchoring a maximized fill on one collapsed
+ * the panel to a 1px sliver at the viewport top ("covered by the chatbox").
+ * `chatRectRef` carries the column's top/bottom (read at measure time;
+ * kept fresh even while docked so the shell's render-time reads are never
+ * stale); while `fullscreen` is on, measureCenter also writes the panel's
+ * top/bottom/height inline (same per-frame DOM-write pattern), so the panel
+ * tracks the column without re-rendering the shell.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveCenterColumn } from '../center-column.ts'
-
-/**
- * The chat-box host selector candidates, newest first: the `conversation.view`
- * slot host IS the ChatView's wrapper (ui-chat injects ChatView into it);
- * hostings without that slot fall back to the session host (still below the
- * header, above the composer). A missing chat host anchors maximize on the
- * center column itself (includes the header — only on exotic hostings).
- */
-const CHAT_BOX_SELECTOR = '#root [data-slot="conversation.view"]'
-const CHAT_BOX_FALLBACK_SELECTOR = '#root [data-slot="conversation.session"]'
 
 export function useCenterColumn(
   /** The bottom panel element: measureCenter writes its edges directly. */
@@ -53,12 +48,14 @@ export function useCenterColumn(
   bottomOpen: boolean | undefined,
   /** Maximized-over-the-chat-box mode (the tab strip's fullscreen toggle):
    *  while true, measureCenter also writes the panel's chat-box top/bottom,
-   *  and its per-frame updates track composer/header geometry changes. */
+   *  and its per-frame updates track column geometry changes. */
   fullscreen: boolean,
 ) {
   const centerRectRef = useRef({ left: 0, right: 0 })
-  /** The chat host's edges (conversation.view rect) — the maximize fill
-   *  target; zero fallback until first measurement. */
+  /** The maximized region's edges — the center column's OWN rect, top to
+   *  bottom (the whole chat box: session header, transcript, input bar; a
+   *  real box, never a `display: contents` slot host — see the module
+   *  comment); zero fallback until first measurement. */
   const chatRectRef = useRef({ top: 0, bottom: 0 })
   const [centerMeasured, setCenterMeasured] = useState(false)
   // Refs keep the measure step stable across renders and let it skip work
@@ -67,7 +64,6 @@ export function useCenterColumn(
   // re-introduce the drag lag this shell deliberately avoids. applyDrag
   // writes the bottom panel's edges directly, so measurement pauses then.
   const centerColRef = useRef<HTMLElement | null>(null)
-  const chatBoxRef = useRef<HTMLElement | null>(null)
   const draggingRef = useRef(false)
   const measureCenter = useCallback((): void => {
     if (draggingRef.current) return
@@ -86,28 +82,21 @@ export function useCenterColumn(
     // panel keeps tracking the center column per frame during the right
     // panel's open/close animation without re-rendering the shell. The
     // one-shot measured flip renders the panel visible once (a stale
-    // {0,0} fallback would flash full-width). The chat-box rect rides the
-    // same cadence — the maximize anchor — and is kept fresh even while
+    // {0,0} fallback would flash full-width). The maximize region is the
+    // same column rect — top to bottom — and is kept fresh even while
     // docked so the shell's render-time reads are never stale.
     centerRectRef.current = { left: rect.left, right: rect.right }
-    const chat = chatBoxRef.current
-    if (chat !== null && chat.isConnected) {
-      const chatRect = chat.getBoundingClientRect()
-      chatRectRef.current = { top: chatRect.top, bottom: chatRect.bottom }
-    } else {
-      // Exotic hosting without a chat-box slot: maximize falls back to the
-      // center column itself (its top includes the session header).
-      chatRectRef.current = { top: rect.top, bottom: rect.bottom }
-    }
+    chatRectRef.current = { top: rect.top, bottom: rect.bottom }
     const bottom = bottomRef.current
     if (bottom !== null) {
       bottom.style.setProperty('left', `${rect.left}px`)
       bottom.style.setProperty('right', `${window.innerWidth - rect.right}px`)
       if (fullscreen) {
-        // Maximized: the panel fills the chat-box region (top..bottom),
-        // leaving the composer visible below. Written per frame so
-        // composer/header geometry changes track without re-rendering the
-        // shell; the shell's style prop reads the same refs, so a
+        // Maximized: the panel fills the ENTIRE conversation column
+        // (top..bottom) — header band, transcript, and input bar are all
+        // the workbench's; nothing of the chat box stays visible. Written
+        // per frame so column geometry changes track without re-rendering
+        // the shell; the shell's style prop reads the same refs, so a
         // re-render re-applies the same values. The docked restore is
         // React's job (its own style diff sees the maximize render's
         // values and rewrites them on exit).
@@ -148,15 +137,6 @@ export function useCenterColumn(
           observer = undefined
         }
         return
-      }
-      // The chat-box host (the maximize fill target) rides the same
-      // revalidation cadence: re-query only when the cached node was lost,
-      // so a same-node chat re-render never costs a document query.
-      const chatCached = chatBoxRef.current
-      if (chatCached === null || !chatCached.isConnected) {
-        chatBoxRef.current =
-          document.querySelector<HTMLElement>(CHAT_BOX_SELECTOR)
-          ?? document.querySelector<HTMLElement>(CHAT_BOX_FALLBACK_SELECTOR)
       }
       if (centerColRef.current !== col) {
         // A NEW column node (boot swap, HMR re-render, or a previous locate
@@ -216,8 +196,7 @@ export function useCenterColumn(
     // matter what sequence the shell used. locate() is query-free while the
     // cached column stays connected; only a detached/missing cache falls
     // back to the document selector. The re-measure on the same tick keeps
-    // the maximize anchor fresh against chat-geometry drift that resizes
-    // no observed box (composer growth, header height changes).
+    // the maximize region fresh against column-geometry drift.
     const retry = window.setInterval(() => {
       locate()
       measureCenter()
@@ -231,7 +210,6 @@ export function useCenterColumn(
       htmlStyleWatcher.disconnect()
       centerColRef.current?.removeAttribute('data-dsh-center-col')
       centerColRef.current = null
-      chatBoxRef.current = null
     }
     // Opening the bottom panel re-runs the whole locate/measure chain: a
     // panel opened before the center column was ever found must not stay
