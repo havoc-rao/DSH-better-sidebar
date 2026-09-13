@@ -173,6 +173,7 @@
     "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.1.5-rc.2",
     "@deepseek-ai/dsh-util-time": "0.1.5-rc.2",
+    "@havocrao/dsh-code-finder": "link:/Users/havoc/Documents/Projects/tools/DSH-code-finder",
     "@huanlin/dsh-plugin-better-locale": "^0.1.0",
     "@playwright/test": "^1.62.1",
     "@shikijs/langs": "^4.3.1",
