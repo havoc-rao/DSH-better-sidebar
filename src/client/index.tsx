@@ -11,7 +11,7 @@
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
-import { allLeaves, createSidebarStore, isAgentTabId } from './state.ts'
+import { allLeaves, createSidebarStore, isAgentTabId, toggleBottomPanel } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
@@ -22,6 +22,7 @@ import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { readNativeSidebarOpen } from './sidebar/use-native-column.ts'
+import { CMD_W_SHORTCUT, claimCloseActiveTab, readDesktopShellBridge } from './desktop-shortcuts.ts'
 import { createNativeSurface } from './native/surface.ts'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
@@ -171,6 +172,33 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBottomToggle(ctx, sidebarStore),
     'dsh-better-sidebar: bottom-workbench toggle',
+  )
+  // The desktop-shell shortcut bridge (the deepseek-harness Electron app):
+  // Cmd+W is intercepted by the shell and routed to the page; the plugin
+  // claims every press (semantics "A"): close the active tab of the native
+  // right Sidebar, fold the column when nothing more is closable there, and
+  // in windows without a native column work the bottom workbench (close its
+  // active tab, or fold the open workbench when it has none). Cmd+W NEVER
+  // falls through to the shell's window close-confirmation while the plugin
+  // is mounted — closing the app goes through Cmd+Q / the shell's chrome.
+  // A missing bridge (plain browser, official shell) is a no-op.
+  ctx.effect(
+    () => {
+      const bridge = readDesktopShellBridge()
+      if (bridge === undefined) return () => {}
+      return bridge.onShortcut(CMD_W_SHORTCUT, () => {
+        try {
+          return claimCloseActiveTab(ctx, service, () => {
+            if (service.getSnapshot().state?.bottomOpen !== true) return false
+            sidebarStore.reduce(toggleBottomPanel)
+            return true
+          })
+        } catch {
+          return undefined
+        }
+      })
+    },
+    'dsh-better-sidebar: desktop shell shortcut claims',
   )
   ctx.effect(
     () => () => { nativeSurface.dispose(); service.setSurface(undefined) },

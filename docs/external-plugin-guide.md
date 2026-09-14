@@ -846,6 +846,36 @@ dsh-hotkey 等键盘优先插件按「内核 `sidebarRight` 优先、本插件�
   底部工作台的文件窗口）。
 - 左侧栏 `[data-side="sidebar"]` 属内核 ui-sidebar 的 DOM，本插件不产出。
 
+#### 7.1.1 桌面壳快捷键认领（Cmd+W 关闭标签，v0.20.x，deepseek-harness Electron）
+
+deepseek-harness 的 Electron 壳（`apps/electron`）在主进程拦截 Cmd+W 并通过
+preload 桥把认领权交给页面：`window.dshDesktopShell`（contextBridge 暴露，
+沙箱渲染进程）：
+
+```ts
+interface DesktopShellBridge {
+  /** 注册一个快捷键的认领 handler；返回 disposer（仅当自己仍是当前注册时生效）。 */
+  onShortcut(name: 'cmd-w', handler: () => boolean | undefined): () => void
+}
+```
+
+- 页面 handler **同步**返回 `true` = 认领该次按键（壳不弹「Close dsh?」确认框）；
+  `false` / `undefined` = 放行，壳维持默认行为（窗口关闭确认）。壳保证：页面
+  无监听、handler 抛错或超时（1.5s）一律按「未认领」结算，主进程永不悬挂。
+- 本插件注册后，Cmd+W 的行为是**只在标签与面板之间游走，永不关闭应用**（语义
+  A）：内核右侧栏展开 → 关闭其活动 tab（关闭后**不**回读验证——内核
+  `active()` 随 React render 滞后，回读会把成功关闭误判成拒绝并误折叠整个侧
+  栏；内核唯一拒绝的场景是「唯一停靠的 guide」，此时为无操作认领）；展开栏
+  **没有活动 tab**（空 pane）时折叠右侧栏作为「没有更多可关」的反馈；无内核
+  栏的弹窗窗口 → 底部工作台：关其活动 tab，空工作台则收起；**任何状态下都认
+  领**——插件挂载时 Cmd+W 不会触发壳的窗口关闭确认，关应用走 `Cmd+Q` / 红绿
+  灯 / 壳菜单。纯浏览器 / 官方壳无该桥 → 本插件零行为。
+- 消费方按「`typeof window.dshDesktopShell?.onShortcut === 'function'`」探测，
+  不依赖 `dsh-desktop-mode` / UA；桥的实现在 deepseek-harness
+  （`apps/electron/src/preload.ts` 契约面），本指南只是消费侧承诺。
+- 便捷关闭的另一半：内核原生标签芯片的中键（鼠标中键）关闭由 harness 侧
+  ui-dockkit 提供；插件底部工作台 TabBar 的 × 与中键关闭为插件自有实现。
+
 ---
 
 ## 8. 声明式设置（v0.4.1+）

@@ -599,6 +599,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 |---|---|
 | 保存编辑 | `Ctrl/Cmd + S` |
 | Git 提交 | `Ctrl + Enter` |
+| 关闭活动标签 / 折叠右侧栏（deepseek-harness Electron 壳内；Cmd+W 永不触发应用的关闭确认，关应用走 `Cmd+Q`） | `Cmd + W` |
 | 关闭 Tab | 鼠标中键 |
 | Tab 右键菜单 | 关闭 / 关闭其他页签 / 关闭左侧页签 / 关闭右侧页签（当前标签组） |
 | 拆分/合并分栏 | 拖 Tab 到分栏边缘 / 中间 |
@@ -616,6 +617,14 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 > 挂载右侧栏，`Cmd+Opt+B` / `Cmd+Shift+E` 也会经插件自身的兜底路径打开文件树
 > （回落底部工作台），内核 `sidebarRight` 可用后自动切回原生栏。契约全文见
 > [指南 §7.1](docs/external-plugin-guide.md)。
+>
+> **桌面壳快捷键认领**（v0.20.x，deepseek-harness Electron）：壳在主进程拦截
+> `Cmd+W` 并经 `window.dshDesktopShell` 桥把认领权交给页面——**Cmd+W 只在标签
+> 与面板之间游走、永不关闭应用**：有活动标签时关标签（内核右侧栏活动 tab 优
+> 先，底部工作台兜底），没有可关时折叠右侧栏 / 收起底部工作台，任何状态都认
+> 领，因此插件挂载期间不会再看到「Close dsh?」确认框；关应用走 `Cmd+Q` / 红
+> 绿灯 / 壳菜单。纯浏览器 / 官方壳无桥时行为不变。契约见
+> [指南 §7.1.1](docs/external-plugin-guide.md)。
 
 ## 🔌 服务化扩展
 
