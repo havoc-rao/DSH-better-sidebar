@@ -143,6 +143,7 @@ export const fr: Record<string, string> = {
   commitPlaceholder: 'Message de commit (Ctrl+Entrée)',
   commit: 'Valider',
   commitError: 'Échec du commit',
+  gitCommitActions: 'Actions de commit',
   branch: 'Branche',
   worktree: 'Arborescence de travail',
   checkoutError: 'Échec du changement de branche',

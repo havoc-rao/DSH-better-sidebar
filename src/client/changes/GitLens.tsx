@@ -10,19 +10,25 @@
  * without a manual refresh. Everything here is the former standalone git
  * panel, re-homed as a lens.
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconCodeOutline16, IconCopyOutline16, IconPlusOutline16,
   IconRefreshOutline16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
 import { api } from '../api.ts'
+import type { BetterSidebarService, GitCommitActionProps, GitCommitTarget } from '../service.ts'
+import { RenderBoundary } from '../RenderBoundary.tsx'
 import { usePolling } from '../use-polling.ts'
 import { baseName, isWithinWorkspace, relativeTo } from '../paths.ts'
 import { resolveSidebarPath } from '../produced-files.ts'
 import { relativeTime, t } from '../locales.ts'
-import type { SidebarDiffRef, SidebarStore } from '../state.ts'
+import type { GitDiffRef, SidebarStore } from '../state.ts'
 import css from './changes.module.css'
+
+/** Monotonic Git-lens instance id: keys the live-target registry so two
+ *  mounted lenses cannot clear each other's target. */
+let nextGitLensOwner = 0
 
 /** The XY status letters a row badge shows (X = index, Y = worktree). */
 function badgeOf(entry: GitStatusEntry): string {
@@ -104,15 +110,27 @@ export interface GitLensProps {
   onCommitMsgCommitted: () => void
   onOpenFile: (path: string) => void
   /** Preview one change in the shared bottom pane (worktree or commit ref). */
-  onPreview: (ref: SidebarDiffRef) => void
+  onPreview: (ref: GitDiffRef) => void
   /** The ref currently previewed (row highlight); null when the pane is closed. */
-  selectedRef: SidebarDiffRef | null
+  selectedRef: GitDiffRef | null
   /** Poll only while the tab is actually visible. */
   visible: boolean
+  /**
+   * The better-sidebar service (feature `gitCommitActions`): renders the
+   * registered commit-row actions and receives this lens' live Git target
+   * through `setGitCommitTarget`. Absent (standalone/test compositions) the
+   * row behaves exactly as before.
+   */
+  service?: BetterSidebarService
 }
 
 export function GitLens(props: GitLensProps) {
-  const { scope, store, commitMsg, onCommitMsgChange, onCommitMsgCommitted, onOpenFile, onPreview, selectedRef, visible } = props
+  const { scope, store, commitMsg, onCommitMsgChange, onCommitMsgCommitted, onOpenFile, onPreview, selectedRef, visible, service } = props
+  /** This instance's own key in the live-target registry (stable across renders). */
+  const [ownerId] = useState(() => {
+    nextGitLensOwner += 1
+    return `git-lens:${nextGitLensOwner}`
+  })
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
   const [selectedWorktree, setSelectedWorktree] = useState<string | undefined>()
@@ -320,7 +338,7 @@ export function GitLens(props: GitLensProps) {
   }
 
   /** The preview ref for one changed file (one ref per path+side). */
-  const worktreeRefOf = (entry: GitStatusEntry, staged: boolean): SidebarDiffRef => ({
+  const worktreeRefOf = (entry: GitStatusEntry, staged: boolean): GitDiffRef => ({
     kind: 'worktree',
     path: entry.path,
     staged,
@@ -330,7 +348,7 @@ export function GitLens(props: GitLensProps) {
   })
 
   /** The preview ref for one commit. */
-  const commitRefOf = (entry: GitLogEntry): SidebarDiffRef => ({
+  const commitRefOf = (entry: GitLogEntry): GitDiffRef => ({
     kind: 'commit',
     hash: entry.hash,
     hashFull: entry.hashFull,
@@ -435,6 +453,71 @@ export function GitLens(props: GitLensProps) {
 
   const stagedEntries = (status?.entries ?? []).filter(isStagedEntry)
   const unstagedEntries = (status?.entries ?? []).filter(isUnstagedEntry)
+
+  /** The live target this lens publishes to the service — exactly what a
+   *  registered commit-row action receives (feature `gitCommitActions`). */
+  const commitTarget = useMemo<GitCommitTarget | null>(() => {
+    if (status === null || !status.isRepo) return null
+    return {
+      scope,
+      ...(repoRoot === undefined ? {} : { repoRoot }),
+      ...(selectedWorktree === undefined ? {} : { worktree: selectedWorktree }),
+      ...(status.branch === undefined ? {} : { branch: status.branch }),
+      status,
+      staged: stagedEntries,
+    }
+    // Granular scope fields: the scope object's identity churns, only its
+    // sessionId / cwd fields gate the published target.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, repoRoot, selectedWorktree, scope.sessionId, scope.cwd])
+
+  // Publish the live target so external plugins can answer "which checkout is
+  // the user looking at". setGitCommitTarget is deliberately silent (it does
+  // NOT notify subscribers), so this cannot loop through the registry
+  // subscription below — the lens is itself a subscriber.
+  useEffect(() => {
+    if (service === undefined) return
+    service.setGitCommitTarget(ownerId, commitTarget)
+  }, [service, ownerId, commitTarget])
+
+  // Drop this instance's target on unmount (lens switch / tab close / session
+  // switch) so a stale worktree is never published to consumers.
+  useEffect(() => {
+    if (service === undefined) return
+    return () => { service.setGitCommitTarget(ownerId, null) }
+  }, [service, ownerId])
+
+  // A registry change (an action registered late, or disposed) re-renders the
+  // row so the seam works without remounting the lens.
+  const [registryVersion, setRegistryVersion] = useState(0)
+  useEffect(
+    () => service?.subscribe(() => { setRegistryVersion(version => version + 1) }),
+    [service],
+  )
+
+  /** The registered commit-row actions, ranked (`order`, then registration)
+   *  and gated by `available`. Empty without a service or an open repository. */
+  const commitActionViews = useMemo(() => {
+    // registryVersion is the re-read trigger on register/dispose (the value
+    // itself is not otherwise needed).
+    void registryVersion
+    if (service === undefined || commitTarget === null) return []
+    const actionProps: GitCommitActionProps = { ...commitTarget, service, refresh }
+    return service.getGitCommitActions()
+      .map((descriptor, index) => ({ descriptor, index }))
+      .sort((a, b) => (a.descriptor.order ?? 100) - (b.descriptor.order ?? 100) || a.index - b.index)
+      .filter(({ descriptor }) => {
+        if (descriptor.available === undefined) return true
+        try {
+          return descriptor.available(commitTarget) !== false
+        } catch (error) {
+          console.error(`[dsh-better-sidebar] git commit action "${descriptor.id}" available() error:`, error)
+          return false
+        }
+      })
+      .map(({ descriptor }) => ({ descriptor, props: actionProps }))
+    // registryVersion forces a re-read on register/dispose.
+  }, [service, commitTarget, registryVersion, refresh])
 
   const renderEntry = (entry: GitStatusEntry, staged: boolean): ReactNode => {
     const selected = isPreviewedWorktree(entry, staged)
@@ -575,6 +658,19 @@ export function GitLens(props: GitLensProps) {
             >
               {t('commit')}
             </button>
+            {commitActionViews.length > 0 && (
+              <div className={css.gitCommitActions} role="group" aria-label={t('gitCommitActions')}>
+                {commitActionViews.map(({ descriptor, props }) => (
+                  // The action is created as an ELEMENT inside the boundary, so
+                  // a throwing component is caught by it (invoking the
+                  // component directly here would throw during GitLens' own
+                  // render, outside the boundary).
+                  <RenderBoundary key={descriptor.id} className={css.gitCommitActionBoundary}>
+                    {createElement(descriptor.component, props)}
+                  </RenderBoundary>
+                ))}
+              </div>
+            )}
           </div>
           {commitError !== null && <div className={css.gitError}>{commitError}</div>}
 

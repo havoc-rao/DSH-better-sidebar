@@ -150,6 +150,7 @@ export const th: Record<string, string> = {
   commitPlaceholder: 'ข้อความ commit (Ctrl+Enter)',
   commit: 'Commit',
   commitError: 'Commit ล้มเหลว',
+  gitCommitActions: 'การดำเนินการคอมมิต',
   branch: 'Branch',
   worktree: 'เวิร์กทรี',
   checkoutError: 'สลับ branch ล้มเหลว',

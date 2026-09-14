@@ -25,6 +25,13 @@ interface DiffData {
   untracked?: string
 }
 
+/** The header/tab title of one diff ref (a proposed patch carries its own). */
+function diffRefTitle(diff: SidebarDiffRef): string {
+  if (diff.kind === 'worktree') return diff.path
+  if (diff.kind === 'commit') return `${diff.hash} ${diff.subject}`
+  return diff.title
+}
+
 export function DiffTab(props: { sessionId: string; cwd: string | undefined; diff: SidebarDiffRef }) {
   const { sessionId, cwd, diff } = props
   const [loading, setLoading] = useState(true)
@@ -46,6 +53,14 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     setError(null)
     setData(null)
     setEffectiveStaged(null)
+    // A proposed patch is caller-supplied text: there is nothing to load, no
+    // git process to run, and no side to reconcile — render the patch as-is.
+    // (No async work is scheduled here, so no cancellation is needed.)
+    if (diff.kind === 'proposed') {
+      setData({ diff: diff.patch })
+      setLoading(false)
+      return
+    }
     const load = async (): Promise<void> => {
       try {
         if (diff.kind === 'commit') {
@@ -99,6 +114,10 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
   const foldContents = useRef(new Map<string, Promise<{ old: string; new: string }>>())
   useEffect(() => { foldContents.current = new Map() }, [diff, tick])
   const foldLoader = useMemo(() => {
+    // A proposed patch has no git revisions to expand folds from: leaving the
+    // resolver absent degrades a fold to its unavailable marker (the shared
+    // renderer's documented fallback) instead of guessing at content.
+    if (diff.kind === 'proposed') return undefined
     const sidesOf = (file: DiffFile): Promise<{ old: string; new: string }> => {
       // Both sides empty cannot cover a non-empty fold — treat it as a failed
       // fetch so the fold degrades to the unavailable marker instead of
@@ -160,8 +179,8 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
   return (
     <div className={css.gitDiffTab}>
       <div className={css.gitDiffTabHeader}>
-        <span className={css.gitDiffTabTitle} title={diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`}>
-          {diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`}
+        <span className={css.gitDiffTabTitle} title={diffRefTitle(diff)}>
+          {diffRefTitle(diff)}
         </span>
         <button
           type="button"

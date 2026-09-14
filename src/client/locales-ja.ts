@@ -150,6 +150,7 @@ export const ja: Record<string, string> = {
   commitPlaceholder: 'コミットメッセージ (Ctrl+Enter)',
   commit: 'コミット',
   commitError: 'コミット失敗',
+  gitCommitActions: 'コミット操作',
   branch: 'ブランチ',
   worktree: 'ワークツリー',
   checkoutError: 'ブランチ切り替えに失敗',

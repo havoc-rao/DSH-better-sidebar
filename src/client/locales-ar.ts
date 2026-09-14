@@ -151,6 +151,7 @@ export const ar: Record<string, string> = {
   commitPlaceholder: 'رسالة التثبيت (Ctrl+Enter)',
   commit: 'تثبيت',
   commitError: 'فشل التثبيت',
+  gitCommitActions: 'إجراءات الالتزام',
   branch: 'الفرع',
   worktree: 'شجرة العمل',
   checkoutError: 'فشل تبديل الفرع',

@@ -150,6 +150,7 @@ export const vi: Record<string, string> = {
   commitPlaceholder: 'Thông điệp commit (Ctrl+Enter)',
   commit: 'Commit',
   commitError: 'Commit thất bại',
+  gitCommitActions: 'Hành động commit',
   branch: 'Branch',
   worktree: 'Worktree',
   checkoutError: 'Chuyển branch thất bại',

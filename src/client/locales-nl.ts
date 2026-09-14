@@ -148,6 +148,7 @@ export const nl: Record<string, string> = {
   commitPlaceholder: 'Commitbericht (Ctrl+Enter)',
   commit: 'Commit',
   commitError: 'Commit mislukt',
+  gitCommitActions: 'Commit-acties',
   branch: 'Branch',
   worktree: 'Worktree',
   checkoutError: 'Wisselen van branch mislukt',

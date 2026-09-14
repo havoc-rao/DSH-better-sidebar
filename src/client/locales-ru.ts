@@ -146,6 +146,7 @@ export const ru: Record<string, string> = {
   commitPlaceholder: 'Сообщение коммита (Ctrl+Enter)',
   commit: 'Закоммитить',
   commitError: 'Сбой коммита',
+  gitCommitActions: 'Действия коммита',
   branch: 'Ветка',
   worktree: 'Рабочее дерево',
   checkoutError: 'Сбой переключения ветки',

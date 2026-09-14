@@ -150,6 +150,7 @@ export const hi: Record<string, string> = {
   commitPlaceholder: 'कमिट संदेश (Ctrl+Enter)',
   commit: 'कमिट',
   commitError: 'कमिट विफल',
+  gitCommitActions: 'कमिट क्रियाएँ',
   branch: 'ब्रांच',
   worktree: 'वर्कट्री',
   checkoutError: 'ब्रांच स्विच विफल',

@@ -27,7 +27,7 @@ import { t } from '../locales.ts'
 import { api } from '../api.ts'
 import { usePolling } from '../use-polling.ts'
 import { updatePluginSettings } from '../plugin-settings.ts'
-import { allLeaves, leafWithTab, patchTab, type SidebarDiffRef, type SidebarStore, type SidebarTab } from '../state.ts'
+import { allLeaves, leafWithTab, patchTab, type GitDiffRef, type SidebarStore, type SidebarTab } from '../state.ts'
 import { GitLens } from './GitLens.tsx'
 import { SessionLens } from './SessionLens.tsx'
 import { DiffPane, diffTabOf, type ChangesPreview } from './DiffPane.tsx'
@@ -110,6 +110,9 @@ function isBottomTab(store: SidebarStore, tab: SidebarTab): boolean {
 
 export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpenDiff }: TabComponentProps) {
   const meta = (tab.meta ?? {}) as ChangesMeta
+  /** The sidebar service: the Git lens publishes its live target through it
+   *  and renders the registered commit-row actions (feature gitCommitActions). */
+  const service = ctx.get('betterSidebar')
   const [lens, setLens] = useState<Lens>(meta.lens === 'session' ? 'session' : 'git')
   const [preview, setPreview] = useState<ChangesPreview | null>(null)
   const [paneHeight, setPaneHeight] = useState<number>(
@@ -294,7 +297,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
   }
 
   /** Preview one git change (worktree file or commit) from the Git lens. */
-  const previewGit = (ref: SidebarDiffRef): void => {
+  const previewGit = (ref: GitDiffRef): void => {
     setPreview({ kind: 'git', ref })
   }
 
@@ -345,6 +348,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
           <GitLens
             scope={scope}
             store={store}
+            service={service}
             commitMsg={commitMsg}
             onCommitMsgChange={onCommitMsgChange}
             onCommitMsgCommitted={onCommitMsgCommitted}

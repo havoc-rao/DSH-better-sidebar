@@ -142,6 +142,7 @@ export const ko: Record<string, string> = {
   commitPlaceholder: '커밋 메시지 (Ctrl+Enter)',
   commit: '커밋',
   commitError: '커밋 실패',
+  gitCommitActions: '커밋 작업',
   branch: '브랜치',
   worktree: '워크트리',
   checkoutError: '브랜치 전환 실패',

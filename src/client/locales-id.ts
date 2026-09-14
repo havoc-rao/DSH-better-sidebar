@@ -148,6 +148,7 @@ export const id: Record<string, string> = {
   commitPlaceholder: 'Pesan commit (Ctrl+Enter)',
   commit: 'Commit',
   commitError: 'Commit gagal',
+  gitCommitActions: 'Aksi commit',
   branch: 'Branch',
   worktree: 'Worktree',
   checkoutError: 'Beralih branch gagal',

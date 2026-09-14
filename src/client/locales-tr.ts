@@ -150,6 +150,7 @@ export const tr: Record<string, string> = {
   commitPlaceholder: 'İşleme iletisi (Ctrl+Enter)',
   commit: 'İşle',
   commitError: 'İşleme başarısız',
+  gitCommitActions: 'Commit işlemleri',
   branch: 'Dal',
   worktree: 'Çalışma ağacı',
   checkoutError: 'Dal değiştirme başarısız',

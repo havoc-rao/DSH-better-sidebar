@@ -136,6 +136,7 @@ export const de: Record<string, string> = {
   commitPlaceholder: 'Commit-Nachricht (Ctrl+Enter)',
   commit: 'Committen',
   commitError: 'Commit fehlgeschlagen',
+  gitCommitActions: 'Commit-Aktionen',
   branch: 'Branch',
   worktree: 'Worktree',
   checkoutError: 'Branchenwechsel fehlgeschlagen',

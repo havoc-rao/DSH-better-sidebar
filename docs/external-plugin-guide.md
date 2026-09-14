@@ -41,7 +41,9 @@
 better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 
 - **新页面（tab）**：注册一种新的侧边栏 tab 类型，出现在侧边栏 `+` 菜单里，用户点击后在自己的分栏里打开你的 React 页面；
-- **文件预览器（file viewer）**：注册一种文件类型预览器，让用户在侧边栏打开文件时走你的渲染组件（覆盖或补充内置的 image/pdf/code 等）。
+- **文件预览器（file viewer）**：注册一种文件类型预览器，让用户在侧边栏打开文件时走你的渲染组件（覆盖或补充内置的 image/pdf/code 等）；
+- **提交行动作（git commit action，v0.20.x）**：在「Git 视角」提交行内置 Commit 按钮旁挂自己的动作，并读到「来源 session + 当前选中 repo/worktree + staged 列表」（§7.2.1）；
+- **计划 diff 预览（v0.20.x）**：把任意原始 unified diff 文本当 diff tab 打开（§7.2.2）。
 
 内置的 7 个 tab（editor / git——「文件变动」统一 tab（Git 视角 + 本轮文件视角）/ subagent / sidechat / terminal / browser / diff）和 6 个 viewer（image / pdf / markdown / html / code / binary-download）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。
 
@@ -403,7 +405,7 @@ ctx.effect(() => {
 | `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（每对话一 Tab）：打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
 | `terminal` | 40 | 否（`terminal:<n>`） | 否 | 终端。v0.17.0+ 右键「固定到工作区/全局」：跨会话不消失，TabBar 内联虚拟 Tab（`pinned:<homeSessionId>:<tabId>`），就地按 home scope 连 PTY；global 全会话可见、workspace 仅同 cwd；`tab.pin = { scope, homeCwd? }` 随会话持久化，渲染期解析（`collectPinnedTabs` → `createPinnedVirtualTab` → `injectPinnedIntoTree`） |
 | `browser` | 50 | 否（`browser:<n>`） | 否 | 内嵌浏览器（沙箱 iframe，可设置关沙箱） |
-| `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（changes tab 的预览面板「展开为独立页签」触发，同一渲染栈） |
+| `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（changes tab 的预览面板「展开为独立页签」触发，同一渲染栈）；v0.20.x 起 `SidebarTab.diff` 另收 `{ kind: 'proposed', id, title, patch }` 任意 patch 种子（features 含 `planDiff`，见 §7.2.2） |
 
 你的 `id` 不可与上述重复，否则 `registerTab` 抛 `"tab type \"X\" already registered"`。
 
@@ -587,6 +589,15 @@ interface BetterSidebarService {
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   /** 注册自定义文件树/文件 tab 图标（v0.19.0+，features 含 'fileIcons'）；返回 disposer */
   registerFileIcon(descriptor: FileIconDescriptor): () => void
+  /** 注册「Git 视角」提交行里的动作（v0.20.x，features 含 'gitCommitActions'）；
+   *  返回 disposer；重复 id 抛错。缺省零注册 = 提交行与之前逐字节一致。详见 §7.2.1 */
+  registerGitCommitAction(descriptor: GitCommitActionDescriptor): () => void
+  /** 已注册提交行动作的注册顺序快照（渲染按 order 再排） */
+  getGitCommitActions(): readonly GitCommitActionDescriptor[]
+  /** GitLens 当前所看的 Git 目标（来源 session / 选中 repo·worktree / branch /
+   *  staged 行）；scope 按 sessionId 过滤，缺省取最近发布。**时点读**：发布 target
+   *  不触发 subscribe（详见 §7.2.1）。未挂载 Git 视角或未 resolve 时为 undefined */
+  getGitCommitTarget(scope?: SessionScope): GitCommitTarget | undefined
   /** 当前已注册的 tab 描述符快照（同步，供 useSyncExternalStore 用；含被设置页禁用的类型） */
   getTabs(): readonly TabDescriptor[]
   /** 当前已注册的 file viewer 描述符快照（含被设置页禁用的 viewer） */
@@ -657,11 +668,13 @@ interface BetterSidebarService {
   /** 能力清单（只增不删，唯一例外：v0.19.0 删除了 'floatWindows'）：
    *  'badge' | 'tabLifecycle' | 'updateTab' | 'openFile' | 'targetedOpen' |
    *  'stateSubscription' | 'tabMeta' | 'pluginSettings' | 'urlTarget' |
-   *  'settingSelect' | 'fileIcons' | 'panelFlags'
+   *  'settingSelect' | 'fileIcons' | 'panelFlags' | 'gitCommitActions' | 'planDiff'
    *  ——用 `features.includes('xxx')` 按能力 gate。
    *  'panelFlags'（v0.20.x，本节「7.1 dsh-hotkey 对接契约」）：
    *  getSnapshot() 携带顶层 bottomOpen/panelOpen，且「right」打开在内核
-   *  sidebarRight 控制器缺失时回落到插件自己的底部工作台。 */
+   *  sidebarRight 控制器缺失时回落到插件自己的底部工作台。
+   *  'gitCommitActions' / 'planDiff'（v0.20.x，见 §7.2）：提交行动作接缝与
+   *  `{ kind: 'proposed' }` 计划 diff 预览。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs；
    *  v0.20.x 起另带顶层 `bottomOpen`/`panelOpen` 布尔（见 7.1）。
@@ -687,6 +700,8 @@ interface OpenTabSeed {
   title?: string
   /** 文件路径：editor = 打开文件资源；其余类型 = 组件种子（落在 tab.path，v0.19.2+） */
   path?: string
+  /** diff tab 的内容种子：worktree / commit / **proposed**（任意 patch 文本，
+   *  v0.20.x，features 含 'planDiff'；见 §7.2.2） */
   diff?: SidebarTab['diff']
   id?: string
   url?: string
@@ -875,6 +890,82 @@ interface DesktopShellBridge {
   （`apps/electron/src/preload.ts` 契约面），本指南只是消费侧承诺。
 - 便捷关闭的另一半：内核原生标签芯片的中键（鼠标中键）关闭由 harness 侧
   ui-dockkit 提供；插件底部工作台 TabBar 的 × 与中键关闭为插件自有实现。
+
+### 7.2 Git 提交区接缝 + 计划 diff 预览（v0.20.x，features 含 `gitCommitActions` / `planDiff`）
+
+外部插件（例如专用提交 Agent）在「Git 视角」提交区加自己的按钮、并把任意 patch 当 diff
+预览，走这两个**纯增量**接缝。未注册任何插件时提交区与 diff 行为与之前完全一致。
+
+#### 7.2.1 提交区动作（feature `gitCommitActions`）
+
+```ts
+interface GitCommitTarget {
+  scope: SessionScope                 // 来源会话（sessionId + cwd）
+  repoRoot?: string                   // 当前选中的子仓库根（undefined = 会话仓库）
+  worktree?: string                   // 当前选中的 linked worktree（undefined = 主 checkout）
+  branch?: string                     // 当前分支（detached / 未解析时 undefined）
+  status: GitStatusResult             // GitLens 刚加载的状态快照（恒 isRepo: true）
+  staged: readonly GitStatusEntry[]   // 与内置 Commit 按钮同一门槛的 index 侧行
+}
+
+interface GitCommitActionProps extends GitCommitTarget {
+  service: BetterSidebarService
+  refresh(): Promise<void>            // 跑一次 GitLens 的 status/branch/log 刷新
+}
+
+interface GitCommitActionDescriptor {
+  id: string
+  order?: number                      // 升序，缺省 100；同序按注册顺序
+  available?: (target: GitCommitTarget) => boolean   // false = 该目标下不渲染
+  component: (props: GitCommitActionProps) => ReactNode
+}
+
+// BetterSidebarService 新增：
+registerGitCommitAction(descriptor: GitCommitActionDescriptor): () => void
+getGitCommitActions(): readonly GitCommitActionDescriptor[]              // 注册顺序快照
+getGitCommitTarget(scope?: SessionScope): GitCommitTarget | undefined   // 时点读
+```
+
+- **渲染位置**：Git 视角提交行（`src/client/changes/GitLens.tsx` 的 `css.gitCommit`）内、
+  内置 Commit 按钮**之后**；外层 `role="group"` + `aria-label`（i18n 键 `gitCommitActions`）。
+  组件自带控件（图标 / 文案 / disabled），宿主只负责位置与生命周期。
+- **顺序与门槛**：`order` 升序、同序注册序；`available(target) === false` 跳过，`available`
+  抛错记 console.error 并跳过。每个动作各自套 `RenderBoundary`——组件渲染抛错只显示一条
+  内联错误条，提交行与兄弟动作照常。
+- **生命周期**：注册即通知 `subscribe` 订阅者（挂载后注册也会即时出现）；disposer 摘除并
+  再次通知。重复 `id` 抛错。`setGitCommitTarget(ownerId, target | null)` 是**内部**发布口
+  （GitLens 调用），按实例 owner 键控，`getGitCommitTarget` 取「最近发布」；**发布不触发
+  subscribe**（避免 发布→通知→重渲染→再发布 的自环）。因此 `getGitCommitTarget` 是时点读：
+  渲染在提交行的插件直接吃 props；在别处读的插件自行在 `subscribeState` / 自己的轮询里重读。
+  GitLens 卸载即清掉自己的 target。
+- **边界**：better-sidebar 只提供接缝与「用户正在看的 worktree」这一事实，**不**存业务状态、
+  **不**建会话、**不**跑计划侧 git；这些都归消费插件。
+
+#### 7.2.2 计划 diff（feature `planDiff`）
+
+`SidebarDiffRef` 增补一个 additive variant：
+
+```ts
+{ kind: 'proposed'; id: string; title: string; patch: string; worktree?: string; repoRoot?: string }
+```
+
+- `patch` 是**原始 unified diff 文本**，经既有 `parseUnifiedDiff` / `DiffFiles` 渲染栈原样渲染；
+  该 variant **不跑任何 git 调用**（没有 git revision 可读，上下文折叠降级为不可用标记；
+  语法着色 / 行内高亮 / 统计与 worktree·commit 完全一致）。
+- `id` / `title` 是调用方自己的 patch 身份与标签；`worktree` / `repoRoot` 仅为展示元数据。
+- 打开方式（现有 seed API，无新方法）：
+
+```ts
+service.openTab({
+  type: 'diff',
+  id: `plan:${planId}:${commitIndex}`,   // 底部工作台的去重身份（见下方说明）
+  title: `计划第 ${commitIndex + 1} 个提交`,
+  diff: { kind: 'proposed', id: `plan:${planId}:${commitIndex}`, title: '…', patch: unifiedPatch },
+})
+```
+
+  注意：原生右侧栏的 tab id 由宿主铸造，seed 的 `id` 只影响 onOpen 收到的合成 tab；diff 页
+  按宿主的多实例规则打开，`patch` 随导航 params 下发到组件。
 
 ---
 

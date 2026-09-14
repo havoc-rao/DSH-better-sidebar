@@ -141,6 +141,7 @@ export const it: Record<string, string> = {
   commitPlaceholder: 'Messaggio di commit (Ctrl+Enter)',
   commit: 'Commit',
   commitError: 'Commit non riuscito',
+  gitCommitActions: 'Azioni di commit',
   branch: 'Ramo',
   worktree: 'Albero di lavoro',
   checkoutError: 'Cambio di ramo non riuscito',

@@ -133,6 +133,7 @@ export const sv: Record<string, string> = {
   commitPlaceholder: 'Commit-meddelande (Ctrl+Enter)',
   commit: 'Commit',
   commitError: 'Commit misslyckades',
+  gitCommitActions: 'Commit-åtgärder',
   branch: 'Gren',
   worktree: 'Arbetsträd',
   checkoutError: 'Grenbyte misslyckades',

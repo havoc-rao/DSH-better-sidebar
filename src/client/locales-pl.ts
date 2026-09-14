@@ -152,6 +152,7 @@ export const pl: Record<string, string> = {
   commitPlaceholder: 'Komunikat commitu (Ctrl+Enter)',
   commit: 'Commit',
   commitError: 'Commit nie powiódł się',
+  gitCommitActions: 'Akcje commita',
   branch: 'Gałąź',
   worktree: 'Drzewo robocze',
   checkoutError: 'Przełączenie gałęzi nie powiodło się',

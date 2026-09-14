@@ -133,6 +133,7 @@ export const pt: Record<string, string> = {
   commitPlaceholder: 'Mensagem de commit (Ctrl+Enter)',
   commit: 'Commit',
   commitError: 'Falha no commit',
+  gitCommitActions: 'Ações de commit',
   branch: 'Branch',
   worktree: 'Worktree',
   checkoutError: 'Falha ao alternar de branch',

@@ -165,6 +165,7 @@ export const zhTW: Record<string, string> = {
   commitPlaceholder: '提交訊息 (Ctrl+Enter)',
   commit: '提交',
   commitError: '提交失敗',
+  gitCommitActions: '提交操作',
   branch: '分支',
   worktree: '工作樹',
   checkoutError: '切換分支失敗',

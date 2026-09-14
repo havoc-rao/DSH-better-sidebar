@@ -28,7 +28,7 @@ import {
 } from './state.ts'
 import { baseName, extOf } from './paths.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
-import type { SessionScope } from './api.ts'
+import type { GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 
 /**
@@ -43,6 +43,7 @@ export type {
   SidebarStore,
   SidebarSnapshot,
   SidebarDiffRef,
+  GitDiffRef,
   TabType,
 } from './state.ts'
 export type { SessionScope } from './api.ts'
@@ -494,12 +495,88 @@ export interface SidebarSurface {
 }
 
 /**
+ * The live Git target the changes tab's Git lens is showing right now
+ * (v0.20.x, feature `gitCommitActions`).
+ *
+ * GitLens owns this state locally — which repository, which linked worktree,
+ * and the status snapshot it just loaded — and publishes it through
+ * {@link BetterSidebarService.setGitCommitTarget} while it is mounted. This is
+ * the ONLY public way an external plugin can learn "which worktree is the user
+ * looking at"; nothing here is a business fact better-sidebar persists.
+ */
+export interface GitCommitTarget {
+  /** The session whose Git lens published this target (the source session id). */
+  scope: SessionScope
+  /** The selected child repository root (undefined = the session/workspace repo). */
+  repoRoot?: string
+  /** The selected linked worktree (undefined = the primary checkout). */
+  worktree?: string
+  /** The current branch name (undefined when detached / not yet resolved). */
+  branch?: string
+  /** The live status snapshot. Always a repository (`isRepo: true`). */
+  status: GitStatusResult
+  /**
+   * EXACTLY the rows the built-in Commit button gates on (the index/staged
+   * side of `status.entries`) — a plugin never re-derives staging itself.
+   */
+  staged: readonly GitStatusEntry[]
+}
+
+/** Everything one registered commit action receives on render. */
+export interface GitCommitActionProps extends GitCommitTarget {
+  /** The live service (for `openTab`, `getSnapshot`, …). */
+  service: BetterSidebarService
+  /** Re-run GitLens' status/branch/log refresh (after an action mutates git). */
+  refresh(): Promise<void>
+}
+
+/**
+ * One action rendered inside the Git lens' commit row (feature
+ * `gitCommitActions`). The component is mounted AFTER the built-in Commit
+ * button, ordered by `order` ascending then registration order; a descriptor
+ * whose `available` returns false is skipped. The component owns its own
+ * control (glyph, label, disabled state) — the host owns only placement and
+ * lifecycle — and rendering is crash-isolated per action (a throwing
+ * component shows an inline error strip, never breaking the commit row).
+ */
+export interface GitCommitActionDescriptor {
+  /** Unique id (`'my-plugin:commit-agent'`); a duplicate throws. */
+  id: string
+  /** Ascending render order; default 100. Ties keep registration order. */
+  order?: number
+  /** Optional gate evaluated against the live target; false hides the action. */
+  available?: (target: GitCommitTarget) => boolean
+  component: (props: GitCommitActionProps) => ReactNode
+}
+
+/**
  * The registry service published as `ctx.betterSidebar`.
  */
 export interface BetterSidebarService {
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
+  /**
+   * Register one action for the Git commit row (v0.20.x, feature
+   * `gitCommitActions`). Returns a disposer (cordis auto-invokes it on fiber
+   * disposal); a duplicate id throws. With nothing registered the row renders
+   * exactly as before — the seam is purely additive.
+   */
+  registerGitCommitAction(descriptor: GitCommitActionDescriptor): () => void
+  /** Snapshot of the registered commit actions in REGISTRATION order (the row sorts by `order`). */
+  getGitCommitActions(): readonly GitCommitActionDescriptor[]
+  /**
+   * The live Git target of the changes tab's Git lens, or undefined when no
+   * Git lens is currently showing a repository. This is a POINT-IN-TIME read
+   * (publishing a target does not fire `subscribe`): a plugin that renders in
+   * the commit row already receives the target through
+   * {@link GitCommitActionProps}; a plugin reading it elsewhere should re-read
+   * on `subscribeState` or its own poll.
+   *
+   * `scope` filters by session id; without it the most recently published
+   * target wins.
+   */
+  getGitCommitTarget(scope?: SessionScope): GitCommitTarget | undefined
   getTabs(): readonly TabDescriptor[]
   getFileViewers(): readonly FileViewerDescriptor[]
   getFileIcons(): readonly FileIconDescriptor[]
@@ -622,6 +699,14 @@ export interface BetterSidebarService {
   /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
   openFile(scope: SessionScope, path: string, title?: string): void
   /**
+   * Publish (or clear with `null`) the live Git target of one Git lens
+   * instance (v0.20.x). Keyed by an instance owner id so two mounted Git
+   * lenses cannot clear each other's target; `getGitCommitTarget` resolves
+   * the most recently published one.
+   * @internal Called by the Git lens; not part of the consumer API.
+   */
+  setGitCommitTarget(ownerId: string, target: GitCommitTarget | null): void
+  /**
    * Install (or clear) the native right-Sidebar write face.
    * @internal Called once by the client half; not part of the consumer API.
    */
@@ -689,6 +774,13 @@ export const SIDEBAR_SERVICE_VERSION = '0.20.0'
  *   back to the bottom workbench while the kernel right Sidebar's
  *   controller is absent (popup / session windows on runtimes without
  *   ui-sidebar-right).
+ * - 'gitCommitActions' (v0.20.x): registerGitCommitAction /
+ *   getGitCommitActions / getGitCommitTarget — external actions rendered
+ *   inside the changes tab's Git commit row, plus the live GitCommitTarget
+ *   (source session, selected repo/worktree, staged rows) they receive.
+ * - 'planDiff' (v0.20.x): the `proposed` SidebarDiffRef variant — raw
+ *   unified-diff text rendered through the shared diff stack via
+ *   `openTab({ type: 'diff', diff: { kind: 'proposed', … } })`.
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -707,6 +799,8 @@ export const SIDEBAR_FEATURES = [
   'settingSelect',
   'fileIcons',
   'panelFlags',
+  'gitCommitActions',
+  'planDiff',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -737,6 +831,10 @@ export function createBetterSidebarService(
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
   const fileIcons = new Map<string, FileIconDescriptor>()
+  const commitActions = new Map<string, GitCommitActionDescriptor>()
+  /** ownerId → the live target; `seq` resolves "most recently published". */
+  const commitTargets = new Map<string, { seq: number; target: GitCommitTarget }>()
+  let commitTargetSeq = 0
   const listeners = new Set<() => void>()
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
@@ -795,6 +893,43 @@ export function createBetterSidebarService(
         notify()
       }
     }
+  }
+
+  const registerGitCommitAction = (descriptor: GitCommitActionDescriptor): (() => void) => {
+    if (commitActions.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] git commit action "${descriptor.id}" already registered`)
+    }
+    commitActions.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (commitActions.get(descriptor.id) === descriptor) {
+        commitActions.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  const getGitCommitActions = (): readonly GitCommitActionDescriptor[] => Array.from(commitActions.values())
+
+  // Publishing a target deliberately does NOT notify subscribers: the Git lens
+  // is itself a subscriber (it re-renders on registry changes), and notifying
+  // here would close a publish → notify → re-render → publish loop.
+  const setGitCommitTarget = (ownerId: string, target: GitCommitTarget | null): void => {
+    if (target === null) {
+      commitTargets.delete(ownerId)
+      return
+    }
+    commitTargetSeq += 1
+    commitTargets.set(ownerId, { seq: commitTargetSeq, target })
+  }
+
+  const getGitCommitTarget = (scope?: SessionScope): GitCommitTarget | undefined => {
+    let best: { seq: number; target: GitCommitTarget } | undefined
+    for (const entry of commitTargets.values()) {
+      if (scope !== undefined && entry.target.scope.sessionId !== scope.sessionId) continue
+      if (best === undefined || entry.seq > best.seq) best = entry
+    }
+    return best?.target
   }
 
   // Registrations in ranking order: priority desc, stable for equal
@@ -1210,6 +1345,10 @@ export function createBetterSidebarService(
     registerTab,
     registerFileViewer,
     registerFileIcon,
+    registerGitCommitAction,
+    getGitCommitActions,
+    getGitCommitTarget,
+    setGitCommitTarget,
     getTabs,
     getFileViewers,
     getFileIcons,
