@@ -213,6 +213,52 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
+/* The dsh-hotkey toggle cluster: a zero-area positioned anchor on the tab
+   strip's right end, so the two absolutely-positioned strip buttons keep
+   their current coordinates while the cluster attribute stays on a real
+   rect-bearing element consumers can query and click through. */
+.toggleCluster {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+}
+
+/* The sidebar (right column) toggle: the close control's twin, parked left
+   of it (right: 40px) so the tab strips' reserved padding covers both. */
+.sidebarToggle {
+  position: absolute;
+  top: 3px;
+  right: 40px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  flex: none;
+}
+
+.sidebarToggle:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The header utilities' bottom-dock toggle cluster: an inline-flex wrapper
+   so the marker element carries its child's box (a display:contents wrapper
+   would leave it rect-less and invisible to visibility probes). */
+.headerToggleCluster {
+  display: inline-flex;
+  align-items: center;
+}
+
 /* The bottom panel's tab strips reserve the close control's width at their
    right end, so the + menu never hides under it. */
 .bottomPanel .tabBar {
@@ -229,7 +275,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    wrappers) have no blanket button rule. The property is a no-op in plain
    browsers and in shells without drag regions — safe everywhere. */
 .toggleButton,
-.tabBar {
+.tabBar,
+.sidebarToggle {
   -webkit-app-region: no-drag;
 }
 
@@ -2223,6 +2270,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    policy requires focus visibility; the accent token doubles as the ring). */
 .toggleButton:focus-visible,
 .bottomClose:focus-visible,
+.sidebarToggle:focus-visible,
 .iconButton:focus-visible,
 .tab:focus-visible,
 .tabClose:focus-visible,

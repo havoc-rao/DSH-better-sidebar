@@ -31,13 +31,13 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
 import {
-  BOTTOM_MIN, CONVERSATION_MIN, agentUuidOf, firstLeaf, isAgentTabId,
+  BOTTOM_MIN, CONVERSATION_MIN, agentUuidOf, allLeaves, firstLeaf, isAgentTabId,
   leafWithTab, moveTab, moveTabToEdge, openDiffTab, resizeSplitIn,
   setBottomHeight, setTabPin, toggleBottomPanel, toggleExpanded,
   type DropZone, type SidebarStore, type SidebarTab,
 } from './state.ts'
 import { getPinnedHomeScope } from './pinned.ts'
-import { IconPanelBottomOutline16 } from './icons.tsx'
+import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
@@ -48,6 +48,7 @@ import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
 import { useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
+import { useNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { usePinnedTabs } from './sidebar/use-pinned-tabs.ts'
 import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
@@ -604,6 +605,50 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     referenceInChatShared(ctx, sessionId, cwd, path, isDir)
   }, [ctx, sessionId, cwd])
 
+  // Live native right-Sidebar expanded state (the kernel owns the column;
+  // this observes it — see sidebar/use-native-column.ts). It drives the
+  // sidebar-toggle button's label; `undefined` means this window has no
+  // kernel right Sidebar (a popup / session window on a runtime that has not
+  // mounted ui-sidebar-right), where the plugin's own file surface fills in.
+  const nativeOpen = useNativeSidebarOpen(ctx)
+
+  // The plugin's own "sidebar" in the no-kernel-column world: the bottom
+  // workbench showing the path-less editor (the files window).
+  const filesWindowOpen = state !== undefined && allLeaves(state.bottomSplits)
+    .some(leaf => leaf.tabs.some(tab => tab.type === 'editor' && tab.path === undefined))
+  const sidebarExpanded = nativeOpen === undefined
+    ? (state?.bottomOpen === true && filesWindowOpen)
+    : nativeOpen
+  const sidebarToggleLabel = sidebarExpanded ? t('collapseSidebar') : t('expandSidebar')
+
+  /**
+   * The sidebar (right column) toggle: the kernel's `toggleExpanded` when the
+   * controller is live (it runs the very store action the native chrome's
+   * buttons call); otherwise — a window without a kernel right Sidebar — the
+   * plugin's file surface: open the files window in the bottom workbench,
+   * or collapse the workbench when it is already showing the files window.
+   */
+  const toggleSidebar = (): void => {
+    if (sessionId === undefined) return
+    try {
+      const column = ctx.get('sidebarRight') as { toggleExpanded?: () => void } | undefined
+      if (column?.toggleExpanded !== undefined) {
+        column.toggleExpanded()
+        return
+      }
+    } catch {
+      // A half-initialized controller: fall through to the plugin surface.
+    }
+    const snap = store.getSnapshot()
+    const filesOpen = snap.state !== undefined && allLeaves(snap.state.bottomSplits)
+      .some(leaf => leaf.tabs.some(tab => tab.type === 'editor' && tab.path === undefined))
+    if (snap.state?.bottomOpen === true && filesOpen) {
+      store.reduce(toggleBottomPanel)
+    } else {
+      ctx.get('betterSidebar')?.openTab({ type: 'editor' }, { sessionId, cwd })
+    }
+  }
+
   if (state === undefined || sessionId === undefined) {
     // No conversation yet: the host stays mounted (the drag shield keeps
     // covering the region) but nothing is rendered — the toggle button lives
@@ -773,20 +818,38 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           onLostPointerCapture={() => { abortDrag(() => setDraggingBottom(false)) }}
         />
         {/*
-          The bottom panel's own close control at its tab strip's right end
-          (the strip reserves the width via CSS so the + menu never hides
-          under it): one tap collapses the panel.
+          The panel's strip-end controls, wrapped in the dsh-hotkey toggle
+          cluster ([data-dsh-toggle-cluster]): the cluster element is the
+          plugin-side seat where keyboard-first consumers find the
+          expand/collapse buttons by keyword (aria-label/title). The close
+          control keeps its corner seat; the sidebar toggle sits just left
+          of it (the strip's reserved padding covers both).
         */}
-        <Tooltip label={t('collapseBottomPanel')} side="bottom" delayMs={500}>
-          <button
-            type="button"
-            className={css.bottomClose}
-            aria-label={t('collapseBottomPanel')}
-            onClick={() => { store.reduce(toggleBottomPanel) }}
-          >
-            <IconCloseFill14 />
-          </button>
-        </Tooltip>
+        <span className={css.toggleCluster} data-dsh-toggle-cluster>
+          <Tooltip label={t('collapseBottomPanel')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.bottomClose}
+              aria-label={t('collapseBottomPanel')}
+              onClick={() => { store.reduce(toggleBottomPanel) }}
+            >
+              <IconCloseFill14 />
+            </button>
+          </Tooltip>
+          <Tooltip label={sidebarToggleLabel} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.sidebarToggle}
+              data-dsh-sidebar-toggle
+              data-active={sidebarExpanded ? 'true' : undefined}
+              aria-label={sidebarToggleLabel}
+              aria-pressed={sidebarExpanded}
+              onClick={toggleSidebar}
+            >
+              <IconPanelRightOutline16 />
+            </button>
+          </Tooltip>
+        </span>
         <div className={css.panelBody}>
           <Workbench
             state={state}
@@ -805,7 +868,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 }
 
 /** The header control that expands/collapses the bottom workbench (see
- *  sidebar/bottom-toggle.tsx — registered into DSH's session header). */
+ *  sidebar/bottom-toggle.tsx — registered into DSH's session header). The
+ *  wrapper carries the dsh-hotkey toggle cluster marker so keyboard-first
+ *  consumers find the bottom-panel toggle by its keyword label. */
 export function BottomDockToggle(props: { store: SidebarStore }) {
   const { store } = props
   const snapshot = useSyncExternalStore(
@@ -815,18 +880,20 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
   const open = snapshot.state?.bottomOpen === true
   const label = open ? t('collapseBottomPanel') : t('expandBottomPanel')
   return (
-    <Tooltip label={label} side="bottom" delayMs={500}>
-      <button
-        type="button"
-        className={css.toggleButton}
-        data-dsh-bottom-toggle
-        data-active={open ? 'true' : undefined}
-        aria-label={label}
-        aria-pressed={open}
-        onClick={() => { store.reduce(toggleBottomPanel) }}
-      >
-        <IconPanelBottomOutline16 />
-      </button>
-    </Tooltip>
+    <span className={css.headerToggleCluster} data-dsh-toggle-cluster>
+      <Tooltip label={label} side="bottom" delayMs={500}>
+        <button
+          type="button"
+          className={css.toggleButton}
+          data-dsh-bottom-toggle
+          data-active={open ? 'true' : undefined}
+          aria-label={label}
+          aria-pressed={open}
+          onClick={() => { store.reduce(toggleBottomPanel) }}
+        >
+          <IconPanelBottomOutline16 />
+        </button>
+      </Tooltip>
+    </span>
   )
 }

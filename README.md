@@ -605,6 +605,18 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 | 引用文件到输入框 | 悬浮行尾 `@文件` 按钮 |
 | 复制文件路径 | 右键行 → 复制相对/绝对地址 |
 
+> **与 dsh-hotkey 键盘快捷键插件联动**（v0.20.x）：本插件长期承诺 dsh-hotkey 的
+> 服务与 DOM 契约——`ctx.betterSidebar` 的 `getSnapshot()` 顶层携带
+> `sessionId` / `bottomOpen` / `panelOpen`，`getTabs()` 暴露
+> terminal / editor / git / subagent / sidechat 五类 id，`openTab({type},
+> {sessionId})` 按类型打开；DOM 提供 `[data-dsh-panel-host]`、
+> `[data-dsh-panel-host] [class*="tab"][title]` 标签条与
+> `[data-dsh-toggle-cluster]` 折叠/展开按钮集群（含「折叠底部面板/展开底部面板」
+> 与「折叠侧边栏/展开侧边栏」关键词按钮）。**弹窗/独立会话窗口**里即使内核尚未
+> 挂载右侧栏，`Cmd+Opt+B` / `Cmd+Shift+E` 也会经插件自身的兜底路径打开文件树
+> （回落底部工作台），内核 `sidebarRight` 可用后自动切回原生栏。契约全文见
+> [指南 §7.1](docs/external-plugin-guide.md)。
+
 ## 🔌 服务化扩展
 
 从 v0.4.0 起暴露 `ctx.betterSidebar` 服务，其他插件可注册侧边栏页面与文件预览器（内置 8 tab + 6 viewer 亦通过同一服务注册）。v0.12.1 补齐基座能力（完整类型导出、能力探测、状态订阅、tab 角标、生命周期回调、定向打开、插件自有设置等）。v0.19.0 起新增文件图标注册：`registerFileIcon` 按扩展名（或保留的 `'folder'` / `'folder-open'` 目录扩展名、`exts: []` 全局默认）替换文件树与文件 tab 的图标，彩色 ReactNode 亦可——内置消费、注册即生效，无需自己接线。

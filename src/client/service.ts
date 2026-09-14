@@ -391,6 +391,25 @@ export interface FileIconDescriptor {
 export const FOLDER_EXT = 'folder' as const
 export const FOLDER_OPEN_EXT = 'folder-open' as const
 
+/**
+ * The service's public snapshot face (v0.20.x+): the store snapshot plus the
+ * flat panel flags dsh-hotkey (and other keyboard-first consumers) read at
+ * keypress time. `bottomOpen` mirrors `state.bottomOpen`; `panelOpen` is the
+ * native right Sidebar's expanded state as the client half's probe reports it
+ * (`ctx.sidebarRight.isExpanded()` when the controller exists, else the
+ * kernel's `[data-sidebar-right-open]` marker), and `undefined` when this
+ * window has no kernel right Sidebar at all — the "no ui-sidebar-right"
+ * signal that lets consumers fall back to the plugin's own surface. Both are
+ * read-only convenience fields — the store snapshot's `state`/`prefs` remain
+ * the source of truth.
+ */
+export interface SidebarServiceSnapshot extends SidebarSnapshot {
+  /** Whether the plugin's bottom workbench is open. */
+  bottomOpen: boolean
+  /** Whether the native right Sidebar is expanded; undefined = no kernel column. */
+  panelOpen: boolean | undefined
+}
+
 /** One `openTab` request. */
 export interface OpenTabSeed {
   type: string
@@ -463,6 +482,15 @@ export interface SidebarSurface {
   activate(tabId: string): boolean
   /** Whether a tab id belongs to the native surface. */
   has(tabId: string): boolean
+  /**
+   * Whether a "right" open for `sessionId` can land in the native surface
+   * at all (v0.20.x+). False when the kernel's `sidebarRight` controller is
+   * absent in this window — a popup / session window on a runtime that has
+   * not mounted ui-sidebar-right — in which case the service falls back to
+   * the plugin's own bottom workbench instead of queueing an open that can
+   * never be flushed. Absent = available (back-compat for test stubs).
+   */
+  canPlace?(sessionId: string): boolean
 }
 
 /**
@@ -574,10 +602,13 @@ export interface BetterSidebarService {
   readonly features: readonly string[]
   /**
    * The current sidebar snapshot: the active session id, its state (panel
-   * geometry, open tabs, expansions), and the side card prefs (v0.12.0+).
+   * geometry, open tabs, expansions), the side card prefs (v0.12.0+), and —
+   * since v0.20.x — the flat `bottomOpen`/`panelOpen` flags dsh-hotkey's
+   * keybindings read (`panelOpen` comes from the probe the client half
+   * installs; `undefined` when the runtime cannot tell).
    * `state`/`sessionId` are undefined until a session becomes active.
    */
-  getSnapshot(): SidebarSnapshot
+  getSnapshot(): SidebarServiceSnapshot
   /** Subscribe to snapshot changes (session switch, state changes, prefs changes). Returns the disposer. */
   subscribeState(listener: () => void): () => void
   /** Update an open tab's display fields (title / path / meta); a missing tab id is a no-op. */
@@ -653,6 +684,11 @@ export const SIDEBAR_SERVICE_VERSION = '0.20.0'
  *   external file-tree icons overriding the built-in glyphs, matched by
  *   extension (`exts`), exact file name (`names`), or directory name
  *   (`folderNames`).
+ * - 'panelFlags' (v0.20.x): getSnapshot() carries the flat `bottomOpen` /
+ *   `panelOpen` fields (the dsh-hotkey contract), and a right open falls
+ *   back to the bottom workbench while the kernel right Sidebar's
+ *   controller is absent (popup / session windows on runtimes without
+ *   ui-sidebar-right).
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -670,6 +706,7 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'fileIcons',
+  'panelFlags',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -685,8 +722,18 @@ function safeCall(fn: () => void): void {
  * Create one BetterSidebar service bound to a store. The service owns the
  * tab/viewer registries (Map + listener set) and proxies openTab/closeTab
  * to the store's reducer. One instance per client plugin activation.
+ *
+ * @param store - the plugin's sidebar store.
+ * @param panelProbe - optional live probe for the native right Sidebar's
+ *   expanded state (v0.20.x+): returns `true` expanded, `false` collapsed,
+ *   `undefined` unknown. The client half installs one that reads
+ *   `ctx.sidebarRight.isExpanded()` with a `[data-sidebar-right-open]` DOM
+ *   fallback. Absent = the snapshot's `panelOpen` stays `undefined`.
  */
-export function createBetterSidebarService(store: SidebarStore): BetterSidebarService {
+export function createBetterSidebarService(
+  store: SidebarStore,
+  panelProbe?: () => boolean | undefined,
+): BetterSidebarService {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
   const fileIcons = new Map<string, FileIconDescriptor>()
@@ -890,9 +937,9 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     if (targetSessionId === undefined) return
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
     // ── Native right Sidebar ──────────────────────────────────────────────
-    // With the native surface installed, every open except an explicit
-    // bottom-panel one lands there. The path seed's meaning depends on the
-    // type: `editor` is the only kind registered with
+    // With the native surface installed and its controller live, every open
+    // except an explicit bottom-panel one lands there. The path seed's
+    // meaning depends on the type: `editor` is the only kind registered with
     // `dsh-resource://file/**` patterns (src/client/native/index.ts), so its
     // path seeds become resource addresses (the native registry routes the
     // address back to the editor); a path-less editor open becomes the
@@ -900,7 +947,17 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     // component state, not a file to open — and rides the seed (path
     // included) as navigation params, which the tab adapter merges onto the
     // synthetic record's `tab.path` for the registered component.
-    if (surface !== undefined && seed.target !== 'bottom') {
+    //
+    // A "right" open whose controller is ABSENT (`canPlace` false — a popup
+    // / session window on a runtime that has not mounted ui-sidebar-right)
+    // would otherwise sit in the surface's pending queue forever: the queue
+    // only flushes on session-list changes and still needs the controller
+    // to place anything. Such windows fall back to the plugin's own bottom
+    // workbench so the open lands where the user can see it (the v0.20.x
+    // dsh-hotkey adaptation); the same open goes native again the moment the
+    // kernel provides the controller.
+    if (surface !== undefined && seed.target !== 'bottom'
+      && (surface.canPlace === undefined || surface.canPlace(targetSessionId))) {
       const state = store.getSnapshot().state
       // The descriptor's own factory mints what a view needs beyond the seed:
       // the side chat's thread bootstrap / reattach meta, the terminal's
@@ -1085,8 +1142,27 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     }
   }
 
-  /** The snapshot the store publishes (state/prefs carry the active session). */
-  const getSnapshot = (): SidebarSnapshot => store.getSnapshot()
+  /** The snapshot the store publishes (state/prefs carry the active session),
+   *  decorated with the flat panel flags dsh-hotkey reads at keypress time.
+   *  A fresh wrapper per call: no in-repo consumer relies on snapshot
+   *  identity across calls (the one call site reads it once), and the flags
+   *  are read on demand, not subscribed. */
+  const getSnapshot = (): SidebarServiceSnapshot => {
+    const base = store.getSnapshot()
+    let panelOpen: boolean | undefined
+    if (panelProbe !== undefined) {
+      try {
+        panelOpen = panelProbe()
+      } catch {
+        panelOpen = undefined
+      }
+    }
+    return {
+      ...base,
+      bottomOpen: base.state?.bottomOpen === true,
+      panelOpen,
+    }
+  }
 
   /** Store changes: session switch, state mutations, prefs writes. */
   const subscribeState = (listener: () => void): (() => void) => store.subscribe(listener)
