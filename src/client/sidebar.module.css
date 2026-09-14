@@ -259,10 +259,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   align-items: center;
 }
 
-/* The bottom panel's tab strips reserve the close control's width at their
-   right end, so the + menu never hides under it. */
+/* The bottom panel's tab strips reserve the strip-end cluster's full width
+   at their right end — the close control (right: 6, 34px) plus the sidebar
+   toggle (right: 40, 68px) — so neither the + menu nor the fullscreen
+   toggle (the strip's rightmost child) hides under or overlaps them. */
 .bottomPanel .tabBar {
-  padding-right: 40px;
+  padding-right: 68px;
 }
 
 /* ── Desktop drag-region opt-out ──────────────────────────────────────── */
