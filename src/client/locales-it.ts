@@ -94,6 +94,8 @@ export const it: Record<string, string> = {
   closePinnedTerminal: 'Chiudi Terminale',
   collapseBottomPanel: 'Comprimi pannello inferiore',
   collapseSidebar: 'Comprimi barra laterale',
+  fullscreen: 'Schermo intero',
+  exitFullscreen: 'Esci da schermo intero',
   expandBottomPanel: 'Espandi pannello inferiore',
   expandSidebar: 'Espandi barra laterale',
   terminalError: 'Connessione del terminale non riuscita',

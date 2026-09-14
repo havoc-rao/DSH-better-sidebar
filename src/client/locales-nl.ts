@@ -101,6 +101,8 @@ export const nl: Record<string, string> = {
   closePinnedTerminal: 'Terminal sluiten',
   collapseBottomPanel: 'Onderpaneel inklappen',
   collapseSidebar: 'Zijbalk inklappen',
+  fullscreen: 'Volledig scherm',
+  exitFullscreen: 'Volledig scherm verlaten',
   expandBottomPanel: 'Onderpaneel uitklappen',
   expandSidebar: 'Zijbalk uitklappen',
   terminalError: 'Terminalverbinding mislukt',

@@ -19,6 +19,22 @@
  * applyDrag), so the panel still tracks the column per frame with zero
  * React work; `centerMeasured` flips ONCE to gate the hidden→visible
  * first-paint fallback.
+ *
+ * MAXIMIZED MODE (the tab strip's fullscreen toggle): the workbench owns
+ * the ENTIRE conversation column — top edge to bottom edge — while it is
+ * on. The session-header band, the transcript, and the composer (the input
+ * bar; InputBar.tsx's card) are all the workbench's: nothing of the chat
+ * box remains visible below or above the panel. The region is the center
+ * column's own rect (a REAL box) — never a DSH slot host: the slot hosts
+ * (`[data-slot="conversation.view"]`…) are `display: contents` wrappers
+ * whose getBoundingClientRect collapses to {0,0} on this host engine
+ * (empty getClientRects), and anchoring a maximized fill on one collapsed
+ * the panel to a 1px sliver at the viewport top ("covered by the chatbox").
+ * `chatRectRef` carries the column's top/bottom (read at measure time;
+ * kept fresh even while docked so the shell's render-time reads are never
+ * stale); while `fullscreen` is on, measureCenter also writes the panel's
+ * top/bottom/height inline (same per-frame DOM-write pattern), so the panel
+ * tracks the column without re-rendering the shell.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveCenterColumn } from '../center-column.ts'
@@ -30,8 +46,17 @@ export function useCenterColumn(
    *  panel re-runs the chain: a panel opened before the center column was
    *  ever found must not stay invisible forever). */
   bottomOpen: boolean | undefined,
+  /** Maximized-over-the-chat-box mode (the tab strip's fullscreen toggle):
+   *  while true, measureCenter also writes the panel's chat-box top/bottom,
+   *  and its per-frame updates track column geometry changes. */
+  fullscreen: boolean,
 ) {
   const centerRectRef = useRef({ left: 0, right: 0 })
+  /** The maximized region's edges — the center column's OWN rect, top to
+   *  bottom (the whole chat box: session header, transcript, input bar; a
+   *  real box, never a `display: contents` slot host — see the module
+   *  comment); zero fallback until first measurement. */
+  const chatRectRef = useRef({ top: 0, bottom: 0 })
   const [centerMeasured, setCenterMeasured] = useState(false)
   // Refs keep the measure step stable across renders and let it skip work
   // mid-drag: during a width/corner drag the layout push resizes the center
@@ -57,15 +82,32 @@ export function useCenterColumn(
     // panel keeps tracking the center column per frame during the right
     // panel's open/close animation without re-rendering the shell. The
     // one-shot measured flip renders the panel visible once (a stale
-    // {0,0} fallback would flash full-width).
+    // {0,0} fallback would flash full-width). The maximize region is the
+    // same column rect — top to bottom — and is kept fresh even while
+    // docked so the shell's render-time reads are never stale.
     centerRectRef.current = { left: rect.left, right: rect.right }
+    chatRectRef.current = { top: rect.top, bottom: rect.bottom }
     const bottom = bottomRef.current
     if (bottom !== null) {
       bottom.style.setProperty('left', `${rect.left}px`)
       bottom.style.setProperty('right', `${window.innerWidth - rect.right}px`)
+      if (fullscreen) {
+        // Maximized: the panel fills the ENTIRE conversation column
+        // (top..bottom) — header band, transcript, and input bar are all
+        // the workbench's; nothing of the chat box stays visible. Written
+        // per frame so column geometry changes track without re-rendering
+        // the shell; the shell's style prop reads the same refs, so a
+        // re-render re-applies the same values. The docked restore is
+        // React's job (its own style diff sees the maximize render's
+        // values and rewrites them on exit).
+        const chatRect = chatRectRef.current
+        bottom.style.setProperty('height', 'auto')
+        bottom.style.setProperty('top', `${chatRect.top}px`)
+        bottom.style.setProperty('bottom', `${Math.max(0, window.innerHeight - chatRect.bottom)}px`)
+      }
     }
     setCenterMeasured(prev => (prev ? prev : true))
-  }, [bottomRef])
+  }, [bottomRef, fullscreen])
   useEffect(() => {
     let disposed = false
     let observer: ResizeObserver | undefined
@@ -153,8 +195,12 @@ export function useCenterColumn(
     // panel converge on the real column within a couple of seconds no
     // matter what sequence the shell used. locate() is query-free while the
     // cached column stays connected; only a detached/missing cache falls
-    // back to the document selector.
-    const retry = window.setInterval(locate, 1500)
+    // back to the document selector. The re-measure on the same tick keeps
+    // the maximize region fresh against column-geometry drift.
+    const retry = window.setInterval(() => {
+      locate()
+      measureCenter()
+    }, 1500)
     return () => {
       disposed = true
       if (locateFrame !== null) cancelAnimationFrame(locateFrame)
@@ -169,7 +215,18 @@ export function useCenterColumn(
     // panel opened before the center column was ever found must not stay
     // invisible forever (the HMR recovery path depends on the observers
     // above, this is the belt-and-braces retry for the open moment itself).
+    // The fullscreen switch re-runs it too: the measure step must write the
+    // maximize geometry immediately (and clear it on exit) instead of
+    // waiting for the next resize event.
   }, [measureCenter, bottomOpen])
 
-  return { centerColRef, centerRectRef, centerMeasured, measureCenter, draggingRef }
+  // The maximize toggle needs one immediate measure on its transition: the
+  // locate effect's observers only fire on size changes, and a toggle is
+  // not one. measureCenter is stable except for the fullscreen flag itself
+  // (see its deps), so this fires exactly on enter/exit.
+  useEffect(() => {
+    measureCenter()
+  }, [measureCenter])
+
+  return { centerColRef, centerRectRef, chatRectRef, centerMeasured, measureCenter, draggingRef }
 }

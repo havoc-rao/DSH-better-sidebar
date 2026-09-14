@@ -105,6 +105,8 @@ export const pl: Record<string, string> = {
   closePinnedTerminal: 'Zamknij terminal',
   collapseBottomPanel: 'Zwiń panel dolny',
   collapseSidebar: 'Zwiń pasek boczny',
+  fullscreen: 'Pełny ekran',
+  exitFullscreen: 'Wyjdź z trybu pełnoekranowego',
   expandBottomPanel: 'Rozwiń panel dolny',
   expandSidebar: 'Rozwiń pasek boczny',
   terminalError: 'Połączenie z terminalem nie powiodło się',

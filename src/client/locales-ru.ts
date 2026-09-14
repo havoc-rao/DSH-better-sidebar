@@ -99,6 +99,8 @@ export const ru: Record<string, string> = {
   closePinnedTerminal: 'Закрыть терминал',
   collapseBottomPanel: 'Свернуть нижнюю панель',
   collapseSidebar: 'Свернуть боковую панель',
+  fullscreen: 'Во весь экран',
+  exitFullscreen: 'Выйти из полноэкранного режима',
   expandBottomPanel: 'Развернуть нижнюю панель',
   expandSidebar: 'Развернуть боковую панель',
   terminalError: 'Сбой подключения терминала',

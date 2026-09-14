@@ -104,6 +104,8 @@ export const ar: Record<string, string> = {
   closePinnedTerminal: 'إغلاق الطرفية',
   collapseBottomPanel: 'طي اللوحة السفلية',
   collapseSidebar: 'طي الشريط الجانبي',
+  fullscreen: 'ملء الشاشة',
+  exitFullscreen: 'إنهاء ملء الشاشة',
   expandBottomPanel: 'توسيع اللوحة السفلية',
   expandSidebar: 'توسيع الشريط الجانبي',
   terminalError: 'فشل اتصال الطرفية',

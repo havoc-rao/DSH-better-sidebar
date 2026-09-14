@@ -86,6 +86,8 @@ export const sv: Record<string, string> = {
   closePinnedTerminal: 'Stäng terminal',
   collapseBottomPanel: 'Komprimera bottenpanel',
   collapseSidebar: 'Fäll ihop sidofältet',
+  fullscreen: 'Helskärm',
+  exitFullscreen: 'Avsluta helskärm',
   expandBottomPanel: 'Expandera bottenpanel',
   expandSidebar: 'Expandera sidofältet',
   terminalError: 'Terminalanslutning misslyckades',

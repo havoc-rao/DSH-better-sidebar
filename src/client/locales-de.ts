@@ -89,6 +89,8 @@ export const de: Record<string, string> = {
   closePinnedTerminal: 'Terminal schließen',
   collapseBottomPanel: 'Unteres Panel einklappen',
   collapseSidebar: 'Seitenleiste einklappen',
+  fullscreen: 'Vollbild',
+  exitFullscreen: 'Vollbild beenden',
   expandBottomPanel: 'Unteres Panel ausklappen',
   expandSidebar: 'Seitenleiste erweitern',
   terminalError: 'Terminalverbindung fehlgeschlagen',

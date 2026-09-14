@@ -103,6 +103,8 @@ export const hi: Record<string, string> = {
   closePinnedTerminal: 'टर्मिनल बंद करें',
   collapseBottomPanel: 'निचला पैनल संक्षिप्त करें',
   collapseSidebar: 'साइडबार संक्षिप्त करें',
+  fullscreen: 'फ़ुल स्क्रीन',
+  exitFullscreen: 'फ़ुल स्क्रीन बंद करें',
   expandBottomPanel: 'निचला पैनल विस्तृत करें',
   expandSidebar: 'साइडबार विस्तृत करें',
   terminalError: 'टर्मिनल कनेक्शन विफल',

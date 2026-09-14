@@ -27,6 +27,13 @@ export const IconPanelRightOutline16 = ({ size = 16, className }: IconProps) => 
   <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect x="1.5" y="2" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
     <rect x="3.25" y="3.25" width="2.75" height="9.5" rx="1" fill="currentColor" stroke="none" />
+ * Exit-fullscreen glyph (the tab strip's "退出全屏" state): four inward
+ * corner arrows — the classic compress mark, in the app's outline style.
+ * The enter-fullscreen mark is the primitives' `IconFullscreenOutline16`.
+ */
+export const IconFullscreenExitOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 1.5v3.5H2.5M10 1.5v3.5h3.5M6 14.5V11H2.5M10 14.5V11h3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 )
 

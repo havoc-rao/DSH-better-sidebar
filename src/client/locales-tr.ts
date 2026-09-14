@@ -103,6 +103,8 @@ export const tr: Record<string, string> = {
   closePinnedTerminal: 'Terminali Kapat',
   collapseBottomPanel: 'Alt paneli daralt',
   collapseSidebar: 'Kenar çubuğunu daralt',
+  fullscreen: 'Tam ekran',
+  exitFullscreen: 'Tam ekrandan çık',
   expandBottomPanel: 'Alt paneli genişlet',
   expandSidebar: 'Kenar çubuğunu genişlet',
   terminalError: 'Terminal bağlantısı başarısız',

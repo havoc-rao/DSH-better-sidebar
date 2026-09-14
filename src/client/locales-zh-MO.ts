@@ -118,6 +118,8 @@ export const zhMO: Record<string, string> = {
   closePinnedTerminal: '關閉終端',
   collapseBottomPanel: '收起底部面板',
   collapseSidebar: '摺疊側邊欄',
+  fullscreen: '進入全螢幕',
+  exitFullscreen: '退出全螢幕',
   expandBottomPanel: '展開底部面板',
   expandSidebar: '展開側邊欄',
   terminalError: '終端連線失敗',

@@ -103,6 +103,8 @@ export const vi: Record<string, string> = {
   closePinnedTerminal: 'Đóng Terminal',
   collapseBottomPanel: 'Thu gọn panel dưới',
   collapseSidebar: 'Thu gọn thanh bên',
+  fullscreen: 'Toàn màn hình',
+  exitFullscreen: 'Thoát toàn màn hình',
   expandBottomPanel: 'Mở rộng panel dưới',
   expandSidebar: 'Mở rộng thanh bên',
   terminalError: 'Kết nối terminal thất bại',

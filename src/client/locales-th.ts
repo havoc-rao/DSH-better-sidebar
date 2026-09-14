@@ -103,6 +103,8 @@ export const th: Record<string, string> = {
   closePinnedTerminal: 'ปิดเทอร์มินัล',
   collapseBottomPanel: 'ย่อพาเนลด้านล่าง',
   collapseSidebar: 'ยุบแถบด้านข้าง',
+  fullscreen: 'เต็มจอ',
+  exitFullscreen: 'ออกจากโหมดเต็มจอ',
   expandBottomPanel: 'ขยายพาเนลด้านล่าง',
   expandSidebar: 'ขยายแถบด้านข้าง',
   terminalError: 'การเชื่อมต่อเทอร์มินัลล้มเหลว',

@@ -42,6 +42,7 @@ import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
 import { parseDesktopEnv } from './desktop-env.ts'
+import { isFullscreenToggleShortcut } from './fullscreen-shortcut.ts'
 import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
@@ -309,7 +310,40 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // writes them straight to the bottom panel element — per-frame tracking
   // without re-rendering the shell (the comments live with the hook now).
   const bottomRef = useRef<HTMLDivElement | null>(null)
-  const { centerRectRef, centerMeasured, measureCenter, draggingRef } = useCenterColumn(bottomRef, state?.bottomOpen)
+  // The fullscreen flag is the strip's maximize toggle: while on, the hook
+  // fills the panel over the whole conversation column (top edge to bottom
+  // edge) and tracks its geometry per frame.
+  const [fullscreen, setFullscreen] = useState(false)
+  // The strip's maximize toggle as ONE stable handler: the TabBar button
+  // (via Workbench → every pane strip) and the global shortcut below share
+  // this identity, so the chord can never drift from the button's behavior.
+  const toggleFullscreen = useCallback(() => { setFullscreen(v => !v) }, [])
+  const { centerRectRef, chatRectRef, centerMeasured, measureCenter, draggingRef } =
+    useCenterColumn(bottomRef, state?.bottomOpen, fullscreen)
+  // Fullscreen is a transient view mode: switching conversations exits it
+  // (the flag lives outside the store, so no session's layout carries it).
+  useEffect(() => { setFullscreen(false) }, [sessionId])
+
+  // The global shortcut for the toggle above: Cmd+Shift+J on macOS,
+  // Ctrl+Shift+J on Windows/Linux (see fullscreen-shortcut.ts for the chord
+  // and its environment fit). Registered at the shell, NOT on the strips: a
+  // split workbench renders one TabBar per pane (up to four), and per-strip
+  // listeners would fire the toggle once per pane — the batched functional
+  // updates cancel out into a visible no-op. The workbench stays mounted
+  // while collapsed (collapse is a CSS hide), so the chord is heard both
+  // ways. A press some inner surface already claimed (a terminal, an
+  // editor — defaultPrevented) is left alone. Lifecycle is the shell's:
+  // the listener dies with the panel host (useEffect cleanup).
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented) return
+      if (!isFullscreenToggleShortcut(event)) return
+      event.preventDefault()
+      toggleFullscreen()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => { window.removeEventListener('keydown', onKeyDown) }
+  }, [toggleFullscreen])
 
   /**
    * Bottom-panel first-expansion auto terminal: the FIRST time the user
@@ -499,15 +533,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // open (0 while collapsed), so the conversation and input bar are squeezed
   // instead of covered. The margin is capped at the viewport so a stale
   // persisted height (e.g. fullscreen on a bigger window) can never crush the
-  // app shell to zero. Dragging disables the layout transition.
+  // app shell to zero. Dragging disables the layout transition. Fullscreen
+  // pushes nothing: the panel already covers the whole chat-box region, so
+  // lifting the column would slide it behind the panel.
   useEffect(() => {
     const height = bottomPushHeight({
       open: snapshot.state?.bottomOpen === true,
       height: snapshot.state?.bottomHeight ?? 0,
       viewportHeight: layoutViewportHeight,
     })
-    writeGeometry(snapshot.state?.bottomOpen === true ? height + keyboardInset : 0)
-  }, [snapshot.state?.bottomOpen, snapshot.state?.bottomHeight, layoutViewportHeight, keyboardInset])
+    writeGeometry(fullscreen ? 0 : (snapshot.state?.bottomOpen === true ? height + keyboardInset : 0))
+  }, [snapshot.state?.bottomOpen, snapshot.state?.bottomHeight, layoutViewportHeight, keyboardInset, fullscreen])
   // Unmount must release the push (issue #31): when the boundary swaps the
   // whole sidebar after a render crash (or the plugin fiber is disposed /
   // HMR), the CSS variable would otherwise stay on <html> and layout.css
@@ -773,16 +809,24 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         className={clsx(css.bottomPanel, !state.bottomOpen && css.bottomPanelHidden)}
         data-dsh-panel
         data-dsh-bottom-panel
+        data-dsh-panel-fullscreen={fullscreen || undefined}
         style={{
-          height: bottomPanelHeight,
+          // Fullscreen (the strip's toggle): the panel fills the ENTIRE
+          // conversation column — top/bottom from the column's own rect
+          // (top edge to bottom edge): the session-header band, the
+          // transcript, and the input bar are all the workbench's, nothing
+          // of the chat box stays visible. Docked: the panel hangs from the
+          // bottom edge with the store's height.
+          ...(fullscreen
+            ? { top: chatRectRef.current.top, bottom: Math.max(0, window.innerHeight - chatRectRef.current.bottom), height: 'auto' }
+            : { height: bottomPanelHeight, bottom: keyboardInset > 0 ? `${keyboardInset}px` : undefined }),
           left: centerRectRef.current.left,
           // Keep the panel above the on-screen keyboard when the visual
           // viewport shrinks (see the keyboardInset effect).
-          bottom: keyboardInset > 0 ? `${keyboardInset}px` : undefined,
+          right: window.innerWidth - centerRectRef.current.right,
           // Direct from the center column's measured right edge: the bottom
           // panel spans ONLY the center column, ending exactly at the
           // details column's left edge.
-          right: window.innerWidth - centerRectRef.current.right,
           // Unmeasured center column → keep the panel invisible (zero-size
           // geometry would flash full-width overflow instead).
           visibility: centerMeasured ? undefined : 'hidden',
@@ -823,7 +867,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           plugin-side seat where keyboard-first consumers find the
           expand/collapse buttons by keyword (aria-label/title). The close
           control keeps its corner seat; the sidebar toggle sits just left
-          of it (the strip's reserved padding covers both).
+          of it (the strip's reserved padding covers both). While fullscreen
+          (the strip's maximize toggle) the close tap first restores the
+          docked panel — a second tap collapses it.
         */}
         <span className={css.toggleCluster} data-dsh-toggle-cluster>
           <Tooltip label={t('collapseBottomPanel')} side="bottom" delayMs={500}>
@@ -831,7 +877,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
               type="button"
               className={css.bottomClose}
               aria-label={t('collapseBottomPanel')}
-              onClick={() => { store.reduce(toggleBottomPanel) }}
+              onClick={() => {
+                if (fullscreen) { setFullscreen(false); return }
+                store.reduce(toggleBottomPanel)
+              }}
             >
               <IconCloseFill14 />
             </button>
@@ -860,6 +909,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            fullscreen={fullscreen}
+            onToggleFullscreen={toggleFullscreen}
           />
         </div>
       </div>

@@ -95,6 +95,8 @@ export const ko: Record<string, string> = {
   closePinnedTerminal: '터미널 닫기',
   collapseBottomPanel: '하단 패널 접기',
   collapseSidebar: '사이드바 접기',
+  fullscreen: '전체 화면',
+  exitFullscreen: '전체 화면 종료',
   expandBottomPanel: '하단 패널 펼치기',
   expandSidebar: '사이드바 펼치기',
   terminalError: '터미널 연결 실패',

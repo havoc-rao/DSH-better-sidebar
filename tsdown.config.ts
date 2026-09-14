@@ -46,7 +46,7 @@ import { builtinModules, createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import type { UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
-  import { codeFinderTsdown } from '@havocrao/dsh-code-finder/tsdown'
+import { codeFinderTsdown } from '@havocrao/dsh-code-finder/tsdown'
 
 const require = createRequire(import.meta.url)
 

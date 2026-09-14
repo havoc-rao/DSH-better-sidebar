@@ -101,6 +101,8 @@ export const id: Record<string, string> = {
   closePinnedTerminal: 'Tutup Terminal',
   collapseBottomPanel: 'Lipat panel bawah',
   collapseSidebar: 'Lipat sidebar',
+  fullscreen: 'Layar penuh',
+  exitFullscreen: 'Keluar layar penuh',
   expandBottomPanel: 'Bentangkan panel bawah',
   expandSidebar: 'Perluas sidebar',
   terminalError: 'Koneksi terminal gagal',

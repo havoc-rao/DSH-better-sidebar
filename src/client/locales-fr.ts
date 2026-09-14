@@ -96,6 +96,8 @@ export const fr: Record<string, string> = {
   closePinnedTerminal: 'Fermer le terminal',
   collapseBottomPanel: 'Réduire le panneau inférieur',
   collapseSidebar: 'Réduire la barre latérale',
+  fullscreen: 'Plein écran',
+  exitFullscreen: 'Quitter le plein écran',
   expandBottomPanel: 'Déployer le panneau inférieur',
   expandSidebar: 'Développer la barre latérale',
   terminalError: 'Échec de la connexion au terminal',

@@ -103,6 +103,8 @@ export const ja: Record<string, string> = {
   closePinnedTerminal: 'ターミナルを閉じる',
   collapseBottomPanel: '下パネルを折りたたむ',
   collapseSidebar: 'サイドバーを折りたたむ',
+  fullscreen: '全画面表示',
+  exitFullscreen: '全画面を終了',
   expandBottomPanel: '下パネルを展開',
   expandSidebar: 'サイドバーを展開',
   terminalError: 'ターミナル接続に失敗',
