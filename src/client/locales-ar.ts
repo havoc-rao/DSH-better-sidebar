@@ -235,6 +235,8 @@ export const ar: Record<string, string> = {
   uploadCancelled: 'تم إلغاء الرفع',
   settingsNav: 'البطاقة الجانبية',
   settingsIntro: 'إدارة ما تعرضه البطاقة الجانبية وكيف تتصرف',
+  settingsLanguageTitle: 'لغة الواجهة',
+  settingsLanguageDesc: 'لغة عرض واجهة DSH (نفس التفضيل الموجود في صف اللغة ضمن عام)',
   settingsPopupDesc: 'تكوين خيارات ذات صلة بـ {feature}',
   settingsDone: 'تم',
   settingsOpenToolsTitle: 'حقن أداة فتح الشريط الجانبي للنموذج',

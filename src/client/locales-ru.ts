@@ -231,6 +231,8 @@ export const ru: Record<string, string> = {
 
   settingsNav: 'Боковая карточка',
   settingsIntro: 'Управление содержимым и поведением боковой карточки по умолчанию',
+  settingsLanguageTitle: 'Язык интерфейса',
+  settingsLanguageDesc: 'Язык отображения интерфейса DSH (та же настройка, что и строка «Язык» в разделе «Общие»)',
   settingsPopupDesc: 'Настройка параметров «{feature}»',
   settingsDone: 'Готово',
   settingsOpenToolsTitle: 'Внедрить инструмент открытия в боковой панели для модели',

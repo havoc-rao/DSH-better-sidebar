@@ -234,6 +234,8 @@ export const ja: Record<string, string> = {
   uploadCancelled: 'アップロードはキャンセルされました',
   settingsNav: 'サイドカード',
   settingsIntro: 'サイドカードの表示内容とデフォルト挙動を管理',
+  settingsLanguageTitle: 'インターフェース言語',
+  settingsLanguageDesc: 'DSH インターフェースの表示言語（「一般」の言語設定と同じ項目です）',
   settingsPopupDesc: '「{feature}」の関連オプションを設定',
   settingsDone: '完了',
   settingsOpenToolsTitle: 'モデルにサイドバー開くツールを注入',

@@ -225,6 +225,8 @@ export const it: Record<string, string> = {
   uploadCancelled: 'Caricamento annullato',
   settingsNav: 'Scheda laterale',
   settingsIntro: 'Gestisca cosa mostra la scheda laterale e come si comporta',
+  settingsLanguageTitle: 'Lingua dell’interfaccia',
+  settingsLanguageDesc: 'Lingua di visualizzazione dell’interfaccia DSH (stessa preferenza della riga Lingua in Generale)',
   settingsPopupDesc: 'Configuri le opzioni relative a {feature}',
   settingsDone: 'Fatto',
   settingsOpenToolsTitle: 'Iniettare lo strumento di apertura della barra laterale per il modello',

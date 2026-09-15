@@ -236,6 +236,8 @@ export const pl: Record<string, string> = {
   uploadCancelled: 'Wgrywanie anulowane',
   settingsNav: 'Karta boczna',
   settingsIntro: 'Zarządzaj tym, co pokazuje karta boczna i jak się zachowuje',
+  settingsLanguageTitle: 'Język interfejsu',
+  settingsLanguageDesc: 'Język wyświetlania interfejsu DSH (ta sama preferencja co wiersz Język w sekcji Ogólne)',
   settingsPopupDesc: 'Skonfiguruj opcje powiązane z: {feature}',
   settingsDone: 'Gotowe',
   settingsOpenToolsTitle: 'Wstrzyknij narzędzie otwierania panelu bocznego dla modelu',

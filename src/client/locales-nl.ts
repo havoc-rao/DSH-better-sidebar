@@ -232,6 +232,8 @@ export const nl: Record<string, string> = {
   uploadCancelled: 'Upload geannuleerd',
   settingsNav: 'Zijkaart',
   settingsIntro: 'Beheer wat de zijkaart toont en hoe deze zich gedraagt',
+  settingsLanguageTitle: 'Interfacetaal',
+  settingsLanguageDesc: 'Weergavetaal van de DSH-interface (dezelfde voorkeur als de rij Taal onder Algemeen)',
   settingsPopupDesc: 'Gerelateerde opties voor {feature} configureren',
   settingsDone: 'Klaar',
   settingsOpenToolsTitle: 'Zijbalk-openen-tool voor het model injecteren',

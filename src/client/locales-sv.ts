@@ -217,6 +217,8 @@ export const sv: Record<string, string> = {
   uploadCancelled: 'Uppladdning avbruten',
   settingsNav: 'Sidokort',
   settingsIntro: 'Hantera vad sidokortet visar och hur det beter sig',
+  settingsLanguageTitle: 'Gränssnittsspråk',
+  settingsLanguageDesc: 'Visningsspråk för DSH-gränssnittet (samma inställning som språkraden under Allmänt)',
   settingsPopupDesc: 'Konfigurera relaterade alternativ för {feature}',
   settingsDone: 'Klar',
   settingsOpenToolsTitle: 'Injicera sidopanel-öppningsverktyg för modellen',

@@ -220,6 +220,8 @@ export const de: Record<string, string> = {
   uploadCancelled: 'Upload abgebrochen',
   settingsNav: 'Seitenkarte',
   settingsIntro: 'Verwalten Sie, was die Seitenkarte anzeigt und wie sie sich verhält',
+  settingsLanguageTitle: 'Sprache der Oberfläche',
+  settingsLanguageDesc: 'Anzeigesprache der DSH-Oberfläche (dieselbe Einstellung wie die Zeile „Sprache“ unter „Allgemein“)',
   settingsPopupDesc: 'Optionen für „{feature}“ konfigurieren',
   settingsDone: 'Fertig',
   settingsOpenToolsTitle: 'Seitenleisten-Öffnungswerkzeug für das Modell bereitstellen',

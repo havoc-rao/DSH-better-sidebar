@@ -226,6 +226,8 @@ export const ko: Record<string, string> = {
   uploadCancelled: '업로드가 취소됨',
   settingsNav: '사이드 카드',
   settingsIntro: '사이드 카드의 표시 내용과 기본 동작을 관리합니다',
+  settingsLanguageTitle: '인터페이스 언어',
+  settingsLanguageDesc: 'DSH 인터페이스 표시 언어 (일반의 언어 설정과 동일한 항목입니다)',
   settingsPopupDesc: '"{feature}" 관련 옵션을 구성합니다',
   settingsDone: '완료',
   settingsOpenToolsTitle: '모델에 사이드바 열기 도구 주입',

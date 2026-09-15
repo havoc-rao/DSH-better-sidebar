@@ -249,6 +249,8 @@ export const zhMO: Record<string, string> = {
   uploadCancelled: '上傳已取消',
   settingsNav: '側邊卡片',
   settingsIntro: '管理側邊卡片的顯示內容與預設行為',
+  settingsLanguageTitle: '介面語言',
+  settingsLanguageDesc: 'DSH 介面的顯示語言（與「一般」中的語言設定是同一項偏好）',
   settingsPopupDesc: '為「{feature}」設定相關選項',
   settingsDone: '完成',
   settingsOpenToolsTitle: '為模型注入側邊欄開啟工具',

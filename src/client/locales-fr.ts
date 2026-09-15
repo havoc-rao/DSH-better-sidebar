@@ -227,6 +227,8 @@ export const fr: Record<string, string> = {
   uploadCancelled: 'Import annulé',
   settingsNav: 'Carte latérale',
   settingsIntro: 'Gérer le contenu affiché par la carte latérale et son comportement par défaut',
+  settingsLanguageTitle: 'Langue de l’interface',
+  settingsLanguageDesc: 'Langue d’affichage de l’interface DSH (même préférence que la ligne « Langue » dans « Général »)',
   settingsPopupDesc: 'Configurer les options liées à « {feature} »',
   settingsDone: 'Terminé',
   settingsOpenToolsTitle: 'Injecter l\'outil d\'ouverture latérale pour le modèle',

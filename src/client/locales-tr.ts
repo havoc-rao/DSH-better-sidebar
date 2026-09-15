@@ -234,6 +234,8 @@ export const tr: Record<string, string> = {
   uploadCancelled: 'Yükleme iptal edildi',
   settingsNav: 'Yan kart',
   settingsIntro: 'Yan kartın ne gösterdiğini ve nasıl davrandığını yönetin',
+  settingsLanguageTitle: 'Arayüz dili',
+  settingsLanguageDesc: 'DSH arayüzünün görüntüleme dili (Genel bölümündeki Dil satırıyla aynı tercih)',
   settingsPopupDesc: '«{feature}» için ilgili seçenekleri yapılandırın',
   settingsDone: 'Bitti',
   settingsOpenToolsTitle: 'Model için kenar çubuğu açma aracı enjekte et',

@@ -81,9 +81,13 @@ describe('built-in tab registrations', () => {
     expect(new Set(lines).size, 'descriptions must differ per tab').toBe(visible.length)
   })
 
-  it('the changes tab declares no settings of its own (the diff always docks)', () => {
+  it('the changes tab declares the interface-language settings panel (the diff always docks)', () => {
     const { service } = setup()
-    expect(service.getTab('git')?.settings).toBeUndefined()
+    // The git card owns one CUSTOM settings panel — the DSH interface
+    // language picker (its second entry point; General owns the first) —
+    // while the diff view itself stays docked: this is not a diff-placement
+    // setting.
+    expect(service.getTab('git')?.settings?.render).toBeDefined()
   })
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {

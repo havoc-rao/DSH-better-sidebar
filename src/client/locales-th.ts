@@ -234,6 +234,8 @@ export const th: Record<string, string> = {
   uploadCancelled: 'การอัปโหลดถูกยกเลิก',
   settingsNav: 'การ์ดด้านข้าง',
   settingsIntro: 'จัดการสิ่งที่การ์ดด้านข้างแสดงและพฤติกรรมของมัน',
+  settingsLanguageTitle: 'ภาษาอินเทอร์เฟซ',
+  settingsLanguageDesc: 'ภาษาที่แสดงของอินเทอร์เฟซ DSH (ค่าเดียวกันกับแถวภาษาในทั่วไป)',
   settingsPopupDesc: 'กำหนดค่าตัวเลือกที่เกี่ยวข้องสำหรับ {feature}',
   settingsDone: 'เสร็จสิ้น',
   settingsOpenToolsTitle: 'ฉีดเครื่องมือเปิดแถบด้านข้างสำหรับโมเดล',

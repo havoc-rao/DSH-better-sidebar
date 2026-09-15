@@ -234,6 +234,8 @@ export const hi: Record<string, string> = {
   uploadCancelled: 'अपलोड रद्द',
   settingsNav: 'साइड कार्ड',
   settingsIntro: 'साइड कार्ड क्या दिखाता है और कैसे व्यवहार करता है प्रबंधित करें',
+  settingsLanguageTitle: 'इंटरफ़ेस भाषा',
+  settingsLanguageDesc: 'DSH इंटरफ़ेस की प्रदर्शन भाषा (सामान्य में भाषा पंक्ति वाली वही प्राथमिकता)',
   settingsPopupDesc: '{feature} के लिए संबंधित विकल्प कॉन्फ़िगर करें',
   settingsDone: 'पूर्ण',
   settingsOpenToolsTitle: 'मॉडल के लिए साइडबार ओपन टूल इंजेक्ट करें',

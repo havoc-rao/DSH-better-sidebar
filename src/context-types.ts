@@ -402,12 +402,18 @@ export interface SidebarSessionsService {
  * namespace registry under `betterSidebar`.
  */
 export interface SidebarLocaleService {
-  /** Current immutable locale snapshot (uSES-safe; `active` is 'zh' | 'en' today). */
-  getSnapshot(): { active: string }
+  /**
+   * Current immutable locale snapshot (uSES-safe; the reference is stable
+   * between changes). `locales` is the selectable catalog in display order,
+   * each entry self-described (its label is written in that language).
+   */
+  getSnapshot(): { active: string; locales: readonly { id: string; label: string }[] }
   /** Subscribe to snapshot changes (locale switch or dictionary registration). */
   subscribe(fn: () => void): () => void
   /** Register one locale's dictionary for a namespace; returns the disposer. */
   register(ns: string, locale: string, dict: Record<string, string>): () => void
+  /** Switch the active locale (the Host-backed `locale.preference`); unknown ids throw. */
+  setLocale(id: string): void
 }
 
 /** The composer draft face the sidebar reaches through `ctx.conversation.input`. */

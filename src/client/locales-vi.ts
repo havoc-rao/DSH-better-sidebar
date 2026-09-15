@@ -234,6 +234,8 @@ export const vi: Record<string, string> = {
   uploadCancelled: 'Đã hủy tải lên',
   settingsNav: 'Thẻ bên',
   settingsIntro: 'Quản lý nội dung hiển thị và hành vi mặc định của thẻ bên',
+  settingsLanguageTitle: 'Ngôn ngữ giao diện',
+  settingsLanguageDesc: 'Ngôn ngữ hiển thị của giao diện DSH (cùng tùy chọn với dòng Ngôn ngữ trong Chung)',
   settingsPopupDesc: 'Cấu hình tùy chọn cho «{feature}»',
   settingsDone: 'Xong',
   settingsOpenToolsTitle: 'Tiêm công cụ mở thanh bên cho mô hình',
