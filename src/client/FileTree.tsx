@@ -36,11 +36,12 @@ import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import { isImeComposition } from './ime-guard.ts'
 import { useSubmenuFlip } from './menu-flip.ts'
 import type { OpenWithTarget } from './open-with.ts'
-import { relativeTo } from './paths.ts'
+import { isWithinWorkspace, relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import type { BetterSidebarService } from './service.ts'
 import type { SidebarStore } from './state.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
+import { pushTreeOp, redoTreeOp, returnTreeOp, undoTreeOp, type TreeMutationOp } from './undo.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -66,6 +67,12 @@ function parentOf(path: string): string {
  *  (mirror of Sidebar.tsx's panel-host shield gate). */
 function isFileDrag(event: DragEvent): boolean {
   return event.dataTransfer?.types.includes('Files') ?? false
+}
+
+/** Whether a drag is an IN-TREE row drag (our custom MIME, set by the row's
+ *  dragstart; never collides with the OS file drags of the upload surface). */
+function isTreeDrag(event: DragEvent): boolean {
+  return event.dataTransfer?.types.includes('application/x-dsh-tree-drag') ?? false
 }
 
 /** How long the row's "copied" label stays after a successful write. */
@@ -190,8 +197,8 @@ export function FileTree(props: {
   // The row menu's "open with" submenu is the one submenu that can tower past
   // the viewport; publish its flip geometry for layout.css while it is open.
   useSubmenuFlip(rowMenu)
-  /** The row being renamed inline: its path plus the edit buffer. */
-  const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null)
+  /** The row being renamed inline: its path (dirs and files alike) plus the edit buffer. */
+  const [renaming, setRenaming] = useState<{ path: string; value: string; isDir: boolean } | null>(null)
   /** The delete awaiting the confirmation modal's yes. */
   const [confirmDelete, setConfirmDelete] = useState<{ path: string; isDir: boolean; name: string } | null>(null)
   /** The last mutation failure (dismissable strip above the tree). */
@@ -200,6 +207,12 @@ export function FileTree(props: {
   const [dropOver, setDropOver] = useState(false)
   /** The directory a drag is hovering right now (null = body, drop to root). */
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  /** The row being dragged in an IN-TREE drag (ref; the value is read by the
+   *  drop handlers and must never trigger renders mid-drag). */
+  const dragSource = useRef<{ path: string; isDir: boolean } | null>(null)
+  /** The dragged row's path, for the dimming visual (state so the class
+   *  re-renders; cleared on dragend/drop). */
+  const [draggingPath, setDraggingPath] = useState<string | null>(null)
   /**
    * Enter/leave depth under the tree body. dragenter/dragleave fire per
    * element along the drag path (and bubble), so a counter — DSH InputBar's
@@ -237,7 +250,80 @@ export function FileTree(props: {
       if (items.length > 0) onUploadRequest(dir, items)
     })
   }
+
+  /** Forget the in-tree drag source (drop landed or the drag ended). */
+  const clearDragSource = (): void => {
+    dragSource.current = null
+    setDraggingPath(null)
+  }
+
+  /**
+   * Whether an in-tree drag may land on `dir`: not the row itself, not a
+   * directory's own descendant (both are catastrophes), and — for MOVES —
+   * not the row's current directory (a same-directory move is nothing; a
+   * same-directory COPY is allowed, colliding on the server's
+   * destination-exists 409). The server re-validates on real paths, so this
+   * is a cheap pre-filter, not the authority.
+   */
+  const canDropInto = (source: { path: string; isDir: boolean }, dir: string, isCopy: boolean): boolean => {
+    if (source.path === dir) return false
+    if (source.isDir && isWithinWorkspace(source.path, dir)) return false
+    if (!isCopy && parentOf(source.path) === dir) return false
+    return true
+  }
+
+  /**
+   * Settle both sides after a transfer landed: the old side is pruned like a
+   * rename (cache, expanded, parent reload); the destination directory's
+   * cached level reloads too when it differs from the old parent (a move
+   * rewrites TWO levels — the old row goes missing from one listing, the new
+   * row appears in another).
+   */
+  const settleTransfer = (oldPath: string, newPath: string): void => {
+    pruneTree(oldPath)
+    const destDir = parentOf(newPath)
+    if (destDir !== parentOf(oldPath)) retryDir(destDir)
+  }
+
+  /** The drag-drop move/copy itself: validate, mutate on the host, settle
+   *  the tree, retarget tabs (moves), and record the undo entry. */
+  const performDrag = (source: { path: string; isDir: boolean }, dir: string, isCopy: boolean): void => {
+    if (cwd === undefined || !canDropInto(source, dir, isCopy)) return
+    const from = source.path
+    if (isCopy) {
+      api.fsCopy({ sessionId, cwd }, from, dir)
+        .then((result) => {
+          setActionError(null)
+          pruneTree(result.path)
+          pushTreeOp(sessionId, cwd, { kind: 'copy', from, to: result.path })
+        })
+        .catch((error: unknown) => {
+          setActionError(error instanceof Error ? error.message : String(error))
+        })
+      return
+    }
+    api.fsMove({ sessionId, cwd }, from, dir)
+      .then((result) => {
+        setActionError(null)
+        settleTransfer(from, result.path)
+        onPathRenamed?.(from, result.path)
+        pushTreeOp(sessionId, cwd, { kind: 'move', from, to: result.path, isDir: source.isDir })
+      })
+      .catch((error: unknown) => {
+        setActionError(error instanceof Error ? error.message : String(error))
+      })
+  }
+
   const handleBodyDrop = (event: DragEvent): void => {
+    if (isTreeDrag(event)) {
+      event.preventDefault()
+      event.stopPropagation()
+      resetDrop()
+      const source = dragSource.current
+      clearDragSource()
+      if (cwd !== undefined && source !== null) performDrag(source, cwd, event.altKey)
+      return
+    }
     if (!isFileDrag(event)) return
     event.preventDefault()
     event.stopPropagation()
@@ -245,6 +331,15 @@ export function FileTree(props: {
     if (cwd !== undefined) reportDrop(cwd, event.dataTransfer)
   }
   const handleDirDrop = (event: DragEvent, dir: string): void => {
+    if (isTreeDrag(event)) {
+      event.preventDefault()
+      event.stopPropagation()
+      resetDrop()
+      const source = dragSource.current
+      clearDragSource()
+      if (source !== null) performDrag(source, dir, event.altKey)
+      return
+    }
     if (!isFileDrag(event)) return
     event.preventDefault()
     event.stopPropagation()
@@ -252,10 +347,17 @@ export function FileTree(props: {
     reportDrop(dir, event.dataTransfer)
   }
   const handleFileDrop = (event: DragEvent, path: string): void => {
-    // VSCode semantics: dropping onto a file uploads into its directory.
+    // VSCode semantics: dropping onto a file targets its parent directory
+    // (uploads into it; in-tree drags move/copy into it).
     handleDirDrop(event, parentOf(path))
   }
   const handleBodyDragEnter = (event: DragEvent): void => {
+    if (isTreeDrag(event)) {
+      // No upload overlay for in-tree drags: the rows themselves are the
+      // targets and the source row is already dimmed by draggingPath.
+      event.preventDefault()
+      return
+    }
     if (!isFileDrag(event)) return
     event.preventDefault()
     event.stopPropagation()
@@ -276,6 +378,19 @@ export function FileTree(props: {
     setDropRect(null)
   }
   const handleBodyDragOver = (event: DragEvent): void => {
+    if (isTreeDrag(event)) {
+      event.preventDefault()
+      event.stopPropagation()
+      const source = dragSource.current
+      const isCopy = event.altKey
+      event.dataTransfer.dropEffect = cwd !== undefined && source !== null && canDropInto(source, cwd, isCopy)
+        ? (isCopy ? 'copy' : 'move')
+        : 'none'
+      // Rows stop propagation: over the body the drag targets the workspace
+      // root, so no row stays highlighted (see the file-drag branch below).
+      setDropTarget(null)
+      return
+    }
     if (!isFileDrag(event)) return
     event.preventDefault()
     event.stopPropagation()
@@ -287,6 +402,20 @@ export function FileTree(props: {
     setDropTarget(null)
   }
   const handleRowDragOver = (event: DragEvent, dir: string): void => {
+    if (isTreeDrag(event)) {
+      event.preventDefault()
+      event.stopPropagation()
+      const source = dragSource.current
+      const isCopy = event.altKey
+      if (source !== null && canDropInto(source, dir, isCopy)) {
+        event.dataTransfer.dropEffect = isCopy ? 'copy' : 'move'
+        setDropTarget(dir)
+      } else {
+        event.dataTransfer.dropEffect = 'none'
+        setDropTarget(null)
+      }
+      return
+    }
     if (!isFileDrag(event)) return
     event.preventDefault()
     event.stopPropagation()
@@ -342,7 +471,7 @@ export function FileTree(props: {
     name !== '' && name !== '.' && name !== '..' && !name.includes('/') && !name.includes('\\')
 
   /** Commit the inline rename: trim, no-op guard, then fs.rename + settle. */
-  const commitRename = (path: string, raw: string): void => {
+  const commitRename = (path: string, raw: string, isDir: boolean): void => {
     setRenaming(null)
     const name = raw.trim()
     if (cwd === undefined || name === baseName(path) || !validRename(name)) {
@@ -354,6 +483,7 @@ export function FileTree(props: {
         setActionError(null)
         pruneTree(path)
         onPathRenamed?.(path, result.path)
+        pushTreeOp(sessionId, cwd, { kind: 'rename', from: path, to: result.path, isDir })
       })
       .catch((error: unknown) => {
         setActionError(error instanceof Error ? error.message : String(error))
@@ -372,6 +502,60 @@ export function FileTree(props: {
       .catch((error: unknown) => {
         setActionError(error instanceof Error ? error.message : String(error))
       })
+  }
+
+  /**
+   * The undo/redo executor. `entry` is the mutation that was PERFORMED
+   * (already moved to the opposite stack by undoTreeOp/redoTreeOp); undoing
+   * runs the INVERSE (`reverse=true`), redoing replays it. On success the
+   * tree settles exactly like the original mutation and tabs retarget; on a
+   * wire failure the entry is returned to its source stack (the error strip
+   * shows the host's reason) so the user can retry.
+   */
+  const runUndoRedo = (op: TreeMutationOp, reverse: boolean): void => {
+    if (cwd === undefined) return
+    const scope = { sessionId, cwd }
+    const settle = (newPath: string): void => {
+      if (op.kind === 'copy') {
+        pruneTree(newPath)
+        return
+      }
+      // Rename/move: the row moved from `from` to `to` (either direction).
+      const from = reverse ? op.to : op.from
+      settleTransfer(from, newPath)
+      onPathRenamed?.(from, newPath)
+    }
+    const run = (): Promise<{ path: string }> => {
+      if (op.kind === 'rename') {
+        return reverse
+          ? api.fsRename(scope, op.to, baseName(op.from))
+          : api.fsRename(scope, op.from, baseName(op.to))
+      }
+      const destDir = reverse ? parentOf(op.from) : parentOf(op.to)
+      if (op.kind === 'move') return api.fsMove(scope, reverse ? op.to : op.from, destDir)
+      return reverse ? api.fsRemove(scope, op.to) : api.fsCopy(scope, op.from, destDir)
+    }
+    run()
+      .then((result) => {
+        setActionError(null)
+        settle(result.path)
+      })
+      .catch((error: unknown) => {
+        returnTreeOp(sessionId, cwd, op, reverse ? 'undo' : 'redo')
+        setActionError(error instanceof Error ? error.message : String(error))
+      })
+  }
+
+  const runUndo = (): void => {
+    if (cwd === undefined) return
+    const op = undoTreeOp(sessionId, cwd)
+    if (op !== undefined) runUndoRedo(op, true)
+  }
+
+  const runRedo = (): void => {
+    if (cwd === undefined) return
+    const op = redoTreeOp(sessionId, cwd)
+    if (op !== undefined) runUndoRedo(op, false)
   }
 
   // The caller's refresh tick wipes the cache (declared BEFORE the load
@@ -595,13 +779,13 @@ export function FileTree(props: {
           if (isImeComposition(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
-            commitRename(entry.path, renaming?.value ?? '')
+            commitRename(entry.path, renaming?.value ?? '', entry.isDir)
           } else if (event.key === 'Escape') {
             event.preventDefault()
             setRenaming(null)
           }
         }}
-        onBlur={() => { commitRename(entry.path, renaming?.value ?? '') }}
+        onBlur={() => { commitRename(entry.path, renaming?.value ?? '', entry.isDir) }}
       />
     </div>
   )
@@ -641,9 +825,11 @@ export function FileTree(props: {
             <div
               role="button"
               tabIndex={0}
+              draggable
               className={clsx(
                 css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
                 dropTarget === entry.path && css.explorerRowDropTarget,
+                draggingPath === entry.path && css.explorerRowDragging,
                 revealedSet.has(entry.path) && css.explorerRowRevealed,
               )}
               data-dsh-revealed={revealedSet.has(entry.path) ? 'true' : undefined}
@@ -655,6 +841,13 @@ export function FileTree(props: {
                   onToggle(entry.path)
                 }
               }}
+              onDragStart={(event) => {
+                event.dataTransfer.setData('application/x-dsh-tree-drag', entry.path)
+                event.dataTransfer.effectAllowed = 'copyMove'
+                dragSource.current = { path: entry.path, isDir: true }
+                setDraggingPath(entry.path)
+              }}
+              onDragEnd={() => { clearDragSource(); resetDrop() }}
               onDragOver={(event) => { handleRowDragOver(event, entry.path) }}
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
@@ -673,9 +866,11 @@ export function FileTree(props: {
           key={entry.path}
           role="button"
           tabIndex={0}
+          draggable
           className={clsx(
             css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
             dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
+            draggingPath === entry.path && css.explorerRowDragging,
             revealedSet.has(entry.path) && css.explorerRowRevealed,
           )}
           data-dsh-revealed={revealedSet.has(entry.path) ? 'true' : undefined}
@@ -688,6 +883,13 @@ export function FileTree(props: {
               onOpenFile(entry.path)
             }
           }}
+          onDragStart={(event) => {
+            event.dataTransfer.setData('application/x-dsh-tree-drag', entry.path)
+            event.dataTransfer.effectAllowed = 'copyMove'
+            dragSource.current = { path: entry.path, isDir: false }
+            setDraggingPath(entry.path)
+          }}
+          onDragEnd={() => { clearDragSource(); resetDrop() }}
           onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
           onDrop={(event) => { handleFileDrop(event, entry.path) }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
@@ -705,10 +907,39 @@ export function FileTree(props: {
     <div
       ref={bodyRef}
       className={css.explorerBody}
+      // Focusable so a click on the tree's blank space (VS Code: the
+      // explorer's background) makes the tree the keyboard owner — the
+      // Cmd+Z undo/redo contract below then applies; rows are already
+      // focusable on their own.
+      tabIndex={-1}
       onDragEnter={handleBodyDragEnter}
       onDragOver={handleBodyDragOver}
       onDragLeave={handleBodyDragLeave}
       onDrop={handleBodyDrop}
+      onKeyDown={(event) => {
+        // VS Code explorer keybindings: Cmd/Ctrl+Z undoes the last tree
+        // mutation; Cmd/Ctrl+Shift+Z (and plain Ctrl+Y on Windows/Linux)
+        // redoes it. Native text undo always wins inside editors — the
+        // inline rename input and TreePanel's search box keep their own
+        // key handling (their keydowns bubble here, hence the target gate).
+        const target = event.target
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+          || (target instanceof HTMLElement && target.isContentEditable)) {
+          return
+        }
+        if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+        const key = event.key.toLowerCase()
+        if (key === 'z') {
+          event.preventDefault()
+          if (event.shiftKey) runRedo()
+          else runUndo()
+        } else if (key === 'y' && !event.shiftKey && !event.metaKey) {
+          // Plain Ctrl+Y only: macOS Cmd+Y is not redo there (Cmd+Shift+Z
+          // is), so it must stay untouched.
+          event.preventDefault()
+          runRedo()
+        }
+      }}
     >
       {root === undefined ? (
         <div className={css.explorerEmpty}>{t('noSession')}</div>
@@ -881,7 +1112,7 @@ export function FileTree(props: {
             return
           }
           if (id === 'rename') {
-            setRenaming({ path: target.path, value: baseName(target.path) })
+            setRenaming({ path: target.path, value: baseName(target.path), isDir: target.isDir })
             return
           }
           if (id === 'delete') {

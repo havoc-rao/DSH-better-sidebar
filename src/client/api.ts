@@ -287,6 +287,18 @@ export const api = {
    *  row unlinks the link only). The UI confirms before calling this. */
   fsRemove: (scope: SessionScope, path: string) =>
     call<{ path: string }>('fs.remove', scopePayload(scope, { path })),
+  /** Move one tree row into another directory (the tree's drag-drop move).
+   *  The server refuses self/descendant moves, existing destinations (409),
+   *  the workspace root, and — while the fence is armed — anything resolving
+   *  outside the workspace; a same-parent move is a no-op. */
+  fsMove: (scope: SessionScope, path: string, dir: string) =>
+    call<{ path: string }>('fs.move', scopePayload(scope, { path, dir })),
+  /** Copy one tree row into another directory (the tree's Option/Alt
+   *  drag-drop copy; recursive for directories, symlinks copied as links).
+   *  Same refusals as fs.move, except a same-directory copy collides with
+   *  the source's own name and lands on the destination-exists 409. */
+  fsCopy: (scope: SessionScope, path: string, dir: string) =>
+    call<{ path: string }>('fs.copy', scopePayload(scope, { path, dir })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
   uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>

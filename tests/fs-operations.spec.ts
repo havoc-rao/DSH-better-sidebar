@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from '../src/fs-operations.ts'
+import { copyWorkspaceEntry, moveWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from '../src/fs-operations.ts'
 
 /** The test workspace root (each suite gets its own temp tree). */
 const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-'))
@@ -237,5 +237,140 @@ describe('removeWorkspaceEntry', () => {
       .rejects.toMatchObject({ code: 'fs-error' })
     await expect(removeWorkspaceEntry({ cwd: root, path: join(root, 'no-such.txt') }))
       .rejects.toMatchObject({ code: 'fs-error' })
+  })
+})
+
+describe('moveWorkspaceEntry', () => {
+  it('moves a file across directories', async () => {
+    mkdirSync(join(root, 'dest'), { recursive: true })
+    writeFileSync(join(root, 'movable.txt'), 'm')
+    const { path } = await moveWorkspaceEntry({ cwd: root, path: join(root, 'movable.txt'), dir: join(root, 'dest') })
+    expect(path.endsWith(join('dest', 'movable.txt'))).toBe(true)
+    expect(existsSync(join(root, 'movable.txt'))).toBe(false)
+    expect(readFileSync(join(root, 'dest/movable.txt'), 'utf8')).toBe('m')
+  })
+
+  it('moves a directory with its whole subtree (into the workspace root)', async () => {
+    mkdirSync(join(root, 'inner/src/nested'), { recursive: true })
+    writeFileSync(join(root, 'inner/src/nested/deep.txt'), 'deep')
+    const { path } = await moveWorkspaceEntry({ cwd: root, path: join(root, 'inner/src'), dir: root })
+    // A move to the workspace root is legal (drops on the tree body).
+    expect(path.endsWith(join(root, 'src'))).toBe(true)
+    expect(existsSync(join(root, 'inner/src'))).toBe(false)
+    expect(readFileSync(join(root, 'src/nested/deep.txt'), 'utf8')).toBe('deep')
+  })
+
+  it('is a no-op for the same parent directory', async () => {
+    writeFileSync(join(root, 'stay.txt'), 's')
+    const { path } = await moveWorkspaceEntry({ cwd: root, path: join(root, 'stay.txt'), dir: root })
+    expect(path.endsWith('stay.txt')).toBe(true)
+    expect(existsSync(join(root, 'stay.txt'))).toBe(true)
+  })
+
+  it('refuses an existing destination instead of clobbering it', async () => {
+    mkdirSync(join(root, 'dest'), { recursive: true })
+    writeFileSync(join(root, 'clash.txt'), 'src')
+    writeFileSync(join(root, 'dest/clash.txt'), 'dst')
+    await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'clash.txt'), dir: join(root, 'dest') }))
+      .rejects.toMatchObject({ code: 'fs-error', status: 409 })
+    expect(readFileSync(join(root, 'dest/clash.txt'), 'utf8')).toBe('dst')
+  })
+
+  it('refuses moving a directory into itself or a descendant', async () => {
+    mkdirSync(join(root, 'box/inner'), { recursive: true })
+    for (const dir of [join(root, 'box'), join(root, 'box/inner')]) {
+      await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'box'), dir }))
+        .rejects.toMatchObject({ code: 'fs-error', message: expect.stringContaining('into itself') })
+    }
+    expect(existsSync(join(root, 'box/inner'))).toBe(true)
+  })
+
+  it('refuses the workspace root, missing sources, and non-directory destinations', async () => {
+    await expect(moveWorkspaceEntry({ cwd: root, path: root, dir: root }))
+      .rejects.toMatchObject({ code: 'fs-error' })
+    await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'missing.txt'), dir: root }))
+      .rejects.toMatchObject({ code: 'fs-error' })
+    writeFileSync(join(root, 'not-a-dir.txt'), 'x')
+    await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'not-a-dir.txt'), dir: join(root, 'not-a-dir.txt') }))
+      .rejects.toMatchObject({ code: 'fs-error', message: expect.stringContaining('not a directory') })
+    await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'not-a-dir.txt'), dir: join(root, 'ghost-dir') }))
+      .rejects.toMatchObject({ code: 'fs-error' })
+  })
+
+  it('moves a symlink ROW, not its target', async () => {
+    mkdirSync(join(root, 'dest'), { recursive: true })
+    writeFileSync(join(root, 'target.txt'), 't')
+    symlinkSync(join(root, 'target.txt'), join(root, 'alias.txt'))
+    const { path } = await moveWorkspaceEntry({ cwd: root, path: join(root, 'alias.txt'), dir: join(root, 'dest') })
+    expect(path.endsWith(join('dest', 'alias.txt'))).toBe(true)
+    expect(existsSync(join(root, 'alias.txt'))).toBe(false)
+    expect(readFileSync(join(root, 'target.txt'), 'utf8')).toBe('t')
+  })
+
+  it('refuses a destination outside the workspace while the fence is armed', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-outside-'))
+    try {
+      writeFileSync(join(root, 'fenced.txt'), 'f')
+      await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'fenced.txt'), dir: outside }))
+        .rejects.toMatchObject({ code: 'forbidden' })
+      await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'fenced.txt'), dir: outside, fence: false }))
+        .resolves.toMatchObject({})
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('copyWorkspaceEntry', () => {
+  it('copies a file into another directory and leaves the source untouched', async () => {
+    mkdirSync(join(root, 'dest'), { recursive: true })
+    writeFileSync(join(root, 'copied.txt'), 'c')
+    const { path } = await copyWorkspaceEntry({ cwd: root, path: join(root, 'copied.txt'), dir: join(root, 'dest') })
+    expect(path.endsWith(join('dest', 'copied.txt'))).toBe(true)
+    expect(readFileSync(join(root, 'copied.txt'), 'utf8')).toBe('c')
+    expect(readFileSync(join(root, 'dest/copied.txt'), 'utf8')).toBe('c')
+  })
+
+  it('copies a directory recursively', async () => {
+    mkdirSync(join(root, 'tree/nested'), { recursive: true })
+    writeFileSync(join(root, 'tree/nested/leaf.txt'), 'leaf')
+    const { path } = await copyWorkspaceEntry({ cwd: root, path: join(root, 'tree'), dir: join(root, 'dest') })
+    expect(path.endsWith(join('dest', 'tree'))).toBe(true)
+    expect(readFileSync(join(root, 'dest/tree/nested/leaf.txt'), 'utf8')).toBe('leaf')
+    expect(readFileSync(join(root, 'tree/nested/leaf.txt'), 'utf8')).toBe('leaf')
+  })
+
+  it('copies a symlink row as a LINK (never dereferenced)', async () => {
+    mkdirSync(join(root, 'dest-copy'), { recursive: true })
+    writeFileSync(join(root, 'target-copy.txt'), 't')
+    symlinkSync(join(root, 'target-copy.txt'), join(root, 'alias-copy.txt'))
+    await copyWorkspaceEntry({ cwd: root, path: join(root, 'alias-copy.txt'), dir: join(root, 'dest-copy') })
+    expect(existsSync(join(root, 'dest-copy/alias-copy.txt'))).toBe(true)
+    expect(existsSync(join(root, 'alias-copy.txt'))).toBe(true)
+    // The copy is a link whose target is the SAME original file, not a new
+    // content clone — a dereferencing copy would double the inode.
+    expect(readFileSync(join(root, 'dest-copy/alias-copy.txt'), 'utf8')).toBe('t')
+  })
+
+  it('refuses an existing destination (including a same-directory copy)', async () => {
+    writeFileSync(join(root, 'dup.txt'), 'x')
+    await expect(copyWorkspaceEntry({ cwd: root, path: join(root, 'dup.txt'), dir: root }))
+      .rejects.toMatchObject({ code: 'fs-error', status: 409 })
+    mkdirSync(join(root, 'dest'), { recursive: true })
+    writeFileSync(join(root, 'taken.txt'), 'src')
+    writeFileSync(join(root, 'dest/taken.txt'), 'dst')
+    await expect(copyWorkspaceEntry({ cwd: root, path: join(root, 'taken.txt'), dir: join(root, 'dest') }))
+      .rejects.toMatchObject({ code: 'fs-error', status: 409 })
+    expect(readFileSync(join(root, 'dest/taken.txt'), 'utf8')).toBe('dst')
+  })
+
+  it('refuses the workspace root and self/descendant copies', async () => {
+    mkdirSync(join(root, 'box/inner'), { recursive: true })
+    await expect(copyWorkspaceEntry({ cwd: root, path: root, dir: join(root, 'box') }))
+      .rejects.toMatchObject({ code: 'fs-error' })
+    for (const dir of [join(root, 'box'), join(root, 'box/inner')]) {
+      await expect(copyWorkspaceEntry({ cwd: root, path: join(root, 'box'), dir }))
+        .rejects.toMatchObject({ code: 'fs-error', message: expect.stringContaining('into itself') })
+    }
   })
 })

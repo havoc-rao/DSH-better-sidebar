@@ -19,8 +19,8 @@
  */
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { createWriteStream } from 'node:fs'
-import { access, lstat, mkdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises'
+import { createWriteStream, type Stats } from 'node:fs'
+import { access, cp, lstat, mkdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { isWithin, requireAbsolute } from './fs-tree.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
@@ -178,6 +178,138 @@ export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise
     await rename(absolute, safeDestination)
   } catch (error) {
     throw new SidebarError('fs-error', `cannot rename "${path}" to "${name}": ${error instanceof Error ? error.message : String(error)}`, 400)
+  }
+  return { path: safeDestination }
+}
+
+/** The shared input shape of a drag-drop move/copy. */
+export interface WorkspaceTransferInput {
+  /** The session workspace root; the entry and the destination must stay inside it. */
+  cwd: string
+  /** Absolute path of the row as the tree displays it (may be a symlink). */
+  path: string
+  /** Absolute destination directory (existing, inside the workspace). */
+  dir: string
+  /** Whether workspace containment is enforced (the `workspaceFence` setting; on by default). */
+  fence?: boolean
+}
+
+/**
+ * Resolve the destination directory of a move/copy: canonicalized and
+ * fence-checked (a symlinked directory resolves to its real target, so the
+ * operation addresses the real location the row points at), existing, and a
+ * real directory. The canonical path is what the caller joins the base name
+ * onto.
+ *
+ * @throws SidebarError with a wire code for containment, existence and
+ * shape failures.
+ */
+async function resolveDestDir(cwd: string, dir: string, fence: boolean): Promise<string> {
+  const destDir = await ensureWorkspaceWritePath(cwd, dir, fence)
+  let info: Stats
+  try {
+    info = await lstat(destDir)
+  } catch (error) {
+    throw new SidebarError('fs-error', `cannot resolve destination "${dir}": ${error instanceof Error ? error.message : String(error)}`, 400)
+  }
+  if (!info.isDirectory()) {
+    throw new SidebarError('fs-error', `"${dir}" is not a directory`, 400)
+  }
+  return destDir
+}
+
+/**
+ * The two real-path checks a transfer needs — both MUST compare real
+ * spellings, never lexical ones (mixing them breaks on macOS tmpdirs, where
+ * `/var` is `/private/var`):
+ *
+ * - same-location: realpath of the source's parent vs the real destination
+ *   directory — a drop onto the row's own directory.
+ * - self/descendant: whether the destination wall sits inside the resolved
+ *   source (or equals it) — a self-referential catastrophe. The source side
+ *   is the row's REAL target, so symlink rows (whose resolved path is the
+ *   link TARGET) check out correctly.
+ */
+async function transferReals(absolute: string, real: string, destDir: string): Promise<{ parent: string; dest: string }> {
+  const [parent, dest] = await Promise.all([realpath(dirname(absolute)), realpath(destDir)])
+  return { parent, dest }
+}
+
+function refuseSelfTransfer(real: string, dest: string, label: 'move' | 'copy'): void {
+  if (isWithin(real, dest)) {
+    throw new SidebarError('fs-error', `cannot ${label} an entry into itself`, 400)
+  }
+}
+
+/**
+ * Move one tree row into another directory — the tree's drag-drop move.
+ * Unlike {@link renameWorkspaceEntry} (single-segment, same directory) this
+ * moves across directories; the destination must be an existing directory;
+ * an existing destination entry is refused (POSIX rename would clobber it
+ * silently); the workspace root itself is never movable; a directory can
+ * never move into itself or a descendant. A same-parent move (a drop onto
+ * the row's own directory) is a no-op, mirroring rename's same-name no-op.
+ * A symlink row moves the LINK, not its target (link-aware, like
+ * rename/remove).
+ *
+ * @throws SidebarError with a wire code for containment, existence, shape
+ * and root failures.
+ */
+export async function moveWorkspaceEntry(input: WorkspaceTransferInput): Promise<{ path: string }> {
+  const { cwd, path, dir, fence = true } = input
+  const { absolute, real, realCwd } = await resolveEntry(cwd, path, fence)
+  if (real === realCwd) {
+    throw new SidebarError('fs-error', 'cannot move the workspace root', 400)
+  }
+  const destDir = await resolveDestDir(cwd, dir, fence)
+  const { parent, dest } = await transferReals(absolute, real, destDir)
+  if (parent === dest) return { path: absolute }
+  refuseSelfTransfer(real, dest, 'move')
+  const destination = join(destDir, basename(absolute))
+  const safeDestination = await ensureWorkspaceWritePath(cwd, destination, fence)
+  if (await pathExists(safeDestination)) {
+    throw new SidebarError('fs-error', `"${basename(absolute)}" already exists`, 409)
+  }
+  try {
+    await rename(absolute, safeDestination)
+  } catch (error) {
+    throw new SidebarError('fs-error', `cannot move "${path}" into "${dir}": ${error instanceof Error ? error.message : String(error)}`, 400)
+  }
+  return { path: safeDestination }
+}
+
+/**
+ * Copy one tree row into another directory — the tree's Option/Alt drag-drop
+ * copy. Directories are copied recursively with symlinks preserved as links
+ * (never dereferenced), the source is never touched, and the destination
+ * rules mirror {@link moveWorkspaceEntry}: an existing directory only, no
+ * root copies, no self/descendant copies, and an existing destination is
+ * refused (a same-directory copy collides with the source's own name, so it
+ * lands on the same 409).
+ *
+ * @throws SidebarError with a wire code for containment, existence, shape
+ * and root failures.
+ */
+export async function copyWorkspaceEntry(input: WorkspaceTransferInput): Promise<{ path: string }> {
+  const { cwd, path, dir, fence = true } = input
+  const { absolute, real, realCwd } = await resolveEntry(cwd, path, fence)
+  if (real === realCwd) {
+    throw new SidebarError('fs-error', 'cannot copy the workspace root', 400)
+  }
+  const destDir = await resolveDestDir(cwd, dir, fence)
+  const { dest } = await transferReals(absolute, real, destDir) // see transferReals: real spellings only
+  refuseSelfTransfer(real, dest, 'copy')
+  const destination = join(destDir, basename(absolute))
+  const safeDestination = await ensureWorkspaceWritePath(cwd, destination, fence)
+  if (await pathExists(safeDestination)) {
+    throw new SidebarError('fs-error', `"${basename(absolute)}" already exists`, 409)
+  }
+  try {
+    // force:false + errorOnExist:true keep cp from ever clobbering (the
+    // pre-check above is the friendly 409; this is the double guard).
+    await cp(absolute, safeDestination, { recursive: true, force: false, errorOnExist: true })
+  } catch (error) {
+    throw new SidebarError('fs-error', `cannot copy "${path}" into "${dir}": ${error instanceof Error ? error.message : String(error)}`, 400)
   }
   return { path: safeDestination }
 }

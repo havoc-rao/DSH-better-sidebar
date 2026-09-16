@@ -26,12 +26,19 @@ function pathTabsOf(snapshot: SidebarSnapshot): SidebarTab[] {
 }
 
 /** Retarget tabs after `oldPath` became `newPath` (title follows the new
- *  base name, matching how openFile titles editor tabs). */
+ *  base name, matching how openFile titles editor tabs). Covers the whole
+ *  SUBTREE: a renamed or moved directory carries every open file under it
+ *  (a stale path's next save would fail against the old location). */
 export function retargetPathTabs(ctx: Context, store: SidebarStore, oldPath: string, newPath: string): void {
   const service = ctx.get('betterSidebar')
   if (service === undefined) return
   for (const tab of pathTabsOf(store.getSnapshot())) {
-    if (tab.path === oldPath) service.updateTab(tab.id, { path: newPath, title: baseName(newPath) })
+    const path = tab.path
+    if (path === undefined || !isWithinWorkspace(oldPath, path)) continue
+    // A directory retarget rewrites the old prefix on every descendant path
+    // (a same-path match keeps the exact tab path).
+    const retargeted = path === oldPath ? newPath : `${newPath}${path.slice(oldPath.length)}`
+    service.updateTab(tab.id, { path: retargeted, title: baseName(retargeted) })
   }
 }
 

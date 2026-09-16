@@ -31,7 +31,7 @@ import {
 } from './config.ts'
 import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
-import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
+import { copyWorkspaceEntry, moveWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
@@ -407,6 +407,29 @@ function buildApi(
       return removeWorkspaceEntry({
         cwd,
         path: requireString(payload, 'path'),
+        fence: fenceEnabledOf(getSettings),
+      })
+    },
+    // The tree row's drag-drop MOVE into another directory: same containment
+    // and shape rules as rename, plus existing-directory destinations and
+    // the self/descendant refusal (real-path checked, symlink rows included).
+    'fs.move': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      return moveWorkspaceEntry({
+        cwd,
+        path: requireString(payload, 'path'),
+        dir: requireString(payload, 'dir'),
+        fence: fenceEnabledOf(getSettings),
+      })
+    },
+    // The tree row's Option/Alt drag-drop COPY: recursive for directories,
+    // symlinks copied as links, the source never touched.
+    'fs.copy': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      return copyWorkspaceEntry({
+        cwd,
+        path: requireString(payload, 'path'),
+        dir: requireString(payload, 'dir'),
         fence: fenceEnabledOf(getSettings),
       })
     },

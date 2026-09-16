@@ -811,6 +811,19 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   opacity: 0.45;
 }
 
+/* The row being dragged in an in-tree drag: dimmed like the hidden rows so
+   its destination highlight stays the only accent on screen. */
+.explorerRowDragging {
+  opacity: 0.45;
+}
+
+/* The tree body is programmatically focusable (tabIndex=-1) solely so a
+   click on the tree's blank space arms the Cmd+Z undo contract; the focus
+   ring would be pure noise on a scroll container. */
+.explorerBody:focus {
+  outline: none;
+}
+
 /* The link badge on symlink rows (folder and file rows alike). */
 .explorerSymlink {
   flex: none;
