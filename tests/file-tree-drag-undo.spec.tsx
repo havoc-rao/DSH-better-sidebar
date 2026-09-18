@@ -377,6 +377,27 @@ describe('Cmd+Z undo / Cmd+Shift+Z redo', () => {
     expect(fsRename).not.toHaveBeenCalled()
   })
 
+  it('a window blur clears stranded drag state (dragend/dragleave lost)', async () => {
+    // Electron: an in-tree drag released outside the window (or an Escape
+    // cancel that loses `dragend`) used to leave the source row dimmed and
+    // the drop overlay up until a page reload. The blur listener is the
+    // "the drag cannot land here anymore" signal: everything clears.
+    const harness = await mountTree()
+    startDrag(harness.container, 'sub')
+    expect(harness.container.querySelector('[class*="explorerRowDragging"]')?.textContent).toContain('sub')
+    // An OS-file drag over the body arms the drop overlay…
+    const data = treeDataTransfer()
+    // …which needs the 'Files' MIME to arm (in-tree drags arm nothing).
+    Object.defineProperty(data, 'types', { value: ['Files'] })
+    act(() => { harness.body.dispatchEvent(dragEvent('dragenter', data)) })
+    // The drop zone is portaled to document.body, not the tree container.
+    expect(document.body.querySelector('[class*="uploadDropZone"]'), 'the drop overlay must arm').not.toBeNull()
+    // …and a blur with no terminal event must clear BOTH states.
+    act(() => { window.dispatchEvent(new Event('blur')) })
+    expect(harness.container.querySelector('[class*="explorerRowDragging"]'), 'the dimmed source row must recover').toBeNull()
+    expect(document.body.querySelector('[class*="uploadDropZone"]'), 'the drop overlay must clear').toBeNull()
+  })
+
   it('history survives a remount of the same session (module-level stacks)', async () => {
     let harness = await mountTree()
     startDrag(harness.container, 'a.ts')

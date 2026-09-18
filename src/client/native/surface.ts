@@ -123,12 +123,28 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     close(sessionId, tabId) {
       const record = records.get(tabId)
       if (record === undefined) return undefined
-      records.drop(tabId)
       const api = controller()
       if (api !== undefined) {
-        if (sessionId === activeSessionId(ctx)) api.close(tabId)
-        else if (api.closeIn !== undefined) api.closeIn(sessionId, tabId)
+        // DO NOT drop the record here. The record is the tab body's click
+        // surface (the file tree's expansion set): dropping it while the body
+        // stays mounted turns every folder click into a silent no-op until a
+        // page reload. The record's real lifetime is the host's tab signal —
+        // a successful host close removes the tab from the layout, which
+        // aborts the signal, and the body's unmount cleanup drops the record.
+        // A REFUSED host close (the tab stays visible) therefore keeps a
+        // fully clickable tree instead of a dead one.
+        try {
+          if (sessionId === activeSessionId(ctx)) api.close(tabId)
+          else if (api.closeIn !== undefined) api.closeIn(sessionId, tabId)
+        } catch {
+          // A throwing close is the same as a refused one: keep the record,
+          // keep the tree clickable.
+        }
+        return { type: record.tab.type, title: record.tab.title }
       }
+      // No controller: nothing will ever unmount the body and abort the
+      // signal, so the record must be forgotten here or it leaks.
+      records.drop(tabId)
       return { type: record.tab.type, title: record.tab.title }
     },
     // A "right" open can only ever land while the kernel provides the

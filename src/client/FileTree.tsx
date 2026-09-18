@@ -229,12 +229,12 @@ export function FileTree(props: {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   /** Reset all drag state (drop landed, the drag left, or a new drag begins). */
-  const resetDrop = (): void => {
+  const resetDrop = useCallback((): void => {
     dropDepth.current = 0
     setDropOver(false)
     setDropTarget(null)
     setDropRect(null)
-  }
+  }, [])
 
   /**
    * Drop handlers: always swallow the event (a dropped file must never open
@@ -252,10 +252,27 @@ export function FileTree(props: {
   }
 
   /** Forget the in-tree drag source (drop landed or the drag ended). */
-  const clearDragSource = (): void => {
+  const clearDragSource = useCallback((): void => {
     dragSource.current = null
     setDraggingPath(null)
-  }
+  }, [])
+
+  /**
+   * Drag-state hygiene for drags that never deliver their terminal event
+   * (Electron: an in-tree drag released outside the window, an Escape
+   * cancel that loses `dragend`, an OS drag that leaves the app and skips
+   * `dragleave`). A window blur is the authoritative "the drag cannot land
+   * here anymore" signal — everything the drag left behind (the dimmed
+   * source row, the drop-target highlight, the upload drop overlay) is
+   * cleared so a reload is never the only way back. The handlers only touch
+   * refs and setters, so the first-render closures stay valid for the
+   * component's whole life.
+   */
+  useEffect(() => {
+    const clear = (): void => { clearDragSource(); resetDrop() }
+    window.addEventListener('blur', clear)
+    return () => { window.removeEventListener('blur', clear) }
+  }, [clearDragSource, resetDrop])
 
   /**
    * Whether an in-tree drag may land on `dir`: not the row itself, not a

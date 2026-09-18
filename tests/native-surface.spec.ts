@@ -10,6 +10,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
+import { createNativeSurface } from '../src/client/native/surface.ts'
 import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
@@ -70,6 +71,34 @@ describe('createNativeTabRecords', () => {
     records.ensure({ id: 'tab-6', kind: 'terminal', title: 'Terminal', params: undefined, scope })
     records.update('tab-6', { title: 'x' })
     expect(listener).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-mints a dropped record through the seed: a tree click never no-ops', () => {
+    // The dead-tree regression: whenever the record for a MOUNTED body is
+    // gone (any path that drops it while the tree stays visible), a folder
+    // click used to hit `toggleExpanded`'s silent early return and nothing
+    // happened until a page reload. The seed re-mints, so the click lands.
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'tab-7', kind: 'editor', title: 'Files', params: undefined, scope })
+    records.drop('tab-7')
+    const listener = vi.fn()
+    const off = records.subscribe(listener)
+    records.toggleExpanded('tab-7', '/work/src', () => ({
+      tab: { id: 'tab-7', type: 'editor', title: 'Files' },
+      scope,
+    }))
+    expect(records.get('tab-7')?.expanded).toEqual(['/work/src'])
+    expect(listener, 'the healed toggle must notify like a normal one').toHaveBeenCalledTimes(1)
+    // The healed record behaves like any other afterwards (collapse works).
+    records.toggleExpanded('tab-7', '/work/src')
+    expect(records.get('tab-7')?.expanded).toEqual([])
+    off()
+  })
+
+  it('a toggle without a seed on a missing record stays a no-op', () => {
+    const records = createNativeTabRecords()
+    records.toggleExpanded('ghost', '/work/src')
+    expect(records.has('ghost')).toBe(false)
   })
 })
 
@@ -463,5 +492,158 @@ describe('NativeTabTitle (the chip glyph)', () => {
     expect(host.querySelector('[aria-hidden="true"]')).toBeNull()
     expect(host.textContent).toBe('Ghost')
     unmount()
+  })
+})
+
+/**
+ * The record lifetime contract: the host aborts the tab's signal only when
+ * the tab VANISHES from its session's committed layout (a true close), while
+ * a body can unmount for many other reasons (seat rebinds, layout churn,
+ * commit races) with the same tab id remounting right after. The cleanup
+ * drops the record ONLY on the aborted signal — a plain unmount keeps both
+ * the record and the expansion set, and the remounted tree stays clickable.
+ */
+describe('NativeTabBody record lifecycle (unmount ≠ close)', () => {
+  const makeService = (): ReturnType<typeof createBetterSidebarService> => {
+    const service = createBetterSidebarService(createSidebarStore())
+    service.registerTab({
+      id: 'stub',
+      title: 'Stub',
+      component: () => createElement('div', { 'data-stub-body': '' }),
+    })
+    return service
+  }
+  const renderBody = (
+    records: ReturnType<typeof createNativeTabRecords>,
+    service: ReturnType<typeof createBetterSidebarService>,
+    signal: AbortSignal,
+  ): { info: { tab: { id: string; kind: string; title: string; visible: boolean; contentId: string; navigation: unknown; signal: AbortSignal } }; unmount: () => void } => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const info = {
+      tab: {
+        id: 'native-life-1',
+        kind: 'stub',
+        title: 'Stub',
+        contentId: 'sidebar://stub',
+        visible: true,
+        navigation: { address: 'sidebar://stub', params: undefined, revision: 0 },
+        signal,
+      },
+    }
+    const sessions = { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } }
+    const ctx = { sessions } as never
+    let root: Root | undefined
+    act(() => {
+      root = createRoot(host)
+      root.render(createElement(NativeTabBody, {
+        sessionId: 's1',
+        ctx,
+        store: createSidebarStore(),
+        service,
+        records,
+        descriptorId: 'stub',
+        useTabInfo: () => info,
+      }))
+    })
+    return {
+      info,
+      unmount: () => {
+        act(() => { root?.unmount() })
+        host.remove()
+      },
+    }
+  }
+
+  it('a plain unmount keeps the record, the expansion set, and the click surface', () => {
+    const records = createNativeTabRecords()
+    const service = makeService()
+    const signal = new AbortController().signal
+    const { unmount } = renderBody(records, service, signal)
+    // The body mount minted the record; expand one directory through the
+    // registry exactly as a folder click would.
+    records.toggleExpanded('native-life-1', '/work/src', () => ({
+      tab: { id: 'native-life-1', type: 'stub', title: 'Stub' },
+      scope,
+    }))
+    expect(records.get('native-life-1')?.expanded).toEqual(['/work/src'])
+    // The host remounts the same tab id WITHOUT aborting the signal (a seat
+    // rebind / commit race): the old behavior dropped the record here and
+    // every later folder click silently no-opped until a page reload.
+    unmount()
+    expect(records.has('native-life-1'), 'a body unmount without an aborted signal must keep the record').toBe(true)
+    expect(records.get('native-life-1')?.expanded).toEqual(['/work/src'])
+    // The remounted tree's click still lands on the SAME record.
+    records.toggleExpanded('native-life-1', '/work/src', () => ({
+      tab: { id: 'native-life-1', type: 'stub', title: 'Stub' },
+      scope,
+    }))
+    expect(records.get('native-life-1')?.expanded).toEqual([])
+  })
+
+  it('an aborted signal drops the record on unmount (a true close)', () => {
+    const records = createNativeTabRecords()
+    const service = makeService()
+    const controller = new AbortController()
+    const { unmount } = renderBody(records, service, controller.signal)
+    expect(records.has('native-life-1')).toBe(true)
+    // The host aborts the tab's signal when the tab vanishes from the layout.
+    controller.abort()
+    unmount()
+    expect(records.has('native-life-1')).toBe(false)
+  })
+})
+
+/**
+ * `close` ordering against the controller: the record must NOT be dropped
+ * before the host close lands — a refused/ignored host close used to leave
+ * the record gone while the tab body stayed mounted, i.e. a permanently dead
+ * file tree (every folder click a silent no-op until a page reload). The
+ * record's lifetime follows the host's tab signal instead.
+ */
+describe('createNativeSurface close ordering', () => {
+  const makeCtx = (controller: unknown): never => ({
+    sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({ current: 's1' }) } },
+    get: () => controller,
+  }) as never
+
+  it('keeps the record when a controller exists; the host close (signal abort) drives the drop', () => {
+    const close = vi.fn()
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'close-1', kind: 'editor', title: 'Files', params: undefined, scope })
+    const surface = createNativeSurface(makeCtx({ close }), records)
+    const result = surface.close('s1', 'close-1')
+    expect(result).toEqual({ type: 'editor', title: 'Files' })
+    expect(close).toHaveBeenCalledWith('close-1')
+    expect(records.has('close-1'), 'the record must survive a close that the host completes').toBe(true)
+    // The host's close removes the tab from the layout → the signal aborts →
+    // the body cleanup drops the record. Simulate that terminal step here.
+    records.drop('close-1')
+    surface.dispose()
+  })
+
+  it('a refused host close leaves a fully clickable tree', () => {
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'close-2', kind: 'editor', title: 'Files', params: undefined, scope })
+    const surface = createNativeSurface(makeCtx({ close: () => { throw new Error('refused') } }), records)
+    expect(() => surface.close('s1', 'close-2')).not.toThrow()
+    expect(records.has('close-2')).toBe(true)
+    // The refused close must not have consumed the click surface.
+    records.toggleExpanded('close-2', '/work/src', () => ({
+      tab: { id: 'close-2', type: 'editor', title: 'Files' },
+      scope,
+    }))
+    expect(records.get('close-2')?.expanded).toEqual(['/work/src'])
+    surface.dispose()
+  })
+
+  it('drops the record locally when no controller will ever unmount the body', () => {
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'close-3', kind: 'editor', title: 'Files', params: undefined, scope })
+    const surface = createNativeSurface(makeCtx(undefined), records)
+    const result = surface.close('s1', 'close-3')
+    expect(result).toEqual({ type: 'editor', title: 'Files' })
+    expect(records.has('close-3')).toBe(false)
+    surface.dispose()
   })
 })

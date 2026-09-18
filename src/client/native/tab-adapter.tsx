@@ -114,8 +114,13 @@ export interface NativeTabRecords {
   update(id: string, patch: { title?: string; path?: string; meta?: unknown }): void
   /** Forget a record (the native tab closed). */
   drop(id: string): void
-  /** Toggle one directory in a record's expansion set. */
-  toggleExpanded(id: string, path: string): void
+  /**
+   * Toggle one directory in a record's expansion set. A missing record —
+   * which should be unreachable while the body is mounted, but is the exact
+   * state that used to leave the tree's folder clicks silently dead until a
+   * page reload — re-mints through `seed` if given (a bare no-op otherwise).
+   */
+  toggleExpanded(id: string, path: string, seed?: () => Pick<View, 'tab' | 'scope'>): void
   /** Mint the next instance number of a kind (titles like "Terminal 2"). */
   nextInstance(kind: string): number
   /** A per-record version for `useSyncExternalStore`. */
@@ -188,9 +193,20 @@ export function createNativeTabRecords(): NativeTabRecords {
     drop(id) {
       if (views.delete(id)) notify()
     },
-    toggleExpanded(id, path) {
-      const entry = views.get(id)
-      if (entry === undefined) return
+    toggleExpanded(id, path, seed) {
+      let entry = views.get(id)
+      if (entry === undefined) {
+        // A mounted tree must never hit a silent no-op: the host can remount
+        // a tab body without aborting its signal (panel rebinds, commit
+        // races, layout churn), and any path that drops the record while the
+        // tree stays visible turns every folder click into a no-op until a
+        // page reload. Re-mint through the caller's seed so the click lands.
+        const minted = seed?.()
+        if (minted === undefined) return
+        entry = { ...minted, expanded: [], revealed: [], version: 0 }
+        views.set(id, entry)
+        console.warn('[dsh-better-sidebar] tree click re-minted a dropped native tab record', id)
+      }
       const expanded = entry.expanded.includes(path)
         ? entry.expanded.filter(candidate => candidate !== path)
         : [...entry.expanded, path]
@@ -285,7 +301,22 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
       return minted === null ? undefined : { title: minted.tab.title, meta: minted.tab.meta }
     },
   })
-  useEffect(() => () => { records.drop(nativeTab.id) }, [records, nativeTab.id])
+  // Forget the record ONLY when the host aborted the tab's lifetime signal —
+  // the authoritative "this tab is gone from the layout" marker (the host
+  // aborts it when the tab vanishes from its session's committed layout; tab
+  // switching and panel rebinds keep bodies mounted without aborting). A
+  // plain unmount must NOT drop the record: the host can remount the very
+  // same tab id (seat rebinds, layout churn, commit races) and the remounted
+  // tree would find its record gone — `toggleExpanded` would silently no-op
+  // and every folder click would die until a page reload. Keeping the
+  // record on plain unmounts also preserves the expansion set across such
+  // remounts.
+  useEffect(
+    () => () => {
+      if (nativeTab.signal?.aborted === true) records.drop(nativeTab.id)
+    },
+    [records, nativeTab.id, nativeTab.signal],
+  )
   if (descriptor === undefined) {
     // The orphaned fallback sits in the SAME native host as a live body, so
     // it gets the same full-height box (its own root also relies on the
@@ -315,7 +346,9 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
         visible: nativeTab.visible,
         expanded: view.expanded,
         revealed: view.revealed,
-        onToggleDir: (path: string) => { records.toggleExpanded(nativeTab.id, path) },
+        onToggleDir: (path: string) => {
+          records.toggleExpanded(nativeTab.id, path, () => ({ tab: view.tab, scope }))
+        },
         onReferenceFile: (path: string, isDir: boolean) => { referenceInChat(ctx, sessionId, cwd, path, isDir) },
         onOpenDiff: (tab: SidebarTab) => {
           service.openTab({
