@@ -39,6 +39,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveCenterColumn } from '../center-column.ts'
 
+/**
+ * The bottom panel's hit box stops this many px short of the center column's
+ * right edge. The host AppFrame's right-panel width strip is an 8px handle
+ * centered on the column border (its left 4px reach into the center column)
+ * at z-index 11, below the panel host's z-index 25 — left overlapping, the
+ * workbench would eat the sidebar margin drag and degrade it into text
+ * selection over the workbench. The panel's box ends before the strip; a
+ * paint-only ::after on .bottomPanel (sidebar.module.css) restores the
+ * visual edge to the column. 6px clears the strip's 4px reach with margin.
+ */
+export const PANEL_RIGHT_HIT_GAP = 6
+
 export function useCenterColumn(
   /** The bottom panel element: measureCenter writes its edges directly. */
   bottomRef: { readonly current: HTMLDivElement | null },
@@ -90,7 +102,7 @@ export function useCenterColumn(
     const bottom = bottomRef.current
     if (bottom !== null) {
       bottom.style.setProperty('left', `${rect.left}px`)
-      bottom.style.setProperty('right', `${window.innerWidth - rect.right}px`)
+      bottom.style.setProperty('right', `${window.innerWidth - rect.right + PANEL_RIGHT_HIT_GAP}px`)
       if (fullscreen) {
         // Maximized: the panel fills the ENTIRE conversation column
         // (top..bottom) — header band, transcript, and input bar are all

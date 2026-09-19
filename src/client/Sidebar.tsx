@@ -47,7 +47,7 @@ import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
-import { useCenterColumn } from './sidebar/use-center-column.ts'
+import { PANEL_RIGHT_HIT_GAP, useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { useNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { usePinnedTabs } from './sidebar/use-pinned-tabs.ts'
@@ -823,7 +823,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           left: centerRectRef.current.left,
           // Keep the panel above the on-screen keyboard when the visual
           // viewport shrinks (see the keyboardInset effect).
-          right: window.innerWidth - centerRectRef.current.right,
+          right: window.innerWidth - centerRectRef.current.right + PANEL_RIGHT_HIT_GAP,
           // Direct from the center column's measured right edge: the bottom
           // panel spans ONLY the center column, ending exactly at the
           // details column's left edge.
