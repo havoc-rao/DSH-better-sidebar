@@ -10,15 +10,41 @@
  * `link:`-to-source-checkout install needed no such config: linked files sit
  * outside `node_modules` and are transformed by default.
  */
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  resolve: {
+    alias: [
+      // The fileTreeUi service-path specs value-import dsh-file-tree-ui's
+      // REAL src components to build the service fixture. The linked
+      // package resolves its OWN node_modules (a separate pnpm virtual
+      // store), so its react / react-dom copies would be distinct module
+      // instances from ours — two Reacts would break hooks ("Cannot read
+      // properties of null (reading 'useState')"). The provider's peer
+      // versions match ours (both React 18.3.1), so pin the react family
+      // to OUR copies: one instance, one store. (ui-primitives/other
+      // packages may stay per-store copies — with a shared React, their
+      // hooks and elements interoperate.)
+      { find: /^react$/, replacement: fileURLToPath(new URL('./node_modules/react/index.js', import.meta.url)) },
+      { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./node_modules/react/jsx-runtime.js', import.meta.url)) },
+      { find: /^react-dom$/, replacement: fileURLToPath(new URL('./node_modules/react-dom/index.js', import.meta.url)) },
+      { find: /^react-dom\/client$/, replacement: fileURLToPath(new URL('./node_modules/react-dom/client.js', import.meta.url)) },
+    ],
+  },
   test: {
     // Bridge Node's `localStorage` accessor to jsdom's store (see the file).
     setupFiles: ['tests/setup.ts'],
     server: {
       deps: {
-        inline: [/@deepseek-ai\/dsh-client-ui-primitives/],
+        inline: [
+          /@deepseek-ai\/dsh-client-ui-primitives/,
+          // The linked dsh-file-tree-ui provider: the service-path specs
+          // value-import its REAL src components (FileTree framework) to
+          // build the service fixture — inside node_modules they must run
+          // through Vite's transform (TSX + css modules), not Node.
+          /dsh-file-tree-ui/,
+        ],
       },
     },
     // A handful of suites drive REAL processes (git, powershell, node-pty),

@@ -216,6 +216,9 @@ importers:
       cordis:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-loader@1.0.0-rc.5)
+      dsh-file-tree-ui:
+        specifier: link:../dsh-file-tree-ui
+        version: link:../dsh-file-tree-ui
       eslint:
         specifier: ^10.9.1
         version: 10.9.1

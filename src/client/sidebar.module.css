@@ -137,6 +137,26 @@
     height var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
+/* The panel's visual edge still ends exactly at the center column's right
+   edge: a paint-only strip covers the hit-box gap the panel's box leaves
+   (PANEL_RIGHT_HIT_GAP in sidebar/use-center-column.ts), so the host
+   frame's right-panel width strip stays grabbable over the workbench (the
+   host handle is 8px centered on the column border, z-index 11, below the
+   panel host's z-index 25 — its left half would otherwise be eaten by the
+   workbench and the drag degraded into text selection). Hit-transparent by
+   intent: pointer events over the strip fall through to the host handle. */
+.bottomPanel::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  pointer-events: none;
+  background: var(--dsw-alias-bg-layer-1);
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
 /* Collapsed: slid off-screen, interactive nothing, hidden after the slide. */
 .bottomPanelHidden {
   transform: translateY(102%);
@@ -961,6 +981,69 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: none;
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── fileTreeUi v2 framework rows (dsh-file-tree-ui service path) ────────
+   With the v2 service present the tree chrome is the provider's FileTree
+   framework and rows carry the consumer state classes below. The
+   .explorerTree container class (passed to renderFileTree) scopes the
+   overrides: raised specificity keeps them above the framework's own row
+   classes (the cascade order between the two bundles' style tags is not
+   guaranteed), and background-color (never the shorthand) leaves the
+   rows' inline guide-line gradients intact. */
+
+.explorerTree {
+  display: flex;
+  flex-direction: column;
+}
+
+.explorerTree .explorerRowRevealed {
+  background-color: var(--dsw-alias-state-business-tertiary);
+}
+
+/* Reveal runs usually list sibling files — consecutive tinted rows merge
+   into ONE rounded block (same policy as the built-in rows' adjacency
+   rules; framework rows only merge within one level list). */
+.explorerTree .explorerRowRevealed + .explorerRowRevealed {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.explorerTree .explorerRowRevealed:has(+ .explorerRowRevealed) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* The @-reference pill rendered in the framework's actions slot: same pill
+   as the built-in path's .explorerRef, but always laid out — the slot's
+   hover-gating is the framework's own actions visibility (opacity), so no
+   display rule of its own. */
+.explorerTreeRef {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-strong-11);
+  cursor: pointer;
+}
+
+.explorerTreeRef:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* A broken symlink's name ink on framework rows (the built-in path colors
+   the row's name via .explorerBroken .explorerName; framework rows carry
+   the class on the injected name span instead — the framework's DOM
+   passthrough has no row-level title either, so the tooltip rides the
+   name span). */
+.explorerBrokenName {
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .explorerError {

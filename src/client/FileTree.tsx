@@ -20,7 +20,7 @@
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
@@ -42,6 +42,15 @@ import type { BetterSidebarService } from './service.ts'
 import type { SidebarStore } from './state.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
 import { pushTreeOp, redoTreeOp, returnTreeOp, undoTreeOp, type TreeMutationOp } from './undo.ts'
+import { useFileTreeUi } from './file-tree-ui.ts'
+// Type-only (erased — never reaches the client-bundle purity gate): the
+// fileTreeUi v2 client-service contract provided by the dsh-file-tree-ui
+// plugin. v2 = tree-FRAMEWORK ownership: the provider renders the whole
+// tree (container/subtrees, indent guides + hover seat, chevron + fold
+// interaction and animations, row chrome slots, drop visuals) from the
+// row models built below; this plugin injects row content, expansion state
+// data and all DOM semantics (see file-tree-ui.ts for the service seat).
+import type { FileTreeRowModel, FileTreeNode, GuideColumn } from 'dsh-file-tree-ui/client-contract'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -162,6 +171,12 @@ export function FileTree(props: {
   service?: BetterSidebarService
 }) {
   const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, service } = props
+  // The optional fileTreeUi v2 service (provider: dsh-file-tree-ui): when
+  // present and protocol-compatible the tree renders through its FileTree
+  // framework (model injection, see the builders near renderLevel);
+  // undefined → the built-in rendering below, byte-for-byte the pre-v2
+  // shape. Live on provide/unload via the internal/service subscription.
+  const fileTreeUi = useFileTreeUi()
   const [data, setData] = useState<Record<string, LevelData>>({})
   /**
    * Registry revision for the file-icon feature: bumps on ANY registry
@@ -606,7 +621,11 @@ export function FileTree(props: {
     if (revealed.length === 0) return
     const body = bodyRef.current
     if (body === null) return
+    // The built-in rows carry the marker attribute; the framework rows
+    // (v2 service path) carry the hashed reveal class instead — both
+    // resolve to the revealed row element.
     const row = body.querySelector<HTMLElement>('[data-dsh-revealed]')
+      ?? body.querySelector<HTMLElement>('[class*="explorerRowRevealed"]')
     if (row === null) return
     const bodyTop = body.getBoundingClientRect().top
     const rowRect = row.getBoundingClientRect()
@@ -647,7 +666,14 @@ export function FileTree(props: {
     )
   }
 
-  const openRowMenu = (event: MouseEvent, path: string, isDir: boolean): void => {
+  /** Open the row context menu at the cursor. The event is any UI event
+   *  with a cursor position (mouse / pointer / keyboard — the keyboard
+   *  events report 0,0 like the browser's own contextmenu event). */
+  const openRowMenu = (
+    event: { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void },
+    path: string,
+    isDir: boolean,
+  ): void => {
     event.preventDefault()
     event.stopPropagation()
     setRowMenu({ path, isDir, x: event.clientX, y: event.clientY })
@@ -920,6 +946,242 @@ export function FileTree(props: {
     })
   }
 
+  // ── fileTreeUi v2 service path: whole-tree MODEL building ──────────────
+  // When the optional fileTreeUi v2 service is present the tree chrome
+  // (container/subtrees, indent guides + hover-highlight seat, chevron +
+  // fold interaction and animations, row chrome slots, drop visuals) is
+  // the provider's FileTree framework; this block builds the
+  // FileTreeRowModel forest from the same `data` state the built-in path
+  // renders above and wires the SAME per-row events, states and visuals as
+  // models (role/tabIndex/draggable + the in-tree drag event family, click
+  // to open/toggle, Enter/Space, the right-click row menu, expansion state
+  // data via expanded + onToggle). The built-in fallback path above stays
+  // byte-for-byte the pre-v2 shape.
+
+  /** The guide-line grid: this tree's own fold geometry (6px base — the
+   *  workspace-root row inset — and the 22px indent step, so the stroke
+   *  columns sit where the built-in rows' padding steps are). */
+  const treeGrid = { basePx: 6, stepPx: 22 }
+  /** Fixed row metrics for framework rows (the provider's fold animation
+   *  needs fixed row heights; the built-in rows are 34px, not the
+   *  framework's 30px default). Inline so no stylesheet cascade can win. */
+  const treeRowStyle: CSSProperties = { minHeight: 34, height: 34, paddingRight: 8 }
+
+  /** The ancestor chain of a row path, root side first — the guide-column
+   *  ids. Full paths are the branch-unique keys the provider's hover seat
+   *  matches on (two branches at the same depth never share an id). */
+  const treeAncestors = (path: string, treeRoot: string): string[] => {
+    const chain: string[] = []
+    let current = parentOf(path)
+    while (current !== treeRoot && current !== parentOf(current)) {
+      chain.unshift(current)
+      current = parentOf(current)
+    }
+    chain.unshift(treeRoot)
+    return chain
+  }
+
+  /** One entry's guide columns (one per ancestor): a band click toggles
+   *  that ancestor's expansion (the provider stops propagation, so a band
+   *  click never opens the row). The root column's toggle is a no-op — the
+   *  workspace root is always shown expanded (it has no collapse affordance
+   *  in the built-in path either). */
+  const treeGuideColumns = (ancestors: string[]): GuideColumn[] =>
+    ancestors.map((dir, index) => ({
+      id: dir,
+      onToggle: index === 0 ? () => {} : () => { onToggle(dir) },
+    }))
+
+  /** The @-reference affordance (or the transient copied label) for the
+   *  actions slot — the framework gates the slot's visibility on row
+   *  hover/focus itself (opacity), so the button needs no display rule of
+   *  its own (see .explorerTreeRef vs the built-in path's .explorerRef). */
+  const treeRowActions = (path: string, isDir: boolean): ReactNode => (
+    copiedPath === path
+      ? <span className={css.explorerCopied}>{t('copied')}</span>
+      : (
+        <button
+          type="button"
+          className={css.explorerTreeRef}
+          aria-label={t('referenceFile')}
+          title={t('referenceFile')}
+          onClick={(event) => {
+            event.stopPropagation()
+            onReferenceFile(path, isDir)
+          }}
+        >
+          {t('referenceFile')}
+        </button>
+      )
+  )
+
+  /**
+   * One level's tree rows (the v2 twin of renderLevel). Level states map
+   * to injected FileTreeNode entries exactly like the built-in path (the
+   * loader row / FenceErrorNotice / error row keep their own padding);
+   * entry rows carry their whole DOM semantics + expansion state data as
+   * FileTreeRowModel fields — every interaction the built-in rows have.
+   */
+  const buildLevelRows = (baseDir: string, depth: number, treeRoot: string): FileTreeNode[] => {
+    const level = data[baseDir]
+    if (level === undefined) {
+      return [(
+        <div
+          key={`loading:${baseDir}`}
+          className={css.explorerRow}
+          style={{ paddingLeft: depth * 22 + 6 }}
+        >
+          {t('loading')}
+        </div>
+      )]
+    }
+    if (level.error !== undefined) {
+      // The fence refusal becomes the friendly notice (reason + one-click
+      // global off + immediate retry of this directory), never the raw
+      // `path "..." is outside workspace` wire text.
+      if (isOutsideWorkspaceMessage(level.error)) {
+        return [(
+          <div key={`fence:${baseDir}`} style={{ paddingLeft: depth * 22 + 6 }}>
+            <FenceErrorNotice store={store} onDisabled={() => { retryDir(baseDir) }} />
+          </div>
+        )]
+      }
+      return [(
+        <div
+          key={`error:${baseDir}`}
+          className={clsx(css.explorerRow, css.explorerError)}
+          style={{ paddingLeft: depth * 22 + 6 }}
+        >
+          {level.error}
+        </div>
+      )]
+    }
+    const entries = level.entries ?? []
+    return entries.map(entry => {
+      // The row being renamed renders as its editor — a whole-row injected
+      // node (an editor is not a click target, and nesting it inside the
+      // framework's row chrome + role="button" would be invalid).
+      if (renaming?.path === entry.path) return renderRenameRow(entry, depth)
+      const isDir = entry.isDir
+      const isOpen = isDir && expandedSet.has(entry.path)
+      // VSCode drop routing: a drop on a directory row lands IN it; a drop
+      // on a file row targets its parent directory (the framework's
+      // dropState is visual only — the routing stays here).
+      const dropDir = isDir ? entry.path : parentOf(entry.path)
+      const row: FileTreeRowModel = {
+        key: entry.path,
+        role: 'button',
+        tabIndex: 0,
+        draggable: true,
+        indentPx: depth * 22 + 6,
+        guideColumns: treeGuideColumns(treeAncestors(entry.path, treeRoot)),
+        junction: isOpen,
+        style: treeRowStyle,
+        className: clsx(
+          isDir && css.explorerDir,
+          entry.hidden && css.explorerHidden,
+          draggingPath === entry.path && css.explorerRowDragging,
+          revealedSet.has(entry.path) && css.explorerRowRevealed,
+        ),
+        // The name span carries the row tooltip and the broken-symlink ink
+        // (the framework's DOM passthrough has no `title`, and the label
+        // slot is where this row's own text lives).
+        label: (
+          <span
+            className={clsx(css.explorerName, entry.broken && css.explorerBrokenName)}
+            title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
+          >
+            {entry.name}
+          </span>
+        ),
+        leading: isDir ? dirRowIcon(entry.path, isOpen) : fileRowIcon(entry.path),
+        ...(entry.isSymlink
+          ? { trailing: <IconLinkOutline16 size={12} className={css.explorerSymlink} /> }
+          : {}),
+        actions: treeRowActions(entry.path, entry.isDir),
+        // The transient copied label must stay visible without hover (the
+        // framework otherwise keeps the actions slot at opacity 0).
+        actionsVisible: copiedPath === entry.path,
+        ...(dropTarget === dropDir ? { dropState: 'on' as const } : {}),
+        onClick: () => { if (isDir) onToggle(entry.path); else onOpenFile(entry.path) },
+        onKeyDown: (event) => {
+          if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault()
+            // Keyboard-triggered menus anchor at 0,0 (the browser's own
+            // contextmenu event reports the same for keyboard triggers).
+            openRowMenu(
+              { clientX: 0, clientY: 0, preventDefault: () => { event.preventDefault() }, stopPropagation: () => { event.stopPropagation() } },
+              entry.path,
+              entry.isDir,
+            )
+            return
+          }
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            if (isDir) onToggle(entry.path)
+            else onOpenFile(entry.path)
+          }
+        },
+        // The right-click row menu: the model's DOM passthrough has no
+        // onContextMenu, so the menu opens on right-button pointer-up over
+        // the row (full-row coverage, chevron and guide bands included)
+        // and the native context menu is suppressed at the explorer body
+        // (the contextmenu event bubbles there — see the body handler).
+        onPointerUp: (event) => {
+          if (event.button === 2) openRowMenu(event, entry.path, entry.isDir)
+        },
+        onDragStart: (event) => {
+          event.dataTransfer.setData('application/x-dsh-tree-drag', entry.path)
+          event.dataTransfer.effectAllowed = 'copyMove'
+          dragSource.current = { path: entry.path, isDir }
+          setDraggingPath(entry.path)
+        },
+        onDragEnd: () => { clearDragSource(); resetDrop() },
+        onDragOver: (event) => { handleRowDragOver(event, dropDir) },
+        onDrop: (event) => {
+          if (isDir) handleDirDrop(event, entry.path)
+          else handleFileDrop(event, entry.path)
+        },
+        // Expansion STATE data stays here (per-row expanded + onToggle;
+        // the caller's expanded set is the single source of truth); the
+        // chevron + fold interaction and the subtree gating/animations are
+        // the framework's. children stay present even while collapsed so
+        // the fold's enter/exit animations can play; an unloaded level
+        // renders its loading node inside the fold like the built-in path.
+        ...(isDir ? {
+          expanded: isOpen,
+          onToggle: () => { onToggle(entry.path) },
+          children: buildLevelRows(entry.path, depth + 1, treeRoot),
+        } : {}),
+      }
+      return row
+    })
+  }
+
+  /** The v2 service path's root row model: the workspace root (icon + name
+   *  + the same @-reference/copied affordance and drop/right-click
+   *  surfaces the built-in root row carries). Its children are always
+   *  shown (no expanded → the framework renders them unconditionally,
+   *  exactly like the built-in `{data[root] !== undefined && renderLevel…}`
+   *  gate — which also means the root level itself shows nothing while it
+   *  loads). */
+  const rootRowModel = (treeRoot: string): FileTreeRowModel => ({
+    key: treeRoot,
+    label: <span className={css.explorerName}>{baseName(treeRoot)}</span>,
+    leading: dirRowIcon(treeRoot, true),
+    indentPx: 6,
+    style: treeRowStyle,
+    actions: treeRowActions(treeRoot, true),
+    actionsVisible: copiedPath === treeRoot,
+    ...(dropTarget === treeRoot ? { dropState: 'on' as const } : {}),
+    onDragOver: (event) => { handleRowDragOver(event, treeRoot) },
+    onDrop: (event) => { handleDirDrop(event, treeRoot) },
+    onPointerUp: (event) => {
+      if (event.button === 2) openRowMenu(event, treeRoot, true)
+    },
+    children: data[treeRoot] === undefined ? [] : buildLevelRows(treeRoot, 1, treeRoot),
+  })
+
   return (
     <div
       ref={bodyRef}
@@ -933,6 +1195,15 @@ export function FileTree(props: {
       onDragOver={handleBodyDragOver}
       onDragLeave={handleBodyDragLeave}
       onDrop={handleBodyDrop}
+      onContextMenu={fileTreeUi !== undefined && root !== undefined ? (event) => {
+        // Service-path rows open the row menu on right-button pointer-up
+        // (the model's DOM passthrough has no onContextMenu); the
+        // contextmenu event itself bubbles here and only needs suppressing
+        // so the browser's native menu never appears on top of ours. The
+        // built-in rows stop propagation and handle the event themselves,
+        // so nothing here changes for the fallback path.
+        event.preventDefault()
+      } : undefined}
       onKeyDown={(event) => {
         // VS Code explorer keybindings: Cmd/Ctrl+Z undoes the last tree
         // mutation; Cmd/Ctrl+Shift+Z (and plain Ctrl+Y on Windows/Linux)
@@ -978,33 +1249,55 @@ export function FileTree(props: {
               </button>
             </div>
           )}
-          <div
-            className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarget)}
-            style={{ paddingLeft: 6 }}
-            onDragOver={(event) => { handleRowDragOver(event, root) }}
-            onDrop={(event) => { handleDirDrop(event, root) }}
-            onContextMenu={(event) => { openRowMenu(event, root, true) }}
-          >
-            {dirRowIcon(root, true)}
-            <span className={css.explorerName}>{baseName(root)}</span>
-            {copiedPath === root
-              ? <span className={css.explorerCopied}>{t('copied')}</span>
-              : (
-                <button
-                  type="button"
-                  className={css.explorerRef}
-                  aria-label={t('referenceFile')}
-                  title={t('referenceFile')}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onReferenceFile(root, true)
-                  }}
-                >
-                  {t('referenceFile')}
-                </button>
-              )}
-          </div>
-          {data[root] !== undefined && renderLevel(root, 1)}
+          {fileTreeUi !== undefined ? (
+            /*
+             * The v2 service path: ONE renderFileTree call — the whole tree
+             * (root row + levels) rides the row models built above; the
+             * provider's FileTree framework owns the container/subtrees,
+             * indent guides + hover seat, chevron + fold interaction and
+             * animations, row chrome slots and drop visuals. The treeKey
+             * isolates this tree's guide-hover seat (other trees on the
+             * same page — e.g. a recents list — use their own keys).
+             */
+            fileTreeUi.renderFileTree({
+              treeKey: 'workspace-explorer',
+              rows: [rootRowModel(root)],
+              grid: treeGrid,
+              className: css.explorerTree,
+              role: 'tree',
+              ariaLabel: t('files'),
+            })
+          ) : (
+            <>
+              <div
+                className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarget)}
+                style={{ paddingLeft: 6 }}
+                onDragOver={(event) => { handleRowDragOver(event, root) }}
+                onDrop={(event) => { handleDirDrop(event, root) }}
+                onContextMenu={(event) => { openRowMenu(event, root, true) }}
+              >
+                {dirRowIcon(root, true)}
+                <span className={css.explorerName}>{baseName(root)}</span>
+                {copiedPath === root
+                  ? <span className={css.explorerCopied}>{t('copied')}</span>
+                  : (
+                    <button
+                      type="button"
+                      className={css.explorerRef}
+                      aria-label={t('referenceFile')}
+                      title={t('referenceFile')}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onReferenceFile(root, true)
+                      }}
+                    >
+                      {t('referenceFile')}
+                    </button>
+                  )}
+              </div>
+              {data[root] !== undefined && renderLevel(root, 1)}
+            </>
+          )}
         </>
       )}
       {dropOver && dropRect !== null && createPortal(

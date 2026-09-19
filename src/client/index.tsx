@@ -27,6 +27,7 @@ import { createNativeSurface } from './native/surface.ts'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
+import { installFileTreeUiSeat } from './file-tree-ui.ts'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
@@ -57,6 +58,17 @@ export const inject = ['slots', 'sessions', 'locale', 'modules', 'connection']
  * @param ctx - the client cordis context (slots, sessions).
  */
 export function apply(ctx: Context): void {
+  // Optional fileTreeUi v2 service seat (provider: dsh-file-tree-ui): the
+  // file tree renders through the provider's FileTree framework when the
+  // v2 service is present (model injection; see FileTree.tsx), and falls
+  // back to its own rendering otherwise. The seat binds the live root
+  // Context for this fiber; a disposed fiber re-installs a null seat so a
+  // stale context can never keep serving (see file-tree-ui.ts).
+  ctx.effect(() => {
+    installFileTreeUiSeat(ctx)
+    return () => { installFileTreeUiSeat(null) }
+  }, 'dsh-better-sidebar: fileTreeUi service seat')
+
   // The sidebar follows the DSH i18n system: attach the locale service so
   // the module-level t()/isZh() resolve the Host-backed language preference
   // (and switch live — the Sidebar root subscribes to it), and register the

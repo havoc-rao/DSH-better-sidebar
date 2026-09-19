@@ -187,6 +187,7 @@
     "@xterm/xterm": "^5.5.0",
     "anser": "^2.3.5",
     "cordis": "^4.0.0-rc.8",
+    "dsh-file-tree-ui": "link:../dsh-file-tree-ui",
     "eslint": "^10.9.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.12.0",
