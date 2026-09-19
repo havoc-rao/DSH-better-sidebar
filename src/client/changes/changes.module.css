@@ -218,6 +218,23 @@
   cursor: default;
 }
 
+/* Registered commit-row actions (feature gitCommitActions): a flex cluster
+   rendered after the built-in Commit button. The whole cluster is absent when
+   no plugin registers, so the row is identical to the pre-seam layout. */
+.gitCommitActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+/* One action's crash boundary: keeps the strip inline in the row. */
+.gitCommitActionBoundary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
    (badges live on the second line so they never crowd the subject). */
 .gitLogRow {

@@ -19,7 +19,8 @@ import { renderRoot, setupReactAct } from './test-utils.ts'
 // The act() environment flag (React 18.2 reads it before flushing effects).
 setupReactAct()
 import type { SidebarSettingToggle } from '../src/client/service.ts'
-import { FeatureSettingsRows } from '../src/client/SideCardSection.tsx'
+import { FeatureSettingsRows, LocalePreferenceRow } from '../src/client/SideCardSection.tsx'
+import type { Context } from '../src/context-types.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 
 /** Type into an input and commit it via blur (React 18: input event +
@@ -254,6 +255,49 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
       valueSource: () => undefined,
     }))
     expect(container.querySelector('button[aria-haspopup="listbox"]')!.textContent).toContain('—')
+    unmount()
+  })
+})
+
+/** A fake ctx exposing only the locale face: a STABLE snapshot reference
+ *  (the uSES contract) plus a setLocale recorder. */
+function localeCtx(): { ctx: Context; calls: string[] } {
+  const calls: string[] = []
+  const snapshot = {
+    active: 'zh',
+    locales: [
+      { id: 'zh', label: '中文' },
+      { id: 'en', label: 'English' },
+    ],
+  }
+  const locale = {
+    getSnapshot: () => snapshot,
+    subscribe: () => () => {},
+    register: () => () => {},
+    setLocale: (id: string) => { calls.push(id) },
+  }
+  return { ctx: { locale } as unknown as Context, calls }
+}
+
+describe('LocalePreferenceRow (interactive)', () => {
+  it('shows the active language and commits the picked one through ctx.locale.setLocale', () => {
+    const { ctx, calls } = localeCtx()
+    const { container, unmount } = renderRoot(createElement(LocalePreferenceRow, { ctx }))
+    // The closed anchor shows the active locale's self-described label.
+    expect(container.querySelector('button[aria-haspopup="listbox"]')!.textContent).toContain('中文')
+    // The dropdown lists every locale, each written in its own language.
+    const items = openSelect(container)
+    expect(items.map(item => item.textContent)).toEqual(['中文', 'English'])
+    act(() => { items[1]!.click() })
+    expect(calls).toEqual(['en'])
+    // Single-pick closes the dropdown.
+    expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(0)
+    unmount()
+  })
+
+  it('renders nothing when the host has no locale service (empty ctx)', () => {
+    const { container, unmount } = renderRoot(createElement(LocalePreferenceRow, { ctx: {} as Context }))
+    expect(container.textContent).toBe('')
     unmount()
   })
 })

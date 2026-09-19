@@ -21,6 +21,7 @@ if (g.localStorage === undefined) {
 }
 
 import { createBetterSidebarService, matchUrlTarget, SIDEBAR_FEATURES, SIDEBAR_SERVICE_VERSION } from '../src/client/service.ts'
+import type { GitCommitTarget, SidebarDiffRef } from '../src/client/service.ts'
 import { createSidebarStore, allLeaves, makeDefaultState, openDiffTab, openTabInBottomPane, sanitizeState } from '../src/client/state.ts'
 
 describe('BetterSidebar service', () => {
@@ -912,6 +913,8 @@ describe('independent CR follow-up fixes', () => {
     expect(SIDEBAR_FEATURES).toContain('targetedOpen')
     expect(SIDEBAR_FEATURES).toContain('stateSubscription')
     expect(SIDEBAR_FEATURES).toContain('tabMeta')
+    expect(SIDEBAR_FEATURES).toContain('gitCommitActions')
+    expect(SIDEBAR_FEATURES).toContain('planDiff')
     expect(SIDEBAR_SERVICE_VERSION).toMatch(/^\d+\.\d+\.\d+/)
   })
 
@@ -920,5 +923,89 @@ describe('independent CR follow-up fixes', () => {
     const service = createBetterSidebarService(store)
     service.registerFileViewer({ id: 'csv', exts: ['csv'], fetchStrategy: 'custom', component: () => null })
     expect(() => service.registerFileViewer({ id: 'csv', exts: ['csv'], fetchStrategy: 'custom', component: () => null })).toThrow(/already registered/)
+  })
+})
+
+describe('git commit actions (v0.20.x, feature gitCommitActions)', () => {
+  /** A minimal live target for one session. */
+  const targetOf = (sessionId: string): GitCommitTarget => ({
+    scope: { sessionId, cwd: '/p' },
+    repoRoot: '/p',
+    worktree: '/p',
+    branch: 'main',
+    status: { isRepo: true, branch: 'main', entries: [{ path: 'a.ts', xy: 'M ' }] },
+    staged: [{ path: 'a.ts', xy: 'M ' }],
+  })
+
+  it('registerGitCommitAction adds, notifies, and disposes', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    let notified = 0
+    service.subscribe(() => { notified += 1 })
+    expect(service.getGitCommitActions()).toHaveLength(0)
+    const dispose = service.registerGitCommitAction({ id: 'agent:commit', component: () => null })
+    expect(service.getGitCommitActions().map(d => d.id)).toEqual(['agent:commit'])
+    expect(notified).toBe(1)
+    dispose()
+    expect(service.getGitCommitActions()).toHaveLength(0)
+    expect(notified).toBe(2)
+  })
+
+  it('throws on a duplicate commit-action id', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    service.registerGitCommitAction({ id: 'agent:commit', component: () => null })
+    expect(() => service.registerGitCommitAction({ id: 'agent:commit', component: () => null })).toThrow(/already registered/)
+  })
+
+  it('publishes a target per owner and resolves the most recently published one', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    expect(service.getGitCommitTarget()).toBeUndefined()
+    service.setGitCommitTarget('lens:1', targetOf('s1'))
+    expect(service.getGitCommitTarget({ sessionId: 's1' })?.repoRoot).toBe('/p')
+    service.setGitCommitTarget('lens:2', { ...targetOf('s2'), branch: 'dev' })
+    // No scope → the latest publication wins; a scope filters by session.
+    expect(service.getGitCommitTarget()?.scope.sessionId).toBe('s2')
+    expect(service.getGitCommitTarget({ sessionId: 's1' })?.scope.sessionId).toBe('s1')
+    expect(service.getGitCommitTarget({ sessionId: 's3' })).toBeUndefined()
+    // Clearing one owner leaves the other's target untouched.
+    service.setGitCommitTarget('lens:2', null)
+    expect(service.getGitCommitTarget()?.scope.sessionId).toBe('s1')
+    service.setGitCommitTarget('lens:1', null)
+    expect(service.getGitCommitTarget()).toBeUndefined()
+  })
+
+  it('republishing one owner makes it the latest again', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    service.setGitCommitTarget('lens:1', targetOf('s1'))
+    service.setGitCommitTarget('lens:2', targetOf('s2'))
+    service.setGitCommitTarget('lens:1', { ...targetOf('s1'), branch: 'feature' })
+    expect(service.getGitCommitTarget()?.branch).toBe('feature')
+  })
+
+  it('publishing a target never notifies subscribers (no publish→notify→render loop)', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    let notified = 0
+    service.subscribe(() => { notified += 1 })
+    service.setGitCommitTarget('lens:1', targetOf('s1'))
+    service.setGitCommitTarget('lens:1', null)
+    expect(notified).toBe(0)
+  })
+})
+
+describe('service.openTab proposed diff (feature planDiff)', () => {
+  it('lands a caller-supplied patch on a diff tab through the existing openTab seed', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'diff', title: 'Diff', dedupeKey: (tab) => tab.id, component: () => null })
+    store.setSession('s1')
+    const seed: SidebarDiffRef = {
+      kind: 'proposed',
+      id: 'plan:1:c0',
+      title: 'Plan commit 1',
+      patch: 'diff --git a/x b/x\n',
+    }
+    service.openTab({ type: 'diff', id: 'plan:1:c0', title: 'Plan commit 1', diff: seed })
+    const tab = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).find(t => t.type === 'diff')!
+    expect(tab.diff).toEqual(seed)
+    expect(tab.title).toBe('Plan commit 1')
   })
 })

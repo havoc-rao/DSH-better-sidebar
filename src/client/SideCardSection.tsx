@@ -40,7 +40,7 @@
  * shows the wire error inline — a broken settings surface never crashes the
  * shell.
  */
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   IconChevronDownOutline14,
   IconPlusOutline16,
@@ -72,6 +72,7 @@ import type {
   SidebarSettingToggle,
   TabDescriptor,
 } from './service.ts'
+import type { Context, SidebarLocaleService } from '../context-types.ts'
 import css from './SideCardSection.module.css'
 
 /** Injected business face: the shared store (prefs cache) + the sidebar service (registries). */
@@ -482,6 +483,65 @@ function SelectRow(props: {
           onSelect={(next) => { onSelectValue?.(toggle, next) }}
         />
       </span>
+    </div>
+  )
+}
+
+/**
+ * The DSH interface-language row, surfaced from the git card's settings
+ * popup: the SECOND entry point to the host's Language preference (the
+ * General section owns the first). It keeps NO preference of its own — the
+ * control reads the `ctx.locale` snapshot and writes back through
+ * `ctx.locale.setLocale`, the same Host-backed `locale.preference` the
+ * General row drives, so the two stay in lockstep and the interface
+ * switches immediately.
+ *
+ * The row reuses the settings-row recipe (title/desc left, control right)
+ * and the shared SelectMenu; the options come from the locale catalog,
+ * each labelled in its own language. Defensive: a host/test composition
+ * without a locale service (`{} as Context`) renders nothing instead of
+ * throwing.
+ */
+export function LocalePreferenceRow(props: { ctx: Context }) {
+  // Optional read: test compositions pass an empty ctx cast to Context.
+  const locale = (props.ctx as { locale?: SidebarLocaleService } | undefined)?.locale
+  if (locale === undefined) return null
+  return <LocalePreferenceSelect locale={locale} />
+}
+
+/**
+ * The inner select: split from {@link LocalePreferenceRow} so the early
+ * return above never precedes a hook call (this component's hook order
+ * stays unconditional).
+ */
+function LocalePreferenceSelect(props: { locale: SidebarLocaleService }) {
+  const { locale } = props
+  // The snapshot reference is stable between changes (the locale service's
+  // contract), so uSES re-renders exactly when the active locale or the
+  // catalog changes — the same subscription Sidebar.tsx uses.
+  const snapshot = useSyncExternalStore(
+    useMemo(() => (callback: () => void) => locale.subscribe(callback), [locale]),
+    useCallback(() => locale.getSnapshot(), [locale]),
+  )
+  const title = t('settingsLanguageTitle')
+  return (
+    <div className={css.popupRows}>
+      <div className={css.popupRow}>
+        <span className={css.rowText}>
+          <span className={css.title}>{title}</span>
+          <span className={css.desc}>{t('settingsLanguageDesc')}</span>
+        </span>
+        <span className={css.control}>
+          <SelectMenu
+            label={title}
+            value={snapshot.active}
+            options={snapshot.locales.map(entry => ({ value: entry.id, title: entry.label }))}
+            onSelect={(next) => {
+              if (typeof next === 'string') locale.setLocale(next)
+            }}
+          />
+        </span>
+      </div>
     </div>
   )
 }

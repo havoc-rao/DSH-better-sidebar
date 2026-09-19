@@ -18,6 +18,7 @@ import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
+import { LocalePreferenceRow } from '../SideCardSection.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { ChangesTab, opCountOf } from '../changes/ChangesTab.tsx'
 import { DiffTab } from '../DiffTab.tsx'
@@ -167,6 +168,14 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       icon: changesTabIcon,
       order: 20,
       single: true,
+      // Custom settings panel: the DSH interface-language picker — the
+      // second entry point to the same Host-backed `locale.preference`
+      // the General section's Language row drives, so both stay in sync.
+      // It is the changes tab's ONLY setting: the diff view stays docked
+      // (no diff-placement preference here).
+      settings: {
+        render: () => <LocalePreferenceRow ctx={ctx} />,
+      },
       badge: (_ctx, scope) => {
         const count = opCountOf(scope.sessionId)
         return count === undefined || count === 0 ? null : count

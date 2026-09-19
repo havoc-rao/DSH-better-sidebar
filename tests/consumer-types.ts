@@ -23,6 +23,9 @@ import type {
   FileIconDescriptor,
   FileViewerDescriptor,
   FileViewerProps,
+  GitCommitActionDescriptor,
+  GitCommitActionProps,
+  GitCommitTarget,
   OpenTabSeed,
   SidebarSettingsDeclaration,
   SidebarSettingsRenderProps,
@@ -32,6 +35,7 @@ import type {
   TabDescriptor,
 } from '../src/client/service.ts'
 import type {
+  GitDiffRef,
   SessionScope,
   SidebarDiffRef,
   SidebarPrefs,
@@ -148,8 +152,36 @@ service.matchFolderIcon(true, 'node_modules')
 service.fileIcon('/p/a.csv', 14)
 service.folderIcon('/p', true, 14)
 
+/** Git commit-action seam (feature `gitCommitActions`). */
+const commitTarget: GitCommitTarget = {
+  scope: { sessionId: 's1', cwd: '/p' },
+  repoRoot: '/p',
+  worktree: '/p',
+  branch: 'main',
+  status: { isRepo: true, branch: 'main', entries: [] },
+  staged: [],
+}
+void commitTarget
+const commitAction: GitCommitActionDescriptor = {
+  id: 'my-plugin:commit-agent',
+  order: 50,
+  available: (target: GitCommitTarget) => target.staged.length > 0 && target.worktree !== undefined,
+  component: (props: GitCommitActionProps) => {
+    void props.refresh
+    const live: GitCommitTarget | undefined = props.service.getGitCommitTarget({ sessionId: props.scope.sessionId })
+    void live
+    return null
+  },
+}
+service.registerGitCommitAction(commitAction)
+service.getGitCommitActions()
+service.getGitCommitTarget()
+service.getGitCommitTarget({ sessionId: 's1', cwd: '/p' })
+
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }
+const proposed: SidebarDiffRef = { kind: 'proposed', id: 'plan:1', title: 'Plan', patch: 'diff --git a/x b/x' }
+const gitDiffRef: GitDiffRef = { kind: 'commit', hash: 'abc1234', hashFull: 'a'.repeat(40), subject: 's' }
 const prefs: SidebarPrefs = { ...({} as SidebarPrefs) }
 const store: SidebarStore = null as unknown as SidebarStore
 const toggleType: SidebarSettingToggleType = 'number'
@@ -160,4 +192,4 @@ const version: string = SIDEBAR_SERVICE_VERSION
 const features: readonly string[] = SIDEBAR_FEATURES
 void version; void features
 const strategy: FileFetchStrategy = 'mediaUrl'
-void diff; void prefs; void store; void declaration; void typeName; void strategy
+void diff; void proposed; void gitDiffRef; void prefs; void store; void declaration; void typeName; void strategy

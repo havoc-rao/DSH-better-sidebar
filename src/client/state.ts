@@ -19,10 +19,41 @@ import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../prefs-shared.ts'
  */
 export type TabType = string
 
-/** What a diff tab shows: a worktree/index change of one path, or one commit's full patch. */
+/**
+ * What a diff tab shows: a worktree/index change of one path, one commit's
+ * full patch, or a caller-supplied patch (`proposed`).
+ *
+ * The `proposed` variant is the additive external-plugin seam (v0.20.x,
+ * feature `planDiff`): the ref carries raw unified-diff TEXT and the diff tab
+ * renders it through the very same `parseUnifiedDiff` / {@link DiffFiles}
+ * stack, running no git at all. It is display-only — better-sidebar never
+ * writes the patch, never stages it, and never reruns git for it. The
+ * `worktree` / `repoRoot` fields on this variant are optional display
+ * metadata (the checkout the patch was planned against); they are not used
+ * for any git call and do not affect folding/expansion.
+ */
 export type SidebarDiffRef =
   | { kind: 'worktree'; path: string; staged: boolean; untracked?: boolean; worktree?: string; repoRoot?: string }
   | { kind: 'commit'; hash: string; hashFull: string; subject: string; worktree?: string; repoRoot?: string }
+  | {
+    kind: 'proposed'
+    /** The caller's own stable patch identity (dedupe key / reload identity). */
+    id: string
+    /** Tab title (a raw patch has no single path to derive one from). */
+    title: string
+    /** Raw unified diff text, rendered verbatim through the shared diff stack. */
+    patch: string
+    /** Display-only origin checkout (never consulted by a git call). */
+    worktree?: string
+    repoRoot?: string
+  }
+
+/**
+ * The diff refs the Git lens can PREVIEW — one changed file or one commit.
+ * The `proposed` variant is excluded because it has no GitLens row to click;
+ * it only ever arrives through `openTab`/`SidebarTab.diff`.
+ */
+export type GitDiffRef = Extract<SidebarDiffRef, { kind: 'worktree' | 'commit' }>
 
 /** One open tab. `path` carries the file (editor) or is absent (git/terminal);
  *  `diff` carries the change a diff tab shows; `meta` (v0.12.0+) carries

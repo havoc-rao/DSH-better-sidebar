@@ -16,7 +16,7 @@ import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../produced-files.ts'
 import { HTML_IFRAME_SANDBOX } from '../html-preview.ts'
-import type { SidebarDiffRef, SidebarTab } from '../state.ts'
+import type { GitDiffRef, SidebarTab } from '../state.ts'
 import { DiffRows, ReadRows } from '../diff/DiffRows.tsx'
 import { PdfView } from '../PdfView.tsx'
 import { DiffFiles } from '../diff/DiffFiles.tsx'
@@ -42,7 +42,7 @@ const REDACTION_KEY = 'dsh-sidebar:v1:redaction'
 
 /** What the pane is showing right now. */
 export type ChangesPreview =
-  | { kind: 'git'; ref: SidebarDiffRef }
+  | { kind: 'git'; ref: GitDiffRef }
   | { kind: 'op'; path: string; op: FileOp; prior?: string }
 
 /** Diff material for one op snapshot: an edit reconstructs the full file
@@ -122,7 +122,7 @@ function MdReadingView(props: { text: string }) {
 }
 
 /** The diff tab a git preview expands into (the shell owns placement). */
-export function diffTabOf(ref: SidebarDiffRef): SidebarTab {
+export function diffTabOf(ref: GitDiffRef): SidebarTab {
   if (ref.kind === 'worktree') {
     return {
       id: `diff:w:${encodeURIComponent(ref.worktree ?? '')}:${ref.staged ? 's' : 'u'}:${ref.path}`,
