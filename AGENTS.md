@@ -8,7 +8,7 @@
 ## 1. 仓库硬约束（必须遵守）
 
 - **禁止修改 DSH 源码**：对官方 checkout（`~/.dsh/source/current`）零写入。
-- **代码改动必须走 PR**：非文档改动在 `feat/*` / `fix/*` 分支开发，`gh pr create` 发起，review 合并后进 main；**仅纯文档改动**（README / AGENTS.md / docs/）允许直推 main。
+- **PR 操作不在默认流程内**：分支开发、`gh pr create`、review 合并、推送到远端等协作流程**只在用户明确要求时执行**；未要求时改动直接在本地完成，提交到哪个分支、是否推送 / 开 PR / 直推 main，一律以用户当次要求为准。
 - **挂载只走 `cordis.patch.yml` + profile 机制**（`~/.dsh/profiles/<profile>/`），插件作为独立包被 profile 引用，不反向侵入 DSH。
 - **市场受管安装约束**：`dependencies` / `peerDependencies` / `optionalDependencies` **一律不得出现 `cordis`**（按名硬拒，optional 无效），`scripts` 不得含 `preinstall` / `install` / `postinstall` / `prepare`。由 `tests/market-manifest.spec.ts` 守护。
 - 缺能力时用 DSH 现成只读/公开 API 或插件自有路由（如 `jobs.output` 事件回放：读会话事件日志而非动注册表）；做不到先向用户说明取舍，不改 DSH。
