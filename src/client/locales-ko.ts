@@ -147,6 +147,7 @@ export const ko: Record<string, string> = {
   worktree: '워크트리',
   checkoutError: '브랜치 전환 실패',
   history: '기록',
+  noHistory: '아직 커밋이 없습니다',
   changes: '파일 변경',
   changesGitLens: 'Git',
   changesSessionLens: '세션',

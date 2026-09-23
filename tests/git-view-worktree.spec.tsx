@@ -41,6 +41,7 @@ function logFor(target?: string, index = 0): GitLogEntry[] {
     author: 'Test',
     date: '2026-08-20 00:00:00 +0800',
     refs: agent ? 'HEAD -> agent' : 'HEAD -> main',
+    parents: [],
   }]
 }
 
@@ -95,7 +96,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       expect(container.textContent).toContain('Agent checkout commit')
       expect(container.textContent).not.toContain('Main checkout commit')
       expect(branch).toHaveBeenCalledWith(expect.anything(), AGENT)
-      expect(log).toHaveBeenCalledWith(expect.anything(), 20, 0, AGENT)
+      expect(log).toHaveBeenCalledWith(expect.anything(), 20, 0, AGENT, { roots: [] })
 
       await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(worktreeSelect, MAIN)
@@ -108,7 +109,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       expect(container.textContent).toContain('Main checkout commit')
       expect(container.textContent).not.toContain('Agent checkout commit')
       expect(branch).toHaveBeenLastCalledWith(expect.anything(), MAIN)
-      expect(log).toHaveBeenLastCalledWith(expect.anything(), 20, 0, MAIN)
+      expect(log).toHaveBeenLastCalledWith(expect.anything(), 20, 0, MAIN, { roots: [] })
     } finally {
       act(() => { root.unmount() })
       container.remove()
@@ -117,15 +118,22 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
 
   it('drops a late history page when the selected worktree changes', async () => {
     const lateAgentPage = deferred<GitLogEntry[]>()
+    let agentLogCalls = 0
     vi.spyOn(api, 'gitWorktrees').mockResolvedValue(inventories)
     vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
     vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
       current: target === AGENT ? 'agent' : 'main',
       names: target === AGENT ? ['agent'] : ['main'],
     }))
-    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, skip, target) => {
-      if (target === AGENT && skip === 20) return lateAgentPage.promise
-      if (target === AGENT) return Array.from({ length: 20 }, (_value, index) => logFor(AGENT, index)[0]!)
+    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => {
+      // The lens pages via the anchored snapshot mode: the FIRST page of the
+      // agent checkout resolves 20 rows, the NEXT agent page (load more)
+      // hangs until the late promise resolves after the checkout switch.
+      if (target === AGENT) {
+        agentLogCalls += 1
+        if (agentLogCalls > 1) return lateAgentPage.promise
+        return Array.from({ length: 20 }, (_value, index) => logFor(AGENT, index)[0]!)
+      }
       return logFor(MAIN)
     })
 

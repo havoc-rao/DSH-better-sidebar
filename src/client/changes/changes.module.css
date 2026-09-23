@@ -71,6 +71,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 6px 12px 4px;
   font: var(--dsw-font-xxxs-strong-11);
   color: var(--dsw-alias-label-tertiary);
@@ -277,12 +278,38 @@
 
 .gitLogRef {
   flex: none;
-  padding: 0 5px;
+  padding: 1px 6px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
   font: var(--dsw-font-xxxs-strong-11);
   color: var(--dsw-alias-brand-primary);
   white-space: nowrap;
+}
+
+/* Ref pills are tinted per kind (skin tokens only, no literals):
+   the checked-out branch / detached HEAD amber, other local branches green,
+   remote-tracking refs purple; tags keep the neutral brand pill with squared
+   corners (the graph mockup's tag chip shape). */
+.gitLogRef[data-kind='head'] {
+  color: var(--dsw-alias-state-warn-label);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 50%, var(--dsw-alias-border-l2));
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 10%, transparent);
+}
+
+.gitLogRef[data-kind='branch'] {
+  color: var(--dsw-alias-state-success-primary);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 50%, var(--dsw-alias-border-l2));
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
+}
+
+.gitLogRef[data-kind='remote'] {
+  color: var(--dsw-alias-state-business-primary);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 50%, var(--dsw-alias-border-l2));
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
+}
+
+.gitLogRef[data-kind='tag'] {
+  border-radius: 4px;
 }
 
 .gitLogSubject {
@@ -298,6 +325,32 @@
 .gitLogMeta {
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-label-tertiary);
+}
+
+/* The gitGraph framework path (feature gitGraph, provider dsh-git-graph):
+   the row's WHOLE content slot — the same two-line commit row the list
+   renders (hash + subject / ref pills + author·time), compacted inside the
+   framework's fixed-height row (the framework centers it; it draws lanes
+   and handles hover/selection itself). The pill line stops wrapping so a
+   huge ref set can never blow through the fixed row height. */
+.gitLogGraphRow {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 12px 0 4px;
+  overflow: hidden;
+}
+
+.gitLogGraphRow .gitLogLine2 {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.gitLogGraphRow .gitLogMeta {
+  flex: none;
 }
 
 .gitLogMore {

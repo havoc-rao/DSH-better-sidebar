@@ -155,6 +155,7 @@ export const tr: Record<string, string> = {
   worktree: 'Çalışma ağacı',
   checkoutError: 'Dal değiştirme başarısız',
   history: 'Geçmiş',
+  noHistory: 'Henüz commit yok',
   changes: 'Dosya değişiklikleri',
   changesGitLens: 'Git',
   changesSessionLens: 'Oturum',

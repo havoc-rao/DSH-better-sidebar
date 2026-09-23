@@ -155,6 +155,7 @@ export const th: Record<string, string> = {
   worktree: 'เวิร์กทรี',
   checkoutError: 'สลับ branch ล้มเหลว',
   history: 'ประวัติ',
+  noHistory: 'ยังไม่มีคอมมิต',
   changes: 'การเปลี่ยนแปลงไฟล์',
   changesGitLens: 'Git',
   changesSessionLens: 'เซสชัน',

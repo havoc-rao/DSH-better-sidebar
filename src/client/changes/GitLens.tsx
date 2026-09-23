@@ -10,7 +10,7 @@
  * without a manual refresh. Everything here is the former standalone git
  * panel, re-homed as a lens.
  */
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { Component, createElement, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconCodeOutline16, IconCopyOutline16, IconPlusOutline16,
   IconRefreshOutline16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
@@ -21,12 +21,28 @@ import { api } from '../api.ts'
 import type { BetterSidebarService, GitCommitActionProps, GitCommitTarget } from '../service.ts'
 import { useGitSource } from '../git-source.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx'
+import type { GraphTreeProps, GraphTreeRow } from 'dsh-git-graph/client-contract'
+import { useGitGraph } from '../git-lens-graph.ts'
 import { usePolling } from '../use-polling.ts'
 import { baseName, isWithinWorkspace, relativeTo } from '../paths.ts'
 import { resolveSidebarPath } from '../produced-files.ts'
 import { relativeTime, t } from '../locales.ts'
 import type { GitDiffRef, SidebarStore } from '../state.ts'
 import css from './changes.module.css'
+
+/** A GraphTree render crash must restore the original history list, not an
+ *  error-only view (same degraded-fallback discipline as the fileTreeUi
+ *  seat). The failure is sticky for the current checkout episode: the next
+ *  checkout / service change re-arms the graph. */
+class GraphBoundary extends Component<{ onFail(): void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch(error: Error) {
+    console.error('[dsh-better-sidebar] gitGraph framework crashed; falling back to the history list:', error)
+    this.props.onFail()
+  }
+  render() { return this.state.failed ? null : this.props.children }
+}
 
 /** Monotonic Git-lens instance id: keys the live-target registry so two
  *  mounted lenses cannot clear each other's target. */
@@ -61,16 +77,43 @@ function isUntracked(entry: GitStatusEntry): boolean {
   return badgeOf(entry) === '?'
 }
 
-/** The ref names of one log row's decorations (`HEAD -> main` → `main`), deduped. */
-function refNames(refs: string): string[] {
-  return [...new Set(
-    refs
-      .split(',')
-      .map(ref => ref.trim())
-      .filter(ref => ref !== '')
-      .map(ref => (ref.includes(' -> ') ? ref.slice(ref.indexOf(' -> ') + 4) : ref))
-      .map(ref => (ref.startsWith('tag: ') ? ref.slice(5) : ref)),
-  )]
+/** How one log row's ref pill is tinted (see `.gitLogRef[data-kind=…]`). */
+type GitRefKind = 'head' | 'branch' | 'remote' | 'tag'
+
+/** One log row's ref decoration: the display name plus its kind. */
+interface GitRefDecoration {
+  name: string
+  kind: GitRefKind
+}
+
+/** The ref decorations of one log row (`%D` with `--decorate=short`), deduped
+ *  and classified so every pill can carry its own color:
+ *  `HEAD -> main` → the checked-out branch (`head`), plain local branch names
+ *  → `branch`, `<remote>/<branch>` forms → `remote`, `tag: v1.0` → `tag`.
+ *  `localBranches` (the checkout's `refs/heads` short names) disambiguates a
+ *  local branch that itself contains a `/` from a remote-tracking ref. */
+function refDecorations(refs: string, localBranches: ReadonlySet<string>): GitRefDecoration[] {
+  const out: GitRefDecoration[] = []
+  const seen = new Set<string>()
+  for (const raw of refs.split(',')) {
+    const ref = raw.trim()
+    if (ref === '') continue
+    const head = ref.includes(' -> ')
+    const name = head
+      ? ref.slice(ref.indexOf(' -> ') + 4)
+      : ref.startsWith('tag: ')
+        ? ref.slice(5)
+        : ref
+    if (name === '' || seen.has(name)) continue
+    seen.add(name)
+    let kind: GitRefKind
+    if (head || name === 'HEAD') kind = 'head'
+    else if (localBranches.has(name)) kind = 'branch'
+    else if (name.includes('/')) kind = 'remote'
+    else kind = 'tag'
+    out.push({ name, kind })
+  }
+  return out
 }
 
 /** One thrown value as display text (every error banner/row here normalizes
@@ -90,6 +133,13 @@ interface ConfirmState {
 /** History batch size: the log loads lazily in pages so a long history never
  *  floods the panel at once (the end of the log is reached by paging). */
 const LOG_BATCH = 20
+
+/** Fixed row height for the gitGraph framework path: the built-in history
+ *  rows carry TWO lines (hash + subject over ref pills + author·time) at the
+ *  design-token line heights, so a compact single-line 32px row would clip
+ *  them. 44px fits the same two-line content at its natural rhythm (the
+ *  framework centers the block while drawing lanes/edges per row). */
+const GRAPH_ROW_HEIGHT = 44
 
 /** Every Nth silent poll re-lists worktrees (and re-runs auto-selection): the
  *  2s tick only needs the selected checkout's STATUS, and re-listing spawned
@@ -153,6 +203,19 @@ export function GitLens(props: GitLensProps) {
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
+  /** The fixed-roots pagination cursor of the CURRENT log snapshot (see
+   *  api.gitLog / GitLogPage): undefined = not anchored yet, so the next
+   *  page request re-pins the server's own tips. */
+  const [logCursor, setLogCursor] = useState<string | undefined>(undefined)
+  /** Sticky GraphTree degradation for the current checkout episode: a render
+   *  crash falls back to the built-in list until the checkout or the gitGraph
+   *  service itself changes. */
+  const [graphFailed, setGraphFailed] = useState(false)
+
+  /** The checkout's local branch names as a lookup set: classifies log-row ref
+   *  pills (a local branch may contain `/`, so remote detection must compare
+   *  against this rather than the name shape alone). */
+  const localBranches = useMemo(() => new Set(branchNames), [branchNames])
 
   /** The open file-row context menu (cursor position for the portaled Menu). */
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
@@ -194,14 +257,26 @@ export function GitLens(props: GitLensProps) {
       const [statusResult, branchResult, logResult] = await Promise.all([
         gitApi.gitStatus(gitScope, target),
         gitApi.gitBranch(gitScope, target).catch(() => ({ current: '', names: [] as string[] })),
-        gitApi.gitLog(gitScope, LOG_BATCH, 0, target).catch(() => [] as GitLogEntry[]),
+        // Anchored page (roots: [] = pin the server's own HEAD tip): the
+        // rows then carry real parents and every later page rides the
+        // response cursor, so the gitGraph framework's lane layout never
+        // shifts mid-pagination. Older hosts / plain arrays fall back to
+        // legacy skip/count paging transparently.
+        gitApi.gitLog(gitScope, LOG_BATCH, 0, target, { roots: [] }).catch(() => [] as GitLogEntry[]),
       ])
       if (options.generation !== refreshGeneration.current) return
       setStatus(statusResult)
       if (statusResult.root !== undefined && statusResult.root !== repoRoot) setRepoRoot(statusResult.root)
       setBranchNames(branchResult.names)
-      setLogEntries(logResult)
-      setLogEnded(logResult.length < LOG_BATCH)
+      if (Array.isArray(logResult)) {
+        setLogEntries(logResult)
+        setLogEnded(logResult.length < LOG_BATCH)
+        setLogCursor(undefined)
+      } else {
+        setLogEntries(logResult.entries)
+        setLogEnded(!logResult.hasMore)
+        setLogCursor(logResult.cursor)
+      }
     } catch (reason) {
       if (options.generation === refreshGeneration.current) {
         setError(errorMessage(reason))
@@ -261,6 +336,7 @@ export function GitLens(props: GitLensProps) {
         setLogEntries([])
         setLogEnded(false)
         setLogLoadingMore(false)
+        setLogCursor(undefined)
       }
       // A poll may update status alone only while staying on the same checkout.
       // Any automatic selection change refreshes the complete derived view.
@@ -306,6 +382,7 @@ export function GitLens(props: GitLensProps) {
     setLogEntries([])
     setLogEnded(false)
     setLogLoadingMore(false)
+    setLogCursor(undefined)
     const generation = refreshGeneration.current += 1
     void refreshTarget(target, { loading: true, generation })
   }
@@ -320,6 +397,7 @@ export function GitLens(props: GitLensProps) {
     setLogEntries([])
     setLogEnded(false)
     setLogLoadingMore(false)
+    setLogCursor(undefined)
     // Re-list worktrees for the selected child (a workspace container's
     // own worktree list is empty); keep the current linked-checkout choice
     // unless it does not belong to the new repository.
@@ -332,19 +410,32 @@ export function GitLens(props: GitLensProps) {
   const pollTick = useCallback((): Promise<void> => refresh(true), [refresh])
   usePolling(visible, pollTick, { intervalMs: 2_000 })
 
-  /** Append the next history page (lazy: only when the user asks for more). */
+  /** Append the next history page (lazy: only when the user asks for more).
+   *  Pages ride the fixed-roots cursor when a snapshot is anchored; a lost
+   *  cursor (old host / expiry) re-anchors on the server's own tips. */
   const loadMoreLog = async (): Promise<void> => {
     if (logLoadingMore || logEnded) return
     const generation = refreshGeneration.current
     const target = chosenPathRef.current
     setLogLoadingMore(true)
     try {
-      const next = await gitApi.gitLog(gitScope, LOG_BATCH, logEntries.length, target)
+      const next = await gitApi.gitLog(
+        gitScope,
+        LOG_BATCH,
+        0,
+        target,
+        logCursor === undefined ? { roots: [] } : { cursor: logCursor },
+      )
       // A worktree switch clears the old history and increments generation.
       // Never append a late page from that checkout into the new one.
       if (generation !== refreshGeneration.current || target !== chosenPathRef.current) return
-      setLogEntries(entries => [...entries, ...next])
-      if (next.length < LOG_BATCH) setLogEnded(true)
+      setLogEntries(entries => [...entries, ...(Array.isArray(next) ? next : next.entries)])
+      if (Array.isArray(next)) {
+        if (next.length < LOG_BATCH) setLogEnded(true)
+      } else {
+        setLogCursor(next.cursor)
+        if (!next.hasMore) setLogEnded(true)
+      }
     } catch (reason) {
       if (generation === refreshGeneration.current && target === chosenPathRef.current) {
         setCommitError(`${t('historyLoadError')}: ${errorMessage(reason)}`)
@@ -462,9 +553,12 @@ export function GitLens(props: GitLensProps) {
     setFileMenu({ entry, staged, x: event.clientX, y: event.clientY })
   }
 
-  const openHistoryMenu = (event: MouseEvent, entry: GitLogEntry): void => {
+  /** The open history-row context menu, opened from BOTH the built-in list
+   *  rows (a DOM mouse event) and the gitGraph rows (the framework's pointer
+   *  event wrapper) — both structurally satisfy this minimal face. */
+  const openHistoryMenu = (event: { clientX: number; clientY: number; preventDefault(): void; stopPropagation?(): void }, entry: GitLogEntry): void => {
     event.preventDefault()
-    event.stopPropagation()
+    event.stopPropagation?.()
     setHistoryMenu({ entry, x: event.clientX, y: event.clientY })
   }
 
@@ -535,6 +629,84 @@ export function GitLens(props: GitLensProps) {
       .map(({ descriptor }) => ({ descriptor, props: actionProps }))
     // registryVersion forces a re-read on register/dispose.
   }, [service, commitTarget, registryVersion, refresh])
+
+  /** ══ gitGraph v1 soft join (provider: dsh-git-graph) ══
+   *  The history section renders through the provider's generic GraphTree
+   *  framework when the service is present and protocol-compatible: rows are
+   *  this lens' own log entries (id = full hash + real parents), each row's
+   *  whole content stays the built-in two-line commit row, and every
+   *  interaction (preview / context menu / paging) stays here — the framework
+   *  only draws lanes, virtualizes and routes keyboard/pointer events. */
+  const gitGraph = useGitGraph()
+  /** The exact checkout shown (worktree > status root > discovered root). */
+  const historyRoot = selectedWorktree ?? status?.root ?? repoRoot
+  /** Rows for the framework: the stable full hash + real parents only. */
+  const graphRows = useMemo<GraphTreeRow[]>(
+    () => logEntries.map(entry => ({ id: entry.hashFull, parents: entry.parents })),
+    [logEntries],
+  )
+  /** row id (full hash) → entry, for event routing and row content. */
+  const logEntryById = useMemo(() => {
+    const map = new Map<string, GitLogEntry>()
+    for (const entry of logEntries) map.set(entry.hashFull, entry)
+    return map
+  }, [logEntries])
+  const previewLogRow = (id: string): void => {
+    const entry = logEntryById.get(id)
+    if (entry !== undefined) onPreview(commitRefOf(entry))
+  }
+  /** A framework crash is sticky for the episode: re-arm on checkout change
+   *  (or service change) so a consistent thrower cannot loop every render. */
+  useEffect(() => { setGraphFailed(false) }, [gitGraph, scope.sessionId, scope.cwd, historyRoot])
+  const graphReady = gitGraph !== undefined && historyRoot !== undefined && !graphFailed
+  /** The shared two-line commit row content — the exact same markup the
+   *  built-in list rows render (hash + subject / ref pills + author·time). */
+  const renderLogRowContent = (entry: GitLogEntry | undefined): ReactNode => {
+    if (entry === undefined) return null
+    return (
+      <>
+        <span className={css.gitLogLine1}>
+          <span className={css.gitLogHash}>{entry.hash}</span>
+          <span className={css.gitLogSubject}>{entry.subject}</span>
+        </span>
+        <span className={css.gitLogLine2}>
+          {refDecorations(entry.refs, localBranches).map(({ name, kind }) => (
+            <span key={name} className={css.gitLogRef} data-kind={kind}>{name}</span>
+          ))}
+          <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
+        </span>
+      </>
+    )
+  }
+  const graphRowAttributes = (row: GraphTreeRow): Record<string, string> => {
+    const entry = logEntryById.get(row.id)
+    return entry === undefined ? {} : { title: `${entry.author} · ${entry.date}\n${entry.hashFull}` }
+  }
+  /** The GraphTree element when the framework path is live (created as an
+   *  ELEMENT inside GraphBoundary so a throwing framework render is caught
+   *  and the section falls back to the built-in list). */
+  const graphProps: GraphTreeProps<GraphTreeRow> = {
+    rows: graphRows,
+    rowHeight: GRAPH_ROW_HEIGHT,
+    selectedId: selectedRef?.kind === 'commit' ? selectedRef.hashFull : undefined,
+    onSelect: previewLogRow,
+    onActivate: previewLogRow,
+    onContextMenu: (id, event) => {
+      const entry = logEntryById.get(id)
+      if (entry !== undefined) openHistoryMenu(event, entry)
+    },
+    hasMore: !logEnded,
+    onLoadMore: () => { void loadMoreLog() },
+    loading: logLoadingMore,
+    ariaLabel: t('history'),
+    emptyText: t('noHistory'),
+    loadingText: t('loading'),
+    loadMoreText: t('loadMore'),
+    renderRow: (row) => (
+      <span className={css.gitLogGraphRow}>{renderLogRowContent(logEntryById.get(row.id))}</span>
+    ),
+    rowAttributes: graphRowAttributes,
+  }
 
   const renderEntry = (entry: GitStatusEntry, staged: boolean): ReactNode => {
     const selected = isPreviewedWorktree(entry, staged)
@@ -693,44 +865,48 @@ export function GitLens(props: GitLensProps) {
 
           <div className={css.gitSection}>
             <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
-            {logEntries.map(entry => (
-              <div
-                key={entry.hashFull}
-                role="button"
-                tabIndex={0}
-                className={css.gitLogRow}
-                data-selected={selectedRef?.kind === 'commit' && selectedRef.hashFull === entry.hashFull ? 'true' : undefined}
-                title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
-                onClick={() => { onPreview(commitRefOf(entry)) }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    onPreview(commitRefOf(entry))
-                  }
-                }}
-                onContextMenu={(event) => { openHistoryMenu(event, entry) }}
-              >
-                <span className={css.gitLogLine1}>
-                  <span className={css.gitLogHash}>{entry.hash}</span>
-                  <span className={css.gitLogSubject}>{entry.subject}</span>
-                </span>
-                <span className={css.gitLogLine2}>
-                  {refNames(entry.refs).map(ref => (
-                    <span key={ref} className={css.gitLogRef}>{ref}</span>
-                  ))}
-                  <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
-                </span>
-              </div>
-            ))}
-            {!logEnded && (
-              <button
-                type="button"
-                className={css.gitLogMore}
-                disabled={logLoadingMore || busy}
-                onClick={() => { void loadMoreLog() }}
-              >
-                {logLoadingMore ? t('loading') : t('loadMore')}
-              </button>
+            {graphReady ? (
+              // gitGraph framework path: the framework draws lanes/edges,
+              // virtualizes the viewport and routes events; every row's
+              // content and all Git business stay here (see the state block
+              // above). A throwing framework render is caught by the
+              // boundary and degrades to the built-in list below.
+              <GraphBoundary onFail={() => { setGraphFailed(true) }}>
+                {createElement(gitGraph.GraphTree, graphProps)}
+              </GraphBoundary>
+            ) : (
+              <>
+                {logEntries.map(entry => (
+                  <div
+                    key={entry.hashFull}
+                    role="button"
+                    tabIndex={0}
+                    className={css.gitLogRow}
+                    data-selected={selectedRef?.kind === 'commit' && selectedRef.hashFull === entry.hashFull ? 'true' : undefined}
+                    title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
+                    onClick={() => { onPreview(commitRefOf(entry)) }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onPreview(commitRefOf(entry))
+                      }
+                    }}
+                    onContextMenu={(event) => { openHistoryMenu(event, entry) }}
+                  >
+                    {renderLogRowContent(entry)}
+                  </div>
+                ))}
+                {!logEnded && (
+                  <button
+                    type="button"
+                    className={css.gitLogMore}
+                    disabled={logLoadingMore || busy}
+                    onClick={() => { void loadMoreLog() }}
+                  >
+                    {logLoadingMore ? t('loading') : t('loadMore')}
+                  </button>
+                )}
+              </>
             )}
           </div>
 

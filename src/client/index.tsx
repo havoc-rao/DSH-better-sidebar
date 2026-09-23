@@ -28,6 +28,7 @@ import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { installFileTreeUiSeat } from './file-tree-ui.ts'
+import { bindGitGraph, unbindGitGraph } from './git-lens-graph.ts'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
@@ -82,6 +83,17 @@ export function apply(ctx: Context): void {
     installFileTreeUiSeat(ctx)
     return () => { installFileTreeUiSeat(null) }
   }, 'dsh-better-sidebar: fileTreeUi service seat')
+
+  // Optional gitGraph v1 service seat (provider: dsh-git-graph): the Git
+  // lens' history section renders through the provider's generic GraphTree
+  // framework when the v1 service is present (row-model injection; see
+  // GitLens.tsx / git-lens-graph.ts) and falls back to its own history list
+  // otherwise. Same bind-on-apply / unbind-on-dispose discipline as the
+  // fileTreeUi seat above.
+  ctx.effect(() => {
+    bindGitGraph(ctx)
+    return () => { unbindGitGraph() }
+  }, 'dsh-better-sidebar: gitGraph service seat')
 
   // The sidebar follows the DSH i18n system: attach the locale service so
   // the module-level t()/isZh() resolve the Host-backed language preference

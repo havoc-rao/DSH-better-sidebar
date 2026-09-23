@@ -148,6 +148,7 @@ export const fr: Record<string, string> = {
   worktree: 'Arborescence de travail',
   checkoutError: 'Échec du changement de branche',
   history: 'Historique',
+  noHistory: 'Aucun commit pour le moment',
   changes: 'Modifications',
   changesGitLens: 'Git',
   changesSessionLens: 'Session',

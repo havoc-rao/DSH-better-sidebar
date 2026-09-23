@@ -205,6 +205,58 @@ const disposeGit: () => void = service.registerGitProvider(gitProvider)
 const gitProviders: readonly GitProviderDescriptor[] = service.getGitProviders()
 void gitSource; void gitOk; void disposeGit; void gitProviders
 
+/** gitGraph v1 framework consumption (soft join, provider dsh-git-graph):
+ *  type-only cross-package contract; the consumer holds the literal service
+ *  name / protocol version and shape-checks the runtime value itself. */
+import type {
+  GitGraphServiceV1,
+  GraphTreePointerEvent,
+  GraphTreeProps,
+  GraphTreeRow,
+  GraphTreeRowContext,
+} from 'dsh-git-graph/client-contract'
+declare const gitGraphValue: unknown
+const gitGraph: GitGraphServiceV1 | undefined
+  = (gitGraphValue !== null && typeof gitGraphValue === 'object'
+    && (gitGraphValue as Partial<GitGraphServiceV1>).protocolVersion === 1
+    && typeof (gitGraphValue as Partial<GitGraphServiceV1>).GraphTree === 'function')
+    ? gitGraphValue as GitGraphServiceV1
+    : undefined
+const graphRow: GraphTreeRow = { id: 'a'.repeat(40), parents: [] }
+const graphRows: GraphTreeRow[] = [graphRow]
+gitGraph?.GraphTree<GraphTreeRow>({
+  rows: graphRows,
+  renderRow: (row: GraphTreeRow, ctx: GraphTreeRowContext) => {
+    void row.id; void ctx.index; void ctx.totalCount; void ctx.selected; void ctx.focused
+    return null
+  },
+  selectedId: graphRow.id,
+  onSelect: (id: string) => { void id },
+  onActivate: (id: string) => { void id },
+  onContextMenu: (id: string, event: GraphTreePointerEvent) => {
+    event.preventDefault()
+    const point: { x: number; y: number } = { x: event.clientX, y: event.clientY }
+    void point; void id
+  },
+  hasMore: true,
+  onLoadMore: () => {},
+  loading: false,
+  rowAttributes: (row: GraphTreeRow): Record<string, string> => ({ title: row.id }),
+  ariaLabel: 'History',
+  emptyText: 'None',
+  loadingText: 'Loading',
+  loadMoreText: 'More',
+  height: 320,
+  rowHeight: 44,
+  overscan: 5,
+  className: 'x',
+})
+const graphProps: GraphTreeProps<GraphTreeRow> = gitGraph === undefined
+  ? { rows: [], renderRow: () => null }
+  : { rows: graphRows, renderRow: () => null }
+const graphServiceVersion: 1 = gitGraph?.protocolVersion ?? 1
+void graphProps; void graphServiceVersion; void gitGraph
+
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }
 const proposed: SidebarDiffRef = { kind: 'proposed', id: 'plan:1', title: 'Plan', patch: 'diff --git a/x b/x' }

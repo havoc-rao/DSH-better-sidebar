@@ -170,6 +170,7 @@ export const zhTW: Record<string, string> = {
   worktree: '工作樹',
   checkoutError: '切換分支失敗',
   history: '歷史',
+  noHistory: '暫無提交',
   changes: '檔案變動',
   changesGitLens: 'Git',
   changesSessionLens: '本輪檔案',

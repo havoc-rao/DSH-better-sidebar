@@ -155,6 +155,7 @@ export const vi: Record<string, string> = {
   worktree: 'Worktree',
   checkoutError: 'Chuyển branch thất bại',
   history: 'Lịch sử',
+  noHistory: 'Chưa có commit nào',
   changes: 'Thay đổi tệp',
   changesGitLens: 'Git',
   changesSessionLens: 'Phiên',

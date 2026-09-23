@@ -141,6 +141,7 @@ export const de: Record<string, string> = {
   worktree: 'Worktree',
   checkoutError: 'Branchenwechsel fehlgeschlagen',
   history: 'Verlauf',
+  noHistory: 'Noch keine Commits',
   changes: 'Dateiänderungen',
   changesGitLens: 'Git',
   changesSessionLens: 'Sitzung',

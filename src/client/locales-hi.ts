@@ -155,6 +155,7 @@ export const hi: Record<string, string> = {
   worktree: 'वर्कट्री',
   checkoutError: 'ब्रांच स्विच विफल',
   history: 'इतिहास',
+  noHistory: 'अभी तक कोई कमिट नहीं',
   changes: 'फ़ाइल परिवर्तन',
   changesGitLens: 'Git',
   changesSessionLens: 'सेशन',

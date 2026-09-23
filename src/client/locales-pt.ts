@@ -138,6 +138,7 @@ export const pt: Record<string, string> = {
   worktree: 'Worktree',
   checkoutError: 'Falha ao alternar de branch',
   history: 'Histórico',
+  noHistory: 'Nenhum commit ainda',
   changes: 'Alterações',
   changesGitLens: 'Git',
   changesSessionLens: 'Sessão',

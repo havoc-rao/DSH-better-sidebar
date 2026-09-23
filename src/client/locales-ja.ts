@@ -155,6 +155,7 @@ export const ja: Record<string, string> = {
   worktree: 'ワークツリー',
   checkoutError: 'ブランチ切り替えに失敗',
   history: '履歴',
+  noHistory: 'コミットはまだありません',
   changes: 'ファイル変更',
   changesGitLens: 'Git',
   changesSessionLens: 'セッション',

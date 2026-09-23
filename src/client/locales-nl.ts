@@ -153,6 +153,7 @@ export const nl: Record<string, string> = {
   worktree: 'Worktree',
   checkoutError: 'Wisselen van branch mislukt',
   history: 'Geschiedenis',
+  noHistory: 'Nog geen commits',
   changes: 'Bestandswijzigingen',
   changesGitLens: 'Git',
   changesSessionLens: 'Sessie',
