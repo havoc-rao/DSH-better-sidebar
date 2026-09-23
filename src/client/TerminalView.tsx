@@ -59,6 +59,7 @@ import {
 import { TerminalBlockOverlay } from './TerminalBlockOverlay.tsx'
 import type { Context } from '../context-types.ts'
 import { TerminalWaitBanner } from './TerminalWaitBanner.tsx'
+import type { TerminalTransport, TerminalTransportHandle } from './terminal-transport.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive unreasoned failures before showing the error banner. */
@@ -134,8 +135,8 @@ function xtermTheme(): ITheme {
   }
 }
 
-export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: string; store: SidebarStore }) {
-  const { ctx, scope, tabId, store } = props
+export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: string; store: SidebarStore; transport?: TerminalTransport }) {
+  const { ctx, scope, tabId, store, transport } = props
   const hostRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
@@ -260,6 +261,7 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
     const schemeSub = subscribeColorScheme(applyTheme)
 
     let socket: WebSocket | null = null
+    let transportHandle: TerminalTransportHandle | null = null
     let closed = false
     let retry: number | undefined
     let failures = 0
@@ -284,6 +286,10 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
     }
 
     const sendResize = (): void => {
+      if (transportHandle !== null) {
+        transportHandle.resize(term.cols, term.rows)
+        return
+      }
       if (socket !== null && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
       }
@@ -352,10 +358,13 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
         socket?.close()
       }
     }
-    connectRef.current = connect
 
     const inputSub = term.onData((data) => {
       tracker.onData(data, term.buffer.active.length)
+      if (transportHandle !== null) {
+        transportHandle.input(data)
+        return
+      }
       if (socket !== null && socket.readyState === WebSocket.OPEN) socket.send(data)
     })
     // Resize streams fire per layout frame during panel open/close
@@ -407,17 +416,50 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
     // FitAddon.fit() is a safe no-op before open. sendResize() here covers
     // the deferred path where the socket may already be open with the
     // default 80x24 dims.
-    const cancelOpen = openWhenSized(host, () => {
-      try {
-        term.open(host)
-        fit.fit()
-        sendResize()
-      } catch (error) {
-        console.error('[dsh-better-sidebar] xterm open failed:', error)
+    let cancelOpen: () => void
+    if (transport !== undefined) {
+      // External connection layer (feature 'terminalSource'): the provider
+      // resolved this transport at mount; the view only translates its
+      // callbacks into the existing banner/state surface. The built-in
+      // local pty WebSocket path below stays untouched.
+      transportHandle = transport.open({
+        term: { write: (data) => term.write(data), cols: term.cols, rows: term.rows },
+        scope,
+        tabId,
+        cwd: scope.cwd,
+        onOutput: (data) => term.write(data),
+        onConnected: (connected) => {
+          setConnected(connected)
+          if (connected) setFatal(null)
+        },
+        onFatal: (reason) => setFatal(reason),
+        onEndpoint: (endpoint) => setLastUrl(endpoint),
+      })
+      connectRef.current = () => {
+        if (transportHandle !== null && typeof transportHandle.retry === 'function') transportHandle.retry()
       }
-    })
-
-    connect()
+      cancelOpen = openWhenSized(host, () => {
+        try {
+          term.open(host)
+          fit.fit()
+          transportHandle?.resize(term.cols, term.rows)
+        } catch (error) {
+          console.error('[dsh-better-sidebar] xterm open failed:', error)
+        }
+      })
+    } else {
+      connectRef.current = connect
+      cancelOpen = openWhenSized(host, () => {
+        try {
+          term.open(host)
+          fit.fit()
+          sendResize()
+        } catch (error) {
+          console.error('[dsh-better-sidebar] xterm open failed:', error)
+        }
+      })
+      connect()
+    }
     return () => {
       closed = true
       cancelOpen()
@@ -446,7 +488,19 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
       // indefinitely — no park frame needed.
       const tabStillOpen = store.tabOpen(scope.sessionId, tabId)
       const sessionSwitched = store.getSnapshot().sessionId !== scope.sessionId
-      if (!tabStillOpen
+      if (transportHandle !== null) {
+        // Same three unmount cases as the local path: closed tab → close
+        // (kill the session immediately), conversation switch with the tab
+        // still open → park (keep alive for reattach), same-session unmount
+        // → dispose (tear the channel down; the provider's own reconnect
+        // semantics ride the view's retry). Agent-owned terminals never
+        // park — the provider decides via the tab id.
+        if (!tabStillOpen) transportHandle.close()
+        else if (tabStillOpen && sessionSwitched && !isAgentTabId(tabId)) transportHandle.park()
+        else transportHandle.dispose()
+        transportHandle = null
+        socket?.close()
+      } else if (!tabStillOpen
         && socket !== null && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'close' }))
       } else if (tabStillOpen && sessionSwitched && !isAgentTabId(tabId)

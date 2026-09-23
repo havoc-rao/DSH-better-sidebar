@@ -27,10 +27,12 @@ import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideCh
 import { api } from '../api.ts'
 import { BrowserView } from '../BrowserView.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
-import type { ComponentType } from 'react'
+import { useTerminalTransport } from '../terminal-source.ts'
+import type { TerminalTransport } from '../terminal-transport.ts'
+import type { ComponentType, ReactNode } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
-import type { TabDescriptor } from '../service.ts'
+import type { TabComponentProps, TabDescriptor } from '../service.ts'
 
 /**
  * Lazy wrapper over the terminal view: xterm (and its stylesheet) is fetched
@@ -49,12 +51,38 @@ const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
   (mod) => mod.TerminalView as ComponentType<TerminalViewProps> | undefined,
 )
 
+/**
+ * The terminal tab's SOURCE-RESOLVING wrapper (the terminal-source slot,
+ * feature 'terminalSource'): the custom transport a registered provider
+ * resolved for this (session, cwd, tab) — absent → TerminalView keeps its
+ * default local pty WebSocket, byte for byte. TerminalView reads
+ * `transport` once at mount, so resolution applies to terminals mounted
+ * after the registry read (77ddf5e-style).
+ */
+function TerminalTabTransport(props: TabComponentProps): ReactNode {
+  const { ctx, tab, scope, store } = props
+  const transport = useTerminalTransport(ctx, scope?.sessionId, scope?.cwd, tab.id)
+  return (
+    <LazyTerminal
+      ctx={ctx}
+      scope={scope}
+      store={store}
+      tabId={tab.id}
+      transport={transport}
+    />
+  )
+}
+
 /** The terminal view's props (mirror of TerminalView's own signature). */
 interface TerminalViewProps {
   ctx: Context
   scope: SessionScope
   tabId: string
   store: SidebarStore
+  /** Feature 'terminalSource': the transport a registered provider
+   *  resolved for this terminal tab; absent → TerminalView's built-in
+   *  local pty WebSocket (byte for byte). */
+  transport?: TerminalTransport
 }
 
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
@@ -330,7 +358,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
-      component: ({ ctx, tab, scope, store }) => <LazyTerminal ctx={ctx} scope={scope} store={store} tabId={tab.id} />,
+      component: (props) => <TerminalTabTransport {...props} />,
     },
     {
       id: 'browser',

@@ -15,9 +15,11 @@ import {
   Button, IconCodeOutline16, IconCopyOutline16, IconPlusOutline16,
   IconRefreshOutline16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { Context } from '../../context-types.ts'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
 import { api } from '../api.ts'
 import type { BetterSidebarService, GitCommitActionProps, GitCommitTarget } from '../service.ts'
+import { useGitSource } from '../git-source.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx'
 import { usePolling } from '../use-polling.ts'
 import { baseName, isWithinWorkspace, relativeTo } from '../paths.ts'
@@ -97,6 +99,10 @@ const LOG_BATCH = 20
 const WORKTREE_RECHECK_TICKS = 15
 
 export interface GitLensProps {
+  /** The client context: resolves the git data source (feature `gitSource`).
+   *  Absent (standalone/test compositions) → local host routes, byte for
+   *  byte. */
+  ctx?: Context
   scope: SessionScope
   /** The sidebar store: reads the `workspaceFence` pref (see the open guard below). */
   store: SidebarStore
@@ -125,7 +131,7 @@ export interface GitLensProps {
 }
 
 export function GitLens(props: GitLensProps) {
-  const { scope, store, commitMsg, onCommitMsgChange, onCommitMsgCommitted, onOpenFile, onPreview, selectedRef, visible, service } = props
+  const { ctx, scope, store, commitMsg, onCommitMsgChange, onCommitMsgCommitted, onOpenFile, onPreview, selectedRef, visible, service } = props
   /** This instance's own key in the live-target registry (stable across renders). */
   const [ownerId] = useState(() => {
     nextGitLensOwner += 1
@@ -170,6 +176,12 @@ export function GitLens(props: GitLensProps) {
 
   const gitScope: SessionScope = repoRoot === undefined ? scope : { ...scope, repoRoot }
 
+  /** The resolved git data source for this scope (feature 'gitSource'):
+   *  a matching provider's GitDataSource shadows the host `api.git*`
+   *  routes; no match → `api` itself (byte for byte). */
+  const gitSource = useGitSource(ctx, gitScope)
+  const gitApi = gitSource ?? api
+
   /** Publish a complete checkout-derived view. Status, branch choices and
    *  history are one consistency unit: never mix rows from two worktrees. */
   const refreshTarget = useCallback(async (
@@ -180,9 +192,9 @@ export function GitLens(props: GitLensProps) {
     setError(null)
     try {
       const [statusResult, branchResult, logResult] = await Promise.all([
-        api.gitStatus(gitScope, target),
-        api.gitBranch(gitScope, target).catch(() => ({ current: '', names: [] as string[] })),
-        api.gitLog(gitScope, LOG_BATCH, 0, target).catch(() => [] as GitLogEntry[]),
+        gitApi.gitStatus(gitScope, target),
+        gitApi.gitBranch(gitScope, target).catch(() => ({ current: '', names: [] as string[] })),
+        gitApi.gitLog(gitScope, LOG_BATCH, 0, target).catch(() => [] as GitLogEntry[]),
       ])
       if (options.generation !== refreshGeneration.current) return
       setStatus(statusResult)
@@ -198,9 +210,12 @@ export function GitLens(props: GitLensProps) {
       if (options.loading && options.generation === refreshGeneration.current) setLoading(false)
     }
     // Granular scope fields: the scope object's identity churns, only its
-    // sessionId / cwd fields gate the git target.
+    // sessionId / cwd fields gate the git target. `gitSource` joins the deps
+    // so a provider registering/unregistering (feature 'gitSource') lands in
+    // the refresh path — the registry subscription re-renders, and a fresh
+    // source must be able to re-own the next refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope.sessionId, scope.cwd, repoRoot])
+  }, [scope.sessionId, scope.cwd, repoRoot, gitSource])
 
   const refresh = useCallback(async (silent = false): Promise<void> => {
     if (refreshInFlight.current) return
@@ -211,12 +226,12 @@ export function GitLens(props: GitLensProps) {
       // STATUS is all that changes between worktree re-lists (see
       // WORKTREE_RECHECK_TICKS) — one git process instead of two.
       if (silent && chosenPathRef.current !== undefined && (silentTickCount.current += 1) % WORKTREE_RECHECK_TICKS !== 0) {
-        const statusResult = await api.gitStatus(gitScope, chosenPathRef.current)
+        const statusResult = await gitApi.gitStatus(gitScope, chosenPathRef.current)
         if (generation === refreshGeneration.current) setStatus(statusResult)
         return
       }
       silentTickCount.current = 0
-      const listed = await api.gitWorktrees(scope)
+      const listed = await gitApi.gitWorktrees(scope)
       if (generation !== refreshGeneration.current) return
       setWorktrees(listed)
       const selectedStillExists = listed.some(entry => entry.path === chosenPathRef.current)
@@ -250,7 +265,7 @@ export function GitLens(props: GitLensProps) {
       // A poll may update status alone only while staying on the same checkout.
       // Any automatic selection change refreshes the complete derived view.
       if (silent && !targetChanged) {
-        const statusResult = await api.gitStatus(gitScope, target)
+        const statusResult = await gitApi.gitStatus(gitScope, target)
         if (generation === refreshGeneration.current) setStatus(statusResult)
         return
       }
@@ -264,9 +279,11 @@ export function GitLens(props: GitLensProps) {
       refreshInFlight.current = false
     }
     // Granular scope fields: the scope object's identity churns, only its
-    // sessionId / cwd fields gate the refresh target.
+    // sessionId / cwd fields gate the refresh target. `gitSource` joins the
+    // deps so a provider registration change re-runs the mount refresh
+    // through the new source (see refreshTarget).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope.sessionId, scope.cwd, refreshTarget])
+  }, [scope.sessionId, scope.cwd, refreshTarget, gitSource])
 
   useEffect(() => {
     refreshGeneration.current += 1
@@ -322,7 +339,7 @@ export function GitLens(props: GitLensProps) {
     const target = chosenPathRef.current
     setLogLoadingMore(true)
     try {
-      const next = await api.gitLog(gitScope, LOG_BATCH, logEntries.length, target)
+      const next = await gitApi.gitLog(gitScope, LOG_BATCH, logEntries.length, target)
       // A worktree switch clears the old history and increments generation.
       // Never append a late page from that checkout into the new one.
       if (generation !== refreshGeneration.current || target !== chosenPathRef.current) return
@@ -367,8 +384,8 @@ export function GitLens(props: GitLensProps) {
   const stageEntry = async (entry: GitStatusEntry, staged: boolean): Promise<void> => {
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(gitScope, entry.path, selectedWorktree)
-      else await api.gitStage(gitScope, entry.path, selectedWorktree)
+      if (staged) await gitApi.gitUnstage(gitScope, entry.path, selectedWorktree)
+      else await gitApi.gitStage(gitScope, entry.path, selectedWorktree)
       await refresh()
     } finally {
       setBusy(false)
@@ -378,8 +395,8 @@ export function GitLens(props: GitLensProps) {
   const stageAll = async (staged: boolean): Promise<void> => {
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(gitScope, undefined, selectedWorktree)
-      else await api.gitStage(gitScope, undefined, selectedWorktree)
+      if (staged) await gitApi.gitUnstage(gitScope, undefined, selectedWorktree)
+      else await gitApi.gitStage(gitScope, undefined, selectedWorktree)
       await refresh()
     } finally {
       setBusy(false)
@@ -392,7 +409,7 @@ export function GitLens(props: GitLensProps) {
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCommit(gitScope, message, selectedWorktree)
+      await gitApi.gitCommit(gitScope, message, selectedWorktree)
       // Clear the draft immediately — not via the debounce: a committed
       // message must not resurrect when the lens reopens.
       onCommitMsgCommitted()
@@ -409,7 +426,7 @@ export function GitLens(props: GitLensProps) {
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCheckout(gitScope, branch, selectedWorktree)
+      await gitApi.gitCheckout(gitScope, branch, selectedWorktree)
       await refresh()
     } catch (reason) {
       setCommitError(`${t('checkoutError')}: ${errorMessage(reason)}`)
@@ -768,7 +785,7 @@ export function GitLens(props: GitLensProps) {
                   title: t('discardTitle'),
                   description: t('discardDesc', { path: target.entry.path }),
                   confirmLabel: t('discard'),
-                  onConfirm: () => api.gitDiscard(gitScope, target.entry.path, selectedWorktree),
+                  onConfirm: () => gitApi.gitDiscard(gitScope, target.entry.path, selectedWorktree),
                 })
                 return
               }
@@ -823,7 +840,7 @@ export function GitLens(props: GitLensProps) {
                   title: t('revertTitle'),
                   description: t('revertDesc', { subject: target.entry.subject }),
                   confirmLabel: t('revertCommit'),
-                  onConfirm: () => api.gitRevert(gitScope, target.entry.hashFull, selectedWorktree),
+                  onConfirm: () => gitApi.gitRevert(gitScope, target.entry.hashFull, selectedWorktree),
                 })
                 return
               }
@@ -832,7 +849,7 @@ export function GitLens(props: GitLensProps) {
                   title: t('cherryPickTitle'),
                   description: t('cherryPickDesc', { subject: target.entry.subject }),
                   confirmLabel: t('cherryPickCommit'),
-                  onConfirm: () => api.gitCherryPick(gitScope, target.entry.hashFull, selectedWorktree),
+                  onConfirm: () => gitApi.gitCherryPick(gitScope, target.entry.hashFull, selectedWorktree),
                 })
               }
             }}

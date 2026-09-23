@@ -30,6 +30,8 @@ import { baseName, extOf } from './paths.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import type { GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
+import type { TerminalProviderDescriptor } from './terminal-source.ts'
+import type { GitProviderDescriptor } from './git-source.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -48,6 +50,8 @@ export type {
 } from './state.ts'
 export type { SessionScope } from './api.ts'
 export type { SidebarPrefs } from '../prefs-shared.ts'
+export type { TerminalProviderDescriptor } from './terminal-source.ts'
+export type { GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
@@ -566,6 +570,38 @@ export interface BetterSidebarService {
   /** Snapshot of the registered commit actions in REGISTRATION order (the row sorts by `order`). */
   getGitCommitActions(): readonly GitCommitActionDescriptor[]
   /**
+   * Register one terminal-source provider (v0.22.0+, feature
+   * `terminalSource`): the DEFAULT terminal tab's connection-layer
+   * injection slot. `match` decides per (sessionId, cwd, tabId); the first
+   * matching provider's `createTransport` supplies the TerminalTransport
+   * TerminalView opens (see terminal-source.ts / terminal-transport.ts).
+   * Returns a disposer; a duplicate id throws. Agent-owned terminals
+   * (`agent:` tab ids) and global shared terminals (`gb:`) belong to the
+   * platform and must never be taken over — providers gate them in
+   * `match`. With no provider matched, the built-in local pty transport is
+   * used (byte-for-byte the historical behavior).
+   */
+  registerTerminalProvider(provider: TerminalProviderDescriptor): () => void
+  /** Snapshot of the registered terminal-source providers in REGISTRATION order. */
+  getTerminalProviders(): readonly TerminalProviderDescriptor[]
+  /**
+   * Register one git data-source provider (v0.23.0+, feature `gitSource`):
+   * the git surfaces' data-source injection slot. A provider owns every
+   * git read AND mutation of the sessions its `match` accepts — the git
+   * lens panel, the explorer's git-status decorations and the diff tabs
+   * route their `api.git*` calls through the provider's GitDataSource (a
+   * shadow of the host `git.*` route surface, same signatures verbatim);
+   * sessions no provider matches keep the local host routes byte for byte.
+   * Resolution is registration-order, FIRST match wins; a throwing
+   * `match` / `createSource` — or an explicit `undefined` factory result
+   * (a per-session refusal) — skips that provider. A duplicate id throws;
+   * the disposer unregisters (HMR-safe through `ctx.effect`).
+   * See `git-source.ts`.
+   */
+  registerGitProvider(provider: GitProviderDescriptor): () => void
+  /** The registered git providers (registration order). */
+  getGitProviders(): readonly GitProviderDescriptor[]
+  /**
    * The live Git target of the changes tab's Git lens, or undefined when no
    * Git lens is currently showing a repository. This is a POINT-IN-TIME read
    * (publishing a target does not fire `subscribe`): a plugin that renders in
@@ -750,7 +786,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.20.0'
+export const SIDEBAR_SERVICE_VERSION = '0.23.0-mainslot.1'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -801,6 +837,8 @@ export const SIDEBAR_FEATURES = [
   'panelFlags',
   'gitCommitActions',
   'planDiff',
+  'terminalSource',
+  'gitSource',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -832,6 +870,8 @@ export function createBetterSidebarService(
   const viewers = new Map<string, FileViewerDescriptor>()
   const fileIcons = new Map<string, FileIconDescriptor>()
   const commitActions = new Map<string, GitCommitActionDescriptor>()
+  const terminalProviders = new Map<string, TerminalProviderDescriptor>()
+  const gitProviders = new Map<string, GitProviderDescriptor>()
   /** ownerId → the live target; `seq` resolves "most recently published". */
   const commitTargets = new Map<string, { seq: number; target: GitCommitTarget }>()
   let commitTargetSeq = 0
@@ -910,6 +950,38 @@ export function createBetterSidebarService(
   }
 
   const getGitCommitActions = (): readonly GitCommitActionDescriptor[] => Array.from(commitActions.values())
+
+  const registerTerminalProvider = (provider: TerminalProviderDescriptor): (() => void) => {
+    if (terminalProviders.has(provider.id)) {
+      throw new Error(`[dsh-better-sidebar] terminal provider "${provider.id}" already registered`)
+    }
+    terminalProviders.set(provider.id, provider)
+    notify()
+    return () => {
+      if (terminalProviders.get(provider.id) === provider) {
+        terminalProviders.delete(provider.id)
+        notify()
+      }
+    }
+  }
+
+  const getTerminalProviders = (): readonly TerminalProviderDescriptor[] => Array.from(terminalProviders.values())
+
+  const registerGitProvider = (provider: GitProviderDescriptor): (() => void) => {
+    if (gitProviders.has(provider.id)) {
+      throw new Error(`[dsh-better-sidebar] git provider "${provider.id}" already registered`)
+    }
+    gitProviders.set(provider.id, provider)
+    notify()
+    return () => {
+      if (gitProviders.get(provider.id) === provider) {
+        gitProviders.delete(provider.id)
+        notify()
+      }
+    }
+  }
+
+  const getGitProviders = (): readonly GitProviderDescriptor[] => Array.from(gitProviders.values())
 
   // Publishing a target deliberately does NOT notify subscribers: the Git lens
   // is itself a subscriber (it re-renders on registry changes), and notifying
@@ -1347,6 +1419,10 @@ export function createBetterSidebarService(
     registerFileIcon,
     registerGitCommitAction,
     getGitCommitActions,
+    registerTerminalProvider,
+    getTerminalProviders,
+    registerGitProvider,
+    getGitProviders,
     getGitCommitTarget,
     setGitCommitTarget,
     getTabs,

@@ -36,6 +36,20 @@ import { loadChunk } from './chunk-loader.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
+/**
+ * Public slot surface re-exported for consumers (features `terminalSource`
+ * and `gitSource`, v0.22.0+ / v0.23.0+): the provider descriptor types and
+ * the pure resolvers / live hooks plugins use to take over the default
+ * terminal tab's connection layer and the git data face of matched
+ * sessions. The registry entry point stays `ctx.betterSidebar`
+ * (`registerTerminalProvider` / `registerGitProvider`).
+ */
+export type { TerminalProviderDescriptor } from './terminal-source.ts'
+export { resolveTerminalSource, useTerminalTransport } from './terminal-source.ts'
+export type { TerminalTransport, TerminalTransportHandle, TerminalTransportSession, TerminalTransportSurface, TerminalViewProps } from './terminal-transport.ts'
+export type { GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
+export { resolveGitSource, useGitSource } from './git-source.ts'
+
 /** Services required before mounting (provided by the client runtime; the
  *  locale service backs the sidebar's copy — see locales.ts). `modules`
  *  (rc.8+) is the client module system the chunk loader resolves its

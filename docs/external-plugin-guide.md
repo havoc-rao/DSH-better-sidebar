@@ -1222,3 +1222,46 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 通过 `ctx.betterSidebar` 的三方插件 [dsh-sidebar-qa](https://github.com/ChenRuoT/dsh-sidebar-qa) —— 基于 better-sidebar 的划选提问：对话划选 → 右侧面板提问 → 同工作区独立追问会话（❓追问·主题）；快速无思考模型压缩主对话上下文后与引文一起注入，不打断主对话；追问可嵌套、可继续、可归档。
 
 更多插件接入后欢迎在此登记（一句话 + 链接）。
+
+---
+
+## Terminal source 槽位（feature 'terminalSource'）
+
+终端 tab 的连接层注入槽位（v0.22.0+，本构建 `0.23.0-mainslot.1`）：允许外部插件接管**默认终端 tab**（内置 descriptor 铸造的 `terminal:<uuid>` tab）的 connection layer，而视图自身（xterm 渲染、块覆盖层、选择、fit/theme/font、banner 状态机）原样保留。
+
+- **注册方法**（`ctx.betterSidebar`，返回 disposer，Cordis `ctx.effect` HMR-safe；重复 id 抛错）：
+
+  ```ts
+  registerTerminalProvider(provider: {
+    id: string
+    match(sessionId: string, cwd: string | undefined, tabId: string): boolean
+    createTransport(sessionId: string, cwd: string | undefined, tabId: string): TerminalTransport | undefined
+  }): () => void
+  getTerminalProviders(): readonly TerminalProviderDescriptor[]
+  ```
+
+- **features 门**：`features` 含 `'terminalSource'`（`SIDEBAR_FEATURES` 数组）；消费插件注册前先 `features.includes('terminalSource')` 探测。
+- **解析语义**：注册顺序 first-match——终端 tab 挂载时按注册顺序求值 `match(sessionId, cwd, tabId)`（三参数逐字透传，不做任何路径/会话转换），第一个命中者的 `createTransport` 提供 `TerminalTransport`（即视图已有的 transport 语义，不是第二套 wire 协议）；`match` 抛错跳过（console.error），`createTransport` 抛错或返回 `undefined`（按 tab 拒接）同样跳过并轮到下一个 provider。解析是纯函数（`resolveTerminalSource`），渲染侧经 `useTerminalTransport` hook 订阅注册表，provider 晚注册只影响之后挂载的 tab，不热切换已打开的终端。
+- **本地回退**：无 provider 匹配（或无注册）→ tab 不携带 `transport` prop 挂载，TerminalView 逐字节保持内置本地 pty WebSocket 行为。`agent:` tab（模型自有终端）与 `gb:`（全局共享终端窗口）由 provider 在 `match` 里自行拒绝——平台终端绝不允许被接管。默认内置终端即是通过 `src/client/builtins/tabs.tsx` 的 `TerminalTabTransport` 包装走同一解析面（吃狗粮）。
+- **消费方引导**：参考实现在 [dsh-remote](https://github.com/omdsh-dev/dsh-remote) 的 `terminalTunnel`（`lib/client.js`：`{ id, apiVersion, match(sessionId,cwd,tabId), createTransport(sessionId,cwd,tabId)→transport|null }` 注册点 + `makeRemoteTransport`）。`TerminalTransport` 词汇（`src/client/terminal-transport.ts`）：`{ kind, open(session) → handle }`；`handle = { input(data), resize(cols,rows), close(), park(), dispose(), retry?() }`；`session = { term: { write(data), cols, rows }, scope, tabId, cwd?, onOutput(data), onTitle?(title, info?), onConnected?(bool), onFatal?(reason|null), onEndpoint?(url) }`。类型与解析器从 `dsh-better-sidebar/client/index` 可导入（`TerminalProviderDescriptor` / `resolveTerminalSource` / `useTerminalTransport` / `TerminalTransport*`）。
+
+## Git data source 槽位（feature 'gitSource'）
+
+git 数据面注入槽位（v0.23.0+，本构建 `0.23.0-mainslot.1`）：允许外部插件**整体接管**所匹配会话的 git 读与写——changes tab 的 Git lens（`src/client/changes/GitLens.tsx`）把每一次 `api.git*` 调用改经 provider 的 `GitDataSource` 路由。
+
+- **注册方法**（`ctx.betterSidebar`，返回 disposer，Cordis `ctx.effect` HMR-safe；重复 id 抛错）：
+
+  ```ts
+  registerGitProvider(provider: {
+    id: string
+    match(sessionId: string, cwd: string | undefined): boolean
+    createSource(sessionId: string, cwd: string | undefined): GitDataSource | undefined
+  }): () => void
+  getGitProviders(): readonly GitProviderDescriptor[]
+  ```
+
+- **features 门**：`features` 含 `'gitSource'`；消费插件注册前先 `features.includes('gitSource')` 探测。
+- **解析语义**：注册顺序 first-match——`match(sessionId, cwd)` 逐字透传；`createSource` 返回 `undefined`（按会话拒接）或抛错 → 跳过并轮到下一个 provider（`resolveGitSource`，throwing-safe）；渲染侧 `useGitSource(ctx, scope)` hook 订阅注册表并随 `scope.sessionId / cwd / repoRoot` 变化重解析，无匹配 → `gitApi = api`（本地 host 路由逐字节不变）。
+- **契约形状**：`GitDataSource` 是 host `api.git*` 路由面的**影子**（签名与返回形状逐字一致，`src/client/git-source.ts`）：`gitStatus / gitWorktrees / gitBranch / gitLog / gitDiff / gitStage / gitUnstage / gitCommit / gitCheckout / gitDiscard / gitRevert / gitCherryPick`（`gitCommitDiff` / `gitShow` 不在契约内，保持宿主直连）；变更类操作返回 `{ ok: true }`。`tests/git-source.spec.tsx` 以 `const _hostShadowsContract: GitDataSource = api` 在编译期守护形状（api.ts 漂移即 typecheck 失败）。
+- **本地回退**：无 provider 匹配（或无注册）、`ctx` 缺失（独立/测试组合）→ 全部 git 调用保持 host 路由，逐字节原行为。
+- **消费方引导**：参考实现在 [dsh-remote-workbench](https://github.com/omdsh-dev/dsh-remote-workbench) 的 `buildGitSource`（`lib/client.js`：按 `(sessionId, cwd)` 记忆化构建 12 方法 source，`/git/read` + `/git/mutate` 远程 RPC；未覆盖操作显式 reject）。类型与解析器从 `dsh-better-sidebar/client/index` 可导入（`GitProviderDescriptor` / `GitDataSource` / `GitOkResult` / `resolveGitSource` / `useGitSource`）。

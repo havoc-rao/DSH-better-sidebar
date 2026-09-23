@@ -26,6 +26,9 @@ import type {
   GitCommitActionDescriptor,
   GitCommitActionProps,
   GitCommitTarget,
+  GitDataSource,
+  GitOkResult,
+  GitProviderDescriptor,
   OpenTabSeed,
   SidebarSettingsDeclaration,
   SidebarSettingsRenderProps,
@@ -33,6 +36,7 @@ import type {
   SidebarSettingToggleType,
   TabComponentProps,
   TabDescriptor,
+  TerminalProviderDescriptor,
 } from '../src/client/service.ts'
 import type {
   GitDiffRef,
@@ -177,6 +181,29 @@ service.registerGitCommitAction(commitAction)
 service.getGitCommitActions()
 service.getGitCommitTarget()
 service.getGitCommitTarget({ sessionId: 's1', cwd: '/p' })
+
+/** Terminal-source slot (feature `terminalSource`). */
+const terminalDescriptor: TerminalProviderDescriptor = {
+  id: 'my-plugin:terminal',
+  match: (sessionId: string, _cwd: string | undefined, tabId: string) =>
+    sessionId === 's1' && !tabId.startsWith('agent:') && !tabId.startsWith('gb:'),
+  createTransport: () => undefined, // a refusal is a valid factory result
+}
+const disposeTerminal: () => void = service.registerTerminalProvider(terminalDescriptor)
+const terminalProviders: readonly TerminalProviderDescriptor[] = service.getTerminalProviders()
+void disposeTerminal; void terminalProviders
+
+/** Git data-source slot (feature `gitSource`). */
+const gitProvider: GitProviderDescriptor = {
+  id: 'my-plugin:git',
+  match: (sessionId: string) => sessionId === 's1',
+  createSource: () => undefined, // a refusal is a valid factory result
+}
+const gitSource: GitDataSource | undefined = undefined
+const gitOk: GitOkResult = { ok: true }
+const disposeGit: () => void = service.registerGitProvider(gitProvider)
+const gitProviders: readonly GitProviderDescriptor[] = service.getGitProviders()
+void gitSource; void gitOk; void disposeGit; void gitProviders
 
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }
