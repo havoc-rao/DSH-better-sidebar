@@ -83,6 +83,9 @@ importers:
       dompurify:
         specifier: ^3.4.14
         version: 3.4.14
+      dsh-git-graph:
+        specifier: link:../DSH-git-graph
+        version: link:../DSH-git-graph
       mermaid:
         specifier: ^11.16.1
         version: 11.17.0
