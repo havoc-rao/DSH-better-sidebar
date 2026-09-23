@@ -12,6 +12,7 @@
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 
 /** A parsed `git status --porcelain=v1 -z` entry. */
@@ -59,6 +60,37 @@ export interface GitLogEntry {
   date: string
   /** Ref decorations (`%D` with --decorate=short), e.g. `HEAD -> main, origin/main`; '' when none. */
   refs: string
+  /** Full parent object ids (`%P`), newest-parent first; [] for root commits. */
+  parents: string[]
+}
+
+/**
+ * One fixed-roots pagination page. In this mode the revision set never
+ * moves between pages (the snapshot pins its tip hashes), so pages fetched
+ * before/after new commits or a force-reset cannot shift rows under the
+ * graph framework's lane layout.
+ */
+export interface GitLogPage {
+  entries: GitLogEntry[]
+  /** Opaque cursor for the NEXT page (binds session/repository/offset
+   *  server-side); absent when the log ended. */
+  cursor?: string
+  hasMore: boolean
+}
+
+/** Optional fixed-roots + cursor paging switch for {@link log} (absent =
+ *  legacy skip/count behavior, unchanged). */
+export interface GitLogRequest {
+  /** Pin the paged revision set on these tip hashes. Every candidate is
+   *  re-verified by the server itself (40-hex + `rev-parse`); anything else
+   *  is rejected. An EMPTY array asks the server to pin its own HEAD tip —
+   *  the client never invents roots from heuristics. */
+  roots?: readonly string[]
+  /** Opaque cursor from a previous GitLogPage response. */
+  cursor?: string
+  /** The requesting session id (internal): cursors are bound to
+   *  session + repository and rejected on mismatch. */
+  sessionId?: string
 }
 
 /** One git failure (stderr text as the message). */
@@ -137,12 +169,12 @@ export function parseWorktreeList(output: string): GitWorktreeRecord[] {
   return rows
 }
 
-/** Parse `git log --pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D` rows. */
+/** Parse `git log --pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D%x1f%P` rows. */
 export function parseLogLines(output: string): GitLogEntry[] {
   const rows: GitLogEntry[] = []
   for (const line of output.split('\n')) {
     if (line === '') continue
-    const [hash, subject, author, date, hashFull, refs] = line.split('\x1f')
+    const [hash, subject, author, date, hashFull, refs, parents] = line.split('\x1f')
     if (hash === undefined || subject === undefined) continue
     rows.push({
       hash,
@@ -151,6 +183,7 @@ export function parseLogLines(output: string): GitLogEntry[] {
       date: date ?? '',
       hashFull: hashFull ?? hash,
       refs: refs ?? '',
+      parents: parents === undefined || parents === '' ? [] : parents.split(' '),
     })
   }
   return rows
@@ -418,13 +451,166 @@ export async function checkout(cwd: string, branch: string, selected?: string): 
   await runGit(await repoRoot(cwd, selected), ['checkout', branch])
 }
 
-/** Recent commit history (newest first), lazily pageable via skip/count. */
-export async function log(cwd: string, count = 30, skip = 0, selected?: string): Promise<GitLogEntry[]> {
-  const raw = await runGit(await repoRoot(cwd, selected), [
-    'log', '-n', String(count), '--skip', String(skip), '--decorate=short',
-    '--pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D',
+/** Recent commit history (newest first). Default: lazily pageable via
+ *  skip/count, exactly as before (rows now also carry real parents).
+ *  With `roots` / `cursor` in {@link GitLogRequest} the REVISION SET is
+ *  fixed (pinned tip hashes, `--topo-order`) and paging rides opaque
+ *  cursors — the stable-pagination mode the gitGraph framework needs. */
+export function log(
+  cwd: string,
+  count?: number,
+  skip?: number,
+  selected?: string,
+): Promise<GitLogEntry[]>
+export function log(
+  cwd: string,
+  count: number | undefined,
+  skip: number | undefined,
+  selected: string | undefined,
+  request: GitLogRequest,
+): Promise<GitLogEntry[] | GitLogPage>
+export async function log(
+  cwd: string,
+  count = 30,
+  skip = 0,
+  selected?: string,
+  request?: GitLogRequest,
+): Promise<GitLogEntry[] | GitLogPage> {
+  // Bounded pages: the panel and the framework both page lazily, and a
+  // runaway count must never flood a single response (nor the git child).
+  const safeCount = Math.max(1, Math.min(LOG_COUNT_LIMIT, count))
+  const root = await repoRoot(cwd, selected)
+  const { cursor, roots, sessionId } = request ?? {}
+  if (cursor === undefined && roots === undefined) {
+    // Legacy skip/count paging — unchanged behavior, now with parents.
+    const raw = await runGit(root, [
+      'log', '-n', String(safeCount), '--skip', String(skip), '--decorate=short',
+      '--pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D%x1f%P',
+    ])
+    return parseLogLines(raw)
+  }
+  const session = sessionId ?? ''
+  const repoKey = pathIdentity(root)
+  if (cursor !== undefined) {
+    return logPageFromCursor(root, cursor, safeCount, session, repoKey)
+  }
+  // Anchor page: pin the revision set on the requested roots (the server
+  // re-resolves and verifies every hash) or, with an empty list, on the
+  // server's own currently checked-out HEAD tip — never on client-side
+  // heuristics.
+  return fetchLogPage(root, await resolveLogRoots(root, roots), skip, safeCount, session, repoKey)
+}
+
+/** Hard cap on `max-count` per page (any mode) — see `log`. */
+const LOG_COUNT_LIMIT = 200
+/** Cursors expire after 10 minutes and are evicted lazily (and on overflow). */
+const LOG_CURSOR_TTL_MS = 10 * 60_000
+/** Live cursor upper bound; at capacity the OLDEST cursors are evicted (a
+ *  stale cursor then fails with `git-cursor` and the client re-anchors). */
+const LOG_CURSOR_LIMIT = 64
+/** A root candidate must be a full object id — ref names / revision syntax
+ *  (`HEAD~2`, `:path`, …) are rejected before ever reaching `git log`. */
+const LOG_ROOT_HASH = /^[0-9a-f]{40}$/
+
+/** cursor token → bound snapshot slice (session/repository/roots/offset). */
+const logCursors = new Map<string, { sessionId: string; repoKey: string; roots: string[]; offset: number; expiresAt: number }>()
+
+/** Resolve the pinned roots for one snapshot: every client-provided hash is
+ *  verified by the server itself (`rev-parse`); an empty request pins the
+ *  server's own HEAD tip. `[]` back means an unborn HEAD (empty repository). */
+async function resolveLogRoots(root: string, requested: readonly string[] | undefined): Promise<string[]> {
+  if (requested === undefined || requested.length === 0) {
+    try {
+      const head = (await runGit(root, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim()
+      return head === '' ? [] : [head]
+    } catch {
+      return []
+    }
+  }
+  if (requested.length > LOG_COUNT_LIMIT) {
+    throw new GitCommandError(`too many log roots (limit ${LOG_COUNT_LIMIT})`, 'git-roots', 'log')
+  }
+  const resolved: string[] = []
+  for (const candidate of requested) {
+    if (typeof candidate !== 'string' || !LOG_ROOT_HASH.test(candidate)) {
+      throw new GitCommandError(`invalid log root: ${String(candidate)}`, 'git-roots', 'log')
+    }
+    let hash: string
+    try {
+      hash = (await runGit(root, ['rev-parse', '--verify', `${candidate}^{commit}`])).trim()
+    } catch {
+      throw new GitCommandError(`unknown log root: ${candidate}`, 'git-roots', 'log')
+    }
+    if (!LOG_ROOT_HASH.test(hash)) {
+      throw new GitCommandError(`unknown log root: ${candidate}`, 'git-roots', 'log')
+    }
+    if (!resolved.includes(hash)) resolved.push(hash)
+  }
+  return resolved.sort()
+}
+
+/** Issue one random cursor token bound to the next page slice. */
+function issueLogCursor(
+  sessionId: string,
+  repoKey: string,
+  roots: string[],
+  offset: number,
+): string {
+  for (const [token, state] of logCursors) {
+    if (state.expiresAt <= Date.now()) logCursors.delete(token)
+  }
+  const token = randomUUID()
+  logCursors.set(token, { sessionId, repoKey, roots, offset, expiresAt: Date.now() + LOG_CURSOR_TTL_MS })
+  while (logCursors.size > LOG_CURSOR_LIMIT) {
+    const oldest = logCursors.keys().next().value
+    if (oldest === undefined) break
+    logCursors.delete(oldest)
+  }
+  return token
+}
+
+/** Resume paging through a previous cursor: session + repository must match
+ *  the binding, otherwise the cursor is rejected (never silently reused). */
+async function logPageFromCursor(
+  root: string,
+  token: string,
+  count: number,
+  sessionId: string,
+  repoKey: string,
+): Promise<GitLogPage> {
+  const state = logCursors.get(token)
+  if (state === undefined || state.expiresAt <= Date.now()) {
+    logCursors.delete(token)
+    throw new GitCommandError('unknown or expired log cursor', 'git-cursor', 'log')
+  }
+  if (state.sessionId !== sessionId || state.repoKey !== repoKey) {
+    throw new GitCommandError('log cursor does not belong to this session/repository', 'git-cursor', 'log')
+  }
+  return fetchLogPage(root, state.roots, state.offset, count, sessionId, repoKey)
+}
+
+async function fetchLogPage(
+  root: string,
+  roots: string[],
+  offset: number,
+  count: number,
+  sessionId: string,
+  repoKey: string,
+): Promise<GitLogPage> {
+  if (roots.length === 0) return { entries: [], hasMore: false }
+  const safeOffset = Math.max(0, Math.floor(offset))
+  const raw = await runGit(root, [
+    'log', '--topo-order', '-n', String(count), '--skip', String(safeOffset), '--decorate=short',
+    '--pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D%x1f%P',
+    ...roots, '--',
   ])
-  return parseLogLines(raw)
+  const entries = parseLogLines(raw)
+  const hasMore = entries.length === count
+  return {
+    entries,
+    ...(hasMore ? { cursor: issueLogCursor(sessionId, repoKey, roots, safeOffset + count) } : {}),
+    hasMore,
+  }
 }
 
 /**

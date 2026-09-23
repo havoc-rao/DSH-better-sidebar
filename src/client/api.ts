@@ -88,6 +88,32 @@ export interface GitLogEntry {
   date: string
   /** Ref decorations (--decorate=short), e.g. `HEAD -> main, origin/main`; '' when none. */
   refs: string
+  /** Full parent object ids (`%P`), newest-parent first; [] for root commits. */
+  parents: string[]
+}
+
+/**
+ * One fixed-roots pagination page (`git.log` with `roots`/`cursor`): the
+ * revision set is pinned on snapshot creation, so rows cannot shift between
+ * pages when new commits land — the stability the gitGraph framework's lane
+ * layout needs. `cursor` absent + `hasMore: false` = the log ended.
+ */
+export interface GitLogPage {
+  entries: GitLogEntry[]
+  /** Opaque cursor for the NEXT page (binds session/repository/offset
+   *  server-side); absent when the log ended. */
+  cursor?: string
+  hasMore: boolean
+}
+
+/** The fixed-roots + cursor paging options for {@link api.gitLog}. */
+export interface GitLogOptions {
+  /** Pin the paged revision set on these tip hashes (each is re-verified
+   *  by the host — 40-hex + rev-parse). An EMPTY array pins the host's own
+   *  HEAD tip; never invent roots from client-side heuristics. */
+  roots?: string[]
+  /** Opaque cursor from a previous GitLogPage response. */
+  cursor?: string
 }
 
 /** Text read result. */
@@ -319,11 +345,18 @@ export const api = {
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
     call<{ ok: true }>('git.checkout', gitPayload(scope, worktree, { branch })),
-  /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */
-  gitLog: (scope: SessionScope, count?: number, skip?: number, worktree?: string, signal?: AbortSignal) =>
-    call<GitLogEntry[]>('git.log', gitPayload(scope, worktree, {
+  /**
+   * Recent commit history, lazily pageable (skip/count; defaults 0/30).
+   * With `options.roots` / `options.cursor` the host switches to fixed-roots
+   * pagination ({@link GitLogPage}): the revision set is pinned on the first
+   * request of the snapshot and later pages ride opaque cursors.
+   */
+  gitLog: (scope: SessionScope, count?: number, skip?: number, worktree?: string, options?: GitLogOptions, signal?: AbortSignal) =>
+    call<GitLogEntry[] | GitLogPage>('git.log', gitPayload(scope, worktree, {
       ...(count !== undefined ? { count } : {}),
       ...(skip !== undefined ? { skip } : {}),
+      ...(options?.roots !== undefined ? { roots: options.roots } : {}),
+      ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}),
     }), signal),
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>

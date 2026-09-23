@@ -483,15 +483,36 @@ function buildApi(
       return { ok: true }
     },
     'git.log': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      const record = payload as { count?: unknown; skip?: unknown }
+      const { sessionId, cwd } = await gitCwdOf(payload)
+      const record = payload as { count?: unknown; skip?: unknown; roots?: unknown; cursor?: unknown }
       const count = typeof record.count === 'number' && Number.isInteger(record.count) && record.count > 0
         ? record.count
         : undefined
       const skip = typeof record.skip === 'number' && Number.isInteger(record.skip) && record.skip >= 0
         ? record.skip
         : undefined
-      return git.log(cwd, count, skip, selectedRepoOf(payload))
+      const roots = record.roots
+      const cursor = record.cursor
+      // Default mode: no roots / cursor → legacy skip/count paging (also the
+      // only shape old clients know). The fixed-roots + cursor mode is
+      // opt-in: `roots` (empty array = pin the server's own tips) or a
+      // cursor from a previous page response.
+      if (roots === undefined && cursor === undefined) {
+        return git.log(cwd, count, skip, selectedRepoOf(payload))
+      }
+      // Guardrails: shape-checked here (bad-request), hash/state-verified
+      // inside git.log (git-roots / git-cursor).
+      if (roots !== undefined && (!Array.isArray(roots) || roots.some(root => typeof root !== 'string'))) {
+        throw new SidebarError('bad-request', 'git.log roots must be an array of commit hashes', 400)
+      }
+      if (cursor !== undefined && (typeof cursor !== 'string' || cursor === '')) {
+        throw new SidebarError('bad-request', 'git.log cursor must be a non-empty string', 400)
+      }
+      return git.log(cwd, count, skip, selectedRepoOf(payload), {
+        ...(roots !== undefined ? { roots } : {}),
+        ...(cursor !== undefined ? { cursor } : {}),
+        sessionId,
+      })
     },
     'git.commit-diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)

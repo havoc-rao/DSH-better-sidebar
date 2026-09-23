@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
-import { parseLogLines, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
+import { parseLogLines, log, parsePorcelainZ, repoRoots, status, type GitLogPage } from '../src/git.ts'
 
 const execFileAsync = promisify(execFile)
 const normalizePath = (path: string): string => path.replaceAll('\\', '/')
@@ -149,6 +149,7 @@ describe('git parsing', () => {
         date: '2024-01-01 10:00:00 +0800',
         hashFull: 'abc1234def5678abc1234def5678abc1234def5678',
         refs: 'HEAD -> main, origin/main',
+        parents: [],
       },
       {
         hash: 'def5678',
@@ -157,8 +158,22 @@ describe('git parsing', () => {
         date: '2024-01-02 10:00:00 +0800',
         hashFull: 'def5678abc1234def5678abc1234def5678abc1234',
         refs: '',
+        parents: [],
       },
     ])
+  })
+
+  it('parses the real %P parent list (multi-parent merge row)', () => {
+    const p1 = '1111111111111111111111111111111111111111'
+    const p2 = '2222222222222222222222222222222222222222'
+    const rows = parseLogLines(
+      `abc1234\x1fMerge branch\x1fAlice\x1f2024-01-03 10:00:00 +0800\x1fabc1234def5678abc1234def5678abc1234def5678\x1fHEAD -> main\x1f${p1} ${p2}\n`
+      + `def5678\x1fRoot\x1fBob\x1f2024-01-02 10:00:00 +0800\x1fdef5678abc1234def5678abc1234def5678abc1234\x1f\x1f`,
+    )
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.parents).toEqual([p1, p2])
+    // A root commit carries an EMPTY %P segment → [].
+    expect(rows[1]!.parents).toEqual([])
   })
 
   it('parses a multi-file unified diff with aligned line numbers', () => {
@@ -254,5 +269,155 @@ describe('git parsing', () => {
   it('parses an empty or junk diff into no files', () => {
     expect(parseUnifiedDiff('').files).toEqual([])
     expect(parseUnifiedDiff('no diff here\n').files).toEqual([])
+  })
+})
+
+describe('git.log fixed-roots + cursor pagination (gitGraph data layer)', () => {
+  /** Build a real repo: A → B → (side: S) & (main: C) → merge M → D → E.
+   *  Commit order (newest first): E D M {C,S} B A. Sibling order in
+   *  --topo-order output within one level is timestamp-tied, so assertions
+   *  never depend on C-vs-S ordering. */
+  async function buildRepo(): Promise<{ root: string; hashes: Record<string, string> }> {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-git-log-'))
+    const root = join(workspace, 'repo')
+    mkdirSync(root)
+    const git = (args: string[]) => execFileAsync('git', ['-C', root, ...args])
+    await git(['init'])
+    await git(['config', 'user.email', 't@example.com'])
+    await git(['config', 'user.name', 'Test'])
+    const commit = async (name: string, message: string) => {
+      // A distinct file per commit keeps the later cross-branch merge
+      // conflict-free (both branches touched different paths).
+      writeFileSync(join(root, `file-${name}.txt`), `${name}\n`)
+      await git(['add', '-A'])
+      await git(['commit', '-m', message])
+      return (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()
+    }
+    const hashes: Record<string, string> = {}
+    try {
+      hashes.A = await commit('a', 'base one')
+      hashes.B = await commit('b', 'base two')
+      await git(['checkout', '-b', 'side'])
+      hashes.S = await commit('s', 'side fork')
+      await git(['checkout', 'main'])
+      hashes.C = await commit('c', 'main after fork')
+      await git(['merge', 'side', '-m', 'merge side'])
+      hashes.M = (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()
+      hashes.D = await commit('d', 'tip one')
+      hashes.E = await commit('e', 'tip two')
+      return { root, hashes }
+    } catch (error) {
+      await rm(workspace, { recursive: true, force: true })
+      throw error
+    }
+  }
+
+  async function withRepo(fn: (ctx: { root: string; hashes: Record<string, string> }) => Promise<void>): Promise<void> {
+    const built = await buildRepo()
+    try {
+      await fn(built)
+    } finally {
+      await rm(built.root, { recursive: true, force: true })
+    }
+  }
+
+  it('reports the real %P parents on a merge commit (multi-parent)', async () => {
+    await withRepo(async ({ root, hashes }) => {
+      const rows = await log(root, 10, 0, undefined, { roots: [], sessionId: 's1' })
+      expect(Array.isArray(rows)).toBe(false)
+      const page = rows as GitLogPage
+      const merge = page.entries.find(entry => entry.hashFull === hashes.M)
+      expect(merge).toBeDefined()
+      expect(merge!.parents).toEqual([hashes.C!, hashes.S!])
+      // The root commit has no parents.
+      const rootRow = page.entries.find(entry => entry.hashFull === hashes.A)
+      expect(rootRow!.parents).toEqual([])
+    })
+  })
+
+  it('pages are pinned to the snapshot: new commits and force-resets cannot shift them', async () => {
+    await withRepo(async ({ root, hashes }) => {
+      const git = (args: string[]) => execFileAsync('git', ['-C', root, ...args])
+      const first = await log(root, 2, 0, undefined, { roots: [], sessionId: 's1' })
+      const page1 = first as GitLogPage
+      expect(page1.entries.map(entry => entry.hashFull)).toEqual([hashes.E, hashes.D])
+      expect(page1.hasMore).toBe(true)
+      expect(page1.cursor).toBeTypeOf('string')
+
+      // A NEW commit lands on top of the tips AFTER the anchor…
+      writeFileSync(join(root, 'file-tip.txt'), 'f\n')
+      await git(['add', '-A'])
+      await git(['commit', '-m', 'tip three'])
+      const newTip = (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()
+      // …and the current branch is then force-reset to an older commit.
+      await git(['reset', '--hard', hashes.D!])
+
+      // The old snapshot's cursor still walks the PINNED history: page 2 is
+      // exactly the old snapshot's next window — never the new tip, never
+      // shifted rows.
+      const second = await log(root, 2, 0, undefined, { cursor: page1.cursor!, sessionId: 's1' })
+      const page2 = second as GitLogPage
+      expect(page2.entries[0]!.hashFull).toBe(hashes.M)
+      expect([hashes.C, hashes.S]).toContain(page2.entries[1]!.hashFull)
+      expect(page2.entries.map(entry => entry.hashFull)).not.toContain(newTip)
+
+      // A fresh anchor (roots: []) reflects the NEW reality (reset tip first).
+      const fresh = await log(root, 2, 0, undefined, { roots: [], sessionId: 's1' })
+      const freshPage = fresh as GitLogPage
+      expect(freshPage.entries.map(entry => entry.hashFull)).toEqual([hashes.D, hashes.M])
+    })
+  })
+
+  it('rejects invalid roots, unknown cursors and cross-session/repo cursors', async () => {
+    await withRepo(async ({ root, hashes }) => {
+      const session = 's1'
+      const anchored = await log(root, 2, 0, undefined, { roots: [hashes.E!], sessionId: session })
+      const page = anchored as { cursor?: string; hasMore: boolean }
+      expect(page.cursor).toBeTypeOf('string')
+
+      // Invalid root shapes: not a 40-hex hash (even a resolvable ref name),
+      // an unknown object id, and an over-long list.
+      await expect(log(root, 2, 0, undefined, { roots: ['main'], sessionId: session }))
+        .rejects.toThrow(/invalid log root/)
+      await expect(log(root, 2, 0, undefined, { roots: ['9'.repeat(40)], sessionId: session }))
+        .rejects.toThrow(/unknown log root/)
+      await expect(log(root, 2, 0, undefined, { roots: Array.from({ length: 201 }, () => 'a'.repeat(40)), sessionId: session }))
+        .rejects.toThrow(/too many log roots/)
+
+      // Unknown / expired cursor.
+      await expect(log(root, 2, 0, undefined, { cursor: 'no-such-cursor', sessionId: session }))
+        .rejects.toThrow(/unknown or expired log cursor/)
+
+      // The cursor is bound to its session…
+      await expect(log(root, 2, 0, undefined, { cursor: page.cursor!, sessionId: 'other-session' }))
+        .rejects.toThrow(/does not belong to this session/)
+      // …and to its repository: a second repo must not consume it.
+      const other = await mkdtemp(join(tmpdir(), 'dsh-git-log-other-'))
+      try {
+        mkdirSync(join(other, 'repo2'))
+        await execFileAsync('git', ['-C', join(other, 'repo2'), 'init'])
+        await execFileAsync('git', ['-C', join(other, 'repo2'), 'config', 'user.email', 't@example.com'])
+        await execFileAsync('git', ['-C', join(other, 'repo2'), 'config', 'user.name', 'Test'])
+        writeFileSync(join(other, 'repo2', 'f.txt'), 'x\n')
+        await execFileAsync('git', ['-C', join(other, 'repo2'), 'add', '-A'])
+        await execFileAsync('git', ['-C', join(other, 'repo2'), 'commit', '-m', 'x'])
+        await expect(log(join(other, 'repo2'), 2, 0, undefined, { cursor: page.cursor!, sessionId: session }))
+          .rejects.toThrow(/does not belong to this session/)
+      } finally {
+        await rm(other, { recursive: true, force: true })
+      }
+    })
+  })
+
+  it('plain skip/count mode is unchanged (an array, now with parents) and count is bounded', async () => {
+    await withRepo(async ({ root, hashes }) => {
+      const plain = await log(root)
+      expect(Array.isArray(plain)).toBe(true)
+      expect(plain[0]!.hashFull).toBe(hashes.E)
+      expect(plain[0]!.parents).toHaveLength(1)
+      // A huge count never escapes the 200 cap (the repo has 7 commits).
+      const capped = await log(root, 500, 0, undefined, { roots: [], sessionId: 's1' })
+      expect((capped as { entries: unknown[] }).entries).toHaveLength(7)
+    })
   })
 })

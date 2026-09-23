@@ -13,7 +13,7 @@
  */
 import { useEffect, useMemo, useReducer } from 'react'
 import type { Context } from '../context-types.ts'
-import type { GitLogEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
+import type { GitLogEntry, GitLogOptions, GitLogPage, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 
 /** A successful git mutation ({ok:true}, mirror of the host route's shape). */
 export interface GitOkResult { ok: true }
@@ -30,7 +30,7 @@ export interface GitDataSource {
   gitStatus(scope: SessionScope, worktree?: string, signal?: AbortSignal): Promise<GitStatusResult>
   gitWorktrees(scope: SessionScope, signal?: AbortSignal): Promise<GitWorktree[]>
   gitBranch(scope: SessionScope, worktree?: string, signal?: AbortSignal): Promise<{ current: string; names: string[] }>
-  gitLog(scope: SessionScope, count?: number, skip?: number, worktree?: string, signal?: AbortSignal): Promise<GitLogEntry[]>
+  gitLog(scope: SessionScope, count?: number, skip?: number, worktree?: string, options?: GitLogOptions, signal?: AbortSignal): Promise<GitLogPage | GitLogEntry[]>
   gitDiff(scope: SessionScope, path: string | undefined, staged: boolean, worktree?: string, signal?: AbortSignal): Promise<{ diff: string }>
   gitStage(scope: SessionScope, path?: string, worktree?: string): Promise<GitOkResult>
   gitUnstage(scope: SessionScope, path?: string, worktree?: string): Promise<GitOkResult>
