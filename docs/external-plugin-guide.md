@@ -43,6 +43,7 @@ better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 - **新页面（tab）**：注册一种新的侧边栏 tab 类型，出现在侧边栏 `+` 菜单里，用户点击后在自己的分栏里打开你的 React 页面；
 - **文件预览器（file viewer）**：注册一种文件类型预览器，让用户在侧边栏打开文件时走你的渲染组件（覆盖或补充内置的 image/pdf/code 等）；
 - **提交行动作（git commit action，v0.20.x）**：在「Git 视角」提交行内置 Commit 按钮旁挂自己的动作，并读到「来源 session + 当前选中 repo/worktree + staged 列表」（§7.2.1）；
+- **gitGraph 服务消费（v0.20.x）**：让 Git 视角的历史区通过另一个插件（dsh-git-graph）的通用 GraphTree 框架渲染（泳道/虚拟滚动/键盘），行内容仍是本插件原有的提交行（§7.2.3）；
 - **计划 diff 预览（v0.20.x）**：把任意原始 unified diff 文本当 diff tab 打开（§7.2.2）。
 
 内置的 7 个 tab（editor / git——「文件变动」统一 tab（Git 视角 + 本轮文件视角）/ subagent / sidechat / terminal / browser / diff）和 6 个 viewer（image / pdf / markdown / html / code / binary-download）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。
@@ -891,7 +892,7 @@ interface DesktopShellBridge {
 - 便捷关闭的另一半：内核原生标签芯片的中键（鼠标中键）关闭由 harness 侧
   ui-dockkit 提供；插件底部工作台 TabBar 的 × 与中键关闭为插件自有实现。
 
-### 7.2 Git 提交区接缝 + 计划 diff 预览（v0.20.x，features 含 `gitCommitActions` / `planDiff`）
+### 7.2 Git 提交区接缝 + gitGraph 服务消费 + 计划 diff 预览（v0.20.x，features 含 `gitCommitActions` / `planDiff`）
 
 外部插件（例如专用提交 Agent）在「Git 视角」提交区加自己的按钮、并把任意 patch 当 diff
 预览，走这两个**纯增量**接缝。未注册任何插件时提交区与 diff 行为与之前完全一致。
@@ -966,6 +967,64 @@ service.openTab({
 
   注意：原生右侧栏的 tab id 由宿主铸造，seed 的 `id` 只影响 onOpen 收到的合成 tab；diff 页
   按宿主的多实例规则打开，`patch` 随导航 params 下发到组件。
+
+#### 7.2.3 gitGraph 服务消费（v0.20.x，软 join，provider：dsh-git-graph）
+
+「Git 视角」的历史区（内置列表）可以经由另一个插件 **dsh-git-graph** 提供的**通用 GraphTree
+框架**渲染：框架负责泳道/连线、虚拟滚动、键盘焦点与选择语义，**没有任何 Git 业务知识**；
+行内容（hash / refs 药丸 / subject / author·time）仍是本插件原有的两行提交行，预览 / 右键
+菜单 / 加载更多等全部业务留在 GitLens。服务缺失 / 协议不符 / 渲染异常 → 历史区**原样回到
+内置列表**（与无框架时逐字节一致）。这是与 fileTreeUi v2 同款的**软 join**（§15 的
+dsh-sentinel 展示了同样的软依赖写法）：
+
+- 服务名 `'gitGraph'`、协议版本 `1`（文档化字符串协议，provider 与消费方各自持有字面量）；
+  provider 在 client apply 里 `ctx.provide('gitGraph', service)`，卸载自动解除。
+- 消费方**不把 provider 放进 dependencies**：只在 devDependencies 以
+  `"dsh-git-graph": "link:../DSH-git-graph"` 引用其类型，运行时用 `ctx.get('gitGraph')`
+  **每次调用现取**（不缓存句柄）+ 手写 shape 检查（`protocolVersion === 1 && typeof
+  GraphTree === 'function'`）；跨包只 `import type … from 'dsh-git-graph/client-contract'`
+  （无运行时 value-import，不触发 client bundle 纯度门）。
+- 本插件内部实现：`src/client/git-lens-graph.ts`（软 join seat：bind/unbind +
+  useSyncExternalStore 快照，`internal/service` 订阅驱动提供/卸载即时切换）。GitLens 历史
+  区在服务可用且仓库有效时渲染 `<GraphTree …>`，否则渲染原列表。
+
+```ts
+// dsh-git-graph/client-contract 导出的 v1 契约（摘要）：
+interface GraphTreeRow {
+  id: string                  // 稳定唯一 id（GitLens 用完整 object id）
+  parents: readonly string[]  // 真实父 id；框架只用于拓扑，不认识其含义
+}
+interface GraphTreeProps<R extends GraphTreeRow> {
+  rows: readonly R[]                          // 子在前、父在后的拓扑行（追加页沿用布局缓存）
+  renderRow: (row: R, ctx: GraphTreeRowContext) => ReactNode   // 整行内容 slot，消费方全权
+  selectedId?: string
+  onSelect?: (id: string) => void        // 单击 / Enter / Space
+  onActivate?: (id: string) => void      // 双击
+  onContextMenu?: (id: string, event: GraphTreePointerEvent) => void
+  hasMore?: boolean; onLoadMore?: () => void; loading?: boolean
+  rowAttributes?: (row: R) => Record<string, string>
+  ariaLabel?: string; emptyText?: string; loadingText?: string; loadMoreText?: string
+  height?: number; rowHeight?: number; overscan?: number; className?: string
+}
+interface GitGraphServiceV1 { protocolVersion: 1; GraphTree: <R extends GraphTreeRow>(props: GraphTreeProps<R>) => ReactNode }
+```
+
+- **数据要求**：框架只吃 `id + parents`，因此 `api.gitLog` 的行现在携带真实 `parents`
+  （`%P`），且 GitLens 的分页走**固定 roots + 游标**模式（首页 `roots: []` = 服务端
+  解析并钉住自己的 HEAD tip；后续页只传响应里的 `cursor`，游标随机绑定 offset 并绑定
+  会话/仓库）——翻页期间新提交 / force-reset 不会让行位移或串台，图的泳道布局保持稳定。
+- **事件路由**：行点击 / Enter / Space → `onSelect` / `onActivate` → GitLens 预览该提交
+  （`onPreview(commitRefOf(…))`）；右键 → `onContextMenu` → GitLens 共享的历史右键菜单
+  （查看 diff / 复制短/全 hash / 复制 subject / revert / cherry-pick）；加载更多 →
+  `onLoadMore` → GitLens 现有的 loadMore 逻辑（`hasMore` / `onLoadMore` 直通）。框架内
+  **不放任何业务操作**。
+- **回退边界**：服务缺失 / 版本不符 / 卸载 → 内置列表；渲染抛错 → 宿主边界捕获、
+  `console.error` 后回退列表；图形故障对当前 checkout **保持一次（本次会话）粘性**，
+  切换 checkout 或服务重新提供（重挂）即重试。
+- **空 / 加载 / 加载更多文案**复用本插件词典：`noHistory` / `loading` / `loadMore`
+  （20 份语言文件已同步）。
+- **独立 Tab**：dsh-git-graph 自带的历史 Tab（`dsh-git-graph:history`）是框架的**演示与
+  独立用途**，与本接缝无关——它用同一框架组件加自己的只读数据层，不是集成通道。
 
 ---
 
