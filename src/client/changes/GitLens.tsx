@@ -875,7 +875,7 @@ export function GitLens(props: GitLensProps) {
           </div>
           {commitError !== null && <div className={css.gitError}>{commitError}</div>}
 
-          <div className={css.gitSection}>
+          <div className={`${css.gitSection} ${graphReady ? css.gitLogGraph : ''}`}>
             <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
             {graphReady ? (
               // gitGraph framework path: the framework draws lanes/edges,
@@ -883,6 +883,11 @@ export function GitLens(props: GitLensProps) {
               // content and all Git business stay here (see the state block
               // above). A throwing framework render is caught by the
               // boundary and degrades to the built-in list below.
+              // The section itself is the flex item that stretches to the
+              // panel's leftover height (same `flex: 1; min-height: 0`
+              // contract as the `.git` root above) and the framework's
+              // fill-mode viewport docks to it, so the log adapts to the
+              // panel instead of a fixed 420px cap.
               <GraphBoundary onFail={() => { setGraphFailed(true) }}>
                 {createElement(gitGraph.GraphTree, graphProps)}
               </GraphBoundary>
