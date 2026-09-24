@@ -254,15 +254,22 @@ export function GitLens(props: GitLensProps) {
     if (options.loading) setLoading(true)
     setError(null)
     try {
+      // Every read is DEFERRED into a microtask: `gitApi.git*` may not
+      // exist on a partially-implemented provider source, and a synchronous
+      // TypeError while the Promise.all array is being built would abort the
+      // WHOLE refresh (status/branch/log all lost, only the error banner).
+      // Deferred, each missing method instead rejects through its own catch
+      // below — a provider lacking gitLog/branch degrades to an empty
+      // history / empty branch list, and status still renders.
       const [statusResult, branchResult, logResult] = await Promise.all([
-        gitApi.gitStatus(gitScope, target),
-        gitApi.gitBranch(gitScope, target).catch(() => ({ current: '', names: [] as string[] })),
+        Promise.resolve().then(() => gitApi.gitStatus(gitScope, target)),
+        Promise.resolve().then(() => gitApi.gitBranch(gitScope, target)).catch(() => ({ current: '', names: [] as string[] })),
         // Anchored page (roots: [] = pin the server's own HEAD tip): the
         // rows then carry real parents and every later page rides the
         // response cursor, so the gitGraph framework's lane layout never
         // shifts mid-pagination. Older hosts / plain arrays fall back to
         // legacy skip/count paging transparently.
-        gitApi.gitLog(gitScope, LOG_BATCH, 0, target, { roots: [] }).catch(() => [] as GitLogEntry[]),
+        Promise.resolve().then(() => gitApi.gitLog(gitScope, LOG_BATCH, 0, target, { roots: [] })).catch(() => [] as GitLogEntry[]),
       ])
       if (options.generation !== refreshGeneration.current) return
       setStatus(statusResult)
@@ -419,12 +426,17 @@ export function GitLens(props: GitLensProps) {
     const target = chosenPathRef.current
     setLogLoadingMore(true)
     try {
-      const next = await gitApi.gitLog(
-        gitScope,
-        LOG_BATCH,
-        0,
-        target,
-        logCursor === undefined ? { roots: [] } : { cursor: logCursor },
+      // Deferred like refreshTarget's reads: a provider source lacking
+      // gitLog must reject into the existing catch below (a "load more"
+      // error line), not throw synchronously out of this try.
+      const next = await Promise.resolve().then(() =>
+        gitApi.gitLog(
+          gitScope,
+          LOG_BATCH,
+          0,
+          target,
+          logCursor === undefined ? { roots: [] } : { cursor: logCursor },
+        ),
       )
       // A worktree switch clears the old history and increments generation.
       // Never append a late page from that checkout into the new one.

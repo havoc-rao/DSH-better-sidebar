@@ -370,6 +370,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
       {preview !== null && (
         <DiffPane
           key={previewKey(preview)}
+          ctx={ctx}
           target={preview}
           scope={scope}
           height={paneHeight}

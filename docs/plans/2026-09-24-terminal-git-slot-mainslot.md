@@ -75,3 +75,20 @@ main 代码结构以最小 diff 重新落盘两个槽位：
 - `agent:` / `gb:` tab 由 provider 在 `match` 中自行拒绝，平台不强制拦截。
 - `useGitSource` / `useTerminalTransport` 的 registry-less stub 与无 session 挂载一律解析
   undefined（stub 绝不破坏终端/git 面）。
+
+## 实施偏差（2026-09-24，远程 git 通道打通）
+
+上一节的「`gitCommitDiff`/`gitShow` 不在契约内保持宿主直连」在本轮被推翻（远程会话 diff
+断的根因）：`GitDataSource` 补齐全部 14 方法（diff 预览与独立 diff tab 的 git 读全量经
+source 路由）。偏差记录：
+
+1. **契约扩展**：`GitDataSource` 新增 `gitCommitDiff` / `gitShow`（签名与 host 路由逐字
+   一致）；`tests/git-source.spec.tsx` 的 `_hostShadowsContract` 编译期形状守护自动覆盖。
+2. **消费面扩展**：DiffPane（ctx prop + `useGitSource`）与 DiffTab（无 ctx，经模块级
+   client-ctx 座位 `bindGitSourceSeat` / `useGitSourceSeat`，index.tsx apply 绑定/卸载解绑）
+   的 git 读改为**逐方法回退**路由 `(gitSource?.gitX ?? api.gitX)(...)`；GitLens 的
+   refreshTarget / loadMoreLog 里 `gitApi.gitLog`（以及同 Promise.all 里的
+   gitStatus/gitBranch）包成 `Promise.resolve().then(...)` 先回 Promise 再调用，缺方法的
+   同步 TypeError 不再炸掉整次刷新——历史区单独降级为空，status/branch 照常渲染。
+3. **vitest 收集**：`vitest.config.ts` exclude 增加 `**/tmp/**`（与 `**/.worktrees/**` 同类：
+   agent 任务遗留的完整仓库副本漂移后污染本地测试链）。

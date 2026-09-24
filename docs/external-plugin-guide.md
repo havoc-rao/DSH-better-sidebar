@@ -1306,7 +1306,7 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 
 ## Git data source 槽位（feature 'gitSource'）
 
-git 数据面注入槽位（v0.23.0+，本构建 `0.23.0-mainslot.1`）：允许外部插件**整体接管**所匹配会话的 git 读与写——changes tab 的 Git lens（`src/client/changes/GitLens.tsx`）把每一次 `api.git*` 调用改经 provider 的 `GitDataSource` 路由。
+git 数据面注入槽位（v0.23.0+，本构建 `0.23.0-mainslot.1`）：允许外部插件**整体接管**所匹配会话的 git 读与写——changes tab 的 Git lens（`src/client/changes/GitLens.tsx`）、changes 区的 diff 预览（`src/client/changes/DiffPane.tsx`）、独立 diff tab（`src/client/DiffTab.tsx`）以及两者的 hunk 折叠展开，把每一次 `api.git*` 调用都改经 provider 的 `GitDataSource` 路由；「changes 区列表、历史、diff 预览、独立 diff tab、装饰等所有 git 数据面」都只消费解析出的 `GitDataSource`。
 
 - **注册方法**（`ctx.betterSidebar`，返回 disposer，Cordis `ctx.effect` HMR-safe；重复 id 抛错）：
 
@@ -1320,7 +1320,8 @@ git 数据面注入槽位（v0.23.0+，本构建 `0.23.0-mainslot.1`）：允许
   ```
 
 - **features 门**：`features` 含 `'gitSource'`；消费插件注册前先 `features.includes('gitSource')` 探测。
-- **解析语义**：注册顺序 first-match——`match(sessionId, cwd)` 逐字透传；`createSource` 返回 `undefined`（按会话拒接）或抛错 → 跳过并轮到下一个 provider（`resolveGitSource`，throwing-safe）；渲染侧 `useGitSource(ctx, scope)` hook 订阅注册表并随 `scope.sessionId / cwd / repoRoot` 变化重解析，无匹配 → `gitApi = api`（本地 host 路由逐字节不变）。
-- **契约形状**：`GitDataSource` 是 host `api.git*` 路由面的**影子**（签名与返回形状逐字一致，`src/client/git-source.ts`）：`gitStatus / gitWorktrees / gitBranch / gitLog / gitDiff / gitStage / gitUnstage / gitCommit / gitCheckout / gitDiscard / gitRevert / gitCherryPick`（`gitCommitDiff` / `gitShow` 不在契约内，保持宿主直连）；变更类操作返回 `{ ok: true }`。`tests/git-source.spec.tsx` 以 `const _hostShadowsContract: GitDataSource = api` 在编译期守护形状（api.ts 漂移即 typecheck 失败）。
-- **本地回退**：无 provider 匹配（或无注册）、`ctx` 缺失（独立/测试组合）→ 全部 git 调用保持 host 路由，逐字节原行为。
-- **消费方引导**：参考实现在 [dsh-remote-workbench](https://github.com/omdsh-dev/dsh-remote-workbench) 的 `buildGitSource`（`lib/client.js`：按 `(sessionId, cwd)` 记忆化构建 12 方法 source，`/git/read` + `/git/mutate` 远程 RPC；未覆盖操作显式 reject）。类型与解析器从 `dsh-better-sidebar/client/index` 可导入（`GitProviderDescriptor` / `GitDataSource` / `GitOkResult` / `resolveGitSource` / `useGitSource`）。
+- **解析语义**：注册顺序 first-match——`match(sessionId, cwd)` 逐字透传；`createSource` 返回 `undefined`（按会话拒接）或抛错 → 跳过并轮到下一个 provider（`resolveGitSource`，throwing-safe）；渲染侧 `useGitSource(ctx, scope)` hook 订阅注册表并随 `scope.sessionId / cwd / repoRoot` 变化重解析，无匹配 → `gitApi = api`（本地 host 路由逐字节不变）。独立 diff tab 的 seed 形态没有 ctx prop，经模块级 client-ctx 座位（`bindGitSourceSeat` / `useGitSourceSeat`，`src/client/index.tsx` apply 处绑定、卸载解绑——与 gitGraph 座位同一纪律）读取同一注册表后按自己的 scope 重新解析，语义与 `useGitSource` 完全一致。
+- **契约形状**：`GitDataSource` 是 host `api.git*` 路由面的**影子**（签名与返回形状逐字一致，`src/client/git-source.ts`），完整方法面：`gitStatus / gitWorktrees / gitBranch / gitLog(+options roots/cursor → GitLogPage) / gitDiff / gitCommitDiff / gitShow / gitStage / gitUnstage / gitCommit / gitCheckout / gitDiscard / gitRevert / gitCherryPick`；变更类操作返回 `{ ok: true }`。`tests/git-source.spec.tsx` 以 `const _hostShadowsContract: GitDataSource = api` 在编译期守护形状（api.ts 漂移即 typecheck 失败）。
+- **路由语义**：**无 provider（或无匹配）时所有 git 读与写逐字节落回宿主路由**；**有 provider 时按面整块接管**——Git lens 把 source 当作原子影子（`gitApi = gitSource ?? api`），缺方法只降级该面（如缺 `gitLog` → 历史区空、status/branch 照常，读调用先回 Promise 再执行，缺方法的同步 TypeError 不会炸掉整次刷新）；**diff 预览与独立 diff tab 则逐方法回退**（`(gitSource?.gitCommitDiff ?? api.gitCommitDiff)(...)` 等）——provider 面缺单个方法时仅该方法落回宿主，绝不因缺方法炸掉预览。
+- **本地回退**：无 provider 匹配（或无注册）、`ctx` 缺失（独立/测试组合）、座位未绑定 → 全部 git 调用保持 host 路由，逐字节原行为。
+- **消费方引导**：参考实现在 [dsh-remote-workbench](https://github.com/omdsh-dev/dsh-remote-workbench) 的 `buildGitSource`（`lib/client.js`：按 `(sessionId, cwd)` 记忆化构建 14 方法 source，`/git/read` + `/git/mutate` 远程 RPC；未覆盖操作显式 reject）。类型与解析器从 `dsh-better-sidebar/client/index` 可导入（`GitProviderDescriptor` / `GitDataSource` / `GitOkResult` / `resolveGitSource` / `useGitSource`）。

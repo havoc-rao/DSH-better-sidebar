@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from './api.ts'
 import { api } from './api.ts'
+import { resolveGitSource, useGitSourceSeat } from './git-source.ts'
 import type { SidebarDiffRef } from './state.ts'
 import { DiffFiles } from './diff/DiffFiles.tsx'
 import { displayPath, foldRowsFromContents, type DiffFile, type DiffRow, type FoldSegment } from './diff/rows.ts'
@@ -44,6 +45,22 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
   // land on the wrong contents).
   const [effectiveStaged, setEffectiveStaged] = useState<boolean | null>(null)
 
+  /** The resolved git data source for this tab's session through the
+   *  client-ctx seat (the openTab seed carries no ctx prop): a matching
+   *  provider's GitDataSource shadows the host routes; undefined keeps them
+   *  byte for byte. Every git read below routes PER METHOD — a matched
+   *  source lacking a single method falls back to the host route for that
+   *  method alone, so a partial provider never breaks the tab. Live: the
+   *  seat re-renders on provider register/unregister. */
+  const providers = useGitSourceSeat()
+  const gitSource = useMemo(
+    () => providers === undefined ? undefined : resolveGitSource(providers, sessionId, cwd),
+    // Granular deps: resolution consumes only the provider list and the
+    // session identity; the diff ref's repoRoot is a per-call scope field
+    // (each read below builds its own scope from it).
+    [providers, sessionId, cwd],
+  )
+
   const refresh = useCallback((): void => { setTick(value => value + 1) }, [])
 
   useEffect(() => {
@@ -64,17 +81,17 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     const load = async (): Promise<void> => {
       try {
         if (diff.kind === 'commit') {
-          const result = await api.gitCommitDiff(scope, diff.hashFull, diff.worktree)
+          const result = await (gitSource?.gitCommitDiff ?? api.gitCommitDiff)(scope, diff.hashFull, diff.worktree)
           if (!cancelled) setData({ diff: result.diff })
           return
         }
-        let result = await api.gitDiff(scope, diff.path, diff.staged, diff.worktree)
+        let result = await (gitSource?.gitDiff ?? api.gitDiff)(scope, diff.path, diff.staged, diff.worktree)
         if (result.diff === '') {
           // The requested side is empty — try the OTHER side once: the ref
           // may predate the staged-flag fix, or the change moved sides (a
           // file staged after its tab opened). Both sides empty means the
           // file genuinely has no text changes.
-          const other = await api.gitDiff(scope, diff.path, !diff.staged, diff.worktree)
+          const other = await (gitSource?.gitDiff ?? api.gitDiff)(scope, diff.path, !diff.staged, diff.worktree)
           if (other.diff !== '') {
             result = other
             if (!cancelled) setEffectiveStaged(!diff.staged)
@@ -105,7 +122,7 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     }
     void load()
     return () => { cancelled = true }
-  }, [sessionId, cwd, diff, tick])
+  }, [sessionId, cwd, diff, tick, gitSource])
 
   // ── On-demand git fold expansion: a fold's hidden rows come from both
   //    sides' full contents (git.show / fsRead), fetched ONCE per file so
@@ -135,10 +152,10 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
           const [oldSide, newSide] = await Promise.all([
             file.oldPath === '/dev/null'
               ? Promise.resolve({ content: null })
-              : api.gitShow(scope, `${diff.hashFull}^`, displayPath(file.oldPath), diff.worktree),
+              : (gitSource?.gitShow ?? api.gitShow)(scope, `${diff.hashFull}^`, displayPath(file.oldPath), diff.worktree),
             file.newPath === '/dev/null'
               ? Promise.resolve({ content: null })
-              : api.gitShow(scope, diff.hashFull, displayPath(file.newPath), diff.worktree),
+              : (gitSource?.gitShow ?? api.gitShow)(scope, diff.hashFull, displayPath(file.newPath), diff.worktree),
           ])
           return ofSides(oldSide.content, newSide.content)
         }
@@ -149,17 +166,17 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
           const [oldSide, newSide] = await Promise.all([
             file.oldPath === '/dev/null'
               ? Promise.resolve({ content: null })
-              : api.gitShow(scope, 'HEAD', displayPath(file.oldPath), diff.worktree),
+              : (gitSource?.gitShow ?? api.gitShow)(scope, 'HEAD', displayPath(file.oldPath), diff.worktree),
             file.newPath === '/dev/null'
               ? Promise.resolve({ content: null })
-              : api.gitShow(scope, ':0', displayPath(file.newPath), diff.worktree),
+              : (gitSource?.gitShow ?? api.gitShow)(scope, ':0', displayPath(file.newPath), diff.worktree),
           ])
           return ofSides(oldSide.content, newSide.content)
         }
         const [oldSide, worktree] = await Promise.all([
           file.oldPath === '/dev/null'
             ? Promise.resolve({ content: null })
-            : api.gitShow(scope, ':0', displayPath(file.oldPath), diff.worktree),
+            : (gitSource?.gitShow ?? api.gitShow)(scope, ':0', displayPath(file.oldPath), diff.worktree),
           api.fsRead(scope, resolveSidebarPath(diff.repoRoot ?? diff.worktree ?? cwd, displayPath(file.newPath))).catch(() => null),
         ])
         return ofSides(oldSide.content, worktree !== null && worktree.kind === 'text' ? worktree.content : null)
@@ -174,7 +191,7 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     }
     return (file: DiffFile, segment: FoldSegment): Promise<readonly DiffRow[]> =>
       sidesOf(file).then(sides => foldRowsFromContents(segment, sides.old, sides.new))
-  }, [sessionId, cwd, diff, effectiveStaged])
+  }, [sessionId, cwd, diff, effectiveStaged, gitSource])
 
   return (
     <div className={css.gitDiffTab}>

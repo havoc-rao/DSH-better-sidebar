@@ -10,8 +10,10 @@
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { IconCloseOutline16, IconRefreshOutline16, IconRightUpOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { api, htmlUrl } from '../api.ts'
+import { useGitSource } from '../git-source.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../produced-files.ts'
@@ -140,6 +142,10 @@ export function diffTabOf(ref: GitDiffRef): SidebarTab {
 }
 
 export interface DiffPaneProps {
+  /** The client context: resolves the git data source (feature `gitSource`)
+   *  for this scope. Absent (standalone/test compositions) → local host
+   *  routes, byte for byte. */
+  ctx?: Context
   target: ChangesPreview
   scope: SessionScope
   /** The persisted pane height (px); drag commits a new one upwards. */
@@ -150,7 +156,7 @@ export interface DiffPaneProps {
   onExpand: () => void
 }
 
-export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExpand }: DiffPaneProps) {
+export function DiffPane({ ctx, target, scope, height, onHeightCommit, onClose, onExpand }: DiffPaneProps) {
   // ── Git target loading (mirrors the diff tab: staged-side fallback, the
   //    untracked full-addition fallback, refresh by tick). ─────────────────
   const [tick, setTick] = useState(0)
@@ -172,6 +178,12 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     ...(gitRef?.repoRoot !== undefined ? { repoRoot: gitRef.repoRoot } : {}),
   }), [scope.sessionId, scope.cwd, gitRef?.repoRoot])
 
+  /** The resolved git data source for this target's scope (feature
+   *  'gitSource'). Every git read below routes PER METHOD: a matched source
+   *  lacking a single method falls back to the host `api` route for that
+   *  method alone — a partial provider must never break the preview. */
+  const gitSource = useGitSource(ctx, gitScope)
+
   useEffect(() => {
     if (gitRef === null) return
     let cancelled = false
@@ -188,15 +200,15 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     const load = async (): Promise<void> => {
       try {
         if (gitRef.kind === 'commit') {
-          const result = await api.gitCommitDiff(paneScope, gitRef.hashFull, gitRef.worktree)
+          const result = await (gitSource?.gitCommitDiff ?? api.gitCommitDiff)(paneScope, gitRef.hashFull, gitRef.worktree)
           if (!cancelled) setDiffText(result.diff)
           return
         }
-        let result = await api.gitDiff(paneScope, gitRef.path, gitRef.staged, gitRef.worktree)
+        let result = await (gitSource?.gitDiff ?? api.gitDiff)(paneScope, gitRef.path, gitRef.staged, gitRef.worktree)
         if (result.diff === '') {
           // The requested side is empty — try the OTHER side once (the change
           // may have moved sides after the preview target was minted).
-          const other = await api.gitDiff(paneScope, gitRef.path, !gitRef.staged, gitRef.worktree)
+          const other = await (gitSource?.gitDiff ?? api.gitDiff)(paneScope, gitRef.path, !gitRef.staged, gitRef.worktree)
           if (other.diff !== '') {
             result = other
             if (!cancelled) setEffectiveStaged(!gitRef.staged)
@@ -225,7 +237,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     }
     void load()
     return () => { cancelled = true }
-  }, [gitRef, scope.sessionId, scope.cwd, tick])
+  }, [gitRef, scope.sessionId, scope.cwd, tick, gitSource])
 
   // ── On-demand git fold expansion: a fold's hidden rows come from both
   //    sides' full contents (git.show / fsRead), fetched ONCE per file so
@@ -251,10 +263,10 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
           const [oldSide, newSide] = await Promise.all([
             file.oldPath === '/dev/null'
               ? Promise.resolve({ content: null })
-              : api.gitShow(gitScope, `${gitRef.hashFull}^`, displayPath(file.oldPath), gitRef.worktree),
+              : (gitSource?.gitShow ?? api.gitShow)(gitScope, `${gitRef.hashFull}^`, displayPath(file.oldPath), gitRef.worktree),
             file.newPath === '/dev/null'
               ? Promise.resolve({ content: null })
-              : api.gitShow(gitScope, gitRef.hashFull, displayPath(file.newPath), gitRef.worktree),
+              : (gitSource?.gitShow ?? api.gitShow)(gitScope, gitRef.hashFull, displayPath(file.newPath), gitRef.worktree),
           ])
           return ofSides(oldSide.content, newSide.content)
         }
@@ -265,17 +277,17 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
           const [oldSide, newSide] = await Promise.all([
             file.oldPath === '/dev/null'
               ? Promise.resolve({ content: null })
-              : api.gitShow(gitScope, 'HEAD', displayPath(file.oldPath), gitRef.worktree),
+              : (gitSource?.gitShow ?? api.gitShow)(gitScope, 'HEAD', displayPath(file.oldPath), gitRef.worktree),
             file.newPath === '/dev/null'
               ? Promise.resolve({ content: null })
-              : api.gitShow(gitScope, ':0', displayPath(file.newPath), gitRef.worktree),
+              : (gitSource?.gitShow ?? api.gitShow)(gitScope, ':0', displayPath(file.newPath), gitRef.worktree),
           ])
           return ofSides(oldSide.content, newSide.content)
         }
         const [oldSide, worktree] = await Promise.all([
           file.oldPath === '/dev/null'
             ? Promise.resolve({ content: null })
-            : api.gitShow(gitScope, ':0', displayPath(file.oldPath), gitRef.worktree),
+            : (gitSource?.gitShow ?? api.gitShow)(gitScope, ':0', displayPath(file.oldPath), gitRef.worktree),
           api.fsRead(gitScope, resolveSidebarPath(gitRef.repoRoot ?? gitRef.worktree ?? scope.cwd, displayPath(file.newPath))).catch(() => null),
         ])
         return ofSides(oldSide.content, worktree !== null && worktree.kind === 'text' ? worktree.content : null)
@@ -290,7 +302,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     }
     return (file: DiffFile, segment: FoldSegment): Promise<readonly DiffRow[]> =>
       sidesOf(file).then(sides => foldRowsFromContents(segment, sides.old, sides.new))
-  }, [gitRef, gitScope, effectiveStaged, scope])
+  }, [gitRef, gitScope, effectiveStaged, scope, gitSource])
 
   // ── Op target material (pure snapshots; the prior content came with the
   //    target so a running op shows what is already known). ────────────────

@@ -29,6 +29,7 @@ import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { installFileTreeUiSeat } from './file-tree-ui.ts'
 import { bindGitGraph, unbindGitGraph } from './git-lens-graph.ts'
+import { bindGitSourceSeat, unbindGitSourceSeat } from './git-source.ts'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
@@ -94,6 +95,17 @@ export function apply(ctx: Context): void {
     bindGitGraph(ctx)
     return () => { unbindGitGraph() }
   }, 'dsh-better-sidebar: gitGraph service seat')
+
+  // Optional git-source client Context seat (feature 'gitSource'): the
+  // dedicated diff tab is mounted from an openTab seed ({sessionId, cwd,
+  // diff}) with NO ctx prop, so it resolves its provider through this seat
+  // (see git-source.ts) — same bind-on-apply / unbind-on-dispose discipline
+  // as the gitGraph seat above; a disposed fiber can never keep serving a
+  // stale context.
+  ctx.effect(() => {
+    bindGitSourceSeat(ctx)
+    return () => { unbindGitSourceSeat() }
+  }, 'dsh-better-sidebar: gitSource provider seat')
 
   // The sidebar follows the DSH i18n system: attach the locale service so
   // the module-level t()/isZh() resolve the Host-backed language preference

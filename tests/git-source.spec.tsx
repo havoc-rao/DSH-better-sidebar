@@ -23,6 +23,8 @@ const makeSource = (): GitDataSource => ({
   gitBranch: async () => ({ current: '', names: [] }),
   gitLog: async () => [],
   gitDiff: async () => ({ diff: '' }),
+  gitCommitDiff: async () => ({ diff: '' }),
+  gitShow: async () => ({ content: null }),
   gitStage: async (): Promise<GitOkResult> => ({ ok: true }),
   gitUnstage: async (): Promise<GitOkResult> => ({ ok: true }),
   gitCommit: async (): Promise<GitOkResult> => ({ ok: true }),
@@ -39,13 +41,15 @@ const makeProvider = (overrides: Partial<GitProviderDescriptor> = {}): GitProvid
   ...overrides,
 })
 
-/** The contract method set, as the Git lens' `gitApi.git*` call surface. */
+/** The contract method set, as the git surfaces' `gitApi.git*` call face. */
 const CONTRACT_METHODS = [
   'gitStatus',
   'gitWorktrees',
   'gitBranch',
   'gitLog',
   'gitDiff',
+  'gitCommitDiff',
+  'gitShow',
   'gitStage',
   'gitUnstage',
   'gitCommit',
