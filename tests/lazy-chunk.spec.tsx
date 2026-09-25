@@ -157,6 +157,32 @@ describe('built-in descriptor contract (render-prop functions)', () => {
     unmount()
   })
 
+  it('the terminal descriptor forwards the bottom-workbench `visible` flag to TerminalView (open-focus wiring)', async () => {
+    let received: unknown
+    registerChunkForTests('terminal', async () => ({
+      TerminalView: ((props: { visible?: boolean }) => {
+        received = props.visible
+        return createElement('div', { 'data-testid': 'terminal-visible' })
+      }) as unknown as ComponentType<Record<string, never>>,
+    }))
+    const tabs = builtinTabs({} as Context)
+    const terminal = tabs.find(tab => tab.id === 'terminal')!
+    const props = {
+      ctx: {},
+      store: undefined,
+      scope: { sessionId: 's1', cwd: '/p' },
+      tab: { id: 'terminal:3', type: 'terminal', title: '终端 3' },
+      // Sidebar's bottom workbench computes visible = bottomOpen && active;
+      // the terminal view relies on it to auto-focus xterm on open.
+      visible: true,
+    } as unknown as TabComponentProps
+    const { container, unmount } = renderRoot(createElement(terminal.component, props))
+    await act(async () => {})
+    expect(container.querySelector('[data-testid="terminal-visible"]')).not.toBeNull()
+    expect(received).toBe(true)
+    unmount()
+  })
+
   it('the loader cache survives across descriptor mounts (chunk fetched once)', async () => {
     let calls = 0
     registerChunkForTests('terminal', async () => {

@@ -135,8 +135,20 @@ function xtermTheme(): ITheme {
   }
 }
 
-export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: string; store: SidebarStore; transport?: TerminalTransport }) {
-  const { ctx, scope, tabId, store, transport } = props
+export function TerminalView(props: {
+  ctx: Context
+  scope: SessionScope
+  tabId: string
+  store: SidebarStore
+  transport?: TerminalTransport
+  /** Whether this tab is the visible active tab of the bottom workbench
+   *  (Sidebar's renderTab: `state.bottomOpen && active`). Drives the
+   *  open-focus behavior: a terminal opened in the bottom box takes keyboard
+   *  input immediately. Absent (native right-sidebar tabs, external hosts)
+   *  → no auto-focus. */
+  visible?: boolean
+}) {
+  const { ctx, scope, tabId, store, transport, visible = false } = props
   const hostRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
@@ -172,6 +184,33 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
   /** The mounted terminal session (null until the mount effect ran); the
    *  block overlay mounts on it. */
   const [session, setSession] = useState<TerminalSession | null>(null)
+
+  /** Mirror of the `visible` prop for the mount effect (its deferred open
+   *  callback outlives renders — the focus logic below reads the latest). */
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
+
+  /**
+   * Open-focus: a terminal opened in the bottom workbench takes keyboard
+   * input the moment it appears — no extra click into the terminal after
+   * the panel/tab opens (the `visible` prop is exactly "bottom panel open
+   * AND this tab is the active one in its pane"). Scoped to the BOTTOM
+   * workbench ([data-dsh-bottom-panel]): a native right-sidebar terminal
+   * tab must not yank focus away from the composer. xterm's focus() is a
+   * guarded no-op before open(), so a fresh mount that starts visible is
+   * focused by the deferred open callback below (via visibleRef), while
+   * this effect covers flips that happen after the terminal is already open
+   * (panel reopen, tab re-activation, a tab dragged to another pane).
+   * Design note: a mount that starts visible also covers restored layouts
+   * and session switches — the terminal the user left open in the bottom
+   * box holds the keyboard, which is the same "opened" intent.
+   */
+  useEffect(() => {
+    if (!visible) return
+    const host = hostRef.current
+    if (host === null || host.closest('[data-dsh-bottom-panel]') === null) return
+    termRef.current?.focus()
+  }, [visible])
 
   /**
    * The block overlay pill's click: build THE hovered block's payload live
@@ -443,6 +482,10 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
           term.open(host)
           fit.fit()
           transportHandle?.resize(term.cols, term.rows)
+          // The mount may have started visible (a tab opened into the open
+          // bottom workbench): the visible effect ran before open (a no-op),
+          // so focus here, once xterm is actually open.
+          if (visibleRef.current && host.closest('[data-dsh-bottom-panel]') !== null) term.focus()
         } catch (error) {
           console.error('[dsh-better-sidebar] xterm open failed:', error)
         }
@@ -454,6 +497,10 @@ export function TerminalView(props: { ctx: Context; scope: SessionScope; tabId: 
           term.open(host)
           fit.fit()
           sendResize()
+          // Open-focus, same as the transport branch: a tab opened into the
+          // bottom workbench focuses once xterm is ready (see the visible
+          // effect above for the already-open path).
+          if (visibleRef.current && host.closest('[data-dsh-bottom-panel]') !== null) term.focus()
         } catch (error) {
           console.error('[dsh-better-sidebar] xterm open failed:', error)
         }

@@ -60,7 +60,7 @@ const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
  * after the registry read (77ddf5e-style).
  */
 function TerminalTabTransport(props: TabComponentProps): ReactNode {
-  const { ctx, tab, scope, store } = props
+  const { ctx, tab, scope, store, visible } = props
   const transport = useTerminalTransport(ctx, scope?.sessionId, scope?.cwd, tab.id)
   return (
     <LazyTerminal
@@ -69,6 +69,7 @@ function TerminalTabTransport(props: TabComponentProps): ReactNode {
       store={store}
       tabId={tab.id}
       transport={transport}
+      visible={visible}
     />
   )
 }
@@ -83,6 +84,12 @@ interface TerminalViewProps {
    *  resolved for this terminal tab; absent → TerminalView's built-in
    *  local pty WebSocket (byte for byte). */
   transport?: TerminalTransport
+  /** Whether this tab is the visible active tab of the bottom workbench
+   *  (Sidebar's renderTab: `state.bottomOpen && active`): the view focuses
+   *  xterm on open — a terminal opened in the bottom box takes keyboard
+   *  input immediately. Absent → no auto-focus (native right-sidebar
+   *  tabs render without it). */
+  visible?: boolean
 }
 
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
