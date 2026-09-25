@@ -23,7 +23,6 @@ export {
   SIDEBAR_PREFS_DEFAULTS,
   TITLE_BAR_SCHEMES,
   TITLE_BAR_STRIP_DEFAULT,
-  clampTerminalFontSize,
   clampTitleBarStrip,
 }
 export type { SidebarPrefs, TitleBarScheme }
@@ -59,15 +58,15 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     terminalFontFamily: typeof record.terminalFontFamily === 'string'
       ? record.terminalFontFamily
       : SIDEBAR_PREFS_DEFAULTS.terminalFontFamily,
+    terminalFontSize: typeof record.terminalFontSize === 'number' && Number.isFinite(record.terminalFontSize)
+      ? clampTerminalFontSize(record.terminalFontSize)
+      : SIDEBAR_PREFS_DEFAULTS.terminalFontSize,
     terminalShell: typeof record.terminalShell === 'string'
       ? record.terminalShell
       : SIDEBAR_PREFS_DEFAULTS.terminalShell,
     terminalShellArgs: typeof record.terminalShellArgs === 'string'
       ? record.terminalShellArgs
       : SIDEBAR_PREFS_DEFAULTS.terminalShellArgs,
-    terminalFontSize: typeof record.terminalFontSize === 'number' && Number.isFinite(record.terminalFontSize)
-      ? clampTerminalFontSize(record.terminalFontSize)
-      : SIDEBAR_PREFS_DEFAULTS.terminalFontSize,
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
@@ -105,21 +104,6 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     htmlViewerDefaultUnsafe: typeof record.htmlViewerDefaultUnsafe === 'boolean'
       ? record.htmlViewerDefaultUnsafe
       : SIDEBAR_PREFS_DEFAULTS.htmlViewerDefaultUnsafe,
-    browserNoSandbox: typeof record.browserNoSandbox === 'boolean'
-      ? record.browserNoSandbox
-      : SIDEBAR_PREFS_DEFAULTS.browserNoSandbox,
-    browserInterceptLinks: typeof record.browserInterceptLinks === 'boolean'
-      ? record.browserInterceptLinks
-      : SIDEBAR_PREFS_DEFAULTS.browserInterceptLinks,
-    browserInterceptHttp: typeof record.browserInterceptHttp === 'boolean'
-      ? record.browserInterceptHttp
-      : SIDEBAR_PREFS_DEFAULTS.browserInterceptHttp,
-    browserInterceptHttps: typeof record.browserInterceptHttps === 'boolean'
-      ? record.browserInterceptHttps
-      : SIDEBAR_PREFS_DEFAULTS.browserInterceptHttps,
-    browserAllowedLoopback: typeof record.browserAllowedLoopback === 'string'
-      ? record.browserAllowedLoopback
-      : SIDEBAR_PREFS_DEFAULTS.browserAllowedLoopback,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),

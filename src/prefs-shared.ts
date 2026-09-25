@@ -23,19 +23,19 @@ export interface SidebarPrefs {
    */
   autoOpenJobs: boolean
   /**
-   * Whether the model-facing agent terminal tools (terminal_create / list /
-   * send / read / wait_for / resize / signal / close) are injected into the
-   * model's toolset. Off by default: the feature stays dormant until the
-   * user explicitly enables it in the side card settings.
-   */
-  agentTerminalTools: boolean
-  /**
    * Whether the model-facing `sidebar_open` tool is injected into the
    * model's toolset — one tool that lets the model actively open a local
    * file, a local folder (as a tree rooted there), or an HTTP(S) page in
    * the calling session's sidebar. Off by default: the feature stays
    * dormant until the user explicitly enables it in the side card settings.
    */
+  /**
+   * Whether the model-facing agent terminal tools (terminal_create / list /
+   * send / read / wait_for / resize / signal / close) are injected into the
+   * model's toolset. Off by default: the feature stays dormant until the
+   * user explicitly enables it in the side card settings.
+   */
+  agentTerminalTools: boolean
   agentOpenTools: boolean
   /**
    * Custom terminal font-family stack (a CSS font-family value, e.g.
@@ -80,6 +80,7 @@ export interface SidebarPrefs {
    */
   workspaceFence: boolean
   /**
+/**
    * Whether the editor / previewers / file tree may OPEN files outside the
    * session workspace (absolute paths the host would otherwise refuse with
    * 403 `forbidden`). READ-ONLY relaxation: while it is on, the read routes
@@ -164,50 +165,6 @@ export interface SidebarPrefs {
    */
   htmlViewerDefaultUnsafe: boolean
   /**
-   * Whether the browser tab drops its sandboxed iframe. Sandbox ON (the
-   * default) keeps browsed sites in an opaque origin with no GUI access;
-   * turning it OFF runs any visited site with the GUI's own origin — it
-   * can read session data and act as the logged-in GUI. Only for trusted
-   * sites; the setting copy warns.
-   */
-  browserNoSandbox: boolean
-  /**
-   * MASTER switch: whether clicking an EXTERNAL link in the GUI (chat
-   * messages, tool rows, prose mentions) is taken over into the sidebar at
-   * all. On by default; the per-protocol granularity lives in
-   * `browserInterceptHttp` / `browserInterceptHttps` (the protocol flag
-   * must also be on), and the target tab's own enable switch gates it too.
-   * Ctrl/Cmd+click always bypasses the takeover. Kept as the master so old
-   * documents keep their meaning with no migration (an explicit `false`
-   * stays "never take over").
-   */
-  browserInterceptLinks: boolean
-  /**
-   * Whether clicking an http EXTERNAL link in the GUI opens the sidebar
-   * (the built-in browser tab, or a plugin tab that declares `urlTarget`)
-   * instead of a new browser tab. On by default; gated on the
-   * `browserInterceptLinks` master and the target tab's own enable switch.
-   */
-  browserInterceptHttp: boolean
-  /**
-   * Whether clicking an https EXTERNAL link in the GUI opens the sidebar
-   * instead of a new browser tab. OFF by default — most https sites (e.g.
-   * GitHub) refuse iframe embedding, so the system browser is the smoother
-   * default; gated on the `browserInterceptLinks` master and the target
-   * tab's own enable switch.
-   */
-  browserInterceptHttps: boolean
-  /**
-   * Comma-separated allowlist of local (loopback) authorities the browser
-   * tab may navigate to — `localhost`, `127.0.0.1`, `127.0.0.1:5174`, or
-   * host:port pairs. Empty by default: loopback addresses stay blocked so a
-   * browsed page cannot probe local services. Each entry is either a bare
-   * hostname (all ports) or host:port; the GUI's own origin is always
-   * allowed regardless. The iframe sandbox still renders allowed local
-   * pages in an opaque origin, exactly like any other site.
-   */
-  browserAllowedLoopback: string
-  /**
    * Per-tab enable switches, keyed by tab descriptor id (`'explorer'`,
    * `'my-plugin:db'`). An ABSENT key means enabled — only an explicit
    * `false` disables a tab type (hidden from the + menu, `openTab` refuses,
@@ -260,7 +217,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   editorExplorer: false,
   workspaceFence: true,
-  allowOpenOutsideWorkspace: false,
+allowOpenOutsideWorkspace: false,
   terminalShell: '',
   terminalShellArgs: '',
   titleBarScheme: 'auto',
@@ -270,11 +227,6 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,
   htmlViewerNoSandbox: false,
   htmlViewerDefaultUnsafe: false,
-  browserNoSandbox: false,
-  browserInterceptLinks: true,
-  browserInterceptHttp: true,
-  browserInterceptHttps: false,
-  browserAllowedLoopback: '',
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},

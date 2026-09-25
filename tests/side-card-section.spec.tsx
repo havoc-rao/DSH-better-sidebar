@@ -228,41 +228,41 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     expect(html).toContain('checked=""')
   })
 
-  it('renders a text row as an input seeded with the pref value (empty = theme default)', () => {
+  it('renders a text row as an input seeded with the pref value', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles: [{
-        key: 'terminalFontFamily',
+        key: 'titleBarPresetId',
         type: 'text',
-        title: () => 'Font family',
-        desc: () => 'CSS stack',
+        title: () => 'Preset id',
+        desc: () => 'Named shell preset',
         placeholder: '"JetBrains Mono", monospace',
       }],
-      prefs: { ...prefs, terminalFontFamily: '"JetBrains Mono", monospace' },
+      prefs: { ...prefs, titleBarPresetId: '"JetBrains Mono", monospace' },
       onToggle: () => {},
       onCommit: () => '',
     }))
-    expect(html).toContain('Font family')
+    expect(html).toContain('Preset id')
     expect(html).toContain('placeholder="&quot;JetBrains Mono&quot;, monospace"')
     // The input carries the pref value (no switch for text rows).
     expect(html).toContain('value="&quot;JetBrains Mono&quot;, monospace"')
     expect(html).not.toContain('type="checkbox"')
   })
 
-  it('renders a number row with the pref value, the declared bounds and a unit suffix', () => {
+  it('renders a number row with the pref value, the declared bounds and a unit suffix (non-default bounds)', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles: [{
-        key: 'terminalFontSize',
+        key: 'titleBarStripPx',
         type: 'number',
-        title: () => 'Font size',
+        title: () => 'Shift distance',
         min: 9,
         max: 32,
         unit: 'px',
       }],
-      prefs: { ...prefs, terminalFontSize: 18 },
+      prefs: { ...prefs, titleBarStripPx: 18 },
       onToggle: () => {},
       onCommit: () => '18',
     }))
-    expect(html).toContain('Font size')
+    expect(html).toContain('Shift distance')
     expect(html).toContain('type="number"')
     expect(html).toContain('value="18"')
     expect(html).toContain('min="9"')

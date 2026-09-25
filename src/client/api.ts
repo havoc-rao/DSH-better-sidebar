@@ -9,8 +9,22 @@
 import { encodeHtmlUrl } from '../html-route.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
-import type { SidebarSessionEvent } from '../context-types.ts'
-import type { BrowserProbeResult } from './browser.ts'
+import type { SidebarJobView, SidebarSessionEvent } from '../context-types.ts'
+
+/** Terminal dependency status (mirror of the host's depsStatus; issue #140). */
+export type TerminalDepsStatus =
+  | { ok: true }
+  | {
+    ok: false
+    /** The require-time error message (module missing, native binding broken…). */
+    cause: string
+    /** The pasteable repair command (terminal/cmd). */
+    command: string
+    /** The detected profile name (null when undetected → the command defaults to web). */
+    profile: string | null
+    /** Optional supplementary hint (fallback command only). */
+    note?: string
+  }
 
 /** One wire failure. */
 export class SidebarApiError extends Error {
@@ -139,21 +153,6 @@ export interface JobOutputResult {
 
 /** The `subagents.live` response: running child id → latest activity. */
 export type SubagentLiveResult = { live: Record<string, LastActivity> }
-
-/** Terminal dependency status (mirror of the host's depsStatus; issue #140). */
-export type TerminalDepsStatus =
-  | { ok: true }
-  | {
-    ok: false
-    /** The require-time error message (module missing, native binding broken…). */
-    cause: string
-    /** The pasteable repair command (terminal/cmd). */
-    command: string
-    /** The detected profile name (null when undetected → the command defaults to web). */
-    profile: string | null
-    /** Optional supplementary hint (fallback command only). */
-    note?: string
-  }
 
 /**
  * Parse one `/sidebar` JSON response envelope into its value. A non-ok
@@ -383,6 +382,24 @@ export const api = {
   /** Cherry-pick one commit onto the current branch. */
   gitCherryPick: (scope: SessionScope, hash: string, worktree?: string) =>
     call<{ ok: true }>('git.cherry-pick', gitPayload(scope, worktree, { hash })),
+  /**
+   * The output the model has read so far for one background job (replayed
+   * from the owner session's event log — never the model's job_output
+   * cursor). The scope MUST be the job's OWNER session.
+   */
+  jobOutput: (scope: SessionScope, id: string, signal?: AbortSignal) =>
+    call<JobOutputResult>('jobs.output', scopePayload(scope, { id }), signal),
+  /**
+   * The background-job list of one session (the Tasks page's jobs section and
+   * the job auto-open trigger). DSH 0.1.7 dropped the client session
+   * snapshot's jobs mirror, so the registry is read through the plugin's own
+   * `jobs.list` route. The registry's access fence admits a job to its OWNER
+   * session (and to unowned jobs) only, so a caller that needs the whole tree
+   * asks once per tree session. A host without the jobs service answers 503:
+   * the rejection is the caller's to degrade from (an empty section).
+   */
+  jobsList: (sessionId: string, signal?: AbortSignal) =>
+    call<{ jobs: SidebarJobView[] }>('jobs.list', { sessionId }, signal),
   /** Release a terminal's process immediately (tab closed; the WS close frame
    *  may be unreachable while the socket is down, so the host also accepts
    *  this explicit route). */
@@ -400,13 +417,9 @@ export const api = {
    *  (the close reason itself is capped at 123 bytes). */
   terminalDeps: () =>
     call<TerminalDepsStatus>('terminal.deps', {}),
-  /**
-   * The output the model has read so far for one background job (replayed
-   * from the owner session's event log — never the model's job_output
-   * cursor). The scope MUST be the job's OWNER session.
-   */
-  jobOutput: (scope: SessionScope, id: string, signal?: AbortSignal) =>
-    call<JobOutputResult>('jobs.output', scopePayload(scope, { id }), signal),
+  /** The effective terminal shell and its display name (plugin-global). */
+  shellGet: () =>
+    call<{ shell: string; name: string }>('shell.get', {}),
   /** Request cancellation of one background job (live jobs flip to stopping). */
   jobKill: (scope: SessionScope, id: string, reason?: string) =>
     call<{ ok: true; outcome: 'requested' | 'already-finished' }>('jobs.kill', scopePayload(scope, {
@@ -448,9 +461,6 @@ export const api = {
       childId,
       ...(afterSeq !== undefined ? { afterSeq } : {}),
     }, signal),
-  /** The effective terminal shell and its display name (plugin-global). */
-  shellGet: () =>
-    call<{ shell: string; name: string }>('shell.get', {}),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
     call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),
@@ -460,10 +470,6 @@ export const api = {
       patch,
       ...(expectedRevision !== undefined ? { expectedRevision } : {}),
     }),
-  /** Probe a URL's response headers (the sidebar browser's embeddability
-   *  check; see the host's browser.probe route). */
-  browserProbe: (url: string, signal?: AbortSignal) =>
-    call<BrowserProbeResult>('browser.probe', { url }, signal),
   /** External open for the file tree's "open with" menu. Remote SSH editor
    *  URLs are launched on the browser/client machine; reveal and local URLs
    *  keep using the host's platform opener. */

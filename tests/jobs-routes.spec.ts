@@ -7,15 +7,16 @@
  * by the owning session, with a 503 when the registry is absent.
  */
 import { describe, expect, it, vi } from 'vitest'
+import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { buildJobsApi } from '../src/jobs-routes.ts'
 import { SidebarError } from '../src/wire.ts'
 import type { Context, SidebarSessionEvent } from '../src/context-types.ts'
 
-/** A context whose `get` serves only the jobs/agents faces, with a session store. */
-function ctxWith(sessions: unknown, jobs: unknown, agents: unknown): Context {
+/** A context whose `get` serves only the jobs face, with a session store. */
+function ctxWith(sessions: unknown, jobs: unknown): Context {
   return {
     sessions,
-    get: (key: string) => (key === 'jobs' ? jobs : key === 'agents' ? agents : undefined),
+    get: (key: string) => (key === 'jobs' ? jobs : undefined),
   } as unknown as Context
 }
 
@@ -25,7 +26,7 @@ function ctxWithFeed(sessions: unknown): {
   emit: (session: unknown, event: SidebarSessionEvent) => void
 } {
   let listener: ((session: unknown, event: SidebarSessionEvent) => void) | undefined
-  const base = ctxWith(sessions, undefined, undefined) as unknown as {
+  const base = ctxWith(sessions, undefined) as unknown as {
     on: (event: string, fn: (session: unknown, event: SidebarSessionEvent) => void) => () => void
     effect: (fn: () => void | (() => void)) => void
   }
@@ -41,15 +42,13 @@ function ctxWithFeed(sessions: unknown): {
   }
 }
 
-/** A stub live agent (the fence compares `id` only). */
-const agent = (id: string) => ({ id, session: { header: { cwd: '/p' } } })
-
 /** One job_output tool/call event. */
 function jobOutputCall(seq: number, callId: string, jobId: string): SidebarSessionEvent {
   return { type: 'tool/call', seq, time: seq, data: { name: 'job_output', callId, arguments: JSON.stringify({ job_id: jobId }) } }
 }
 
-/** One tool/result event carrying the finalized text the model received. */
+/** One tool/result event carrying the finalized text the model received —
+ *  the 0.1.7 first-class tool-role shape (content + isError on the message). */
 function jobOutputResult(seq: number, callId: string, text: string, over: { isError?: boolean } = {}): SidebarSessionEvent {
   return {
     type: 'tool/result',
@@ -57,6 +56,26 @@ function jobOutputResult(seq: number, callId: string, text: string, over: { isEr
     time: seq,
     data: {
       message: {
+        role: 'tool',
+        source: { kind: 'tool', callId },
+        toolCallId: callId,
+        isError: over.isError === true,
+        content: [{ type: 'text', text }],
+      },
+    },
+  }
+}
+
+/** The retired 0.1.6 shape: role-'user' message wrapping the result in one
+ *  `tool-result` block. Historical logs still carry it. */
+function legacyJobOutputResult(seq: number, callId: string, text: string, over: { isError?: boolean } = {}): SidebarSessionEvent {
+  return {
+    type: 'tool/result',
+    seq,
+    time: seq,
+    data: {
+      message: {
+        role: 'user',
         source: { kind: 'tool', callId },
         content: [{
           type: 'tool-result',
@@ -85,7 +104,7 @@ describe('jobs.output route (event replay)', () => {
       jobOutputCall(4, 'c3', 'bash-2'),
       jobOutputResult(5, 'c3', 'other job output'),
     ]
-    const api = buildJobsApi(ctxWith({ get: () => session(events) }, undefined, undefined), 512 * 1024)
+    const api = buildJobsApi(ctxWith({ get: () => session(events) }, undefined), 512 * 1024)
     expect(api.output({ sessionId: 's1', id: 'bash-1' })).toEqual({
       text: 'line1\nline2\n[status: running]\nline3\n[status: completed, exit code: 0]',
       truncated: false,
@@ -102,9 +121,44 @@ describe('jobs.output route (event replay)', () => {
       jobOutputCall(4, 'c3', 'bash-1'),
       jobOutputResult(5, 'c3', 'boom', { isError: true }),
     ]
-    const api = buildJobsApi(ctxWith({ get: () => session(events) }, undefined, undefined), 512 * 1024)
+    const api = buildJobsApi(ctxWith({ get: () => session(events) }, undefined), 512 * 1024)
     expect(api.output({ sessionId: 's1', id: 'bash-1' })).toEqual({
       text: 'real output\n[status: running]',
+      truncated: false,
+      read: true,
+    })
+  })
+
+  it('reads the tool/result message dsh-llm actually produces (producer round-trip)', () => {
+    const message = createToolResultMessage({
+      callId: ToolCallId('c1'),
+      content: [{ type: 'text', text: 'produced output\n[status: running]' }],
+      isError: false,
+    })
+    const events: SidebarSessionEvent[] = [
+      jobOutputCall(0, 'c1', 'bash-1'),
+      { type: 'tool/result', seq: 1, time: 1, data: { message } },
+    ]
+    const api = buildJobsApi(ctxWith({ get: () => session(events) }, undefined), 512 * 1024)
+    expect(api.output({ sessionId: 's1', id: 'bash-1' })).toEqual({
+      text: 'produced output\n[status: running]',
+      truncated: false,
+      read: true,
+    })
+  })
+
+  it('reads a LEGACY 0.1.6-era tool-result wrapper (historical logs keep that shape)', () => {
+    // The first legacy read is an error (its wrapper flag must still be
+    // honored), the second supplies the text.
+    const events = [
+      jobOutputCall(0, 'c1', 'bash-1'),
+      legacyJobOutputResult(1, 'c1', 'legacy boom', { isError: true }),
+      jobOutputCall(2, 'c2', 'bash-1'),
+      legacyJobOutputResult(3, 'c2', 'legacy line\n[status: running]'),
+    ]
+    const api = buildJobsApi(ctxWith({ get: () => session(events) }, undefined), 512 * 1024)
+    expect(api.output({ sessionId: 's1', id: 'bash-1' })).toEqual({
+      text: 'legacy line\n[status: running]',
       truncated: false,
       read: true,
     })
@@ -113,7 +167,7 @@ describe('jobs.output route (event replay)', () => {
   it('reports read:false until the model reads the job (no registry call at all)', () => {
     const events = [jobOutputCall(0, 'c1', 'bash-2')]
     const jobs = { kill: vi.fn() }
-    const api = buildJobsApi(ctxWith({ get: () => session(events) }, jobs, undefined), 100)
+    const api = buildJobsApi(ctxWith({ get: () => session(events) }, jobs), 100)
     expect(api.output({ sessionId: 's1', id: 'bash-1' })).toEqual({ text: '', truncated: false, read: false })
     // The replay never touches the registry — the model's cursor is safe by construction.
     expect(jobs.kill).not.toHaveBeenCalled()
@@ -170,7 +224,7 @@ describe('jobs.output route (event replay)', () => {
 
   it('caps oversized replays with the truncated flag', () => {
     const events = [jobOutputCall(0, 'c1', 'bash-1'), jobOutputResult(1, 'c1', 'x'.repeat(10_000))]
-    const api = buildJobsApi(ctxWith({ get: () => session(events) }, undefined, undefined), 100)
+    const api = buildJobsApi(ctxWith({ get: () => session(events) }, undefined), 100)
     const value = api.output({ sessionId: 's1', id: 'bash-1' })
     expect(value.text).toBe('x'.repeat(100))
     expect(value.truncated).toBe(true)
@@ -178,39 +232,39 @@ describe('jobs.output route (event replay)', () => {
   })
 
   it('rejects a missing sessionId or id as bad-request', () => {
-    const api = buildJobsApi(ctxWith({ get: () => undefined }, undefined, undefined), 100)
+    const api = buildJobsApi(ctxWith({ get: () => undefined }, undefined), 100)
     expect(() => api.output({ id: 'bash-1' })).toThrowError(expect.objectContaining<Partial<SidebarError>>({ code: 'bad-request' }))
     expect(() => api.output({ sessionId: 's1' })).toThrowError(expect.objectContaining<Partial<SidebarError>>({ code: 'bad-request' }))
   })
 })
 
 describe('jobs.kill route', () => {
-  it('kills with the forwarded reason and the live caller', () => {
+  it('kills with the forwarded reason and the owning session id', () => {
     const jobs = { kill: vi.fn(() => 'requested' as const) }
-    const agents = { get: vi.fn((id: string) => agent(id)) }
-    const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs, agents), 100)
+    const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs), 100)
     expect(api.kill({ sessionId: 's1', id: 'bash-1', reason: 'user pressed stop' }))
       .toEqual({ ok: true, outcome: 'requested' })
-    expect(jobs.kill).toHaveBeenCalledWith('bash-1', agent('s1'), 'user pressed stop')
+    // 0.1.7's registry fences by SessionId; the 0.1.6 Agent object is gone.
+    expect(jobs.kill).toHaveBeenCalledWith('bash-1', 's1', 'user pressed stop')
   })
 
   it('defaults the reason when none is supplied', () => {
     const jobs = { kill: vi.fn(() => 'already-finished' as const) }
-    const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs, undefined), 100)
+    const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs), 100)
     expect(api.kill({ sessionId: 's1', id: 'bash-1' })).toEqual({ ok: true, outcome: 'already-finished' })
-    expect(jobs.kill).toHaveBeenCalledWith('bash-1', undefined, 'user requested via sidebar')
+    expect(jobs.kill).toHaveBeenCalledWith('bash-1', 's1', 'user requested via sidebar')
   })
 
   it('maps registry refusals to a 404 job-error', () => {
     const jobs = { kill: vi.fn(() => { throw new Error('unknown job bash-9') }) }
-    const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs, undefined), 100)
+    const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs), 100)
     expect(() => api.kill({ sessionId: 's1', id: 'bash-9' })).toThrowError(
       expect.objectContaining<Partial<SidebarError>>({ code: 'job-error', status: 404 }),
     )
   })
 
   it('degrades to a 503 when the jobs registry is absent (output keeps working)', () => {
-    const api = buildJobsApi(ctxWith({ get: () => session([]) }, undefined, undefined), 100)
+    const api = buildJobsApi(ctxWith({ get: () => session([]) }, undefined), 100)
     expect(() => api.kill({ sessionId: 's1', id: 'bash-1' })).toThrowError(
       expect.objectContaining<Partial<SidebarError>>({ code: 'job-error', status: 503 }),
     )

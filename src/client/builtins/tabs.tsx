@@ -1,17 +1,21 @@
 /**
- * The 7 built-in tab descriptors: the plugin registers its own pages
- * (editor / git — the unified changes tab / subagent / sidechat / terminal /
- * browser / diff) through
+ * The built-in tab descriptors: the plugin registers its own pages
+ * (editor / git — the unified changes tab / subagent / sidechat / browser /
+ * diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
- * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
- * and mints `terminal:<uuid>` ids through `createTab`; the browser mints
- * `browser:<n>` the same way (no quota). The editor IS the files window
- * (the old standalone explorer merged into it).
+ * own dogfood. The editor IS the files window (the old standalone explorer
+ * merged into it).
+ *
+ * DSH 0.1.6-alpha.2 ships its own right-Sidebar terminal and browser tab
+ * types, so this plugin contributes neither: the host's `terminal` kind owns
+ * interactive shells outright, and the host's `browser` kind (delegated to
+ * from the chat's http(s) links) owns embedded pages. See
+ * docs/plans/2026-09-21-dsh-0.1.6-alpha.2-adaptation.md.
  */
-import { IconCodeOutline16, IconPanelLeftOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import {
-  browserTabIcon, changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
+  changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
 } from './tab-icons.tsx'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
@@ -25,7 +29,6 @@ import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
 import { api } from '../api.ts'
-import { BrowserView } from '../BrowserView.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import { useTerminalTransport } from '../terminal-source.ts'
 import type { TerminalTransport } from '../terminal-transport.ts'
@@ -118,6 +121,7 @@ function uiTerminalCount(state: SidebarState): number {
 
 /** The 6 built-in tab descriptors. */
 export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): readonly TabDescriptor[] {
+
   return [
     {
       id: 'editor',
@@ -146,13 +150,13 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           options: [
             {
               value: true,
-              icon: (size: number) => <IconPanelLeftOutline16 size={size} />,
+              icon: (size: number) => <IconPanelLeftOutlineRegular size={size} />,
               title: () => t('editorExplorerMerged'),
               desc: () => t('editorExplorerMergedDesc'),
             },
             {
               value: false,
-              icon: (size: number) => <IconCodeOutline16 size={size} />,
+              icon: (size: number) => <IconCodeOutlineRegular size={size} />,
               title: () => t('editorExplorerSplit'),
               desc: () => t('editorExplorerSplitDesc'),
             },
@@ -303,7 +307,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       ),
     },
     {
-      id: 'terminal',
+id: 'terminal',
       title: () => t('terminal'),
       description: () => t('guideDescTerminal'),
       icon: terminalTabIcon,
@@ -366,51 +370,6 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
         }
       },
       component: (props) => <TerminalTabTransport {...props} />,
-    },
-    {
-      id: 'browser',
-      title: () => t('browser'),
-      description: () => t('guideDescBrowser'),
-      icon: browserTabIcon,
-      order: 50,
-      // Declarative settings: the sandbox escape hatch, the link-takeover
-      // MASTER switch, and the per-protocol takeover switches (http on /
-      // https off by default) render under this tab's row in the Side card
-      // settings page (the sandbox one is warned on).
-      settings: {
-        toggles: [{
-          key: 'browserNoSandbox',
-          title: () => t('settingsBrowserSandboxTitle'),
-          desc: () => t('settingsBrowserSandboxDesc'),
-        }, {
-          key: 'browserInterceptLinks',
-          title: () => t('settingsBrowserLinksTitle'),
-          desc: () => t('settingsBrowserLinksDesc'),
-        }, {
-          key: 'browserInterceptHttp',
-          title: () => t('settingsBrowserHttpTitle'),
-          desc: () => t('settingsBrowserHttpDesc'),
-        }, {
-          key: 'browserInterceptHttps',
-          title: () => t('settingsBrowserHttpsTitle'),
-          desc: () => t('settingsBrowserHttpsDesc'),
-        }, {
-          key: 'browserAllowedLoopback',
-          type: 'text',
-          title: () => t('settingsBrowserLoopbackTitle'),
-          desc: () => t('settingsBrowserLoopbackDesc'),
-          placeholder: t('settingsBrowserLoopbackPlaceholder'),
-        }],
-      },
-      createTab: (state) => ({
-        tab: {
-          id: `browser:${state.nextBrowser}`,
-          type: 'browser',
-          title: t('browser'),
-        },
-        patch: { nextBrowser: state.nextBrowser + 1 },
-      }),
-      component: (props) => <BrowserView {...props} />,
     },
     {
       id: 'diff',

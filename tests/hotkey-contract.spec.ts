@@ -31,7 +31,11 @@ function makeCtx(controller: unknown): {
   sessions: { list: { subscribe: (cb: () => void) => () => void; getSnapshot: () => { current: string; byId: Record<string, { sessionId: string; cwd: string }> } } }
 } {
   return {
-    get: (name: string) => (name === 'sidebarRight' ? controller : undefined),
+    get: (name: string) => (name === 'sidebarRight' ? (controller === undefined ? controller : {
+      ...(controller as object),
+      // DSH 0.1.7: mountedSessionId reads the controller's mounted seat.
+      mounted: { getSnapshot: () => 's1', subscribe: () => () => {} },
+    }) : undefined),
     sessions: {
       list: {
         subscribe: () => () => {},
@@ -202,7 +206,13 @@ function renderSidebar(): {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
     betterSidebar: service,
-    get: (name: string) => name === 'betterSidebar' ? service : undefined,
+    get: (name: string) => {
+      if (name === 'betterSidebar') return service
+      // The real-sidebar shell world: no native column (popup / session
+      // window) — `sidebarRight` stays absent, so the plugin's own
+      // workbench-fallback surface is in charge (v0.20.x dsh-hotkey world).
+      return undefined
+    },
   }
   const root = createRoot(container)
   act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })

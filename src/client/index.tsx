@@ -2,11 +2,11 @@
  * Client half of dsh-better-sidebar: resolves the user's "Side card"
  * preferences through the plugin's own fenced settings route, mounts the
  * right sidebar portal (inside an error boundary so a rendering failure
- * shows an error strip instead of a blank panel), registers the turn-tail
- * interception, and contributes the Side card settings section to the DSH
- * Settings shell. Requires the runtime's slots and sessions services; the
- * bundle itself is a module-table consumer only (react + ui-primitives +
- * xterm, all provided or inlined).
+ * shows an error strip instead of a blank panel), and contributes the Side
+ * card settings section to the DSH Settings shell. Requires the runtime's
+ * slots and sessions services; the bundle itself is a module-table consumer
+ * only (react + ui-primitives, all provided or inlined — the editor and
+ * mermaid libraries arrive as lazy chunks).
  */
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -17,14 +17,13 @@ import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-load
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
-import { registerTurnTailInterception } from './intercept.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { readNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { CMD_W_SHORTCUT, claimCloseActiveTab, readDesktopShellBridge } from './desktop-shortcuts.ts'
 import { createNativeSurface } from './native/surface.ts'
-import { registerLinkInterception } from './link-intercept.ts'
+import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { installFileTreeUiSeat } from './file-tree-ui.ts'
@@ -57,9 +56,7 @@ export { resolveGitSource, useGitSource } from './git-source.ts'
  *  (rc.8+) is the client module system the chunk loader resolves its
  *  externals through; `connection` (0.1.2-alpha.2+) is the Remote transport's
  *  recovery lifecycle the side chat's disconnect banner reads — Cordis guards
- *  service access without inject. The `remote.session` namespace is NOT here:
- *  it mounts asynchronously, so the open-path interception reaches it through
- *  `ctx.inject` (see intercept.tsx). */
+ *  service access without inject. */
 export const inject = ['slots', 'sessions', 'locale', 'modules', 'connection']
 
 /**
@@ -214,7 +211,10 @@ export function apply(ctx: Context): void {
   const nativeSurface = createNativeSurface(ctx, nativeRecords)
   service.setSurface(nativeSurface)
   ctx.effect(
-    () => registerNativeSurface({ ctx, store: sidebarStore, service, records: nativeRecords }),
+    () => registerNativeSurface({
+      ctx, store: sidebarStore, service, records: nativeRecords,
+      reportFailure: (phase, error) => { fail(`native ${phase}`, error) },
+    }),
     'dsh-better-sidebar: native right-Sidebar registrations',
   )
   // The bottom workbench's expand/collapse button in DSH's session header
@@ -280,6 +280,7 @@ export function apply(ctx: Context): void {
     () => registerBuiltins(ctx, service, { terminalTitle: () => terminalTitle }),
     'dsh-better-sidebar: register built-in tabs and viewers',
   )
+
   // A failure anywhere in the client lifecycle must never take the app down
   // silently: log with the plugin prefix and pin a visible diagnostic strip
   // to the page so a blank panel is never the only symptom. This strip is
@@ -303,6 +304,7 @@ export function apply(ctx: Context): void {
       // Nothing left to report with.
     }
   }
+  
   try {
     // rc.8+ exposes the client module system as the `ctx.modules` service;
     // the chunk loader needs it to resolve its externals, so inject it
@@ -449,48 +451,42 @@ export function apply(ctx: Context): void {
     ctx.effect(
       () => {
         try {
-          return registerTurnTailInterception(ctx, sidebarStore)
-        } catch (error) {
-          fail('interception', error)
-          return () => {}
-        }
-      },
-      'dsh-better-sidebar: turn-tail interception',
-    )
-
-    ctx.effect(
-      () => {
-        try {
-          // External http(s) links in the chat/GUI open the sidebar instead
-          // of a new window. Gated on the browserInterceptLinks MASTER pref,
-          // the URL's protocol flag (browserInterceptHttp / Https — https
-          // defaults OFF: most https sites refuse iframe embedding), and the
-          // target tab's enable switch; Ctrl/Cmd+click always bypasses. The
-          // target is the first registered tab whose `urlTarget` claims the
-          // URL (enabled tabs only), else the built-in browser tab.
+          // External links are taken over ONLY when a registered tab type
+          // claims the URL through `urlTarget` (and this sidebar is not
+          // suspended); Ctrl/Cmd+click and non-http(s) / same-origin links
+          // always bypass. Everything else is left to the host: since DSH
+          // 0.1.7 the destination of a chat link is decided by the user's
+          // `linkOpening` setting plus the host's own browser tab — a kind
+          // the Web profile leaves disabled — so `preventDefault`ing an
+          // unclaimed link would swallow it (the host's `MarkdownAnchor`
+          // does not re-check `defaultPrevented`, and plugin-drawn markdown
+          // — sidechat transcripts, editor previews, HTML previews, diff
+          // panes — would lose the click entirely). Host-rendered chat prose
+          // therefore goes back to the host's `openExternalLink`, and
+          // plugin-drawn markdown to the anchor's own `window.open`.
           const urlTargetOf = (url: URL): string | undefined => {
             const prefs = sidebarStore.getPrefs()
             const enabled = service.getTabs().filter(tab => prefs.tabsEnabled[tab.id] !== false)
             return matchUrlTarget(enabled, url)?.id
           }
           return registerLinkInterception({
-            takeoverEnabled: (url) => {
-              if (sidebarStore.getSuspended()) return false
-              const prefs = sidebarStore.getPrefs()
-              if (prefs.browserInterceptLinks === false) return false
-              const protocolOn = url.protocol === 'https:'
-                ? prefs.browserInterceptHttps !== false
-                : prefs.browserInterceptHttp !== false
-              if (!protocolOn) return false
-              // A plugin claim is the target (already enabled-filtered);
-              // otherwise the built-in browser must be enabled.
-              return urlTargetOf(url) !== undefined || prefs.tabsEnabled['browser'] !== false
-            },
+            takeoverEnabled: (url) => shouldTakeOverLink(url, {
+              suspended: sidebarStore.getSuspended(),
+              resolveTarget: urlTargetOf,
+            }),
             openInSidebar: (url) => {
-              let title: string | undefined
-              try { title = new URL(url).hostname } catch { /* keep the default title */ }
-              const type = urlTargetOf(new URL(url)) ?? 'browser'
-              ctx.get('betterSidebar')?.openTab({ type, url, title })
+              openInterceptedLink(url, {
+                resolveTarget: urlTargetOf,
+                // Re-checked at open time: the claim above and this open are
+                // separate turns, so the type may be gone (plugin unloaded,
+                // switched off) by now.
+                isAvailable: (type) => isTargetAvailable(
+                  type,
+                  service.getTabs(),
+                  sidebarStore.getPrefs().tabsEnabled,
+                ),
+                sidebar: ctx.get('betterSidebar'),
+              })
             },
             selfOrigin: window.location.origin,
           })

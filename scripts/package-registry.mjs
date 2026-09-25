@@ -10,7 +10,7 @@
  *
  * The registry install copies the whole source directory (`cp -r`), so
  * installing the repo root would drag in `node_modules/` (machine-local
- * `link:` devDependency symlinks, node-pty binaries) and `.git/`. This
+ * `link:` devDependency symlinks) and `.git/`. This
  * staging directory carries exactly the files the manifest references plus
  * the docs — same layout as the dsh-subagent-tree `registry/` pattern. It is
  * gitignored and rebuilt from scratch on every run.
@@ -31,8 +31,6 @@ const files = [
   'lib/client-registry.js.map',
   // Lazy chunks: the client fetches these from the host's /sidebar/bundle
   // route on first use (see src/client/chunk-loader.ts / src/bundle-route.ts).
-  'lib/client-terminal.js',
-  'lib/client-terminal.js.map',
   'lib/client-editor.js',
   'lib/client-editor.js.map',
   'lib/client-mermaid.js',

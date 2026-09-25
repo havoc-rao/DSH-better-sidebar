@@ -13,7 +13,7 @@ import {
   jobStatusLabel,
   treeSessionIds,
 } from '../src/client/subagent-jobs.ts'
-import type { SidebarSessionList, SidebarSessionSummary, SidebarJobStatus, SidebarJobView } from '../src/context-types.ts'
+import type { SidebarSessionSummary, SidebarJobStatus, SidebarJobView } from '../src/context-types.ts'
 
 /** The translator stub: renders duration templates like the real locale copy. */
 const templates: Record<string, string> = {
@@ -67,17 +67,19 @@ describe('collectTreeJobs', () => {
       root: summary('root'),
       child: summary('child', { origin: 'subagent', parentId: 'root' }),
     }
-    const jobsBySession = {
+    // The map is the client's per-owner read of `jobs.list` (the registry's
+    // fence admits a job to its owner session only), keyed by that owner.
+    const jobsByOwner = {
       root: [job('bash-1')],
       child: [job('bash-2', { status: 'completed', finishedAt: 2_000 })],
       stranger: [job('bash-9')],
     }
-    const rows = collectTreeJobs(byId, jobsBySession, 'root')
+    const rows = collectTreeJobs(byId, jobsByOwner, 'root')
     expect(rows.map(row => [row.ownerSessionId, row.ownerTitle, row.job.id]))
       .toEqual([['root', 'title-root', 'bash-1'], ['child', 'title-child', 'bash-2']])
   })
 
-  it('returns an empty list for an absent mirror or empty sets', () => {
+  it('returns an empty list for an absent read or empty sets', () => {
     const byId = { root: summary('root') }
     expect(collectTreeJobs(byId, undefined, 'root')).toEqual([])
     expect(collectTreeJobs(byId, {}, 'root')).toEqual([])
@@ -134,32 +136,28 @@ describe('status presentation helpers', () => {
 })
 
 describe('detectNewJob', () => {
-  const list = (jobsBySession: Record<string, SidebarJobView[]>): SidebarSessionList => ({
-    current: 'root',
-    byId: { root: { id: 'root', displayTitle: 'root' } },
-    subagentsByParent: {},
-    jobsBySession: jobsBySession,
-  })
-
-  it('fires on EVERY new job id for the session (not just the first)', () => {
-    expect(detectNewJob(list({}), list({ root: [job('bash-1')] }), 'root')).toBe(true)
+  /**
+   * The baseline rule the auto-open trigger adds on top of this helper: the
+   * FIRST list a page reads only arms the baseline (the poller keeps
+   * `prev === undefined` until a read succeeds), so a conversation that is
+   * already running jobs when the page loads never pops the Tasks page. The
+   * helper itself is pure over two lists.
+   */
+  it('fires on EVERY job id the previous list lacked, and on nothing else', () => {
+    // A new id appears (the first job, then another one alongside it).
+    expect(detectNewJob([], [job('bash-1')])).toBe(true)
+    expect(detectNewJob([job('bash-1')], [job('bash-1'), job('bash-2')])).toBe(true)
+    // Settling only mutates status: same ids, no trigger.
     expect(detectNewJob(
-      list({ root: [job('bash-1')] }),
-      list({ root: [job('bash-1'), job('bash-2')] }),
-      'root',
-    )).toBe(true)
-  })
-
-  it('stays quiet on settling, same ids, other sessions, or an absent mirror', () => {
-    // Settling only mutates status, never adds ids.
-    expect(detectNewJob(
-      list({ root: [job('bash-1')] }),
-      list({ root: [job('bash-1', { status: 'completed', finishedAt: 2_000 })] }),
-      'root',
+      [job('bash-1')],
+      [job('bash-1', { status: 'completed', finishedAt: 2_000 })],
     )).toBe(false)
-    expect(detectNewJob(list({ root: [job('bash-1')] }), list({ root: [job('bash-1')] }), 'root')).toBe(false)
-    // Jobs owned by another session do not trigger the current one.
-    expect(detectNewJob(list({}), list({ child: [job('bash-1')] }), 'root')).toBe(false)
-    expect(detectNewJob(list({}), list({}), 'root')).toBe(false)
+    // Identical lists, and lists that only LOST a job (settled and dropped),
+    // are not new work.
+    expect(detectNewJob([job('bash-1')], [job('bash-1')])).toBe(false)
+    expect(detectNewJob([job('bash-1'), job('bash-2')], [job('bash-2')])).toBe(false)
+    // The first list of a fresh page is compared against itself by the caller
+    // (prev stays undefined until a read succeeds) — the helper's quiet case.
+    expect(detectNewJob([], [])).toBe(false)
   })
 })

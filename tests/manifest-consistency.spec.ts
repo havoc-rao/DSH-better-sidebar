@@ -48,7 +48,17 @@ interface PackageJson {
 const manifest = JSON.parse(readFileSync(resolve(ROOT, 'dsh.plugin.json'), 'utf8')) as PluginManifest
 const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as PackageJson
 
-/** The registry's strict id validation (manifest.ts / client-modules registerExternal): exactly two lowercase slash-separated segments. */
+/**
+ * The THIRD-PARTY registry channel's id rule (the community market validates
+ * `dsh.plugin.json`'s id itself): exactly two lowercase slash-separated
+ * segments.
+ *
+ * `dsh.plugin.json` is NOT a DSH contract — no DSH version reads it, and the
+ * official channel is `package.json`'s `dsh.bundle.patch` + `dsh.client` +
+ * `exports["./client"]` (asserted in tests/plugin-shape.spec.ts). This spec
+ * guards the registry channel's own shape so publishing there cannot break
+ * silently.
+ */
 const ID_PATTERN = /^(?!node_modules\/)(?:@[a-z0-9][a-z0-9-.]*\/[a-z0-9][a-z0-9-.]*|[a-z0-9][a-z0-9-.]*\/[a-z0-9][a-z0-9-.]*)$/
 
 /** Literal require() specifiers the frozen browser module table can answer. */
@@ -71,7 +81,7 @@ function bundleId(file: string): string {
 }
 
 /** The lazy chunk bundle names (mirror of src/bundle-route.ts CHUNK_NAMES). */
-const CHUNK_FILES = ['terminal', 'editor', 'mermaid'].map(name => `lib/client-${name}.js`)
+const CHUNK_FILES = ['editor', 'mermaid'].map(name => `lib/client-${name}.js`)
 
 /** The global registry slot a built chunk script assigns (its factory key). */
 function chunkSlot(file: string): string {

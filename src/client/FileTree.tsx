@@ -24,8 +24,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
-  Button, IconChevronRightOutline14, IconCloseFill14, IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16,
-  IconEditOutline16, IconLinkOutline16, IconTrashOutline16, Menu, Modal, type MenuEntry, type MenuItem, writeClipboard,
+  Button, IconChevronRightOutlineRegular, IconCloseFillRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconDownloadOutlineRegular,
+  IconEditOutlineRegular, IconLinkOutlineRegular, IconTrashOutlineRegular, Menu, Modal, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
@@ -51,6 +51,7 @@ import { useFileTreeUi } from './file-tree-ui.ts'
 // row models built below; this plugin injects row content, expansion state
 // data and all DOM semantics (see file-tree-ui.ts for the service seat).
 import type { FileTreeRowModel, FileTreeNode, GuideColumn } from 'dsh-file-tree-ui/client-contract'
+import { useDirectoryWatch } from './use-dir-watch.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -609,6 +610,17 @@ export function FileTree(props: {
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
 
+  // Live refresh: the host watches the folders this tree has expanded and
+  // names the one that changed, so exactly that level is dropped and
+  // re-listed instead of the whole tree. Without it a folder listed once when
+  // it was opened stayed stale for the rest of the session.
+  useDirectoryWatch({
+    sessionId,
+    root: cwd,
+    dirs: expanded,
+    onStale: retryDir,
+  })
+
   // Bring a "Show in folder" reveal into view: the ancestors expand above
   // (revealPaths), but the row may not be scrolled into sight — a reveal on
   // a long tree should surface the highlighted file. Re-runs when the tree
@@ -713,7 +725,7 @@ export function FileTree(props: {
       if (target.id === 'vscode') return <IconVscode16 size={14} />
       if (target.id === 'cursor') return <SiCursor size={14} />
       if (target.id === 'zed') return <SiZedindustries size={14} />
-      return <IconCodeOutline16 size={14} />
+      return <IconCodeOutlineRegular size={14} />
     }
     const pinned = openWithTargets
       .filter(target => pinnedIds.includes(target.id))
@@ -764,7 +776,7 @@ export function FileTree(props: {
         label: (
           <span className={css.openWithLabel}>
             <span className={css.openWithName}>{t('openWithMenu')}</span>
-            <IconChevronRightOutline14 size={14} className={css.openWithChevron} aria-hidden />
+            <IconChevronRightOutlineRegular size={14} className={css.openWithChevron} aria-hidden />
           </span>
         ),
         icon: <VscLinkExternal size={14} />,
@@ -897,7 +909,7 @@ export function FileTree(props: {
             >
               {dirRowIcon(entry.path, isOpen)}
               <span className={css.explorerName}>{entry.name}</span>
-              {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
+              {entry.isSymlink && <IconLinkOutlineRegular size={12} className={css.explorerSymlink} />}
               {rowActions(entry)}
             </div>
             {isOpen && renderLevel(entry.path, depth + 1)}
@@ -939,7 +951,7 @@ export function FileTree(props: {
         >
           {fileRowIcon(entry.path)}
           <span className={css.explorerName}>{entry.name}</span>
-          {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
+          {entry.isSymlink && <IconLinkOutlineRegular size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}
         </div>
       )
@@ -1096,7 +1108,7 @@ export function FileTree(props: {
         ),
         leading: isDir ? dirRowIcon(entry.path, isOpen) : fileRowIcon(entry.path),
         ...(entry.isSymlink
-          ? { trailing: <IconLinkOutline16 size={12} className={css.explorerSymlink} /> }
+          ? { trailing: <IconLinkOutlineRegular size={12} className={css.explorerSymlink} /> }
           : {}),
         actions: treeRowActions(entry.path, entry.isDir),
         // The transient copied label must stay visible without hover (the
@@ -1245,7 +1257,7 @@ export function FileTree(props: {
                 aria-label={t('dismiss')}
                 onClick={() => { setActionError(null) }}
               >
-                <IconCloseFill14 />
+                <IconCloseFillRegular size={14} />
               </button>
             </div>
           )}
@@ -1370,7 +1382,7 @@ export function FileTree(props: {
         items={[
           // The open escapes head the FILE menu (dirs only get copy).
           ...(rowMenu?.isDir === false && onOpenFileNewTab !== undefined
-            ? [{ id: 'open-new-tab', label: t('openFileNewTab'), icon: <IconCodeOutline16 size={14} /> }]
+            ? [{ id: 'open-new-tab', label: t('openFileNewTab'), icon: <IconCodeOutlineRegular size={14} /> }]
             : []),
           ...(rowMenu?.isDir === false && onOpenFileSide !== undefined
             ? [{ id: 'open-side', label: t('openFileSide'), icon: <VscFolderOpened size={14} /> }]
@@ -1378,21 +1390,21 @@ export function FileTree(props: {
           ...openWithEntries(),
           // Download applies to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
-            ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
+            ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutlineRegular size={14} /> }]
             : []),
           // Upload into a directory (incl. the workspace root row).
           ...(rowMenu?.isDir === true
             ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={14} /> }]
             : []),
-          { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={14} /> },
-          { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={14} /> },
+          { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutlineRegular size={14} /> },
+          { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutlineRegular size={14} /> },
           // Explorer mutations close the menu; the workspace ROOT row is the
           // session itself — never renamable or deletable (server double-guards).
           ...(rowMenu !== null && rowMenu.path !== cwd
             ? [
                 { id: 'mutate-sep', type: 'separator' } as MenuEntry,
-                { id: 'rename', label: t('rename'), icon: <IconEditOutline16 size={14} /> },
-                { id: 'delete', label: t('delete'), icon: <IconTrashOutline16 size={14} />, danger: true },
+                { id: 'rename', label: t('rename'), icon: <IconEditOutlineRegular size={14} /> },
+                { id: 'delete', label: t('delete'), icon: <IconTrashOutlineRegular size={14} />, danger: true },
               ]
             : []),
         ]}
