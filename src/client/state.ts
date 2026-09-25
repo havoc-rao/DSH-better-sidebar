@@ -29,8 +29,10 @@ export type TabType = string
  * stack, running no git at all. It is display-only — better-sidebar never
  * writes the patch, never stages it, and never reruns git for it. The
  * `worktree` / `repoRoot` fields on this variant are optional display
- * metadata (the checkout the patch was planned against); they are not used
- * for any git call and do not affect folding/expansion.
+ * metadata (the checkout the patch was planned against); `truncated` /
+ * `sourceRef` (v0.21.0) are caller-declared completeness metadata — all
+ * display-only, never consulted by a git call, and none of them affect
+ * folding/expansion.
  */
 export type SidebarDiffRef =
   | { kind: 'worktree'; path: string; staged: boolean; untracked?: boolean; worktree?: string; repoRoot?: string }
@@ -46,6 +48,13 @@ export type SidebarDiffRef =
     /** Display-only origin checkout (never consulted by a git call). */
     worktree?: string
     repoRoot?: string
+    /** Caller-declared completeness metadata (v0.21.0): the patch was
+     *  truncated by the caller. Display-only — never used for a git call. */
+    truncated?: boolean
+    /** Caller-declared provenance metadata (v0.21.0): a source label for the
+     *  patch (e.g. `plan <id> rev 3`), shown in the diff tab's notice bar.
+     *  Display-only — never used for a git call. */
+    sourceRef?: string
   }
 
 /**

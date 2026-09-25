@@ -56,9 +56,19 @@ export interface DiffFilesProps {
    *  folds without `rows` stay non-expandable (session-op diffs and
    *  untracked additions always carry theirs). */
   resolveFold?: (file: DiffFile, segment: FoldSegment) => Promise<readonly DiffRow[]>
+  /** Open a changed file in the sidebar editor (proposed patches only — the
+   *  caller resolves the path against the session cwd; the patch itself stays
+   *  a read-only snapshot). Absent → the header renders exactly as before. */
+  onOpenFile?: (path: string) => void
+  /** Row-level open (proposed patches only): clicking a hunk row opens the
+   *  changed file in the sidebar editor, scrolled to the row's NEW-side line
+   *  (`null` for deleted rows — the file opens without a line). The `path`
+   *  argument is the file's display path; the caller resolves it against the
+   *  session cwd. Absent → rows render exactly as before. */
+  onOpenRow?: (path: string, newLine: number | null) => void
 }
 
-export function DiffFiles({ diff, untrackedPath, untrackedContent, resolveFold }: DiffFilesProps) {
+export function DiffFiles({ diff, untrackedPath, untrackedContent, resolveFold, onOpenFile, onOpenRow }: DiffFilesProps) {
   const parsed = useMemo(() => {
     if (untrackedPath !== undefined) {
       return { files: [untrackedFile(untrackedPath, untrackedContent ?? '')] }
@@ -104,35 +114,63 @@ export function DiffFiles({ diff, untrackedPath, untrackedContent, resolveFold }
     const to = displayPath(file.newPath)
     const expandable = !file.binary && file.hunks.length > 0
     const fileExpanded = expandedFiles.has(fileIndex)
-    return (
-      <div key={`file-${String(fileIndex)}`} className={css.fileBlock}>
+    const collapseButton = (
+      <button
+        type="button"
+        className={css.file}
+        disabled={!expandable}
+        aria-expanded={expandable ? fileExpanded : undefined}
+        onClick={() => {
+          setExpandedFiles(current => {
+            const next = new Set(current)
+            if (next.has(fileIndex)) next.delete(fileIndex)
+            else next.add(fileIndex)
+            return next
+          })
+        }}
+      >
+        {expandable && <span aria-hidden="true" className={clsx(css.fileChevron, fileExpanded && css.fileChevronExpanded)}>›</span>}
+        <span className={css.filePath}>{to}</span>
+        {from !== to && <span className={css.fileOld}>← {from}</span>}
+        {tag !== null && <span className={css.fileTag}>{tag}</span>}
+        {expandable && (stats.added > 0 || stats.deleted > 0) && (
+          <span className={css.fileStats}>
+            {stats.added > 0 && <span className={css.statAdd}>+{String(stats.added)}</span>}
+            {stats.deleted > 0 && <span className={css.statDel}>−{String(stats.deleted)}</span>}
+          </span>
+        )}
+      </button>
+    )
+    // Only with a handler (proposed patches) does the header gain the row
+    // wrapper + open action; absent it the header renders exactly as before.
+    const header = onOpenFile === undefined ? collapseButton : (
+      <div className={css.fileHeaderRow}>
+        {collapseButton}
         <button
           type="button"
-          className={css.file}
-          disabled={!expandable}
-          aria-expanded={expandable ? fileExpanded : undefined}
-          onClick={() => {
-            setExpandedFiles(current => {
-              const next = new Set(current)
-              if (next.has(fileIndex)) next.delete(fileIndex)
-              else next.add(fileIndex)
-              return next
-            })
-          }}
+          className={css.fileOpen}
+          aria-label={t('diffOpenFile')}
+          title={t('diffOpenFile')}
+          onClick={() => onOpenFile(displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath))}
         >
-          {expandable && <span aria-hidden="true" className={clsx(css.fileChevron, fileExpanded && css.fileChevronExpanded)}>›</span>}
-          <span className={css.filePath}>{to}</span>
-          {from !== to && <span className={css.fileOld}>← {from}</span>}
-          {tag !== null && <span className={css.fileTag}>{tag}</span>}
-          {expandable && (stats.added > 0 || stats.deleted > 0) && (
-            <span className={css.fileStats}>
-              {stats.added > 0 && <span className={css.statAdd}>+{String(stats.added)}</span>}
-              {stats.deleted > 0 && <span className={css.statDel}>−{String(stats.deleted)}</span>}
-            </span>
-          )}
+          {t('diffOpenFile')}
         </button>
+      </div>
+    )
+    return (
+      <div key={`file-${String(fileIndex)}`} className={css.fileBlock}>
+        {header}
         {expandable && fileExpanded && (
-          <DiffRows segments={segments} lang={langOfPath(to)} resolveFold={resolveFold !== undefined ? (segment) => loadFold(file, segment) : undefined} />
+          <DiffRows
+            segments={segments}
+            lang={langOfPath(to)}
+            resolveFold={resolveFold !== undefined ? (segment) => loadFold(file, segment) : undefined}
+            // The display path is bound HERE (the current file is in scope);
+            // DiffRows only carries the row's new-side line.
+            onOpenRow={onOpenRow === undefined
+              ? undefined
+              : (newLine: number | null) => onOpenRow(displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath), newLine)}
+          />
         )}
       </div>
     )

@@ -2302,6 +2302,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* The proposed-patch notice bar (caller-declared snapshot metadata: source
+   label + truncation, display-only). */
+.gitProposedNote {
+  flex: none;
+  padding: 4px 12px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
 .gitPlaceholder {
   padding: 16px;
   font: var(--dsw-font-xxs-12);

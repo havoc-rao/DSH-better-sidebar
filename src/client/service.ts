@@ -428,6 +428,12 @@ export interface OpenTabSeed {
    * v0.19.0/v0.19.1 every path seed was rerouted into a file open).
    */
   path?: string
+  /**
+   * Optional line number for `editor` seeds only: the native surface's
+   * resource open carries it, so the editor opens scrolled to that line
+   * (v0.21.0). Ignored by every other kind.
+   */
+  line?: number
   /** A diff reference (the diff tab's content seed). */
   diff?: SidebarTab['diff']
   /** Explicit tab id (defaults to the type). */
@@ -1191,6 +1197,7 @@ export function createBetterSidebarService(
           surface.openResource({
             sessionId: targetSessionId,
             address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
+            ...(seed.line === undefined ? {} : { line: seed.line }),
             revealIfOpened: true,
           })
         } else {

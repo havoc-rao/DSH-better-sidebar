@@ -15,7 +15,7 @@ import {
 } from './tab-icons.tsx'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
-import { openSidebarFile } from '../intercept.tsx'
+import { openSidebarFile, openSidebarFileAt } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
 import { LocalePreferenceRow } from '../SideCardSection.tsx'
@@ -419,9 +419,15 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       order: -1,
       hidden: true,
       dedupeKey: (tab) => tab.id,
-      component: ({ scope, tab }) => (
+      component: ({ ctx, store, scope, tab }) => (
         tab.diff === undefined ? null
-          : <DiffTab sessionId={scope.sessionId} cwd={scope.cwd} diff={tab.diff} />
+          : <DiffTab sessionId={scope.sessionId} cwd={scope.cwd} diff={tab.diff}
+              onOpenFile={tab.diff.kind === 'proposed'
+                ? (path: string) => openSidebarFile(ctx, store, scope.sessionId, path)
+                : undefined}
+              onOpenRow={tab.diff.kind === 'proposed'
+                ? (path: string, line: number | null) => openSidebarFileAt(ctx, store, scope.sessionId, path, line)
+                : undefined} />
       ),
     },
   ]

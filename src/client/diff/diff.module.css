@@ -24,6 +24,13 @@
 .row[data-kind='add'] { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 8%, transparent); }
 .row[data-kind='mod'] { background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, transparent); }
 
+/* Row-level open (proposed patches only): the click opens the file at the
+   row's new-side line. Only applied WITH the handler, so without one the row
+   keeps its exact previous rendering. Placed AFTER the data-kind tints so
+   the hover background (same specificity) wins during a row hover. */
+.rowOpenable { cursor: pointer; }
+.rowOpenable:hover { background: var(--dsw-alias-interactive-bg-hover); }
+
 .row .text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
 .row[data-folded='true'] .text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -63,6 +70,10 @@
 /* Multi-file documents (commit patches): collapsible file headers. */
 .files { display: flex; flex-direction: column; }
 .fileBlock { display: flex; flex-direction: column; }
+.fileHeaderRow { display: flex; align-items: center; }
+.fileHeaderRow .file { flex: 1; min-width: 0; }
+.fileOpen { flex: none; margin-right: 8px; padding: 2px 7px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 10px; cursor: pointer; }
+.fileOpen:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .file { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border: 0; background: transparent; font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
 .file:disabled { cursor: default; }
 .file:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }

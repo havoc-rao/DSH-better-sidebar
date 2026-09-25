@@ -15,7 +15,7 @@ import { api } from './api.ts'
 import { resolveGitSource, useGitSourceSeat } from './git-source.ts'
 import type { SidebarDiffRef } from './state.ts'
 import { DiffFiles } from './diff/DiffFiles.tsx'
-import { displayPath, foldRowsFromContents, type DiffFile, type DiffRow, type FoldSegment } from './diff/rows.ts'
+import { displayPath, foldRowsFromContents, parseUnifiedDiff, type DiffFile, type DiffRow, type FoldSegment } from './diff/rows.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import css from './sidebar.module.css'
@@ -33,8 +33,16 @@ function diffRefTitle(diff: SidebarDiffRef): string {
   return diff.title
 }
 
-export function DiffTab(props: { sessionId: string; cwd: string | undefined; diff: SidebarDiffRef }) {
-  const { sessionId, cwd, diff } = props
+export function DiffTab(props: {
+  sessionId: string
+  cwd: string | undefined
+  diff: SidebarDiffRef
+  onOpenFile?: (path: string) => void
+  /** Row-level open (proposed refs only): clicking a hunk row opens the
+   *  file at the row's new-side line (null for deleted rows). */
+  onOpenRow?: (path: string, newLine: number | null) => void
+}) {
+  const { sessionId, cwd, diff, onOpenFile, onOpenRow } = props
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<DiffData | null>(null)
@@ -193,6 +201,15 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
       sidesOf(file).then(sides => foldRowsFromContents(segment, sides.old, sides.new))
   }, [sessionId, cwd, diff, effectiveStaged, gitSource])
 
+  // A proposed patch that is non-empty yet parses to zero files (garbage
+  // text, a mangled header) renders nothing through DiffFiles — surface an
+  // explicit notice instead of a blank pane.
+  const isProposed = diff.kind === 'proposed'
+  const unparseable = useMemo(
+    () => isProposed && diff.patch.trim() !== '' && parseUnifiedDiff(diff.patch).files.length === 0,
+    [diff, isProposed],
+  )
+
   return (
     <div className={css.gitDiffTab}>
       <div className={css.gitDiffTabHeader}>
@@ -209,13 +226,24 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
           <IconRefreshOutline16 size={14} />
         </button>
       </div>
+      {isProposed && (
+        <div className={css.gitProposedNote}>
+          {t('diffProposedNote')}
+          {typeof diff.sourceRef === 'string' && diff.sourceRef !== ''
+            ? ` · ${diff.sourceRef}`
+            : null}
+          {diff.truncated === true ? ` · ${t('diffProposedTruncated')}` : null}
+        </div>
+      )}
       {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
       {!loading && error !== null && <div className={css.gitError}>{t('diffLoadError')}: {error}</div>}
       {!loading && error === null && data !== null && (
         <>
-          {data.untracked !== undefined
-            ? <DiffFiles diff="" untrackedPath={diff.kind === 'worktree' ? diff.path : ''} untrackedContent={data.untracked} />
-            : <DiffFiles diff={data.diff} resolveFold={foldLoader} />}
+          {unparseable
+            ? <div className={css.gitEmpty}>{t('diffUnparseable')}</div>
+            : data.untracked !== undefined
+              ? <DiffFiles diff="" untrackedPath={diff.kind === 'worktree' ? diff.path : ''} untrackedContent={data.untracked} />
+              : <DiffFiles diff={data.diff} resolveFold={foldLoader} onOpenFile={isProposed ? onOpenFile : undefined} onOpenRow={isProposed ? onOpenRow : undefined} />}
           {data.diff === '' && data.untracked === undefined && (
             <div className={css.gitEmpty}>{t('diffEmpty')}</div>
           )}

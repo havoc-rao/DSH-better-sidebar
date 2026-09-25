@@ -25,6 +25,34 @@ export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: st
 }
 
 /**
+ * Open a file in the sidebar's editor at a line (v0.21.0; the proposed diff's
+ * row-level open). Sister of {@link openSidebarFile}: the same absolute-path
+ * resolution and editor seed, plus `line` — the seed's `line` rides the
+ * native surface's resource open, and the host editor decides whether/how it
+ * scrolls. A `null` line (a deleted diff row has no new-side line) opens
+ * without one.
+ */
+export function openSidebarFileAt(
+  ctx: Context,
+  store: SidebarStore,
+  sessionId: string,
+  path: string,
+  line: number | null,
+): void {
+  const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
+  const absolute = resolveSidebarPath(summary?.cwd, path)
+  const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
+  const title = at === -1 ? absolute : absolute.slice(at + 1)
+  ctx.get('betterSidebar')?.openTab({
+    type: 'editor',
+    title,
+    path: absolute,
+    id: `editor:${absolute}`,
+    ...(line === null ? {} : { line }),
+  })
+}
+
+/**
  * Reveal the produced files in the sidebar explorer: expand their parent
  * directories, highlight the rows, and focus the explorer tab. Unknown
  * files fall back to revealing the workspace root itself.

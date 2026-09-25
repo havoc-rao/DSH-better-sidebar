@@ -112,10 +112,19 @@ export interface DiffRowsProps {
    *  sliced by the fold's line ranges). Absent folds without `rows` — git's
    *  unemitted gaps without a resolver — stay non-expandable markers. */
   resolveFold?: (segment: FoldSegment) => Promise<readonly DiffRow[]>
+  /**
+   * Row-level open (proposed patches only): the caller BINDS the file's
+   * display path (DiffFiles passes its current file), so a click receives
+   * just the row's NEW-side line number — `null` for deleted rows (they
+   * have no new-side line; the caller opens the file without one). Absent
+   * → rows render exactly as before: no click handling, no title, no
+   * openable styling.
+   */
+  onOpenRow?: (newLine: number | null) => void
 }
 
 /** One file's diff rows: fold chips between hunks, highlighted code rows. */
-export function DiffRows({ segments, lang, resolveFold }: DiffRowsProps) {
+export function DiffRows({ segments, lang, resolveFold, onOpenRow }: DiffRowsProps) {
   // Long diff lines fold to one ellipsized row; the set holds expanded row keys.
   const [expandedLines, setExpandedLines] = useState<ReadonlySet<string>>(new Set())
   // Hunk-fold segments expanded by index; default collapsed.
@@ -155,21 +164,47 @@ export function DiffRows({ segments, lang, resolveFold }: DiffRowsProps) {
     const isLong = row.text.length > FOLD_THRESHOLD
     const isFolded = isLong && !expandedLines.has(rowKey)
     const blockEntry = blockEntries.get(row) ?? false
+    // Row-level open (proposed patches only): every non-meta row is
+    // clickable and keyboard-reachable; the click passes the NEW-side line
+    // (`null` for deleted rows — no new-side line). A folded long row keeps
+    // its fold toggle (first affordance) and opens as well. All of this is
+    // gated on the handler: absent it, the row below renders EXACTLY as
+    // before (no class, no title, no click/tabIndex/keyboard handling).
+    const openable = onOpenRow !== undefined
+    const openLine = row.newLine ?? null
+    const openLabel = row.newLine !== undefined
+      ? t('diffOpenFileAt', { line: row.newLine })
+      : t('diffOpenFile')
+    const openRow = (): void => { onOpenRow?.(openLine) }
     return (
       <div
         key={rowKey}
-        className={css.row}
+        className={openable ? `${css.row} ${css.rowOpenable}` : css.row}
         data-kind={row.kind}
         data-folded={isFolded ? 'true' : undefined}
-        onClick={isLong ? () => {
-          setExpandedLines(prev => {
-            const next = new Set(prev)
-            if (next.has(rowKey)) next.delete(rowKey)
-            else next.add(rowKey)
-            return next
-          })
+        onClick={isLong || openable ? (event) => {
+          if (isLong) {
+            setExpandedLines(prev => {
+              const next = new Set(prev)
+              if (next.has(rowKey)) next.delete(rowKey)
+              else next.add(rowKey)
+              return next
+            })
+          }
+          if (openable) {
+            event.stopPropagation()
+            openRow()
+          }
         } : undefined}
-        title={isFolded ? row.text : undefined}
+        onKeyDown={openable ? (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            openRow()
+          }
+        } : undefined}
+        tabIndex={openable ? 0 : undefined}
+        title={isFolded ? row.text : openable ? openLabel : undefined}
+        aria-label={openable ? openLabel : undefined}
       >
         <span className={css.lineNo}>{row.oldLine !== undefined ? String(row.oldLine) : ''}</span>
         <span className={css.lineNo}>{row.newLine !== undefined ? String(row.newLine) : ''}</span>
