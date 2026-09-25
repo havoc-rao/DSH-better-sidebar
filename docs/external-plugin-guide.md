@@ -406,7 +406,7 @@ ctx.effect(() => {
 | `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（每对话一 Tab）：打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
 | `terminal` | 40 | 否（`terminal:<n>`） | 否 | 终端。v0.17.0+ 右键「固定到工作区/全局」：跨会话不消失，TabBar 内联虚拟 Tab（`pinned:<homeSessionId>:<tabId>`），就地按 home scope 连 PTY；global 全会话可见、workspace 仅同 cwd；`tab.pin = { scope, homeCwd? }` 随会话持久化，渲染期解析（`collectPinnedTabs` → `createPinnedVirtualTab` → `injectPinnedIntoTree`）。**打开进底部工作台即自动聚焦**：tab 在底部工作台里成为可见激活 tab（`visible` 变真）或随面板打开挂载时，xterm 直接接管键盘输入（无需再点进终端）；仅限插件底部工作台，原生右侧栏的终端 tab 不抢焦点 |
 | `browser` | 50 | 否（`browser:<n>`） | 否 | 内嵌浏览器（沙箱 iframe，可设置关沙箱） |
-| `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（changes tab 的预览面板「展开为独立页签」触发，同一渲染栈）；v0.20.x 起 `SidebarTab.diff` 另收 `{ kind: 'proposed', id, title, patch }` 任意 patch 种子（features 含 `planDiff`，见 §7.2.2） |
+| `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（changes tab 的预览面板「展开为独立页签」触发，同一渲染栈）；v0.20.x 起 `SidebarTab.diff` 另收 `{ kind: 'proposed', id, title, patch }` 任意 patch 种子（features 含 `planDiff`，见 §7.2.2）；v0.21.0 起该 variant 追加可选 `truncated` / `sourceRef` 展示元数据、文件头「打开文件」按钮与行点击定位（`OpenTabSeed.line`，仅 proposed） |
 
 你的 `id` 不可与上述重复，否则 `registerTab` 抛 `"tab type \"X\" already registered"`。
 
@@ -701,6 +701,9 @@ interface OpenTabSeed {
   title?: string
   /** 文件路径：editor = 打开文件资源；其余类型 = 组件种子（落在 tab.path，v0.19.2+） */
   path?: string
+  /** 仅 editor 种子（v0.21.0）：打开文件资源的行号——原生右侧栏的 resource open
+   *  携带它，编辑器打开后是否滚动到该行由宿主编辑器决定；其余类型忽略 */
+  line?: number
   /** diff tab 的内容种子：worktree / commit / **proposed**（任意 patch 文本，
    *  v0.20.x，features 含 'planDiff'；见 §7.2.2） */
   diff?: SidebarTab['diff']
@@ -944,16 +947,34 @@ getGitCommitTarget(scope?: SessionScope): GitCommitTarget | undefined   // 时�
 
 #### 7.2.2 计划 diff（feature `planDiff`）
 
-`SidebarDiffRef` 增补一个 additive variant：
+`SidebarDiffRef` 增补一个 additive variant（v0.21.0 起追加截断 / 来源展示元数据）：
 
 ```ts
-{ kind: 'proposed'; id: string; title: string; patch: string; worktree?: string; repoRoot?: string }
+{ kind: 'proposed'; id: string; title: string; patch: string; worktree?: string; repoRoot?: string; truncated?: boolean; sourceRef?: string }
 ```
 
 - `patch` 是**原始 unified diff 文本**，经既有 `parseUnifiedDiff` / `DiffFiles` 渲染栈原样渲染；
   该 variant **不跑任何 git 调用**（没有 git revision 可读，上下文折叠降级为不可用标记；
   语法着色 / 行内高亮 / 统计与 worktree·commit 完全一致）。
-- `id` / `title` 是调用方自己的 patch 身份与标签；`worktree` / `repoRoot` 仅为展示元数据。
+- `id` / `title` 是调用方自己的 patch 身份与标签；`worktree` / `repoRoot` 仅为展示元数据；
+  `truncated` / `sourceRef`（v0.21.0）是**调用方声明的完整性元数据，仅展示用，绝不用于
+  git 调用**——`truncated: true` 标记该 patch 是调用方截断后的部分预览，`sourceRef` 是补丁
+  来源标签（如 `plan <id> rev 3`）。
+- **快照提示条**：DiffTab 对 proposed 在 header 与内容之间渲染「计划快照」提示条（i18n 键
+  `diffProposedNote`）；`sourceRef` 非空时同一提示条追加 ` · <sourceRef>`，`truncated` 时追加
+  ` · diffProposedTruncated`。
+- **不可解析显式提示**：`patch` 非空但 `parseUnifiedDiff` 解析出 0 个文件时（DiffFiles 对 0
+  文件返回 null）显示显式提示（`diffUnparseable`），不空白。
+- **文件定位**：每个文件头在 proposed 下提供「打开文件」按钮（i18n 键 `diffOpenFile`），经
+  `openSidebarFile` 在**当前会话**侧栏编辑器打开**实时文件**——patch 本身始终是只读快照，
+  打开的是当前工作区文件，路径相对会话 cwd 解析；worktree / commit ref 不提供该按钮。
+- **行定位（v0.21.0）**：proposed 下的 diff 行也可点击（i18n 键 `diffOpenFileAt`，文案带行号
+  插值），在**当前会话**侧栏编辑器打开实时文件并**定位到行**。行回调
+  `onOpenRow(path, newLine)` 的 `path` 是该文件的展示路径（相对会话 cwd 解析），`newLine` 是
+  该行的 **NEW 侧行号**；行点击经 `openSidebarFileAt` 走 `OpenTabSeed.line`（**仅 editor 种子
+  有效**，其余类型忽略）→ 原生右侧栏 `openResource` 携带行号下发；删除行没有 new-side 行号，
+  回调为 `null`（仅打开文件）。**行定位到资源打开，是否滚动由宿主编辑器决定**；patch 仍是只读
+  快照，不因行点击而变；worktree / commit ref 不提供行点击。
 - 打开方式（现有 seed API，无新方法）：
 
 ```ts
@@ -961,7 +982,7 @@ service.openTab({
   type: 'diff',
   id: `plan:${planId}:${commitIndex}`,   // 底部工作台的去重身份（见下方说明）
   title: `计划第 ${commitIndex + 1} 个提交`,
-  diff: { kind: 'proposed', id: `plan:${planId}:${commitIndex}`, title: '…', patch: unifiedPatch },
+  diff: { kind: 'proposed', id: `plan:${planId}:${commitIndex}`, title: '…', patch: unifiedPatch, sourceRef: `plan ${planId} rev ${rev}`, truncated: isPartial },
 })
 ```
 
