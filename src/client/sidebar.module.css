@@ -24,14 +24,22 @@
    containing block for every panel element. Panels are ABSOLUTE within it
    (not fixed), so a desktop shell's intermediate wrapper transform can
    never hijack their containing block — the host itself is the only fixed
-   element, appended directly to document.body. The layer sits at z-index 25:
-   above the app's shell overlay (AppFrame overlayLayer, 20) and in-flow
-   content, below DSH's ui-cordis dynamic-plugin panel (fixed, 30 — the
-   inventory/surfacing surface must never be hidden behind the workbench),
-   and below the app's overlay stack at 100+; each panel re-enables pointer
-   events on itself. Degraded mode ([data-dsh-panel-host-degraded]) covers
-   the rare shell that transforms <html>/<body> itself: the host becomes
-   absolute and the mount self-check pins it to the viewport every frame. */
+   element, mounted inside `#root`. It must NOT be appended as a direct
+   child of <body>: DSH's shared window-chrome contract (ui-web base.css)
+   gives every `body > :not(#root)` element `-webkit-app-region: no-drag`
+   (the modal-cover convention), and Chromium propagates that computed
+   app-region down the ancestor chain — a persistent host under <body>
+   would subtract the whole macOS hidden-titlebar drag surface (sidebar
+   strip, conversation header, …). Inside `#root` the host declares no
+   app-region and the product rows keep their own boxes. The layer sits at
+   z-index 25: above the app's shell overlay (AppFrame overlayLayer, 20)
+   and in-flow content, below DSH's ui-cordis dynamic-plugin panel (fixed,
+   30 — the inventory/surfacing surface must never be hidden behind the
+   workbench), and below the app's overlay stack at 100+; each panel
+   re-enables pointer events on itself. Degraded mode
+   ([data-dsh-panel-host-degraded]) covers the rare shell that transforms
+   <html>/<body> itself: the host becomes absolute and the mount
+   self-check pins it to the viewport every frame. */
 :global([data-dsh-panel-host]) {
   position: fixed;
   inset: 0;

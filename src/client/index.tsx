@@ -11,7 +11,7 @@
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
-import { allLeaves, createSidebarStore, isAgentTabId, toggleBottomPanel } from './state.ts'
+import { createSidebarStore, toggleBottomPanel } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
@@ -255,24 +255,11 @@ export function apply(ctx: Context): void {
     'dsh-better-sidebar: native right-Sidebar surface',
   )
   // Terminal tab titles use the host's effective shell name (e.g. bash/zsh)
-  // instead of "Terminal 1". Start with a safe fallback and replace it as
-  // soon as the host shell info resolves. Tabs created before the response
-  // arrives keep the fallback title, so also retitle any already-open UI
-  // terminal tabs that still carry it.
-  const fallbackTitle = t('terminal')
-  let terminalTitle = fallbackTitle
-  void api.shellGet().then(({ name }) => {
-    terminalTitle = name
-    const snapshot = service.getSnapshot()
-    if (snapshot.state === undefined) return
-    const tabs = allLeaves(snapshot.state.bottomSplits)
-      .flatMap(leaf => leaf.tabs)
-    for (const tab of tabs) {
-      if (tab.type === 'terminal' && !isAgentTabId(tab.id) && tab.title === fallbackTitle) {
-        service.updateTab(tab.id, { title: name })
-      }
-    }
-  }).catch(() => { /* keep fallback */ })
+  // instead of "Terminal 1". The 0.21.0 terminal handover retired the
+  // plugin's host-side `shell.get` route (the host's own terminal owns the
+  // effective shell), so the fallback title is the one name the plugin can
+  // resolve without a wire round-trip.
+  const terminalTitle = t('terminal')
   // Register the plugin's own built-in tabs and viewers through the same
   // service (eating our own dogfood). The disposer unregisters them on
   // fiber disposal (HMR-safe).

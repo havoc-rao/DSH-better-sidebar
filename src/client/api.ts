@@ -417,9 +417,6 @@ export const api = {
    *  (the close reason itself is capped at 123 bytes). */
   terminalDeps: () =>
     call<TerminalDepsStatus>('terminal.deps', {}),
-  /** The effective terminal shell and its display name (plugin-global). */
-  shellGet: () =>
-    call<{ shell: string; name: string }>('shell.get', {}),
   /** Request cancellation of one background job (live jobs flip to stopping). */
   jobKill: (scope: SessionScope, id: string, reason?: string) =>
     call<{ ok: true; outcome: 'requested' | 'already-finished' }>('jobs.kill', scopePayload(scope, {

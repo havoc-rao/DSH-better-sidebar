@@ -14,9 +14,13 @@
  * native sidebar's own expand control.
  *
  * The panel is mounted inside the unified panel host — a fixed,
- * viewport-sized containing block ([data-dsh-panel-host]) appended to
- * document.body — instead of a fixed-position element, so a desktop shell's
- * intermediate wrapper transforms can never hijack its containing block.
+ * viewport-sized containing block ([data-dsh-panel-host]) appended inside
+ * `#root` (never as a direct child of <body>: ui-web base.css marks every
+ * `body > :not(#root)` element no-drag, and that propagates down the tree,
+ * which would kill the macOS shell's whole drag surface) — instead of a
+ * fixed-position element, so a desktop shell's intermediate wrapper
+ * transforms can never hijack its containing block (the degraded-mode
+ * self-check covers hosts that transform <html>/<body>).
  * The whole layout lives in the per-session store, so switching
  * conversations swaps the workbench.
  *

@@ -14,6 +14,7 @@
  * un-watched, so a long session does not accumulate handles.
  */
 import { useEffect, useRef } from 'react'
+import { sidebarWsUrl } from './ws-url.ts'
 
 /** One server frame: a stale directory, a watch verdict, or a refusal. */
 interface FsWatchFrame {
@@ -88,8 +89,7 @@ export function useDirectoryWatch(options: DirectoryWatchOptions): void {
 
     const connect = (): void => {
       if (closed) return
-      const url = new URL('/sidebar/ws/fs-watch', location.origin)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      const url = sidebarWsUrl('/sidebar/ws/fs-watch')
       url.search = new URLSearchParams({ sessionId }).toString()
       socket = new WebSocket(url.toString())
       socket.onopen = () => {

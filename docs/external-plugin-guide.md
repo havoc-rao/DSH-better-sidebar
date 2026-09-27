@@ -53,6 +53,8 @@ better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 关键机制一句话：better-sidebar 的 client half 在 `apply()` 开头执行 `ctx.provide('betterSidebar', service)`（`src/client/index.tsx`），消费插件在 `inject` 里声明 `'betterSidebar'`，Cordis 保证服务就绪后才激活你的插件，然后你调用 `ctx.betterSidebar.registerTab(...)` / `registerFileViewer(...)` 完成注册，返回的 disposer 由 Cordis fiber 在卸载（HMR / 禁用）时自动调用。
 
 > ⚠️ **服务只在 client half**：`ctx.betterSidebar` 只存在于浏览器侧。你的插件 **host 半没有这个服务**；host 半需要读 better-sidebar 状态时，走它自己的 HTTP/WS 路由（`/sidebar/api/*`、`/sidebar/file`、`/sidebar/ws/*`），不走服务。
+>
+> ⚠️ **桌面 shell 的 WS 基址**：页面运行在 `dsh-app://app`（deepseek-harness Electron 桌面壳）时，`location.origin` 是 shell 的协议——壳的 `protocol.handle` 会转发该 origin 的 HTTP 到宿主（`/sidebar/api`、`/sidebar/file`、`/sidebar/html`、`/sidebar/bundle` 照常使用 document-relative 地址），但**自定义协议没有 WebSocket 载体**，`ws://app/sidebar/ws/*` 必然失败。宿主把物理 loopback 基址放进 `globalThis.__DSH_TRANSPORT__.streamBaseUrl`（产品自己的 client 也用它解析 `api/remote.mux`，壳侧会对这些 socket 注入会话 cookie）；消费插件构造 `/sidebar/ws/*` 的 WebSocket 地址时应把路径解析到该基址（`new URL(path, streamBaseUrl)` + 协议换成 `ws:`）。纯浏览器部署没有这个全局，`location.origin` 即正确基址。HTTP 请求**不要**改成绝对 loopback 地址：插件侧 trust fence 要求请求 Origin 与 Host 同名，页面直接 fetch `http://127.0.0.1:port/...` 会携带 `Origin: dsh-app://app` 而被 403 拒绝。
 
 ---
 
@@ -883,7 +885,7 @@ dsh-hotkey 等键盘优先插件按「内核 `sidebarRight` 优先、本插件�
 
 **DOM（插件宿主树）：**
 
-- 面板宿主：`[data-dsh-panel-host]`（始终挂载于 `body`，无会话时为空宿主）。
+- 面板宿主：`[data-dsh-panel-host]`（始终挂载于 `#root` 内——见 §10 平台陷阱的 `body > :not(#root)` 契约——无会话时为空宿主）。
 - 标签条：`[data-dsh-panel-host] [class*="tab"][title]`——每个 tab 的
   `title` 即标签标题（如「文件」「Terminal 1」），关键词匹配可点击。
 - 折叠/展开按钮集群：`[data-dsh-toggle-cluster]`（两处：会话头部底栏开关
@@ -1241,7 +1243,7 @@ interface SettingsDescriptor {
 
 - **面板表面**：右/底面板背景 = `var(--dsw-alias-bg-layer-1)`。**绝不消费 `--dsw-specific-sidebar-fill`**（宿主左导航专属，皮肤按左导航语义覆盖它，面板消费会失去填充）。换面板表面 = 覆写 `--dsw-alias-bg-layer-1`。
 - **终端/编辑器表面**：`effectiveTokenValue` 读 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明值回退不透明底色（文字不叠背景画，issue #90）；≥ 0.9 放行。
-- **根锚点**：宿主 div 带 `data-dsh-better-sidebar`（append 到 body）；其内**面板宿主层** `[data-dsh-panel-host]`（`fixed; inset:0; z-25; pointer-events:none; overflow:hidden+clip`，v0.13.1+），面板/开关簇 absolute 定位，免疫中间层 transform 劫持；页面级 transform 触发 `data-dsh-panel-host-degraded` 降级。`overflow` 级联是**契约**（`hidden` 兜底 + `clip` 收尾，`tests/panel-host-css.spec.ts` 守护）：`hidden` 盒子仍是滚动容器，脚本滚动或浏览器 scroll-into-view 修正（焦点移入视口外区域、嵌套 iframe/工作台加载时抢焦点、面板滑出动画中 focus() 落点）会沿最近可滚祖先滚走整层——面板与开关簇集体偏离视口角（computed left/right 仍"正确"，偏移藏在盒子自身 scroll offset 里）；`clip` 裁剪语义相同但不产生滚动盒，任何路径都滚不动这层。皮肤作用域覆盖限定在 `[data-dsh-better-sidebar]` 内。
+- **根锚点**：宿主 div 带 `data-dsh-better-sidebar`（append 到 `#root`，**绝不 append 为 `body` 直子**：`ui-web base.css` 给 `body > :not(#root)` 声明 `-webkit-app-region: no-drag`（模态覆盖层约定），而 Chromium 把该计算值沿祖先链传播——常驻全窗宿主挂在 `body` 下会把 macOS 隐藏标题栏壳的整块拖拽面（侧边栏条 / 对话 header 等 `data-window-drag` 行）全部减去，窗口任何位置都拖不动）；其内**面板宿主层** `[data-dsh-panel-host]`（`fixed; inset:0; z-25; pointer-events:none; overflow:hidden+clip`，v0.13.1+），面板/开关簇 absolute 定位，免疫中间层 transform 劫持；页面级 transform 触发 `data-dsh-panel-host-degraded` 降级。`overflow` 级联是**契约**（`hidden` 兜底 + `clip` 收尾，`tests/panel-host-css.spec.ts` 守护）：`hidden` 盒子仍是滚动容器，脚本滚动或浏览器 scroll-into-view 修正（焦点移入视口外区域、嵌套 iframe/工作台加载时抢焦点、面板滑出动画中 focus() 落点）会沿最近可滚祖先滚走整层——面板与开关簇集体偏离视口角（computed left/right 仍"正确"，偏移藏在盒子自身 scroll offset 里）；`clip` 裁剪语义相同但不产生滚动盒，任何路径都滚不动这层。皮肤作用域覆盖限定在 `[data-dsh-better-sidebar]` 内。
 - **布局变量**（`<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`。右面板宽度 = AppFrame 的 `padding-right` 预留（新版 `#root [data-dsh-frame]` / rc.8 `#root > [data-slot="root"] > div` 双锚点），AppFrame border box 保持完整桌面视口宽度（Harness 以此判定桌面/窄屏布局，避免插件面板展开误入窄屏）；AppFrame 的 details 拖拽手柄按同一变量向左平移贴合列边缘。底部面板仍走 centerCol `margin-bottom`；centerCol 锚点 = **JS 标注**（禁止 `nth-child`）：侧栏 shell 的定位器给测得的 centerCol 节点打 `[data-dsh-center-col]` 标签（`Sidebar.tsx` locate，节点更换/HMR 时随 ref 迁移），`layout.css` 用 `#root [data-dsh-center-col]` 选中（`drag-layout.e2e.ts` 断言恰一节点且为对话槽宿主的父级——alpha.2 起 shell 把 `#root [data-slot="main.conversation"]` 解析进列并跳过 `display: contents` 祖先（`center-column.ts` 的 `CENTER_COLUMN_SELECTOR` 同时认 `main.conversation` 与 alpha.1 的 `conversation`），定位器从槽宿主向上取第一个非 `contents` 的祖先；frame 宽度与桌面 Session Log 由 `desktop-layout.e2e.ts` 断言）。
 - **桌面信号与标题栏**（v0.14.1+ 四方案模型 `SidebarPrefs.titleBarScheme`，唯一决策点 `src/client/titlebar-strip.ts` 纯函数）：
   - 壳信号（只读，不自动触发修改）：URL `dsh-desktop-mode` / `dsh-desktop-platform` / 可选 `dsh-desktop-titlebar-inset`（0–120 clamp）。

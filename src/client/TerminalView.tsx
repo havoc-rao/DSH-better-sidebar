@@ -40,6 +40,7 @@ import { t } from './locales.ts'
 import { ONE_DARK, ONE_LIGHT } from './one-dark-palette.ts'
 import { openWhenSized } from './open-when-sized.ts'
 import { api, type SessionScope, type TerminalDepsStatus } from './api.ts'
+import { sidebarWsUrl } from './ws-url.ts'
 import { agentUuidOf, isAgentTabId, type SidebarStore } from './state.ts'
 import { isDarkScheme, subscribeColorScheme, effectiveTokenValue, tokenValue } from './theme.ts'
 import { resolveTerminalFont } from './terminal-font.ts'
@@ -306,8 +307,12 @@ export function TerminalView(props: {
     let failures = 0
 
     const wsUrl = (): string => {
-      const url = new URL('/sidebar/ws/terminal', location.origin)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      // The desktop shell (`dsh-app://app`) has no WebSocket carrier on its
+      // custom protocol; sidebarWsUrl resolves onto the physical loopback
+      // host the shell publishes (see ws-url.ts). Same construction the
+      // app's own downlink WebSockets use, so whatever the environment
+      // does to the app's websockets applies identically here.
+      const url = sidebarWsUrl('/sidebar/ws/terminal')
       // Agent terminals attach by uuid (the host looks them up in the agent
       // pty registry); UI-tab terminals attach by sessionId+tab (the host
       // uses the UI-tab pty manager). Same upgrade endpoint, different query.
@@ -318,9 +323,6 @@ export function TerminalView(props: {
         if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
         url.search = params.toString()
       }
-      // Same construction the app's own downlink WebSockets use (new URL
-      // over location.origin + protocol swap): whatever the environment
-      // does to the app's websockets applies identically here.
       return url.toString()
     }
 
