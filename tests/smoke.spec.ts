@@ -87,9 +87,42 @@ describe('host plugin smoke', () => {
       '/sidebar/file',
       '/sidebar/html',
     ])
-    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/agent-opens', '/sidebar/ws/fs-watch'])
+    expect(upgrades.map(route => route.path)).toEqual([
+      '/sidebar/ws/agent-opens',
+      '/sidebar/ws/fs-watch',
+      // Restored with the terminal tab (the 0.1.6 yield dropped the routes;
+      // the client keeps asking for them, so a missing upgrade 1006s every
+      // terminal open). The agent-opens/fs-watch routes above survived that
+      // round and must stay.
+      '/sidebar/ws/terminal',
+      '/sidebar/ws/agent-terminals',
+    ])
     // Teardown runs without throwing.
     for (const cleanup of effects) cleanup()
+  })
+
+  it('serves the restored terminal API methods', async () => {
+    // The client api.ts calls these four after a terminal-tab open (WS attach,
+    // the reconnect-close fallback, the wait banner, and the node-pty repair
+    // details). Each must answer in BOTH host modes: node-pty loaded and
+    // node-pty degraded (registries null) — so the assertions never depend on
+    // the native addon being present in the test environment.
+    const route = mountWithSettings(undefined)
+    const deps = await invoke(route, 'terminal.deps', {})
+    expect(deps.ok).toBe(true)
+    expect(typeof (deps.value as { ok?: unknown }).ok).toBe('boolean')
+    const closed = await invoke(route, 'pty.close', { sessionId: 's1', tab: 't1' })
+    expect(closed.ok).toBe(true)
+    const closedAgent = await invoke(route, 'agent-pty.close', { uuid: 'missing' })
+    expect(closedAgent.ok).toBe(true)
+    const skipped = await invoke(route, 'agent-pty.skip-wait', { uuid: 'missing' })
+    // Unknown uuid: a live registry answers 404 not-found; degraded mode (no
+    // registry) answers ok with skipped 0. Both are the contract.
+    if (skipped.ok) {
+      expect(typeof (skipped.value as { skipped?: unknown }).skipped).toBe('number')
+    } else {
+      expect(skipped.error?.code).toBe('not-found')
+    }
   })
 
   it('serves HTML previews as UTF-8 without changing the file bytes', async () => {

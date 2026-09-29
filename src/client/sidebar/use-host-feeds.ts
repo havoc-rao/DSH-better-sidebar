@@ -15,6 +15,7 @@ import { api } from '../api.ts'
 import { sidebarWsUrl } from '../ws-url.ts'
 import { mountedSessionId } from '../native/surface.ts'
 import { usePolling } from '../use-polling.ts'
+import { mirrorAgentWaits, reconcileAgentTerminals } from '../state.ts'
 import { t } from '../locales.ts'
 
 /** How many consecutive reconnect failures stop the agent-opens push loop
@@ -100,6 +101,65 @@ export function useHostFeeds(feeds: {
   sessionId: string | undefined
 }): { subagentJumpRef: { current: string | undefined } } {
   const { ctx, store, sessionList, sessionId } = feeds
+
+  /**
+   * Agent terminals push: subscribe to the host's live agent-terminal list
+   * for this session (terminals the model created through the terminal_*
+   * tools). The host pushes one JSON list per change; the sidebar mirrors
+   * it into tabs (id `agent:<uuid>`, agent-owned terminals can never be
+   * duplicated and are exempt from tab-close removal). While the terminal
+   * tab type is disabled in settings, pushes add / remove no tabs — but the
+   * authoritative wait map is STILL mirrored (see the branch below);
+   * re-enabling makes the next push converge on both. A disconnected socket
+   * retries with a short backoff; a refused endpoint never spins forever
+   * (the next session switch restarts the loop).
+   */
+  useEffect(() => {
+    if (sessionId === undefined) return
+    let socket: WebSocket | null = null
+    let retry: number | undefined
+    let closed = false
+    let failures = 0
+    const connect = (): void => {
+      if (closed) return
+      const url = sidebarWsUrl('/sidebar/ws/agent-terminals')
+      url.search = new URLSearchParams({ sessionId }).toString()
+      socket = new WebSocket(url.toString())
+      socket.onmessage = (event) => {
+        if (typeof event.data !== 'string') return
+        try {
+          const list = JSON.parse(event.data) as Array<{ uuid: string; title: string; command: string; exited: boolean; waiting?: { needle: string; since: number } | null }>
+          if (!Array.isArray(list)) return
+          store.reduce(s => ctx.get('betterSidebar')?.isTabEnabled('terminal') === false
+            // Terminal tabs are disabled: skip tab add/remove reconciliation,
+            // but STILL mirror the authoritative wait map — a wait resolving
+            // during the disabled window must clear its banner state, or a
+            // re-enabled terminal keeps a stale banner until the next
+            // unrelated push.
+            ? mirrorAgentWaits(s, list)
+            : reconcileAgentTerminals(s, list))
+        } catch {
+          // Malformed push: ignore (the next push will reconcile).
+        }
+      }
+      socket.onclose = () => {
+        if (closed) return
+        failures += 1
+        if (failures >= FAILURE_LIMIT) {
+          console.error('[dsh-better-sidebar] agent-terminals connection failed; stopping reconnect loop', sessionId)
+          return
+        }
+        retry = window.setTimeout(connect, 2000)
+      }
+      socket.onerror = () => { socket?.close() }
+    }
+    connect()
+    return () => {
+      closed = true
+      window.clearTimeout(retry)
+      socket?.close()
+    }
+  }, [sessionId, ctx, store])
 
   /**
    * Agent opens push: subscribe to the host's `sidebar_open` requests for
