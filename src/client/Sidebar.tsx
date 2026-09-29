@@ -321,6 +321,35 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // consumes (renderTab's onSubagentJump arms it).
   const { subagentJumpRef } = useHostFeeds({ ctx, store, sessionList, sessionId })
 
+  /**
+   * Bottom-panel first-expansion auto terminal: the FIRST time the user
+   * expands the bottom panel in a session, try to open a fresh terminal tab
+   * there. "Try" is literal — the terminal's own quota and enable switch
+   * gate the attempt (a full quota or a disabled terminal type makes it a
+   * no-op). Gated on the bottomPanelAutoTerminal pref (the terminal tab's
+   * nested settings toggle, default on). Only a false→true TRANSITION fires
+   * (a panel persisted open never counts as an expansion), and the session's
+   * bottomOpenedOnce flag is set atomically with the first fire so later
+   * expansions never repeat it (the effect was lost with the 0.1.6 terminal
+   * yield and restored together with the terminal tab in the bottom
+   * workbench — the pref and its settings toggle had stayed on the ledger
+   * as a dead switch in between).
+   */
+  const bottomWasOpenRef = useRef<boolean | undefined>(undefined)
+  useEffect(() => {
+    if (state === undefined) return
+    const wasOpen = bottomWasOpenRef.current
+    bottomWasOpenRef.current = state.bottomOpen
+    if (wasOpen === undefined || wasOpen || !state.bottomOpen) return
+    if (state.bottomOpenedOnce) return
+    if (store.getPrefs().bottomPanelAutoTerminal === false) return
+    if (ctx.get('betterSidebar')?.isTabEnabled('terminal') === false) return
+    // Land the tab in the bottom panel's first pane; the once-flag is set
+    // atomically so later expansions never repeat the auto-open.
+    store.reduce(s => ({ ...s, activePane: firstLeaf(s.bottomSplits).id, bottomOpenedOnce: true }))
+    ctx.get('betterSidebar')?.openTab({ type: 'terminal', target: 'bottom' })
+  }, [state, store, ctx])
+
   // Center-column tracking (sidebar/use-center-column.ts): the bottom
   // workbench spans ONLY the app shell's center column ("squeezes the agent
   // output area"); the hook locates the AppFrame's center column DOM (host

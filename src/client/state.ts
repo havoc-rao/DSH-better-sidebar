@@ -108,6 +108,12 @@ export interface SidebarState {
   revealed: string[]
   /** Whether the bottom panel (the plugin's one workbench) is open. */
   bottomOpen: boolean
+  /**
+   * Whether the bottom panel has been expanded at least once in this
+   * session — the FIRST expansion tries to auto-open a terminal tab (gated
+   * on the bottomPanelAutoTerminal pref); later expansions never do.
+   */
+  bottomOpenedOnce: boolean
   /** The bottom panel's height (clamped to the contract range). */
   bottomHeight: number
   /** The bottom workbench's split tree. */
@@ -186,6 +192,7 @@ export function makeDefaultState(): SidebarState {
     expanded: [],
     revealed: [],
     bottomOpen: false,
+    bottomOpenedOnce: false,
     bottomHeight: BOTTOM_DEFAULT,
     bottomSplits: bottomLeaf,
   }
@@ -732,6 +739,10 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     expanded: record.expanded as string[],
     revealed: [],
     bottomOpen,
+    // An older persisted state never expanded the bottom panel (the field
+    // arrived later): defaulting to false gives it the first-expansion
+    // auto-terminal exactly once after the upgrade.
+    bottomOpenedOnce: record.bottomOpenedOnce === true,
     bottomHeight,
     bottomSplits,
   }
