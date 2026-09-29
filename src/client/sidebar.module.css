@@ -30,8 +30,9 @@
    (the modal-cover convention), and Chromium propagates that computed
    app-region down the ancestor chain — a persistent host under <body>
    would subtract the whole macOS hidden-titlebar drag surface (sidebar
-   strip, conversation header, …). Inside `#root` the host declares no
-   app-region and the product rows keep their own boxes. The layer sits at
+   strip, conversation header, …). Inside `#root` the host declares
+   `initial` (no region) — see the rule below — and the product rows keep
+   their own boxes. The layer sits at
    z-index 25: above the app's shell overlay (AppFrame overlayLayer, 20)
    and in-flow content, below DSH's ui-cordis dynamic-plugin panel (fixed,
    30 — the inventory/surfacing surface must never be hidden behind the
@@ -45,6 +46,13 @@
   inset: 0;
   z-index: 25;
   pointer-events: none;
+  /* Electron propagates a computed app-region down the ancestor chain, so a
+     no-drag inherited from an upstream container (a body-level mount under
+     DSH's window-chrome contract) would subtract the whole macOS
+     hidden-titlebar drag surface. Reset explicitly: the host contributes no
+     window-drag geometry — only rows it covers that declare their own
+     no-drag (the interactive-elements contract) subtract themselves. */
+  -webkit-app-region: initial;
   /* Clip at the viewport edge: collapsed panels slide off-screen with
      `transform: translate(102%)`, and a transformed element still
      contributes to its ancestors' scrollable overflow — without this the

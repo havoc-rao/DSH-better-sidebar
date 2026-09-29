@@ -323,17 +323,28 @@ export function apply(ctx: Context): void {
         host?.remove()
         host = undefined
       }
+      /** #root when the product page provides it, else <body>. The mount
+       *  must NOT be a direct <body> child on macOS: DSH's window-chrome
+       *  contract (`html[data-platform='darwin'] body > :not(#root)`) gives
+       *  every body child `-webkit-app-region: no-drag`, and Electron
+       *  propagates that computed region down the ancestor chain — a
+       *  body-mounted host inherits it into its full-viewport fixed panel
+       *  host and subtracts the whole hidden-titlebar drag surface (sidebar
+       *  strip, conversation header, …). */
+      const mountAnchor = (): HTMLElement => document.getElementById('root') ?? document.body
       /** Re-attach the host if the page (a desktop shell wrapper, SPA
-       *  navigation, …) ever removes it from <body>. Cheap: childList only,
-       *  no subtree, no attribute filtering. */
+       *  navigation, …) ever removes it from its anchor. Cheap: childList
+       *  only, no subtree, no attribute filtering. */
       const guardAnchor = (): void => {
         if (bodyObserver !== undefined) return
         bodyObserver = new MutationObserver(() => {
-          if (host !== undefined && !document.body.contains(host)) {
-            document.body.appendChild(host)
-          }
+          if (host === undefined) return
+          const anchor = mountAnchor()
+          if (!anchor.contains(host)) anchor.appendChild(host)
         })
         bodyObserver.observe(document.body, { childList: true })
+        const root = document.getElementById('root')
+        if (root !== null) bodyObserver.observe(root, { childList: true })
       }
       /** One-shot geometry self-check: if the host page transforms
        *  <html>/<body> itself (exotic shells), a fixed panel host would
@@ -387,7 +398,7 @@ export function apply(ctx: Context): void {
         try {
           host = document.createElement('div')
           host.setAttribute('data-dsh-better-sidebar', '')
-          document.body.appendChild(host)
+          mountAnchor().appendChild(host)
           root = createRoot(host)
           root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
           mounted = true
