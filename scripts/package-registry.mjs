@@ -33,8 +33,12 @@ const files = [
   // route on first use (see src/client/chunk-loader.ts / src/bundle-route.ts).
   'lib/client-editor.js',
   'lib/client-editor.js.map',
+  'lib/client-locale.js',
+  'lib/client-locale.js.map',
   'lib/client-mermaid.js',
   'lib/client-mermaid.js.map',
+  'lib/client-terminal.js',
+  'lib/client-terminal.js.map',
   'README.md',
   'LICENSE',
 ]

@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { CHUNK_NAMES } from '../src/bundle-route.ts'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 
@@ -43,6 +44,7 @@ interface PluginManifest {
 interface PackageJson {
   name: string
   version: string
+  files?: string[]
 }
 
 const manifest = JSON.parse(readFileSync(resolve(ROOT, 'dsh.plugin.json'), 'utf8')) as PluginManifest
@@ -81,7 +83,7 @@ function bundleId(file: string): string {
 }
 
 /** The lazy chunk bundle names (mirror of src/bundle-route.ts CHUNK_NAMES). */
-const CHUNK_FILES = ['editor', 'mermaid'].map(name => `lib/client-${name}.js`)
+const CHUNK_FILES = [...CHUNK_NAMES].map(name => `lib/client-${name}.js`)
 
 /** The global registry slot a built chunk script assigns (its factory key). */
 function chunkSlot(file: string): string {
@@ -117,6 +119,20 @@ describe.skipIf(!libBuilt)('registry manifest consistency (dsh.plugin.json)', ()
     for (const file of CHUNK_FILES) {
       expect(existsSync(resolve(ROOT, file)), file).toBe(true)
       expect(chunkSlot(file), file).toBe(file.slice('lib/client-'.length, -'.js'.length))
+    }
+  })
+
+  it('every chunk is shipped by both install channels (package.json files + the registry staging list)', () => {
+    // The DSH 0.1.6 terminal yield trimmed `terminal` from BOTH lists while
+    // the build and route kept serving it — an npm/registry install then
+    // 404s the chunk script even with the allowlist fixed. Pin the two
+    // packaging mirrors to the route's allowlist.
+    const files = pkg.files ?? []
+    const registrySource = readFileSync(resolve(ROOT, 'scripts/package-registry.mjs'), 'utf8')
+    for (const name of CHUNK_NAMES) {
+      const file = `lib/client-${name}.js`
+      expect(files, `package.json files must ship ${file}`).toContain(file)
+      expect(registrySource, `scripts/package-registry.mjs must stage ${file}`).toContain(`'${file}'`)
     }
   })
 

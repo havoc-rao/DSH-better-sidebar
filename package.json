@@ -65,6 +65,7 @@
     "lib/client-editor.js",
     "lib/client-locale.js",
     "lib/client-mermaid.js",
+    "lib/client-terminal.js",
     "lib/types/**/*.d.ts",
     "src",
     "scripts/install.sh",

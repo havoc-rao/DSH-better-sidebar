@@ -18,8 +18,11 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context, SidebarHttpRequest, SidebarHttpResponse } from './context-types.ts'
 
-/** The chunk names the client may request (mirror of src/client/chunk-loader.ts). */
-export const CHUNK_NAMES = ['editor', 'mermaid', 'locale'] as const
+/** The chunk names the client may request (mirror of src/client/chunk-loader.ts
+ *  and tsdown.config.ts CHUNKS — the DSH 0.1.6 yield trimmed `terminal` here,
+ *  but the terminal tab came back with its lazy chunk, so the route must serve
+ *  it again; tests/bundle-route.spec.ts pins the two lists together). */
+export const CHUNK_NAMES = ['editor', 'terminal', 'mermaid', 'locale'] as const
 export type ChunkName = (typeof CHUNK_NAMES)[number]
 
 /** Directory of this host-half module (lib/ — the chunk scripts live next to it). */

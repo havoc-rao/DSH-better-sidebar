@@ -6,7 +6,7 @@
  * re-downloading.
  */
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -150,6 +150,19 @@ describe('/sidebar/bundle route', () => {
   })
 
   it('exports the chunk allowlist (mirror of src/client/chunk-loader.ts)', () => {
-    expect([...CHUNK_NAMES]).toEqual(['editor', 'mermaid', 'locale'])
+    expect([...CHUNK_NAMES]).toEqual(['editor', 'terminal', 'mermaid', 'locale'])
+  })
+
+  it('the allowlist covers every chunk tsdown builds (mirror of tsdown.config.ts CHUNKS)', () => {
+    // The DSH 0.1.6 terminal yield trimmed `terminal` from the route but the
+    // terminal tab regressed back with its lazy chunk, leaving the route to
+    // 404 a chunk the build still emits ("chunk script /sidebar/bundle/
+    // terminal.js failed to load" with a retry that can never succeed).
+    // Pin the two lists together so that drift fails here, not in the UI.
+    const source = readFileSync(new URL('../tsdown.config.ts', import.meta.url), 'utf8')
+    const match = /const CHUNKS = \[([^\]]+)\]/.exec(source)
+    expect(match, 'CHUNKS literal in tsdown.config.ts').not.toBeNull()
+    const built = [...match![1]!.matchAll(/'([a-z0-9-]+)'/g)].map(m => m[1]!)
+    expect(built.sort()).toEqual([...CHUNK_NAMES].sort())
   })
 })
