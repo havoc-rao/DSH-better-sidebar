@@ -93,11 +93,20 @@ export function useDirectoryWatch(options: DirectoryWatchOptions): void {
       url.search = new URLSearchParams({ sessionId }).toString()
       socket = new WebSocket(url.toString())
       socket.onopen = () => {
+        // The tree unmounted while the handshake was still in flight:
+        // nothing may be sent, and the socket still has to go. Chromium
+        // refuses close() on a CONNECTING socket (InvalidStateError), so
+        // this open is the earliest point the teardown is legal.
+        if (closed) {
+          socket?.close()
+          return
+        }
         failures = 0
         watching.clear()
         reconcile()
       }
       socket.onmessage = (event) => {
+        if (closed) return
         if (typeof event.data !== 'string') return
         let frame: FsWatchFrame
         try {
@@ -127,7 +136,12 @@ export function useDirectoryWatch(options: DirectoryWatchOptions): void {
       closed = true
       reconcileRef.current = () => {}
       if (retry !== undefined) window.clearTimeout(retry)
-      socket?.close()
+      // Chromium throws InvalidStateError ("WebSocket is closed before the
+      // connection is established") when close() runs while the handshake is
+      // still in flight — the socket effect cleanup lands exactly there when
+      // the tree unmounts (or the session changes) mid-connect. Such a socket
+      // is left to settle and torn down from onopen instead.
+      if (socket !== null && socket.readyState !== WebSocket.CONNECTING) socket.close()
     }
   }, [sessionId])
 
