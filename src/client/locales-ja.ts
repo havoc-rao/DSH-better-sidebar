@@ -16,6 +16,17 @@
 
 /** The ja dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const ja: Record<string, string> = {
+  workspaceTerminals: 'ワークスペースのターミナル',
+  workspaceTerminalRunning: '実行中',
+  workspaceTerminalExited: '終了済み',
+  workspaceTerminalTerminated: 'ワークスペースのターミナル管理によりターミナルが終了されました',
+  workspaceTerminalTerminateConfirm: 'プロセスが終了し、このターミナルに接続されているすべてのビューが切断されます。',
+  workspaceTerminalUnavailable: '元のターミナルは存在しません。新しいターミナルを起動できます。',
+  workspaceTerminalRestart: 'ターミナルを再起動',
+  workspaceTerminalTerminate: 'プロセスを終了',
+  workspaceTerminalOpen: 'ビューを開く',
+  workspaceTerminalEmpty: 'このワークスペースにターミナルはありません',
+  workspaceTerminalDetachHint: 'タブを閉じてもビューのみ閉じます。シェルを停止するには「プロセスを終了」を使用してください。',
   files: 'ファイル',
   guideDescFiles: 'ワークスペースのファイルツリーを閲覧し、クリックでプレビュー／編集',
   guideDescGit: 'Git の変更と今回のセッションのファイル変更を 1 つのタブに',

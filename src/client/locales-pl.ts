@@ -18,6 +18,18 @@
 
 /** The pl dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const pl: Record<string, string> = {
+  workspaceTerminals: "Terminale obszaru roboczego",
+  workspaceTerminalRunning: "Uruchomiony",
+  workspaceTerminalExited: "Zakończony",
+  workspaceTerminalTerminated: "Terminal został zakończony przez system zarządzania terminalami obszaru roboczego",
+  workspaceTerminalTerminateConfirm: "Spowoduje to zakończenie procesu i odłączenie wszystkich widoków połączonych z tym terminalem.",
+  workspaceTerminalUnavailable: "Pierwotny terminal już nie istnieje. Można uruchomić nowy.",
+  workspaceTerminalRestart: "Uruchom terminal ponownie",
+  workspaceTerminalTerminate: "Zakończ proces",
+  workspaceTerminalOpen: "Otwórz widok",
+  workspaceTerminalEmpty: "Brak terminali w tym obszarze roboczym",
+  workspaceTerminalDetachHint: "Zamknięcie karty zamyka tylko widok. Użyj Zakończ proces, aby zatrzymać powłokę.",
+
   files: 'Pliki',
   guideDescFiles: 'Przeglądaj drzewo plików obszaru roboczego; klik otwiera podgląd lub edycję',
   guideDescGit: 'Zmiany Git i zmiany plików z tej sesji w jednej karcie',

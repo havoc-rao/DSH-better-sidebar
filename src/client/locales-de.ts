@@ -2,6 +2,18 @@
  * German dictionary for better-sidebar.
  */
 export const de: Record<string, string> = {
+  workspaceTerminals: "Arbeitsbereich-Terminals",
+  workspaceTerminalRunning: "Läuft",
+  workspaceTerminalExited: "Beendet",
+  workspaceTerminalTerminated: "Das Terminal wurde durch die Terminalverwaltung des Arbeitsbereichs beendet",
+  workspaceTerminalTerminateConfirm: "Dadurch wird der Prozess beendet und die Verbindung aller mit diesem Terminal verbundenen Ansichten getrennt.",
+  workspaceTerminalUnavailable: "Das ursprüngliche Terminal existiert nicht mehr. Sie können ein neues starten.",
+  workspaceTerminalRestart: "Terminal neu starten",
+  workspaceTerminalTerminate: "Prozess beenden",
+  workspaceTerminalOpen: "Ansicht öffnen",
+  workspaceTerminalEmpty: "Keine Terminals in diesem Arbeitsbereich",
+  workspaceTerminalDetachHint: "Das Schließen eines Tabs schließt nur die Ansicht. Zum Stoppen der Shell Prozess beenden wählen.",
+
   files: 'Dateien',
   guideDescFiles: 'Dateibaum des Arbeitsbereichs durchsuchen; Klick öffnet Vorschau oder Editor',
   guideDescGit: 'Git-Änderungen und Dateiänderungen dieser Sitzung in einem Tab',

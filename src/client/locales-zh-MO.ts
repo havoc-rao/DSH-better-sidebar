@@ -31,6 +31,18 @@
 
 /** The zh-HK dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const zhMO: Record<string, string> = {
+  workspaceTerminals: "工作區終端",
+  workspaceTerminalRunning: "執行中",
+  workspaceTerminalExited: "已退出",
+  workspaceTerminalTerminated: "終端已被工作區終端管理結束",
+  workspaceTerminalTerminateConfirm: "這會結束程序，並中斷所有連接此終端的檢視。",
+  workspaceTerminalUnavailable: "原終端已不存在，可以重新啟動新終端",
+  workspaceTerminalRestart: "重新啟動",
+  workspaceTerminalTerminate: "結束程序",
+  workspaceTerminalOpen: "開啟檢視",
+  workspaceTerminalEmpty: "本工作區暫無終端",
+  workspaceTerminalDetachHint: "關閉分頁僅關閉檢視；停止 shell 請使用「結束程序」。",
+
   files: '檔案',
   guideDescFiles: '瀏覽工作區檔案樹，點開即可預覽或編輯',
   guideDescGit: 'Git 變更與本輪檔案改動，雙視角合一',

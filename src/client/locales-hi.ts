@@ -16,6 +16,18 @@
 
 /** The hi dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const hi: Record<string, string> = {
+  workspaceTerminals: "कार्यस्थान टर्मिनल",
+  workspaceTerminalRunning: "चल रहा है",
+  workspaceTerminalExited: "समाप्त",
+  workspaceTerminalTerminated: "कार्यस्थान टर्मिनल प्रबंधन द्वारा टर्मिनल समाप्त कर दिया गया है",
+  workspaceTerminalTerminateConfirm: "इससे प्रक्रिया समाप्त हो जाएगी और इस टर्मिनल से जुड़े सभी दृश्यों का कनेक्शन टूट जाएगा।",
+  workspaceTerminalUnavailable: "मूल टर्मिनल अब मौजूद नहीं है। आप नया टर्मिनल शुरू कर सकते हैं।",
+  workspaceTerminalRestart: "टर्मिनल फिर से शुरू करें",
+  workspaceTerminalTerminate: "प्रक्रिया समाप्त करें",
+  workspaceTerminalOpen: "दृश्य खोलें",
+  workspaceTerminalEmpty: "इस कार्यस्थान में कोई टर्मिनल नहीं",
+  workspaceTerminalDetachHint: "टैब बंद करने से केवल दृश्य बंद होता है। शेल रोकने के लिए प्रक्रिया समाप्त करें चुनें।",
+
   files: 'फ़ाइलें',
   guideDescFiles: 'वर्कस्पेस फ़ाइल ट्री देखें; क्लिक करने पर प्रीव्यू या संपादन खुलता है',
   guideDescGit: 'Git बदलाव और इस सत्र के फ़ाइल बदलाव एक ही टैब में',

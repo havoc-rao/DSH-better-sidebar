@@ -8,6 +8,18 @@
  */
 
 export const ko: Record<string, string> = {
+  workspaceTerminals: "작업 공간 터미널",
+  workspaceTerminalRunning: "실행 중",
+  workspaceTerminalExited: "종료됨",
+  workspaceTerminalTerminated: "작업 공간 터미널 관리에서 터미널을 종료했습니다",
+  workspaceTerminalTerminateConfirm: "프로세스가 종료되고 이 터미널에 연결된 모든 뷰의 연결이 끊어집니다.",
+  workspaceTerminalUnavailable: "기존 터미널이 더 이상 존재하지 않습니다. 새 터미널을 시작할 수 있습니다.",
+  workspaceTerminalRestart: "터미널 다시 시작",
+  workspaceTerminalTerminate: "프로세스 종료",
+  workspaceTerminalOpen: "뷰 열기",
+  workspaceTerminalEmpty: "이 작업 공간에 터미널이 없습니다",
+  workspaceTerminalDetachHint: "탭을 닫아도 뷰만 닫힙니다. 셸을 중지하려면 프로세스 종료를 사용하세요.",
+
   files: '파일',
   guideDescFiles: '워크스페이스 파일 트리를 보고 클릭하면 미리보기/편집',
   guideDescGit: 'Git 변경 사항과 이번 세션의 파일 변경을 한 탭에서',

@@ -9,6 +9,18 @@
 
 /** fr dictionary for the `betterSidebar` namespace. */
 export const fr: Record<string, string> = {
+  workspaceTerminals: "Terminaux de l’espace de travail",
+  workspaceTerminalRunning: "En cours",
+  workspaceTerminalExited: "Terminé",
+  workspaceTerminalTerminated: "Le terminal a été arrêté par la gestion des terminaux de l’espace de travail",
+  workspaceTerminalTerminateConfirm: "Cela arrête le processus et déconnecte toutes les vues rattachées à ce terminal.",
+  workspaceTerminalUnavailable: "Le terminal d’origine n’existe plus. Vous pouvez en démarrer un nouveau.",
+  workspaceTerminalRestart: "Redémarrer le terminal",
+  workspaceTerminalTerminate: "Arrêter le processus",
+  workspaceTerminalOpen: "Ouvrir la vue",
+  workspaceTerminalEmpty: "Aucun terminal dans cet espace de travail",
+  workspaceTerminalDetachHint: "Fermer un onglet ferme seulement sa vue. Utilisez Arrêter le processus pour arrêter le shell.",
+
   files: 'Fichiers',
   guideDescFiles: 'Parcourir l\'arborescence du workspace ; un clic ouvre l\'aperçu ou l\'édition',
   guideDescGit: 'Modifications Git et éditions de cette session dans un seul onglet',

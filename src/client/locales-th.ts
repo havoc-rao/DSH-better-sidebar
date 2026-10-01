@@ -16,6 +16,18 @@
 
 /** The th dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const th: Record<string, string> = {
+  workspaceTerminals: "เทอร์มินัลพื้นที่ทำงาน",
+  workspaceTerminalRunning: "กำลังทำงาน",
+  workspaceTerminalExited: "ออกแล้ว",
+  workspaceTerminalTerminated: "เทอร์มินัลถูกยุติโดยระบบจัดการเทอร์มินัลของพื้นที่ทำงาน",
+  workspaceTerminalTerminateConfirm: "การดำเนินการนี้จะยุติกระบวนการและตัดการเชื่อมต่อมุมมองทั้งหมดที่เชื่อมต่อกับเทอร์มินัลนี้",
+  workspaceTerminalUnavailable: "เทอร์มินัลเดิมไม่มีอยู่อีกต่อไป คุณสามารถเริ่มเทอร์มินัลใหม่ได้",
+  workspaceTerminalRestart: "เริ่มเทอร์มินัลใหม่",
+  workspaceTerminalTerminate: "ยุติกระบวนการ",
+  workspaceTerminalOpen: "เปิดมุมมอง",
+  workspaceTerminalEmpty: "ไม่มีเทอร์มินัลในพื้นที่ทำงานนี้",
+  workspaceTerminalDetachHint: "การปิดแท็บปิดเฉพาะมุมมอง ใช้ ยุติกระบวนการ เพื่อหยุดเชลล์",
+
   files: 'ไฟล์',
   guideDescFiles: 'เรียกดูแผนผังไฟล์ของเวิร์กสเปซ คลิกเพื่อดูตัวอย่างหรือแก้ไข',
   guideDescGit: 'การเปลี่ยนแปลง Git และไฟล์ที่แก้ในเซสชันนี้ในแท็บเดียว',

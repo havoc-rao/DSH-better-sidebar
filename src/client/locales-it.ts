@@ -7,6 +7,18 @@
  */
 
 export const it: Record<string, string> = {
+  workspaceTerminals: "Terminali dell’area di lavoro",
+  workspaceTerminalRunning: "In esecuzione",
+  workspaceTerminalExited: "Terminato",
+  workspaceTerminalTerminated: "Il terminale è stato terminato dalla gestione dei terminali dell’area di lavoro",
+  workspaceTerminalTerminateConfirm: "Questo termina il processo e disconnette tutte le viste collegate a questo terminale.",
+  workspaceTerminalUnavailable: "Il terminale originale non esiste più. Puoi avviarne uno nuovo.",
+  workspaceTerminalRestart: "Riavvia terminale",
+  workspaceTerminalTerminate: "Termina processo",
+  workspaceTerminalOpen: "Apri vista",
+  workspaceTerminalEmpty: "Nessun terminale in questa area di lavoro",
+  workspaceTerminalDetachHint: "Chiudere una scheda chiude solo la vista. Usa Termina processo per arrestare la shell.",
+
   files: 'File',
   guideDescFiles: 'Sfoglia l\'albero del workspace; un clic apre anteprima o editor',
   guideDescGit: 'Modifiche Git e modifiche ai file di questa sessione in un solo tab',

@@ -12,6 +12,18 @@
  */
 
 export const ru: Record<string, string> = {
+  workspaceTerminals: "Терминалы рабочего пространства",
+  workspaceTerminalRunning: "Работает",
+  workspaceTerminalExited: "Завершён",
+  workspaceTerminalTerminated: "Терминал был завершён системой управления терминалами рабочего пространства",
+  workspaceTerminalTerminateConfirm: "Это завершит процесс и отключит все представления, подключённые к этому терминалу.",
+  workspaceTerminalUnavailable: "Исходный терминал больше не существует. Вы можете запустить новый.",
+  workspaceTerminalRestart: "Перезапустить терминал",
+  workspaceTerminalTerminate: "Завершить процесс",
+  workspaceTerminalOpen: "Открыть вид",
+  workspaceTerminalEmpty: "В этом пространстве нет терминалов",
+  workspaceTerminalDetachHint: "Закрытие вкладки закрывает только вид. Чтобы остановить оболочку, выберите Завершить процесс.",
+
   files: 'Файлы',
   guideDescFiles: 'Дерево файлов рабочей области: клик открывает просмотр или редактор',
   guideDescGit: 'Изменения Git и правки файлов этой сессии в одной вкладке',

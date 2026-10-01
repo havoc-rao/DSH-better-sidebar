@@ -16,6 +16,18 @@
 
 /** The tr dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const tr: Record<string, string> = {
+  workspaceTerminals: "Çalışma alanı terminalleri",
+  workspaceTerminalRunning: "Çalışıyor",
+  workspaceTerminalExited: "Sonlandı",
+  workspaceTerminalTerminated: "Terminal, çalışma alanı terminal yönetimi tarafından sonlandırıldı",
+  workspaceTerminalTerminateConfirm: "Bu, işlemi sonlandırır ve bu terminale bağlı tüm görünümlerin bağlantısını keser.",
+  workspaceTerminalUnavailable: "Önceki terminal artık mevcut değil. Yeni bir terminal başlatabilirsiniz.",
+  workspaceTerminalRestart: "Terminali yeniden başlat",
+  workspaceTerminalTerminate: "İşlemi sonlandır",
+  workspaceTerminalOpen: "Görünümü aç",
+  workspaceTerminalEmpty: "Bu çalışma alanında terminal yok",
+  workspaceTerminalDetachHint: "Sekmeyi kapatmak yalnızca görünümü kapatır. Kabuğu durdurmak için İşlemi sonlandır seçeneğini kullanın.",
+
   files: 'Dosyalar',
   guideDescFiles: 'Çalışma alanı dosya ağacına göz atın; tıklayınca önizleme veya düzenleme açılır',
   guideDescGit: 'Git değişiklikleri ve bu oturumun dosya değişiklikleri tek sekmede',

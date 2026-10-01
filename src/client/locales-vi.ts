@@ -16,6 +16,18 @@
 
 /** The vi dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const vi: Record<string, string> = {
+  workspaceTerminals: "Terminal không gian làm việc",
+  workspaceTerminalRunning: "Đang chạy",
+  workspaceTerminalExited: "Đã thoát",
+  workspaceTerminalTerminated: "Terminal đã bị kết thúc bởi hệ thống quản lý terminal của không gian làm việc",
+  workspaceTerminalTerminateConfirm: "Thao tác này sẽ dừng tiến trình và ngắt kết nối tất cả chế độ xem được kết nối với terminal này.",
+  workspaceTerminalUnavailable: "Terminal ban đầu không còn tồn tại. Bạn có thể khởi động một terminal mới.",
+  workspaceTerminalRestart: "Khởi động lại terminal",
+  workspaceTerminalTerminate: "Dừng tiến trình",
+  workspaceTerminalOpen: "Mở chế độ xem",
+  workspaceTerminalEmpty: "Không có terminal trong không gian này",
+  workspaceTerminalDetachHint: "Đóng thẻ chỉ đóng chế độ xem. Dùng Dừng tiến trình để dừng shell.",
+
   files: 'Tệp',
   guideDescFiles: 'Duyệt cây tệp của workspace; bấm để xem trước hoặc chỉnh sửa',
   guideDescGit: 'Thay đổi Git và thay đổi tệp của phiên này trong một tab',

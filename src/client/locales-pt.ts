@@ -1,4 +1,16 @@
 export const pt: Record<string, string> = {
+  workspaceTerminals: "Terminais do workspace",
+  workspaceTerminalRunning: "Em execução",
+  workspaceTerminalExited: "Encerrado",
+  workspaceTerminalTerminated: "O terminal foi encerrado pelo gerenciamento de terminais do workspace",
+  workspaceTerminalTerminateConfirm: "Isso encerra o processo e desconecta todas as visualizações conectadas a este terminal.",
+  workspaceTerminalUnavailable: "O terminal original não existe mais. Você pode iniciar um novo.",
+  workspaceTerminalRestart: "Reiniciar terminal",
+  workspaceTerminalTerminate: "Encerrar processo",
+  workspaceTerminalOpen: "Abrir visualização",
+  workspaceTerminalEmpty: "Nenhum terminal neste workspace",
+  workspaceTerminalDetachHint: "Fechar uma aba fecha apenas a visualização. Use Encerrar processo para parar o shell.",
+
   files: 'Arquivos',
   guideDescFiles: 'Navegue pela árvore do workspace; um clique abre a pré-visualização ou a edição',
   guideDescGit: 'Alterações do Git e edições desta sessão em um único separador',

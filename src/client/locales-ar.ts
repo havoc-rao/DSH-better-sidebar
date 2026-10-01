@@ -17,6 +17,18 @@
 
 /** The ar dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const ar: Record<string, string> = {
+  workspaceTerminals: "طرفيات مساحة العمل",
+  workspaceTerminalRunning: "قيد التشغيل",
+  workspaceTerminalExited: "انتهى",
+  workspaceTerminalTerminated: "تم إنهاء الطرفية بواسطة إدارة طرفيات مساحة العمل",
+  workspaceTerminalTerminateConfirm: "سيؤدي هذا إلى إنهاء العملية وقطع اتصال جميع العروض المتصلة بهذه الطرفية.",
+  workspaceTerminalUnavailable: "لم تعد الطرفية الأصلية موجودة. يمكنك بدء طرفية جديدة.",
+  workspaceTerminalRestart: "إعادة تشغيل الطرفية",
+  workspaceTerminalTerminate: "إنهاء العملية",
+  workspaceTerminalOpen: "فتح العرض",
+  workspaceTerminalEmpty: "لا توجد طرفيات في مساحة العمل",
+  workspaceTerminalDetachHint: "إغلاق علامة التبويب يغلق العرض فقط. استخدم إنهاء العملية لإيقاف الصدفة.",
+
   files: 'الملفات',
   guideDescFiles: 'استعرض شجرة ملفات مساحة العمل؛ انقر للمعاينة أو التحرير',
   guideDescGit: 'تغييرات Git وتعديلات ملفات هذه الجلسة في تبويب واحد',

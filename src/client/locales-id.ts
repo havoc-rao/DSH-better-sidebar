@@ -14,6 +14,18 @@
  */
 
 export const id: Record<string, string> = {
+  workspaceTerminals: "Terminal ruang kerja",
+  workspaceTerminalRunning: "Berjalan",
+  workspaceTerminalExited: "Selesai",
+  workspaceTerminalTerminated: "Terminal dihentikan oleh pengelolaan terminal ruang kerja",
+  workspaceTerminalTerminateConfirm: "Ini akan menghentikan proses dan memutus koneksi semua tampilan yang terhubung ke terminal ini.",
+  workspaceTerminalUnavailable: "Terminal asli sudah tidak ada. Anda dapat memulai terminal baru.",
+  workspaceTerminalRestart: "Mulai ulang terminal",
+  workspaceTerminalTerminate: "Hentikan proses",
+  workspaceTerminalOpen: "Buka tampilan",
+  workspaceTerminalEmpty: "Tidak ada terminal di ruang kerja ini",
+  workspaceTerminalDetachHint: "Menutup tab hanya menutup tampilan. Gunakan Hentikan proses untuk menghentikan shell.",
+
   files: 'Berkas',
   guideDescFiles: 'Telusuri pohon berkas workspace; klik untuk pratinjau atau edit',
   guideDescGit: 'Perubahan Git dan perubahan berkas sesi ini dalam satu tab',

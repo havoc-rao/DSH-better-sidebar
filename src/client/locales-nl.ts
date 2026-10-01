@@ -14,6 +14,18 @@
  * - English brand names (VS Code, Cursor, Zed, SSH) stay as-is.
  */
 export const nl: Record<string, string> = {
+  workspaceTerminals: "Werkruimte-terminals",
+  workspaceTerminalRunning: "Actief",
+  workspaceTerminalExited: "Beëindigd",
+  workspaceTerminalTerminated: "De terminal is beëindigd door het terminalbeheer van de werkruimte",
+  workspaceTerminalTerminateConfirm: "Dit beëindigt het proces en verbreekt de verbinding met alle weergaven die aan deze terminal zijn gekoppeld.",
+  workspaceTerminalUnavailable: "De oorspronkelijke terminal bestaat niet meer. U kunt een nieuwe starten.",
+  workspaceTerminalRestart: "Terminal opnieuw starten",
+  workspaceTerminalTerminate: "Proces beëindigen",
+  workspaceTerminalOpen: "Weergave openen",
+  workspaceTerminalEmpty: "Geen terminals in deze werkruimte",
+  workspaceTerminalDetachHint: "Een tab sluiten sluit alleen de weergave. Gebruik Proces beëindigen om de shell te stoppen.",
+
   files: 'Bestanden',
   guideDescFiles: 'Blader door de bestandsboom van de workspace; klik opent voorbeeld of editor',
   guideDescGit: 'Git-wijzigingen en bestandswijzigingen van deze sessie in één tabblad',

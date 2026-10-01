@@ -23,6 +23,17 @@
 
 /** The zh dictionary (also registered into the DSH locale registry under {@link LOCALE_NS}). */
 export const zh = {
+  workspaceTerminals: '工作区终端',
+  workspaceTerminalRunning: '运行中',
+  workspaceTerminalExited: '已退出',
+  workspaceTerminalTerminated: '终端已被工作区终端管理结束',
+  workspaceTerminalTerminateConfirm: '这会结束进程，并断开所有连接此终端的视图。',
+  workspaceTerminalUnavailable: '原终端已不存在，可以重新启动新终端',
+  workspaceTerminalRestart: '重新启动',
+  workspaceTerminalTerminate: '结束进程',
+  workspaceTerminalOpen: '打开视图',
+  workspaceTerminalEmpty: '本工作区暂无终端',
+  workspaceTerminalDetachHint: '关闭标签仅关闭视图；结束进程请点击“结束进程”。',
   files: '文件',
   guideDescFiles: '浏览工作区文件树，点开即预览或编辑',
   guideDescGit: 'Git 变更与本轮文件改动，双视角合一',
@@ -473,6 +484,17 @@ export const zh = {
 
 /** The en dictionary (key-set-equal to zh, enforced by the type annotation). */
 export const en: Record<keyof typeof zh, string> = {
+  workspaceTerminals: 'Workspace terminals',
+  workspaceTerminalRunning: 'Running',
+  workspaceTerminalExited: 'Exited',
+  workspaceTerminalTerminated: 'Terminal was terminated by workspace terminal management',
+  workspaceTerminalTerminateConfirm: 'This ends the process and disconnects every view attached to this terminal.',
+  workspaceTerminalUnavailable: 'The original terminal no longer exists. You can start a new one.',
+  workspaceTerminalRestart: 'Restart terminal',
+  workspaceTerminalTerminate: 'Terminate process',
+  workspaceTerminalOpen: 'Open view',
+  workspaceTerminalEmpty: 'No terminals in this workspace',
+  workspaceTerminalDetachHint: 'Closing a tab only closes its view. Use “Terminate process” to stop the shell.',
   files: 'Files',
   guideDescFiles: 'Browse the workspace tree; click a file to preview or edit',
   guideDescGit: 'Git changes and this session\'s file edits, in one tab',

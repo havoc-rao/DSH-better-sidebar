@@ -1,4 +1,16 @@
 export const sv: Record<string, string> = {
+  workspaceTerminals: "Arbetsytans terminaler",
+  workspaceTerminalRunning: "Körs",
+  workspaceTerminalExited: "Avslutad",
+  workspaceTerminalTerminated: "Terminalen avslutades av arbetsytans terminalhantering",
+  workspaceTerminalTerminateConfirm: "Detta avslutar processen och kopplar från alla vyer som är anslutna till den här terminalen.",
+  workspaceTerminalUnavailable: "Den ursprungliga terminalen finns inte längre. Du kan starta en ny.",
+  workspaceTerminalRestart: "Starta om terminalen",
+  workspaceTerminalTerminate: "Avsluta process",
+  workspaceTerminalOpen: "Öppna vy",
+  workspaceTerminalEmpty: "Inga terminaler i arbetsytan",
+  workspaceTerminalDetachHint: "Att stänga en flik stänger bara vyn. Använd Avsluta process för att stoppa skalet.",
+
   files: 'Filer',
   guideDescFiles: 'Bläddra i arbetsytans filträd; klick öppnar förhandsvisning eller redigering',
   guideDescGit: 'Git-ändringar och sessionens filändringar i en flik',
