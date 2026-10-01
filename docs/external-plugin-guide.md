@@ -10,7 +10,7 @@
 
 ## 0. 承载面：DSH 原生右侧栏 + 插件底部工作台（v0.19.0-alpha.0 起）
 
-从 v0.19.0-alpha.0 起，**右列完全属于 DSH**：你的 tab 渲染在 **DSH 自己的右侧栏**里（`ctx.sidebarRight` / `ctx.sidebarRightTabs`），插件把每个 `TabDescriptor` 注册成原生 tab 类型（`kind = descriptor.id`）+ 一个原生 tab 体。插件自己只保留**底部工作台**（分栏树、会话内持久化；**其中不再有终端**——宿主 0.1.6 的右侧栏终端取代了它）。对你的接入代码**没有影响**——仍然只调用 `ctx.betterSidebar`：
+从 v0.19.0-alpha.0 起，**右列完全属于 DSH**：你的 tab 渲染在 **DSH 自己的右侧栏**里（`ctx.sidebarRight` / `ctx.sidebarRightTabs`），插件把每个 `TabDescriptor` 注册成原生 tab 类型（`kind = descriptor.id`）+ 一个原生 tab 体。插件自己只保留**底部工作台**（分栏树、会话内持久化；**本地终端已在本合并基线恢复**，并新增 workspace 级终端管理；宿主右侧栏终端仍是宿主自己的承载面）。对你的接入代码**没有影响**——仍然只调用 `ctx.betterSidebar`：
 
 - `registerTab` / `registerFileViewer` 签名不变；
 - `openTab` / `openFile` 默认落到原生右侧栏；新增可选 `OpenTabSeed.target`（`'right'` 默认 / `'bottom'` 落插件的底部工作台）；
@@ -29,12 +29,12 @@
 | 文件树实时刷新（v0.21.1+） | 插件接管了内置 `files` 页，所以宿主自己的按目录 watch 覆盖不到这棵树——插件自带一条 `/sidebar/ws/fs-watch` socket：客户端上报**已展开**的目录集，宿主侧按目录 `fs.watch`（150ms 去抖、每连接上限 64 个句柄），变动后只让那一层缓存失效并重列；目录折叠即退订。路径仍走 `fs.tree` 同一道 workspace fence |
 | 链接接管（v0.21.1+） | DOM 层只接管**有类型通过 `urlTarget` 声明认领**的外链（Ctrl/Cmd/Shift/Alt 点击一律放行）；一个都没认领到时**不阻止默认行为**，交回宿主。见 §4.1 的 `urlTarget` |
 | path 种子的去向（v0.19.2+） | `path` seed 的含义**跟随类型**：只有 `editor`（唯一认领 `dsh-resource://file/**` 的类型）把 path 转成资源地址打开（文件落在编辑器）；**其余类型保留页面型打开**，path 随导航 params 落到合成记录的 `tab.path` 供组件消费——组件型 tab 的 path seed 不会被改道到文件编辑器（v0.19.0/0.19.1 上一切 path seed 都被改道，组件从未挂载，#632） |
-| 终端（已交还宿主） | 插件**不再提供任何终端**：宿主 0.1.6 起自带 `ui-sidebar-terminal`（kind `terminal`），插件侧 PTY 栈与 `terminal_*` 工具整体删除。这里不再有「插件终端数量上限」这类语义 |
+| 终端（本合并基线恢复） | 插件底部工作台恢复自研终端与 Agent 终端。新本地 UI 终端由 workspace 管理，关闭视图不结束进程，可跨 session 按需连接，进程有 workspace/global 配额；旧终端与 Provider 保持原契约。宿主右侧栏终端仍由宿主管理，不能将两套实例当作同一注册表 |
 | 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里 |
 | 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**本插件默认贡献 4 个 guide 条目**（文件 / 文件变动 / 任务管理 / 侧边对话，恰好在上限内），**但宿主的终端条目也占一行**——装了宿主终端即是 5 条，说明整列不渲染；要让说明回来，需在插件设置页关掉足够多的 tab 类型把总数压到 ≤ 4 条 |
 | 新建面板的种子（alpha.2） | 在新会话打开原生新面板时，宿主从已注册的 guide 条目里播种：恰好 1 个条目 → 直接打开那一页；0 或 ≥2 个条目 → 打开指南。`revealIfOpened` 打开的「页面」在**同一 pane 内**强制去重（已在该 pane 就不再新建）；由已有 tab 地址驱动的打开不受该去重影响 |
 | alpha.2 全局面板（不接入） | 插件**不采用** alpha.2 引入的全局主面板模型——根级 keyed `main` 槽（预留 key `conversation`，由 ui-conversation 注册为 `main.conversation`）、根级 `sidebar.panellist` 列表槽（`SidebarPanelMetadata` / `SidebarPanelIconOwnerProps`）、`ctx.layout.selectPanel(MainPanelId|null)` / `beginNavigation()` / `dispose()`、全局标准 prop `usePanelInfo`，以及改根级并新增会话级 `rightbar.session` 子槽的 `rightbar`——这些只作兼容保留，不向其迁移 |
-| 已移除 | 插件自绘右侧面板（含宽度拖拽 / 新会话默认宽度）与**自由窗口**（`features` 里的 `'floatWindows'` 已删除，v0.18.x 及更早版本的消费者请勿再 gate 该能力）；`openByDefault` / `defaultWidthPercent` / `changesDiffFloat` 三个设置项同步删除（旧文档里的键会被忽略）；**插件自带的终端与浏览器 tab 类型**（宿主 0.1.6/0.1.7 自带两者）与**只读文件预览**（image / pdf / Office / 表格，宿主 0.1.7 的 `ui-sidebar-documentpreview` 接手）同样不再内置，详见 §4.4 与 §5.4 |
+| 已移除 | 插件自绘右侧面板（含宽度拖拽 / 新会话默认宽度）与**自由窗口**（`features` 里的 `'floatWindows'` 已删除，v0.18.x 及更早版本的消费者请勿再 gate 该能力）；`openByDefault` / `defaultWidthPercent` / `changesDiffFloat` 三个设置项同步删除（旧文档里的键会被忽略）；**浏览器 tab 类型**与**只读文件预览**（image / pdf / Office / 表格，宿主 0.1.7 的 `ui-sidebar-documentpreview` 接手）同样不再内置；终端在本合并基线已恢复，不属于当前移除清单，详见 §4.4 与 §5.4 |
 
 ---
 
@@ -48,7 +48,7 @@ better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 - **gitGraph 服务消费（v0.20.x）**：让 Git 视角的历史区通过另一个插件（dsh-git-graph）的通用 GraphTree 框架渲染（泳道/虚拟滚动/键盘），行内容仍是本插件原有的提交行（§7.2.3）；
 - **计划 diff 预览（v0.20.x）**：把任意原始 unified diff 文本当 diff tab 打开（§7.2.2）。
 
-内置的 5 个 tab（editor / git——「文件变动」统一 tab（Git 视角 + 本轮文件视角）/ subagent / sidechat / diff）和 3 个 viewer（markdown / html / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
+内置的 7 个 tab（editor / git——「文件变动」统一 tab（Git 视角 + 本轮文件视角）/ subagent / sidechat / terminal / workspace-terminals / diff）和 3 个 viewer（markdown / html / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 browser 类型，terminal 在本合并基线已恢复**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），与插件底部终端是不同的资源体系；浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
 
 关键机制一句话：better-sidebar 的 client half 在 `apply()` 开头执行 `ctx.provide('betterSidebar', service)`（`src/client/index.tsx`），消费插件在 `inject` 里声明 `'betterSidebar'`，Cordis 保证服务就绪后才激活你的插件，然后你调用 `ctx.betterSidebar.registerTab(...)` / `registerFileViewer(...)` 完成注册，返回的 disposer 由 Cordis fiber 在卸载（HMR / 禁用）时自动调用。
 
@@ -418,6 +418,7 @@ ctx.effect(() => {
 | `subagent` | 30 | 是 | 否 | 子代理拓扑 |
 | `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（每对话一 Tab）：打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
 | `terminal` | 40 | 否（`terminal:<n>`） | 否 | 终端。v0.17.0+ 右键「固定到工作区/全局」：跨会话不消失，TabBar 内联虚拟 Tab（`pinned:<homeSessionId>:<tabId>`），就地按 home scope 连 PTY；global 全会话可见、workspace 仅同 cwd；`tab.pin = { scope, homeCwd? }` 随会话持久化，渲染期解析（`collectPinnedTabs` → `createPinnedVirtualTab` → `injectPinnedIntoTree`）。**打开进底部工作台即自动聚焦**：tab 在底部工作台里成为可见激活 tab（`visible` 变真）或随面板打开挂载时，xterm 直接接管键盘输入（无需再点进终端）；仅限插件底部工作台，原生右侧栏的终端 tab 不抢焦点 |
+| `workspace-terminals` | 41 | 是 | 否 | 工作区终端管理：右侧栏指南与底部 `+` 菜单均提供入口，内联展示列表、状态、连接与二次确认结束。默认或 `target:'right'` 进入右侧栏，`target:'bottom'` 进入底部；右侧栏不可用时回退到底部 |
 | `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（changes tab 的预览面板「展开为独立页签」触发，同一渲染栈）；v0.20.x 起 `SidebarTab.diff` 另收 `{ kind: 'proposed', id, title, patch }` 任意 patch 种子（features 含 `planDiff`，见 §7.2.2）；v0.21.0 起该 variant 追加可选 `truncated` / `sourceRef` 展示元数据、文件头「打开文件」按钮与行点击定位（`OpenTabSeed.line`，仅 proposed） |
 
 你的 `id` 不可与上述重复，否则 `registerTab` 抛 `"tab type \"X\" already registered"`。
@@ -426,7 +427,7 @@ ctx.effect(() => {
 
 | 原 id | 现状 | 你该怎么做 |
 |---|---|---|
-| `terminal` | 宿主自带 `kind: 'terminal'`（`@deepseek-ai/dsh-client-ui-sidebar-terminal`） | 不要再注册同名 kind。插件侧 API（`api.ptyClose` / `agentPtyClose` / `agentSkipWait` / `terminalDeps` / `shellGet`）与 `SidebarTab.pin` / `SidebarState.nextTerminal` / `agentWaits` / `isAgentTabId` / `agentUuidOf` / `reconcileAgentTerminals` / `mirrorAgentWaits` / `setTabPin` 全部**已删除** |
+| `terminal` | 历史官方适配线曾让出宿主；**本合并基线恢复插件终端** | 不要再向 betterSidebar 注册同名类型。插件终端 API、Agent 工具和固定元数据及解析模块仍保留（当前 Sidebar 的 pinned hook 未接线，本次不恢复旧固定 UI）；新本地实例使用 workspace 管理，既有 session/tab 与远程 Provider 兼容保留。宿主终端不是 workspace 注册表成员 |
 | `browser` | 宿主自带 `kind: 'browser'`（`@deepseek-ai/dsh-client-ui-sidebar-browser`），**但 DSH 0.1.7 起只在 desktop profile 挂载**（`web-app` 的 patch 里 `disabled: ctx.get('profileContext')?.name !== 'desktop'`）——Web profile 上**没有这个 kind**，`openTab('browser', …)` 必然失败 | 不要再注册同名 kind。要打开网页：desktop profile 走 `ctx.sidebarRight.openTab('browser', { params: { url } })`（务必 try/catch 兜底，宿主未装该包时 `openTab` 会抛）；Web profile 只能自己提供页面，或把链接交回宿主（正文链接由宿主的 `linkOpening` 设置决定去向）。插件侧的 `api.browserProbe` / `SidebarPrefs.browserNoSandbox` / `browserAllowedLoopback` **以及三个「按协议分流」的外链接管偏好键全部已删除**；`urlTarget` 机制保留，但不再有接管总闸（见 §4.1） |
 
 **同时删除的还有**：轮尾产物行接管。DSH 0.1.6 把 `conversation.chat.turnTail` 从 `chain` 改成 `list`（list 槽要求 `options.id`，且只能**追加**，不能替换宿主的产物行），插件因此整体移除了 `registerTurnTailInterception` 与 `selectProducedFiles`。要往那个位置加东西，按 list 契约注册 `{ name: 'conversation.chat.turnTail', id: '<你的 id>', order }`；`openSidebarFile` 作为通用打开工具留在 `dsh-better-sidebar/src/client/sidebar-file.ts`（`resolveSidebarPath` 移到 `src/client/paths.ts`）。
@@ -1396,8 +1397,21 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 
 - **features 门**：`features` 含 `'terminalSource'`（`SIDEBAR_FEATURES` 数组）；消费插件注册前先 `features.includes('terminalSource')` 探测。
 - **解析语义**：注册顺序 first-match——终端 tab 挂载时按注册顺序求值 `match(sessionId, cwd, tabId)`（三参数逐字透传，不做任何路径/会话转换），第一个命中者的 `createTransport` 提供 `TerminalTransport`（即视图已有的 transport 语义，不是第二套 wire 协议）；`match` 抛错跳过（console.error），`createTransport` 抛错或返回 `undefined`（按 tab 拒接）同样跳过并轮到下一个 provider。解析是纯函数（`resolveTerminalSource`），渲染侧经 `useTerminalTransport` hook 订阅注册表，provider 晚注册只影响之后挂载的 tab，不热切换已打开的终端。
-- **本地回退**：无 provider 匹配（或无注册）→ tab 不携带 `transport` prop 挂载，TerminalView 逐字节保持内置本地 pty WebSocket 行为。`agent:` tab（模型自有终端）与 `gb:`（全局共享终端窗口）由 provider 在 `match` 里自行拒绝——平台终端绝不允许被接管。默认内置终端即是通过 `src/client/builtins/tabs.tsx` 的 `TerminalTabTransport` 包装走同一解析面（吃狗粮）。
+- **本地回退与 workspace 终端**：新普通终端无 provider 认领时，服务异步创建 workspace 终端，以 `meta.workspaceTerminalId` 标识资源；视图使用本地 workspace WS 协议，绕过 provider 解析（不能将已有本地 PTY 因晚注册 provider 改接到远程机器）。既有未带该元数据的持久化终端仍使用历史 session/tab 本地路径。`agent:` tab（模型自有终端）与 `gb:`（全局共享终端窗口）由 provider 在 `match` 里自行拒绝——平台终端绝不允许被接管。普通 provider 终端继续通过 `src/client/builtins/tabs.tsx` 的 `TerminalTabTransport` 包装走同一解析面。
 - **消费方引导**：参考实现在 [dsh-remote](https://github.com/omdsh-dev/dsh-remote) 的 `terminalTunnel`（`lib/client.js`：`{ id, apiVersion, match(sessionId,cwd,tabId), createTransport(sessionId,cwd,tabId)→transport|null }` 注册点 + `makeRemoteTransport`）。`TerminalTransport` 词汇（`src/client/terminal-transport.ts`）：`{ kind, open(session) → handle }`；`handle = { input(data), resize(cols,rows), close(), park(), dispose(), retry?() }`；`session = { term: { write(data), cols, rows }, scope, tabId, cwd?, onOutput(data), onTitle?(title, info?), onConnected?(bool), onFatal?(reason|null), onEndpoint?(url) }`。类型与解析器从 `dsh-better-sidebar/client/index` 可导入（`TerminalProviderDescriptor` / `resolveTerminalSource` / `useTerminalTransport` / `TerminalTransport*`）。
+
+## Workspace 终端管理（本地终端）
+
+新建本地终端独立于 session 的页签生命周期。右侧栏指南与底部工作台 `+` 新建菜单均提供「工作区终端」管理 tab（类型 ID `workspace-terminals`，每个承载面内按 session 单例），列表直接在 tab 内扩展展示。`openTab({type:'workspace-terminals'})` 或指定 `target:'right'` 时进入原生右侧栏；指定 `target:'bottom'` 时进入底部工作台，右侧栏不可用时也回退到底部。管理页内的「打开」仍将终端视图打开到底部工作台。同一 workspace 的 session B 可按需打开 A 创建的同一进程；关闭页签、切会话和刷新只断开视图，**只有明确的「结束终端」操作结束进程**。终端自行退出后可重新连接读取保留输出，不自动 spawn 新 shell。插件卸载和宿主重启不保证进程存活。
+
+- 管理页为自适应紧凑列表：标题/状态与辅助路径/来源分层，来源读宿主 `displayTitle`（未知时短 ID）。刷新保留现有列表，初次加载/空状态单独呈现；结束动作使用行内确认，可取消，窄面板自动换行，键盘焦点可见。视图隐藏或切 session 取消请求，不新增后台轮询。
+- `meta.workspaceTerminalId` 是本地终端资源引用，不是授权凭据；各 session 的页签可引用同一个稳定 ID。来源 session 仅作为创建记录，不拥有生命周期。
+- 新普通 `openTab({type:'terminal'})` 先检测 TerminalProvider；被认领的终端保留 provider 原生命周期，不调用本地 create。无人认领才异步建立本地资源，**workspace 终端总落插件底部工作台**（即使 seed 请求 `target:'right'`，不占宿主终端指南条目）。调用方不能假设打开后 PTY 已同步就绪，创建失败会在来源 session 的工作台显示。带显式 tab ID 或自定义 meta 的旧入口保持兼容，不自动迁移。
+- 管理 HTTP 路由均为 `POST /sidebar/api/<method>`：`workspace-terminal.create`（`{sessionId,title?}`）、`workspace-terminal.list`（`{sessionId}` → `{terminals}`）、`workspace-terminal.terminate`（`{sessionId,terminalId}` → `{ok:true}`）。终端描述为 `{terminalId,title,cwd,createdBySessionId,createdAt,exited,exitCode?}`。
+- 连接：`/sidebar/ws/terminal?sessionId=<viewer>&terminalId=<id>`，仅附着已存在实例，不能借此创建。`terminal-exited` / `terminal-terminated`（1000）和拒绝连接（1008）都停止自动重连。视图区分自然退出与「被工作区终端管理结束」，提供显式「重新启动」：创建**新 terminalId** 并重新绑定当前页签，不复活旧进程，也不迁移其他视图；离线页签连接时发现 `terminal-not-found` 同样可新建。跨工作区拒绝不能当作重启许可。网络故障仍使用「重试连接」而不是新建进程。
+- 所有管理与连接请求经过既有 trust fence，并在服务端从真实 session header 解析 workspace；不信任请求 cwd。优先使用公开 workspace registry 的身份，缺失时使用当前宿主的 canonical 本地 root。**这不是远程 workspace 身份协议**，不会按远程路径偷偷创建本地 shell。
+- 终端进程、保留记录和输出均有界：每 workspace 最多 3 个活进程、12 条保留记录，全局最多 64 个活进程、256 条记录，每条最多 1 MiB 输出；退出实例也可显式结束以移除记录并释放配额。旧 session/tab 终端、Agent 终端及远程 Provider 仍保留旧契约，不自动迁移或改变 `close/park/dispose` 的含义。
+- 本次不增加 Agent 跨会话读写权限或 CLI 操作工具。后续 Agent 接入需要同一 stable ID、单写者控制租约、多观察者、用户接管、增量输出游标和来源记录；不能将终端输出当作可信指令。
 
 ## Git data source 槽位（feature 'gitSource'）
 
