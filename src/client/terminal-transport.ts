@@ -26,6 +26,8 @@ export interface TerminalTransportSession {
   scope: SessionScope
   /** The tab id (`agent:`-prefixed ids are agent-owned terminals). */
   tabId: string
+  /** Existing workspace instance identity; closing this view never terminates it. */
+  terminalId?: string
   /** Working-directory hint (used as the remote start dir). */
   cwd?: string
   /** Raw downlink bytes → written into the terminal buffer verbatim. */
@@ -69,6 +71,8 @@ export interface TerminalViewProps {
   ctx: Context
   scope: SessionScope
   tabId: string
+  /** Existing workspace instance identity; closing this view never terminates it. */
+  terminalId?: string
   store: SidebarStore
   /** Absent → the built-in local pty WebSocket (byte for byte). Read ONCE
    *  at mount: pass a stable instance. */

@@ -94,6 +94,8 @@ export interface SidebarState {
   activePane: string | null
   /** Monotonic terminal tab counter (ids survive reloads). */
   nextTerminal: number
+  /** Last workspace terminal request failure, scoped to its request session. */
+  workspaceTerminalError?: string
   /** Live agent-wait banner state by agent terminal uuid. */
   agentWaits: Record<string, { needle: string; since: number }>
   /** Monotonic browser tab counter (ids survive reloads). */

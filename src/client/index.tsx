@@ -201,7 +201,7 @@ export function apply(ctx: Context): void {
     } catch {
       return undefined
     }
-  })
+  }, sessionId => ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd)
   ctx.provide('betterSidebar', service)
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the

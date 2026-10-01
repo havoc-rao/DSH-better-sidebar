@@ -61,6 +61,7 @@ import { TerminalBlockOverlay } from './TerminalBlockOverlay.tsx'
 import type { Context } from '../context-types.ts'
 import { TerminalWaitBanner } from './TerminalWaitBanner.tsx'
 import type { TerminalTransport, TerminalTransportHandle } from './terminal-transport.ts'
+import { restartWorkspaceTerminal, updateTerminalSession } from './workspace-terminals.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive unreasoned failures before showing the error banner. */
@@ -140,6 +141,7 @@ export function TerminalView(props: {
   ctx: Context
   scope: SessionScope
   tabId: string
+  terminalId?: string
   store: SidebarStore
   transport?: TerminalTransport
   /** Whether this tab is the visible active tab of the bottom workbench
@@ -149,10 +151,16 @@ export function TerminalView(props: {
    *  → no auto-focus. */
   visible?: boolean
 }) {
-  const { ctx, scope, tabId, store, transport, visible = false } = props
+  const { ctx, scope, tabId, terminalId, store, transport, visible = false } = props
   const hostRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
+  const [closedReason, setClosedReason] = useState<'exited' | 'terminated' | 'missing' | null>(null)
+  const [restarting, setRestarting] = useState(false)
+  const restartPending = useRef(false)
+  // An async create may outlive this view; only its captured store scope may
+  // still be updated, never the state of a new mount/terminal identity.
+  const mountGeneration = useRef(0)
   const [depsFatal, setDepsFatal] = useState<TerminalDepsInfo | null>(null)
   const [lastUrl, setLastUrl] = useState<string | null>(null)
   // Agent terminals only: the model's active terminal_wait_for (mirrored
@@ -230,9 +238,36 @@ export function TerminalView(props: {
     appendToDraft(ctx, scope.sessionId, buildTerminalInsert(block.command, output))
   }
 
+  const restart = async (): Promise<void> => {
+    if (terminalId === undefined || transport !== undefined || restartPending.current) return
+    const generation = mountGeneration.current
+    restartPending.current = true
+    setRestarting(true)
+    setFatal(null)
+    try {
+      await restartWorkspaceTerminal(store, scope.sessionId, tabId, terminalId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // Keep failures observable even when a session switch unmounted the view.
+      updateTerminalSession(store, scope.sessionId, state => ({ ...state, workspaceTerminalError: message }))
+      if (mountGeneration.current === generation) setFatal(message)
+    } finally {
+      restartPending.current = false
+      if (mountGeneration.current === generation) setRestarting(false)
+    }
+  }
+
   useEffect(() => {
+    const generation = ++mountGeneration.current
+    setConnected(false)
+    setFatal(null)
+    setClosedReason(null)
+    setDepsFatal(null)
+    setLastUrl(null)
+    setRestarting(false)
     const host = hostRef.current
     if (host === null) return
+    // A new terminal identity gets a fresh xterm/buffer and block tracker.
     // The custom font prefs (side card settings, terminal card) resolve at
     // mount; store changes re-apply them live below.
     const font = resolveTerminalFont(store.getPrefs(), tokenValue('--ds-font-family-code'))
@@ -316,7 +351,9 @@ export function TerminalView(props: {
       // Agent terminals attach by uuid (the host looks them up in the agent
       // pty registry); UI-tab terminals attach by sessionId+tab (the host
       // uses the UI-tab pty manager). Same upgrade endpoint, different query.
-      if (isAgentTabId(tabId)) {
+      if (terminalId !== undefined) {
+        url.search = new URLSearchParams({ sessionId: scope.sessionId, terminalId }).toString()
+      } else if (isAgentTabId(tabId)) {
         url.search = new URLSearchParams({ uuid: agentUuidOf(tabId) }).toString()
       } else {
         const params = new URLSearchParams({ sessionId: scope.sessionId, tab: tabId })
@@ -342,16 +379,36 @@ export function TerminalView(props: {
       setLastUrl(url)
       socket = new WebSocket(url)
       socket.onopen = () => {
+        if (closed) return
         failures = 0
         setConnected(true)
         setFatal(null)
+        setClosedReason(null)
         sendResize()
       }
       socket.onmessage = (event) => {
         if (typeof event.data === 'string') term.write(event.data)
       }
       socket.onclose = (event) => {
+        if (closed) return
         setConnected(false)
+        if (terminalId !== undefined) {
+          if (event.code === 1000 && (event.reason === 'terminal-exited' || event.reason === 'terminal-terminated')) {
+            setClosedReason(event.reason === 'terminal-exited' ? 'exited' : 'terminated')
+            setFatal(null)
+            return
+          }
+          if (event.code === 1008 && event.reason === 'terminal-not-found') {
+            setClosedReason('missing')
+            setFatal(null)
+            return
+          }
+          // Permission/fence refusals are not evidence of a dead terminal.
+          if (event.code === 1008 || event.reason === 'workspace-detached' || event.reason === 'terminal-detached') {
+            setFatal(event.reason)
+            return
+          }
+        }
         // node-pty dependency missing/broken (issue #140): the host closed
         // with the short marker. Fetch the full repair details over HTTP —
         // a WS close reason is capped at 123 bytes, too small for the
@@ -467,6 +524,7 @@ export function TerminalView(props: {
         term: { write: (data) => term.write(data), cols: term.cols, rows: term.rows },
         scope,
         tabId,
+        terminalId,
         cwd: scope.cwd,
         onOutput: (data) => term.write(data),
         onConnected: (connected) => {
@@ -510,6 +568,7 @@ export function TerminalView(props: {
       connect()
     }
     return () => {
+      if (mountGeneration.current === generation) ++mountGeneration.current
       closed = true
       cancelOpen()
       window.clearTimeout(retry)
@@ -537,7 +596,11 @@ export function TerminalView(props: {
       // indefinitely — no park frame needed.
       const tabStillOpen = store.tabOpen(scope.sessionId, tabId)
       const sessionSwitched = store.getSnapshot().sessionId !== scope.sessionId
-      if (transportHandle !== null) {
+      if (terminalId !== undefined) {
+        // Workspace lifetime is explicit API terminate only; all view exits detach.
+        transportHandle?.dispose()
+        transportHandle = null
+      } else if (transportHandle !== null) {
         // Same three unmount cases as the local path: closed tab → close
         // (kill the session immediately), conversation switch with the tab
         // still open → park (keep alive for reattach), same-session unmount
@@ -564,7 +627,7 @@ export function TerminalView(props: {
       trackerRef.current = null
       setSession(null)
     }
-  }, [scope.sessionId, scope.cwd, tabId, store])
+  }, [scope.sessionId, scope.cwd, tabId, terminalId, store])
 
   return (
     <div className={css.terminalWrap}>
@@ -577,9 +640,19 @@ export function TerminalView(props: {
       {depsFatal !== null && (
         <TerminalDepsBanner deps={depsFatal} onRetry={() => { setDepsFatal(null); connectRef.current?.() }} />
       )}
-      {fatal !== null && (
+      {closedReason !== null && (
         <div className={css.terminalBanner}>
-          {t('terminalError')}: {fatal}
+          {t(closedReason === 'exited' ? 'workspaceTerminalExited' : closedReason === 'terminated' ? 'workspaceTerminalTerminated' : 'workspaceTerminalUnavailable')}
+          {fatal !== null && <div role="alert">{`${t('terminalError')}: ${fatal}`}</div>}
+          <button type="button" className={css.terminalRetry} disabled={restarting}
+            onClick={() => { void restart() }}>
+            {t('workspaceTerminalRestart')}
+          </button>
+        </div>
+      )}
+      {fatal !== null && closedReason === null && (
+        <div className={css.terminalBanner}>
+          {`${t('terminalError')}: ${fatal}`}
           {lastUrl !== null && <div className={css.terminalBannerUrl}>{lastUrl}</div>}
           <button
             type="button"
@@ -590,7 +663,7 @@ export function TerminalView(props: {
           </button>
         </div>
       )}
-      {fatal === null && depsFatal === null && !connected && <div className={css.terminalBanner}>{t('disconnected')}</div>}
+      {closedReason === null && fatal === null && depsFatal === null && !connected && <div className={css.terminalBanner}>{t('disconnected')}</div>}
       <div ref={hostRef} className={css.terminal}>
         {/* The block layer: hairline dividers at every CLI block boundary;
             hovering a block highlights its span and raises the per-block

@@ -58,6 +58,8 @@ import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { readPersistedSession } from './session-store.ts'
+import { buildWorkspaceTerminalApi, resolveTerminalWorkspace, WorkspaceTerminalManager } from './workspace-terminal.ts'
+export type { WorkspaceTerminalInfo } from './workspace-terminal.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -307,6 +309,7 @@ function buildApi(
   resolved: ResolvedSidebarConfig,
   getSettings: () => SidebarSettingsFace | undefined,
   assistantLive: AssistantLiveBuffer,
+  workspaceTerminals: WorkspaceTerminalManager | null,
 ): Record<string, ApiMethod> {
   const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const sessionId = requireString(payload, 'sessionId')
@@ -677,6 +680,7 @@ function buildApi(
     // ownership), and the thread is created with a CUSTOM seed the stock
     // fork APIs cannot express.
     ...buildSidechatApi(ctx, assistantLive),
+    ...buildWorkspaceTerminalApi(ctx, workspaceTerminals, () => shellOverridesOf(getSettings)),
   }
 }
 
@@ -858,6 +862,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const ptyManager = nodePty !== null
     ? new PtyManager(terminalShell, SIDEBAR_TERMINALS_PER_SESSION, [], nodePty)
     : null
+  // Workspace UI terminals never share the legacy session/tab registry.
+  const workspaceTerminals = nodePty !== null ? new WorkspaceTerminalManager(terminalShell, nodePty) : null
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
   // uncapped, and torn down with the plugin. The model creates terminals here
@@ -1015,7 +1021,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // effect releases the listener on fiber disposal.
   const assistantLive = createAssistantLiveBuffer(ctx)
   ctx.effect(() => () => { assistantLive.dispose() }, 'dsh-better-sidebar: live assistant stream buffer')
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, assistantLive)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, assistantLive, workspaceTerminals)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -1258,7 +1264,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         return
       }
       terminalWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
-        void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, () => settingsFace)
+        void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, () => settingsFace, workspaceTerminals)
       })
     },
   }), 'dsh-better-sidebar: terminal WebSocket')
@@ -1290,6 +1296,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     terminalToolsDisposers?.()
     openToolsDisposers?.()
     ptyManager?.disposeAll()
+    workspaceTerminals?.disposeAll()
     agentPtyRegistry?.disposeAll()
     agentOpenRegistry.dispose()
     terminalWss.close()
@@ -1507,9 +1514,24 @@ async function attachTerminal(
   ws: WebSocket,
   req: SidebarHttpRequest,
   getSettings: () => SidebarSettingsFace | undefined,
+  workspaceTerminals: WorkspaceTerminalManager | null,
 ): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', 'http://dsh.internal')
+    const terminalId = url.searchParams.get('terminalId')
+    if (terminalId !== null) {
+      // Attach ONLY an existing workspace instance. Never call legacy open().
+      try {
+        const viewer = url.searchParams.get('sessionId')
+        if (!viewer) throw new SidebarError('bad-request', 'sessionId is required', 400)
+        const workspace = await resolveTerminalWorkspace(ctx, viewer)
+        if (workspaceTerminals === null) throw new SidebarError('not-found', 'terminal-not-found', 404)
+        workspaceTerminals.attach(workspace, terminalId, ws)
+      } catch (error) {
+        ws.close(1008, truncateUtf8Bytes(wsCloseReasonOf(error), 123))
+      }
+      return
+    }
     const uuid = url.searchParams.get('uuid')
     if (uuid !== null) {
       // Degraded mode (node-pty unavailable): no agent terminal can exist,

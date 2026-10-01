@@ -28,7 +28,8 @@ import {
 } from './state.ts'
 import { baseName, extOf } from './paths.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
-import type { GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
+import { api, type GitStatusEntry, type GitStatusResult, type SessionScope } from './api.ts'
+import { openWorkspaceTerminal, updateTerminalSession } from './workspace-terminals.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import type { TerminalProviderDescriptor } from './terminal-source.ts'
 import type { GitProviderDescriptor } from './git-source.ts'
@@ -870,6 +871,7 @@ function safeCall(fn: () => void): void {
 export function createBetterSidebarService(
   store: SidebarStore,
   panelProbe?: () => boolean | undefined,
+  sessionCwd?: (sessionId: string) => string | undefined,
 ): BetterSidebarService {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
@@ -1148,6 +1150,31 @@ export function createBetterSidebarService(
     const targetSessionId = scope?.sessionId ?? store.getSnapshot().sessionId
     if (targetSessionId === undefined) return
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
+    // Only NEW ordinary terminals use workspace lifetime. Explicit identities
+    // remain the legacy/agent/provider seam; restored tabs are never migrated.
+    if (seed.type === 'terminal' && seed.id === undefined && seed.meta === undefined) {
+      const candidateId = `terminal:${typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`}`
+      const cwd = scope?.cwd ?? sessionCwd?.(targetSessionId)
+      const remote = Array.from(terminalProviders.values()).some(provider => {
+        try { return provider.match(targetSessionId, cwd, candidateId) } catch (error) {
+          console.error('[dsh-better-sidebar] terminal provider match error:', error)
+          return false
+        }
+      })
+      if (!remote) {
+        void api.workspaceTerminalCreate(targetSessionId, seed.title).then(info => {
+          openWorkspaceTerminal(store, targetSessionId, info)
+          updateTerminalSession(store, targetSessionId, state => ({ ...state, workspaceTerminalError: undefined }))
+          safeCall(() => descriptor.onOpen?.({ id: `workspace-view:${info.terminalId}`, type: 'terminal', title: info.title,
+            meta: { workspaceTerminalId: info.terminalId } }, callbackScope))
+        }).catch(error => {
+          updateTerminalSession(store, targetSessionId, state => ({ ...state, bottomOpen: true,
+            workspaceTerminalError: error instanceof Error ? error.message : String(error) }))
+        })
+        return
+      }
+      seed = { ...seed, id: candidateId }
+    }
     // ── Native right Sidebar ──────────────────────────────────────────────
     // With the native surface installed and its controller live, every open
     // except an explicit bottom-panel one lands there. The path seed's
@@ -1245,8 +1272,8 @@ export function createBetterSidebarService(
       if (descriptor.createTab !== undefined) {
         const result = descriptor.createTab(state)
         if (result === null) return state
-        tab = result.tab
-        next = applyDedupe(state, result.tab, descriptor, land)
+        tab = seed.id === undefined ? result.tab : { ...result.tab, id: seed.id }
+        next = applyDedupe(state, tab, descriptor, land)
         if (result.patch !== undefined) next = { ...next, ...result.patch }
       } else {
         tab = {

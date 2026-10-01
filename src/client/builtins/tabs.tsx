@@ -31,6 +31,8 @@ import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideCh
 import { api } from '../api.ts'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import { useTerminalTransport } from '../terminal-source.ts'
+import { workspaceTerminalIdOf } from '../workspace-terminals.ts'
+import { WorkspaceTerminals } from '../WorkspaceTerminals.tsx'
 import type { TerminalTransport } from '../terminal-transport.ts'
 import type { ComponentType, ReactNode } from 'react'
 import type { SessionScope } from '../api.ts'
@@ -64,13 +66,15 @@ const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
  */
 function TerminalTabTransport(props: TabComponentProps): ReactNode {
   const { ctx, tab, scope, store, visible } = props
-  const transport = useTerminalTransport(ctx, scope?.sessionId, scope?.cwd, tab.id)
+  const terminalId = workspaceTerminalIdOf(tab)
+  const transport = useTerminalTransport(ctx, terminalId === undefined ? scope?.sessionId : undefined, scope?.cwd, tab.id)
   return (
     <LazyTerminal
       ctx={ctx}
       scope={scope}
       store={store}
       tabId={tab.id}
+      terminalId={terminalId}
       transport={transport}
       visible={visible}
     />
@@ -82,6 +86,7 @@ interface TerminalViewProps {
   ctx: Context
   scope: SessionScope
   tabId: string
+  terminalId?: string
   store: SidebarStore
   /** Feature 'terminalSource': the transport a registered provider
    *  resolved for this terminal tab; absent → TerminalView's built-in
@@ -119,7 +124,7 @@ function uiTerminalCount(state: SidebarState): number {
     .filter(tab => tab.type === 'terminal' && !isAgentTabId(tab.id)).length
 }
 
-/** The 6 built-in tab descriptors. */
+/** The 7 built-in tab descriptors. */
 export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): readonly TabDescriptor[] {
 
   return [
@@ -370,6 +375,17 @@ id: 'terminal',
         }
       },
       component: (props) => <TerminalTabTransport {...props} />,
+    },
+    {
+      id: 'workspace-terminals',
+      title: () => t('workspaceTerminals'),
+      description: () => t('workspaceTerminalDetachHint'),
+      icon: terminalTabIcon,
+      order: 41,
+      single: true,
+      component: ({ ctx, scope, store, visible }) => (
+        <WorkspaceTerminals ctx={ctx} sessionId={scope.sessionId} store={store} visible={visible} />
+      ),
     },
     {
       id: 'diff',

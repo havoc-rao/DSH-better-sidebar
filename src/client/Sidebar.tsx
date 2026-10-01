@@ -873,6 +873,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             </button>
           </Tooltip>
         </span>
+        {state.workspaceTerminalError !== undefined && (
+          <div role="alert" className={css.explorerActionError}>
+            <span className={css.explorerActionErrorText}>{state.workspaceTerminalError}</span>
+          </div>
+        )}
         <div className={css.panelBody}>
           <Workbench
             state={state}

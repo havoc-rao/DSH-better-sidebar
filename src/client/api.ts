@@ -26,6 +26,16 @@ export type TerminalDepsStatus =
     note?: string
   }
 
+export interface WorkspaceTerminalInfo {
+  terminalId: string
+  title: string
+  cwd: string
+  createdBySessionId: string
+  createdAt: number
+  exited: boolean
+  exitCode?: number
+}
+
 /** One wire failure. */
 export class SidebarApiError extends Error {
   constructor(
@@ -291,6 +301,12 @@ function openExternal(payload: OpenExternalPayload): Promise<OpenExternalResult>
 
 /** The sidebar API surface (session scope threaded through every call). */
 export const api = {
+  workspaceTerminalCreate: (sessionId: string, title?: string) =>
+    call<WorkspaceTerminalInfo>('workspace-terminal.create', { sessionId, ...(title === undefined ? {} : { title }) }),
+  workspaceTerminalList: (sessionId: string, signal?: AbortSignal) =>
+    call<{ terminals: WorkspaceTerminalInfo[] }>('workspace-terminal.list', { sessionId }, signal),
+  workspaceTerminalTerminate: (sessionId: string, terminalId: string) =>
+    call<{ ok: true }>('workspace-terminal.terminate', { sessionId, terminalId }),
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
     call<{ sessionId: string; cwd: string; root: string; parent: string | null }>('session.cwd', scopePayload(scope, {}), signal),
   fsTree: (scope: SessionScope, path: string, signal?: AbortSignal) =>
