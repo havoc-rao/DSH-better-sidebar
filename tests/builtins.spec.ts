@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 5 tabs and 3 file
+ * Built-in registration tests: the plugin registers 7 tabs and 3 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer and the html sandbox settings pin the
  * registry's behavior. The read-only previews (image / pdf /
@@ -31,10 +31,10 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 6 built-in tabs (the plugin keeps its own terminal; the host owns browser)', () => {
+  it('registers the 7 built-in tabs (including the workspace terminal manager)', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal'],
+      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal', 'workspace-terminals'],
     )
   })
 
@@ -63,7 +63,7 @@ describe('built-in tab registrations', () => {
     expect(new Set(titles).size, 'titles must differ per tab').toBe(visible.length)
   })
 
-  it('every visible tab declares a non-empty, mutually distinct description', () => {
+  it('every guide-facing tab declares a non-empty, mutually distinct description', () => {
     // DSH 0.1.5-rc.1+ renders `description` under the title while the guide
     // lists at most 4 entries (a longer list drops every description). With
     // the host no longer substituting a generic fallback, a tab without one
@@ -101,9 +101,22 @@ describe('built-in tab registrations', () => {
 
   it('single-instance tabs use the single sugar', () => {
     const { service } = setup()
-    for (const id of ['git', 'subagent']) {
+    for (const id of ['git', 'subagent', 'workspace-terminals']) {
       expect(service.getTab(id)?.single).toBe(true)
     }
+  })
+
+  it('the workspace terminal manager is a single visible inline tab after terminal', () => {
+    const { service } = setup()
+    const manager = service.getTab('workspace-terminals')
+    expect(manager?.order).toBe(41)
+    expect(manager?.single).toBe(true)
+    expect(manager?.hidden).not.toBe(true)
+    expect(manager?.icon).toBe(service.getTab('terminal')?.icon)
+    expect(manager?.description).toBeTypeOf('function')
+    const element = manager!.component({ scope: { sessionId: 'B' }, store: createSidebarStore(), visible: true } as never) as ReactElement<{ sessionId: string; visible: boolean }>
+    expect(element.props.sessionId).toBe('B')
+    expect(element.props.visible).toBe(true)
   })
 
   it('the side chat tab sits between tasks and the terminal slot in the + menu', () => {

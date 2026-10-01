@@ -121,6 +121,17 @@ describe('skin contract: the plugin owns no color of its own', () => {
     }
   })
 
+  it('the workspace terminal catalog uses skin tokens and adapts to compact panes', () => {
+    const styles = readFileSync(resolve(ROOT, 'src/client/WorkspaceTerminals.module.css'), 'utf8')
+    expect(styles).not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(/)
+    expect(styles).toContain(':focus-visible')
+    expect(styles).toContain('prefers-reduced-motion')
+    expect(styles).toMatch(/@container|@media/)
+    for (const match of styles.matchAll(/(?:^|[;{\n])\s*(?:color|background(?:-color)?|border-color):\s*([^;}]+)/g)) {
+      expect(match[1], match[0]).toMatch(/var\(--(?:dsw-|ds-)|transparent|currentColor|none/)
+    }
+  })
+
   it('the empty-pane welcome capsule follows the host guide recipe', () => {
     // The card is the same surface as DSH's own guide capsule ("pick what
     // opens here"), so this pins the shared geometry and the token-only

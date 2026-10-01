@@ -135,6 +135,22 @@ describe('service routing into the native surface', () => {
     return { surface, calls, service }
   }
 
+  it('opens workspace terminal management natively and preserves explicit bottom placement', () => {
+    const { service, calls } = mount()
+    service.registerTab({ id: 'workspace-terminals', title: 'Workspace terminals', single: true, component: () => null })
+    service.openTab({ type: 'workspace-terminals', target: 'right' }, scope)
+    service.openTab({ type: 'workspace-terminals' }, scope)
+    expect(calls).toEqual([0, 1].map(() => ({
+      op: 'openTab', sessionId: 's1', kind: 'workspace-terminals',
+      params: { title: 'Workspace terminals' }, revealIfOpened: true,
+    })))
+    service.openTab({ type: 'workspace-terminals', target: 'bottom' }, scope)
+    service.openTab({ type: 'workspace-terminals', target: 'bottom' }, scope)
+    expect(calls).toHaveLength(2)
+    expect(service.getSnapshot().state?.bottomOpen).toBe(true)
+    expect(service.getSnapshot().state?.bottomSplits).toMatchObject({ kind: 'leaf', tabs: [{ type: 'workspace-terminals' }] })
+  })
+
   it('opens a page type natively, carrying the descriptor factory seed', () => {
     const { service, calls } = mount()
     service.openTab({ type: 'my-plugin:term' }, scope)
@@ -255,6 +271,7 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
     service.registerTab({ id: 'terminal', title: 'Terminal', component: () => null, description: () => 'Runs a shell' })
     service.registerTab({ id: 'editor', title: 'Files', component: () => null, icon: () => null, description: () => 'Browse the tree' })
     service.registerTab({ id: 'browser', title: 'Browser', component: () => null })
+    service.registerTab({ id: 'workspace-terminals', title: 'Workspace terminals', single: true, component: () => null })
     const records = createNativeTabRecords()
 
     const registered: Array<{ id: string; kind: string; title: (address: string) => string; guide: unknown }> = []
@@ -296,7 +313,9 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
       },
     }
     runInjected?.()
-    expect(registered.map(entry => entry.kind).sort()).toEqual(['browser', 'editor', 'files', 'terminal'])
+    expect(registered.map(entry => entry.kind).sort()).toEqual(['browser', 'editor', 'files', 'terminal', 'workspace-terminals'])
+    expect(registered.find(entry => entry.kind === 'workspace-terminals')?.guide).toEqual([expect.objectContaining({ id: 'workspace-terminals' })])
+    expect(slotKeys).toContain('dsh-better-sidebar:workspace-terminals')
     expect(registered.map(entry => entry.id)).toContain('dsh-better-sidebar:files')
     expect(slotKeys).toContain('dsh-better-sidebar:terminal')
     expect(slotKeys).toContain('dsh-better-sidebar:files')

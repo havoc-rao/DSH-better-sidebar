@@ -32,6 +32,7 @@ import { Sidebar } from '../src/client/Sidebar.tsx'
 import { allLeaves, createSidebarStore, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
+import { api } from '../src/client/api.ts'
 
 /** jsdom has no WebSocket; the agent-terminals push effect constructs one on mount. */
 class FakeWebSocket {
@@ -54,6 +55,10 @@ let sessionSeq = 0
 
 /** Mount the real Sidebar shell against a minimal context (real store + service). */
 function mountSidebar(): MountedSidebar {
+  vi.spyOn(api, 'workspaceTerminalCreate').mockImplementation(async (source) => ({
+    terminalId: `terminal:${crypto.randomUUID()}`, title: 'Terminal', cwd: '/tmp',
+    createdBySessionId: source, createdAt: Date.now(), exited: false,
+  }))
   vi.stubGlobal('WebSocket', FakeWebSocket)
   // The jobs baseline poll (use-host-feeds) must never hit a real network.
   vi.stubGlobal('fetch', async () => { throw new Error('network stub') })
@@ -100,6 +105,7 @@ afterEach(() => {
   // Belt and braces: drop any persisted layout a pending 200ms debounce
   // write left behind between tests (unique session ids already isolate).
   localStorage.clear()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -139,13 +145,13 @@ function registerStubTerminal(service: BetterSidebarService, renders: { count: n
 }
 
 describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', () => {
-  it('auto-opens exactly one terminal tab in the bottom workbench on the FIRST expansion', () => {
+  it('auto-opens exactly one terminal tab in the bottom workbench on the FIRST expansion', async () => {
     const { container, store, service } = mountSidebar()
 
     const renders = { count: 0 }
     registerStubTerminal(service, renders)
 
-    act(() => { store.reduce(toggleBottomPanel) })
+    await act(async () => { store.reduce(toggleBottomPanel) })
 
     const state = store.getSnapshot().state!
     expect(state.bottomOpen).toBe(true)
@@ -166,11 +172,11 @@ describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', ()
     )
   })
 
-  it('never repeats the auto-open on later expansions (once per session)', () => {
+  it('never repeats the auto-open on later expansions (once per session)', async () => {
     const { store, service } = mountSidebar()
     registerStubTerminal(service, { count: 0 })
 
-    act(() => { store.reduce(toggleBottomPanel) })
+    await act(async () => { store.reduce(toggleBottomPanel) })
     expect(bottomTabs(store)).toHaveLength(1)
 
     // Collapse → expand again: the once-flag suppresses any second terminal.
@@ -207,37 +213,18 @@ describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', ()
     expect(bottomTabs(store)).toHaveLength(0)
   })
 
-  it('a full terminal quota still marks the once-flag (the attempt is one-shot)', () => {
+  it('a full workspace terminal quota still marks the once-flag (the attempt is one-shot)', async () => {
     const { store, service } = mountSidebar()
-    // The real terminal descriptor refuses once TERMINAL_LIMIT UI tabs are
-    // open (createTab returns null); the stub mirrors that quota by refusing
-    // after the first tab.
-    let minted = 0
-    service.registerTab({
-      id: 'terminal',
-      title: () => 'Terminal',
-      createTab: (state) => {
-        const count = allLeaves(state.bottomSplits)
-          .flatMap(leaf => leaf.tabs)
-          .filter(tab => tab.type === 'terminal').length
-        if (count >= 1) return null
-        return {
-          tab: { id: `terminal:${++minted}`, type: 'terminal', title: 'Terminal' },
-          patch: { nextTerminal: minted + 1 },
-        }
-      },
-      component: () => createElement('div', null, 'terminal-stub-content'),
-    })
-    act(() => { store.reduce(toggleBottomPanel) })
-    expect(bottomTabs(store)).toHaveLength(1)
-
-    // Close the tab and expand again: the first-fire once-flag is already
-    // set, so the quota freed by the close is never exploited — a second
-    // expansion must NOT open anything ("try" is one-shot per session).
-    act(() => { service.closeTab(bottomTabs(store)[0]!.id) })
-    act(() => { store.reduce(toggleBottomPanel) })
-    act(() => { store.reduce(toggleBottomPanel) })
+    registerStubTerminal(service, { count: 0 })
+    const create = vi.mocked(api.workspaceTerminalCreate).mockRejectedValue(new Error('terminal limit reached'))
+    await act(async () => { store.reduce(toggleBottomPanel) })
     expect(bottomTabs(store)).toHaveLength(0)
+    expect(store.getSnapshot().state!.workspaceTerminalError).toBe('terminal limit reached')
     expect(store.getSnapshot().state!.bottomOpenedOnce).toBe(true)
+    // Quota lives on the host now. Even a failed async attempt is one-shot.
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(bottomTabs(store)).toHaveLength(0)
   })
 })

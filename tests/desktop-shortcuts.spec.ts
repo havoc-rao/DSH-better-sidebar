@@ -49,7 +49,9 @@ function mount(): {
 
 /** Open one terminal tab in the bottom workbench (the no-surface path). */
 function openBottomTerminal(service: ReturnType<typeof createBetterSidebarService>): string {
-  service.openTab({ type: 'terminal', title: 'Terminal 1' }, { sessionId: 's1' })
+  // Explicit legacy identity keeps this synchronous shortcut unit test
+  // independent of workspace process creation (covered by workspace client specs).
+  service.openTab({ type: 'terminal', id: 'shortcut-terminal', title: 'Terminal 1' }, { sessionId: 's1' })
   const state = service.getSnapshot().state!
   const tabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
   return tabs[0]!.id
