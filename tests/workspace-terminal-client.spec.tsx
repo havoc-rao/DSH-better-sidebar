@@ -150,7 +150,7 @@ describe('workspace terminal client', () => {
     act(() => section.querySelector<HTMLButtonElement>('[role="group"] button')!.click())
     expect(terminate).toHaveBeenCalledExactlyOnceWith('A', info.terminalId)
     expect(section.querySelector('[data-terminal-id="terminal:abc"]')?.getAttribute('aria-busy')).toBe('true')
-    expect([...section.querySelectorAll('[role="listitem"] button, header button[data-loading]')].every(button => button.disabled)).toBe(true)
+    expect([...section.querySelectorAll('[role="listitem"] button, header button[data-loading]')].every(button => (button as HTMLButtonElement).disabled)).toBe(true)
     act(() => { section.querySelector<HTMLButtonElement>('header button[data-loading]')!.click(); stop.click() })
     expect(list).toHaveBeenCalledTimes(1)
     expect(terminate).toHaveBeenCalledTimes(1)
