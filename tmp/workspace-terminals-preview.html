@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkspaceTerminals 设计预览 · DSH-better-sidebar</title>
+<style>
+/* ======================================================================
+   DSH 皮肤令牌（独立预览用；插件内由宿主主题注入，规则见 skin contract）
+   ====================================================================== */
+:root {
+  --dsw-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --dsw-font-xs-13: 400 13px/20px var(--dsw-font-family);
+  --dsw-font-xxs-12: 400 12px/18px var(--dsw-font-family);
+  --dsw-font-xxxs-11: 400 11px/16px var(--dsw-font-family);
+  --ds-font-family-code: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+html[data-theme="dark"] {
+  --dsw-alias-bg-layer-1: #1f2023;
+  --dsw-alias-bg-layer-2: #2a2b2f;
+  --dsw-alias-bg-layer-3: #323338;
+  --dsw-alias-label-primary: #e6e8ec;
+  --dsw-alias-label-secondary: #b9bec6;
+  --dsw-alias-label-tertiary: #8a909a;
+  --dsw-alias-label-dimmed: #5f646d;
+  --dsw-alias-border-l1: rgba(255, 255, 255, 0.08);
+  --dsw-alias-border-l2: rgba(255, 255, 255, 0.13);
+  --dsw-alias-border-l3: rgba(255, 255, 255, 0.22);
+  --dsw-alias-hairline: rgba(255, 255, 255, 0.10);
+  --dsw-alias-interactive-bg-hover: rgba(255, 255, 255, 0.06);
+  --dsw-alias-interactive-bg-active: rgba(255, 255, 255, 0.12);
+  --dsw-alias-state-success-primary: #43c478;
+  --dsw-alias-state-error-primary: #e5484d;
+  --dsw-alias-state-warn-primary: #f59e0b;
+  --dsw-alias-state-business-primary: #4c8dff;
+}
+html[data-theme="light"] {
+  --dsw-alias-bg-layer-1: #f7f7f8;
+  --dsw-alias-bg-layer-2: #ededf0;
+  --dsw-alias-bg-layer-3: #e3e3e8;
+  --dsw-alias-label-primary: #1f2328;
+  --dsw-alias-label-secondary: #57606a;
+  --dsw-alias-label-tertiary: #8c959f;
+  --dsw-alias-label-dimmed: #b0b7bf;
+  --dsw-alias-border-l1: rgba(0, 0, 0, 0.08);
+  --dsw-alias-border-l2: rgba(0, 0, 0, 0.13);
+  --dsw-alias-border-l3: rgba(0, 0, 0, 0.22);
+  --dsw-alias-hairline: rgba(0, 0, 0, 0.10);
+  --dsw-alias-interactive-bg-hover: rgba(0, 0, 0, 0.05);
+  --dsw-alias-interactive-bg-active: rgba(0, 0, 0, 0.09);
+  --dsw-alias-state-success-primary: #1a7f37;
+  --dsw-alias-state-error-primary: #cf222e;
+  --dsw-alias-state-warn-primary: #9a6700;
+  --dsw-alias-state-business-primary: #0969da;
+}
+
+/* ======================================================================
+   组件 CSS —— 与 src/client/WorkspaceTerminals.module.css 逐字一致
+   ====================================================================== */
+.catalog {
+  flex: 1; min-height: 0; height: 100%; box-sizing: border-box;
+  display: flex; flex-direction: column; container-type: inline-size;
+  overflow: auto; padding: 12px; font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1);
+}
+
+.catalog button {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  min-height: 24px; padding: 1px 8px; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11); cursor: pointer; transition: background .12s ease;
+}
+.catalog button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.catalog button:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
+.catalog button:disabled { opacity: .5; cursor: default; }
+
+/* Sticky header: heading + live stats on the left, refresh pinned right. */
+.toolbar {
+  position: sticky; top: -12px; z-index: 1;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; flex: none;
+  padding: 2px 0 8px; background: var(--dsw-alias-bg-layer-1);
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+}
+.heading { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.headingGlyph { display: inline-flex; flex: none; color: var(--dsw-alias-label-tertiary); }
+.heading strong {
+  font: var(--dsw-font-xs-13); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.count {
+  flex: none; min-width: 18px; padding: 0 5px; box-sizing: border-box;
+  border-radius: 999px; text-align: center; font: var(--dsw-font-xxxs-11);
+  line-height: 15px; color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2); font-variant-numeric: tabular-nums;
+}
+.summary {
+  display: flex; flex: 1; flex-wrap: wrap; gap: 9px; align-items: center;
+  font: var(--dsw-font-xxxs-11); color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.statDot {
+  display: inline-block; width: 5px; height: 5px; margin-right: 4px;
+  border-radius: 50%; vertical-align: 1px;
+  background: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-primary));
+}
+.exitedStat .statDot { background: var(--dsw-alias-label-tertiary); }
+.catalog .refresh {
+  width: 24px; min-height: 24px; padding: 3px; margin-left: auto;
+  border-radius: 6px; color: var(--dsw-alias-label-secondary);
+}
+.catalog .refresh:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
+
+.hint {
+  flex: none; margin: 8px 2px 2px;
+  font: var(--dsw-font-xxxs-11); color: var(--dsw-alias-label-tertiary); line-height: 1.5;
+}
+.error {
+  flex: none; margin-top: 8px; padding: 7px 10px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+/* The pill stack: rows separated by 1px gaps instead of lines. */
+.list { min-height: 0; display: flex; flex-direction: column; gap: 1px; }
+
+/* One row: glyph + live dot, two text lines, actions on the right. */
+.row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px 10px;
+  padding: 5px 6px; border-radius: 8px;
+}
+.row:hover, .row:focus-within { background: var(--dsw-alias-interactive-bg-hover); }
+.glyph {
+  position: relative; display: inline-flex; flex: none; width: 15px;
+  align-self: flex-start; margin-top: 3px; color: var(--dsw-alias-label-secondary);
+}
+.dot {
+  position: absolute; width: 4.5px; height: 4.5px; right: -1px; bottom: -1px; border-radius: 50%;
+  background: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-primary));
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-1);
+}
+.row[data-exited='true'] .dot { background: var(--dsw-alias-label-tertiary); }
+.details { flex: 1; min-width: 0; }
+.titleLine { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.title {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: var(--dsw-font-xs-13);
+}
+.row[data-exited='true'] .title { color: var(--dsw-alias-label-secondary); }
+.status {
+  flex: none; margin-left: auto; max-width: 55%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: var(--dsw-font-xxxs-11); color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.row[data-exited='true'] .status { color: var(--dsw-alias-label-tertiary); }
+.metadata {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  margin: 3px 0 0 25px; color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+.cwd, .source { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cwd { flex: 1; font-family: var(--ds-font-family-code, monospace); }
+.sep { flex: none; }
+.source { flex: 0 1 45%; }
+
+/* Row actions reveal on hover / keyboard focus, stay visible on touch. */
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; opacity: 0; }
+.row:hover .actions, .row:focus-within .actions { opacity: 1; }
+@media (hover: none) {
+  .actions { opacity: 1; }
+}
+.catalog .open { border-color: var(--dsw-alias-border-l2); color: var(--dsw-alias-label-primary); }
+.catalog .terminate { color: var(--dsw-alias-label-tertiary); }
+.row:hover .terminate, .row:focus-within .terminate { color: var(--dsw-alias-label-secondary); }
+
+/* Inline termination confirmation: an error-tinted notice card. */
+.confirmation {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; width: 100%;
+  padding: 8px 10px; box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 24%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 6%, transparent);
+}
+.confirmText { flex: 1 1 180px; min-width: 0; }
+.confirmText strong { display: block; overflow-wrap: anywhere; }
+.confirmText span {
+  display: block; margin-top: 2px; color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12); line-height: 1.5;
+}
+.confirmActions { display: flex; align-items: center; gap: 2px; }
+.catalog .confirmButton { border-color: var(--dsw-alias-state-error-primary); color: var(--dsw-alias-state-error-primary); }
+.catalog .confirmButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* Empty catalog: a quiet circular chip under the copy. */
+.empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 40px 12px 36px; text-align: center;
+}
+.emptyIcon {
+  display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
+  color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-layer-2);
+}
+.empty strong { font: var(--dsw-font-xxs-12); font-weight: 400; color: var(--dsw-alias-label-secondary); }
+
+.skeletonRow {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 6px; border-radius: 8px;
+}
+.skeletonRow span {
+  height: 9px; width: 55%; border-radius: 4px; background: var(--dsw-alias-bg-layer-2);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.skeletonRow span + span { width: 38%; height: 7px; }
+
+.refresh[data-loading='true'] svg { animation: spin 1s linear infinite; }
+.row[aria-busy='true'] .dot { animation: pulse 1s ease-in-out infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 50% { opacity: .45; } }
+
+/* Compact panes: the stats wrap under, details take the full width and the
+   actions indent under the text lines (kept visible on their own line). */
+@container (max-width: 420px) {
+  .summary { flex-basis: calc(100% - 36px); order: 2; }
+  .details { flex-basis: 100%; }
+  .actions { padding-left: 25px; width: 100%; }
+  .actions { opacity: 1; }
+  .confirmation { align-items: flex-start; }
+  .confirmText { flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .catalog button { transition: none; }
+  .skeletonRow span, .refresh[data-loading='true'] svg, .row[aria-busy='true'] .dot { animation: none; }
+}
+
+/* ======================================================================
+   预览台（不属于组件：控制条 / 面板边框 / 背景）
+   ====================================================================== */
+body {
+  margin: 0; background: #101114; min-height: 100vh;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 28px 20px 60px; font: 13px/20px var(--dsw-font-family);
+}
+.stage {
+  width: 420px; max-width: 100%; border-radius: 14px; overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+.chrome {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 8px 12px; background: #191b1e; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: #9aa0a8; font-size: 12px; letter-spacing: 0.01em;
+}
+.chrome b { color: #d6d9dc; font-weight: 600; }
+.chrome .sep { flex: 1; }
+.chrome button {
+  padding: 2px 8px; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 5px;
+  background: transparent; color: #c3c7cc; font: inherit; cursor: pointer;
+}
+.chrome button.on { background: rgba(76, 141, 255, 0.18); border-color: rgba(76, 141, 255, 0.5); color: #9cc1ff; }
+.chrome input[type="range"] { width: 110px; accent-color: #4c8dff; }
+.shell { height: 520px; } /* 面板高度：模拟底部工作台 tab */
+.badge { position: absolute; top: 34px; right: 16px; z-index: 3; white-space: nowrap; }
+.catalog noscript { display: block; padding: 12px; color: var(--dsw-alias-label-secondary); }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="chrome">
+    <b>WorkspaceTerminals</b> 设计预览
+    <span class="sep"></span>
+    <span>状态</span>
+    <button data-state="list" class="on">列表</button>
+    <button data-state="skeleton">骨架</button>
+    <button data-state="empty">空态</button>
+    <button data-state="error">错误</button>
+    <span>宽度</span>
+    <input id="width" type="range" min="300" max="560" value="420" step="10">
+    <span id="widthLabel">420</span>
+    <button id="theme">浅色</button>
+  </div>
+  <div class="shell" id="shell"></div>
+</div>
+
+<script>
+const T_TERMINAL = '<path d="M18.75 1.5H5.25C3.1815 1.5 1.5 3.183 1.5 5.25V18.75C1.5 20.8185 3.1815 22.5 5.25 22.5H18.75C20.8185 22.5 22.5 20.8185 22.5 18.75V5.25C22.5 3.183 20.8185 1.5 18.75 1.5ZM21 18.75C21 19.9905 19.9905 21 18.75 21H5.25C4.0095 21 3 19.9905 3 18.75V5.25C3 4.0095 4.0095 3 5.25 3H18.75C19.9905 3 21 4.0095 21 5.25V18.75ZM10.281 13.281L5.781 17.781C5.634 17.928 5.442 18 5.25 18C5.058 18 4.866 17.9265 4.719 17.781C4.4265 17.4885 4.4265 17.013 4.719 16.7205L8.688 12.7515L4.719 8.7825C4.4265 8.49 4.4265 8.0145 4.719 7.722C5.0115 7.4295 5.487 7.4295 5.7795 7.722L10.2795 12.222C10.572 12.5145 10.572 12.99 10.2795 13.2825L10.281 13.281ZM19.5 17.25C19.5 17.664 19.164 18 18.75 18H11.25C10.836 18 10.5 17.664 10.5 17.25C10.5 16.836 10.836 16.5 11.25 16.5H18.75C19.164 16.5 19.5 16.836 19.5 17.25Z"/>'
+const icon = (size, cls) => `<svg class="${cls || ''}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${T_TERMINAL}</svg>`
+const REFRESH = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.4 8a5.4 5.4 0 1 1-1.6-3.85"/><path d="M13.2 2.2v2.5h-2.5"/></svg>'
+
+const terminals = [
+  { id: 't1', title: 'dev-server', cwd: '/Users/havoc/Projects/tools/dsh-plugins/DSH-better-sidebar', source: '主会话', sourceId: 'sess-8f2a', exited: false },
+  { id: 't2', title: 'pnpm watch', cwd: '/Users/havoc/Projects/tools/dsh-plugins/DSH-better-sidebar', source: '主会话', sourceId: 'sess-8f2a', exited: false },
+  { id: 't3', title: 'python3 -m uvicorn app.main:app --reload --port 8000 --host 0.0.0.0', cwd: '/Users/havoc/Projects/tools/dsh-plugins/dsh-enhanced-workspace', source: '预览会话', sourceId: 'sess-11c9', exited: false },
+  { id: 't4', title: 'build-and-test', cwd: '/Users/havoc/Projects/tools/dsh-plugins/dsh-enhanced-workspace', source: '审查会话', sourceId: 'sess-04d7', exited: true, exitCode: 7 },
+  { id: 't5', title: 'migrate-db', cwd: '/Users/havoc/Projects/tools/dsh-plugins/DSH-better-sidebar/db', source: '主会话', sourceId: 'sess-8f2a', exited: true, exitCode: 0 },
+  { id: 't6', title: 'prettier --write src', cwd: '/Users/havoc/Projects/tools/dsh-plugins/DSH-better-sidebar', source: '主会话', sourceId: 'sess-8f2a', exited: false },
+  { id: 't7', title: 'tail -f server.log', cwd: '/private/tmp/dsh-scratch', source: '调试会话', sourceId: 'sess-db31', exited: false },
+  { id: 't8', title: 'ssh dev-box', cwd: '/Users/havoc', source: '调试会话', sourceId: 'sess-db31', exited: true, exitCode: 130 },
+]
+
+function rowHtml(t) {
+  const status = t.exited
+    ? `已退出${t.exitCode !== undefined ? ` (${t.exitCode})` : ''}`
+    : '运行中'
+  return `
+  <div class="row" role="listitem" data-terminal-id="${t.id}" data-exited="${t.exited}" aria-busy="false">
+    <span class="glyph" aria-hidden="true">${icon(14)}<span class="dot"></span></span>
+    <div class="details">
+      <div class="titleLine">
+        <strong class="title" title="${t.title}">${t.title}</strong>
+        <span class="status">${status}</span>
+      </div>
+      <div class="metadata">
+        <span class="cwd" title="${t.cwd}">${t.cwd}</span>
+        <span class="sep" aria-hidden="true">·</span>
+        <span class="source" title="${t.source} · ${t.sourceId}">${t.source}</span>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="open" type="button">打开视图</button>
+      <button class="terminate" type="button" aria-expanded="false">结束进程</button>
+    </div>
+    <div class="confirmation" role="group" aria-label="结束进程" hidden>
+      <div class="confirmText"><strong>结束进程 · ${t.title}</strong><span>这会结束进程，并断开所有连接此终端的视图。</span></div>
+      <div class="confirmActions">
+        <button class="confirmButton" type="button">结束进程</button>
+        <button type="button" class="cancel">取消</button>
+      </div>
+    </div>
+  </div>`
+}
+
+const running = terminals.filter(t => !t.exited).length
+const exited = terminals.length - running
+
+function catalogHtml(state) {
+  const errorHtml = state === 'error'
+    ? `<div role="alert" class="error">workspace-terminal.list 失败：list failed（仅作预览，错误条样式）</div>` : ''
+  let body
+  if (state === 'skeleton') {
+    body = `<div class="skeleton" role="status" aria-label="加载中…">${[0, 1, 2].map(k =>
+      `<div class="skeletonRow"><span></span><span></span></div>`).join('')}</div>`
+  } else if (state === 'empty') {
+    body = `<div class="empty"><span class="emptyIcon" aria-hidden="true">${icon(15)}</span><strong>本工作区暂无终端</strong></div>`
+  } else {
+    body = `<div class="list" role="list">${terminals.map(rowHtml).join('')}</div>`
+  }
+  return `
+  <section class="catalog" aria-label="工作区终端" aria-busy="false">
+    <header class="toolbar">
+      <div class="heading">
+        <span class="headingGlyph" aria-hidden="true">${icon(14)}</span>
+        <strong>工作区终端</strong>
+        <span class="count">${state === 'list' ? terminals.length : '0'}</span>
+      </div>
+      <div class="summary">
+        ${state === 'list' && running > 0 ? `<span><span class="statDot" aria-hidden="true"></span>${running} 运行中</span>` : ''}
+        ${state === 'list' && exited > 0 ? `<span class="exitedStat"><span class="statDot" aria-hidden="true"></span>${exited} 已退出</span>` : ''}
+      </div>
+      <button class="refresh" type="button" aria-label="刷新" title="刷新" data-loading="false">${REFRESH}</button>
+    </header>
+    ${errorHtml}
+    <p class="hint">关闭标签仅关闭视图；结束进程请点击“结束进程”。</p>
+    ${body}
+  </section>`
+}
+
+const shell = document.getElementById('shell')
+let state = 'list'
+function render() { shell.innerHTML = catalogHtml(state) }
+render()
+
+/* 交互模拟（与组件语义一致：悬停显现操作、行内确认、Escape 取消、刷新转圈） */
+shell.addEventListener('click', (event) => {
+  const btn = event.target.closest('button')
+  if (!btn) return
+  const row = btn.closest('.row')
+  if (btn.classList.contains('terminate') && row) {
+    const open = row.querySelector('.confirmation').hidden !== true
+    row.querySelector('.confirmation').hidden = open
+    btn.setAttribute('aria-expanded', String(!open))
+    return
+  }
+  if (btn.classList.contains('confirmButton') && row) {
+    // 确认：此行转为「已退出 (129)」
+    row.dataset.exited = 'true'
+    row.querySelector('.title').textContent += '（已结束）'
+    row.querySelector('.status').textContent = '已退出 (129)'
+    row.querySelector('.confirmation').hidden = true
+    row.querySelector('.terminate').setAttribute('aria-expanded', 'false')
+    return
+  }
+  if (btn.classList.contains('cancel')) {
+    const row = btn.closest('.row')
+    row.querySelector('.confirmation').hidden = true
+    row.querySelector('.terminate').setAttribute('aria-expanded', 'false')
+    return
+  }
+  if (btn.classList.contains('refresh')) {
+    const section = shell.querySelector('.catalog')
+    section.setAttribute('aria-busy', 'true')
+    btn.dataset.loading = 'true'
+    section.querySelectorAll('button').forEach(b => { b.disabled = true })
+    setTimeout(() => {
+      section.setAttribute('aria-busy', 'false')
+      btn.dataset.loading = 'false'
+      section.querySelectorAll('button').forEach(b => { b.disabled = false })
+    }, 900)
+  }
+})
+shell.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return
+  const group = shell.querySelector('.confirmation:not([hidden])')
+  if (group) {
+    group.hidden = true
+    group.closest('.row').querySelector('.terminate').setAttribute('aria-expanded', 'false')
+  }
+})
+
+/* 预览台控制 */
+document.querySelectorAll('.chrome button[data-state]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.chrome button[data-state]').forEach(b => b.classList.remove('on'))
+    btn.classList.add('on')
+    state = btn.dataset.state
+    render()
+  })
+})
+const width = document.getElementById('width')
+const stage = document.querySelector('.stage')
+const widthLabel = document.getElementById('widthLabel')
+width.addEventListener('input', () => {
+  stage.style.width = width.value + 'px'
+  widthLabel.textContent = width.value
+})
+document.getElementById('theme').addEventListener('click', (event) => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
+  document.documentElement.dataset.theme = next
+  event.currentTarget.textContent = next === 'dark' ? '浅色' : '深色'
+})
+</script>
+</body>
+</html>
