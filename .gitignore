@@ -155,3 +155,6 @@ playwright-report/
 test-results/
 
 .dsh-probe/
+
+# scratch git worktrees (linked branch checkouts via `git worktree add`)
+tmp/
