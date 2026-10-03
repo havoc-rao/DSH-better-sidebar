@@ -141,11 +141,10 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       dedupeKey: (tab) => tab.path,
       // Declarative settings: the file-open behavior picker (in-place switch
       // vs per-path windows) renders as an iconed select row under the
-      // editor card's gear in the Side card settings page, followed by the
-      // workspace fence switch (the host's containment guard over every
-      // sidebar filesystem route); the "open with" configuration (SSH host +
-      // custom editors) is the custom panel BELOW those rows — the settings
-      // seam renders rows first, custom panel after.
+      // editor card's gear in the Side card settings page; the "open with"
+      // configuration (SSH host + custom editors) is the custom panel BELOW
+      // those rows — the settings seam renders rows first, custom panel after.
+      // The workspace-fence switch is GONE: there is no containment to toggle.
       settings: {
         toggles: [{
           key: 'editorExplorer',
@@ -166,32 +165,26 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
               desc: () => t('editorExplorerSplitDesc'),
             },
           ],
-        }, {
-          key: 'workspaceFence',
-          title: () => t('settingsFenceTitle'),
-          desc: () => t('settingsFenceDesc'),
-        }, {
-          // Read-side workspace boundary opt-out. Off by default — the file
-          // API keeps its session-workspace fence. When on, the editor /
-          // previewers / file tree may open absolute paths outside the
-          // workspace (the host's READ routes skip containment); saving and
-          // uploading remain confined to the workspace no matter what —
-          // unlike the workspace fence above, this switch never lifts the
-          // write fence.
-          key: 'allowOpenOutsideWorkspace',
-          title: () => t('allowOpenOutside'),
-          desc: () => t('allowOpenOutsideDesc'),
+        }],
+        // Plugin-owned rows (values live in `pluginSettings['editor']`): the
+        // plugin's own open-with targets are shown only when the host reports
+        // no local application, unless the user asks for both side by side.
+        pluginToggles: [{
+          key: 'openWithPluginTargets',
+          title: () => t('settingsOpenWithPluginTitle'),
+          desc: () => t('settingsOpenWithPluginDesc'),
         }],
         render: ({ pluginSettings, updatePluginSetting }) => (
           <OpenWithSettings pluginSettings={pluginSettings} updatePluginSetting={updatePluginSetting} />
         ),
       },
-      component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile }) => (
+      component: ({ ctx, store, scope, tab, visible, expanded, revealed, onToggleDir, onReferenceFile }) => (
         <EditorHost
           ctx={ctx}
           store={store}
           scope={scope}
           tab={tab}
+          visible={visible}
           expanded={expanded ?? []}
           revealed={revealed ?? []}
           onToggleDir={onToggleDir ?? (() => { /* no-op */ })}
@@ -254,12 +247,30 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           key: 'autoOpenJobs',
           title: () => t('settingsJobsTitle'),
           desc: () => t('settingsJobsDesc'),
+        }, {
+          key: 'tasksViewMode',
+          type: 'select',
+          title: () => t('settingsViewModeTitle'),
+          desc: () => t('settingsViewModeDesc'),
+          options: [
+            {
+              value: 'graph',
+              title: () => t('settingsViewModeGraph'),
+              desc: () => t('settingsViewModeGraphDesc'),
+            },
+            {
+              value: 'tree',
+              title: () => t('settingsViewModeTree'),
+              desc: () => t('settingsViewModeTreeDesc'),
+            },
+          ],
         }],
       },
-      component: ({ ctx, scope, visible, onSubagentJump }) => (
+      component: ({ ctx, store, scope, visible, onSubagentJump }) => (
         <SubagentView
           sessionId={scope.sessionId}
           ctx={ctx}
+          store={store}
           active={visible}
           onOpenChild={(address) => { onSubagentJump?.(address.childSessionId) }}
         />

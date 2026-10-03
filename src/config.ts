@@ -79,22 +79,27 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 
 // ── User-facing "Side card" preferences ─────────────────────────────────────
 
-/** Schemastery schema for the user-facing preferences (validated by the settings service). */
+/**
+ * Schemastery schema for the user-facing preferences (validated by the
+ * settings service).
+ *
+ * Asserted as `z<SidebarPrefs>` (the interface lives in `prefs-shared.ts`; the
+ * explicit annotation is also what keeps the emitted declaration portable).
+ * Unknown keys are TOLERATED by this schema and pass through untouched, which
+ * is what keeps a legacy `workspaceFence: true` in an old profile harmless.
+ */
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
   agentTerminalTools: z.boolean().default(false),
+  tasksViewMode: z.union([z.const('graph'), z.const('tree')]).default('graph'),
+  mobileNoAutoOpen: z.boolean().default(true),
+  mobileDefaultTree: z.boolean().default(true),
   agentOpenTools: z.boolean().default(false),
   bottomPanelAutoTerminal: z.boolean().default(true),
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   editorExplorer: z.boolean().default(false),
-  workspaceFence: z.boolean().default(true),
-// Read-side workspace boundary opt-out (default off): while on, the READ
-  // routes (fs.tree / fs.read / media / HTML preview) skip the containment
-  // check. The WRITE fence (fs.write / rename / remove / upload) is never
-  // lifted by this switch — unlike `workspaceFence` above.
-  allowOpenOutsideWorkspace: z.boolean().default(false),
   terminalShell: z.string().default(''),
   terminalShellArgs: z.string().default(''),
   titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),

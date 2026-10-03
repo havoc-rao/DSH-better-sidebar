@@ -13,7 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { GitLens } from '../src/client/changes/GitLens.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
-import { api, type GitLogEntry, type GitLogPage, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
+import { api, type GitLogEntry, type GitLogPage, type GitStatusResult } from '../src/client/api.ts'
 import { bindGitGraph, unbindGitGraph } from '../src/client/git-lens-graph.ts'
 import type { Context } from '../src/context-types.ts'
 import type { GitGraphServiceV1, GraphTreeProps, GraphTreeRow } from 'dsh-git-graph/client-contract'
@@ -145,7 +145,7 @@ async function mountGitLens(container: HTMLElement, onPreview: (ref: unknown) =>
       onOpenFile: () => {},
       onPreview,
       selectedRef: null,
-      visible: false,
+      visible: true,
     }))
   })
   await act(async () => { await Promise.resolve() })
@@ -183,7 +183,7 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
         expect(container.textContent).toContain('Dev')
         expect(container.querySelector('[data-kind="head"]')?.textContent).toBe('main')
         // The built-in list must NOT be rendered in framework mode.
-        expect(container.querySelector('[class*="gitLogRow"]')).toBeNull()
+        expect(container.querySelector('[class*="logRow"]')).toBeNull()
       } finally {
         act(() => { root.unmount() })
       }
@@ -247,7 +247,6 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
     // The mount + the repoRoot-settled re-refresh both anchor page 1; the
     // load-more click then rides the response cursor into page 2.
     const log = mockApi([
-      pageFor(3, 0, 'cur-1'),
       pageFor(3, 0, 'cur-1'),
       pageFor(2, 3),
     ])
@@ -319,7 +318,7 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
       const root = await mountGitLens(container, () => {})
       try {
         expect(container.querySelector('[data-testid="graph-tree"]')).toBeNull()
-        expect(container.querySelectorAll('[class*="gitLogRow"]')).toHaveLength(2)
+        expect(container.querySelectorAll('[class*="logRow"]')).toHaveLength(2)
         expect(container.textContent).toContain('Graph subject 0')
         expect(container.textContent).toContain('Graph subject 1')
         expect(container.querySelector('[data-kind="head"]')?.textContent).toBe('main')
@@ -345,7 +344,7 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
       const root = await mountGitLens(container, () => {})
       try {
         expect(container.querySelector('[data-testid="graph-tree"]')).toBeNull()
-        expect(container.querySelectorAll('[class*="gitLogRow"]')).toHaveLength(1)
+        expect(container.querySelectorAll('[class*="logRow"]')).toHaveLength(1)
         expect(warn).toHaveBeenCalledTimes(1)
       } finally {
         act(() => { root.unmount() })
@@ -370,7 +369,7 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
       try {
         // The crash is caught by the graph boundary: the section degrades to
         // the built-in list (never a blank/error-only history).
-        expect(container.querySelectorAll('[class*="gitLogRow"]')).toHaveLength(1)
+        expect(container.querySelectorAll('[class*="logRow"]')).toHaveLength(1)
         expect(error).toHaveBeenCalledWith(expect.stringContaining('gitGraph framework crashed'), expect.any(Error))
       } finally {
         act(() => { root.unmount() })

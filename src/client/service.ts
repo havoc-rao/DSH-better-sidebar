@@ -447,8 +447,14 @@ export interface OpenTabSeed {
    * the plugin's content is registered there as native tab types; `'bottom'`
    * is the plugin's own bottom workbench. Only the plugin's own flows pass
    * `'bottom'` (the bottom panel's + menu, the auto-terminal).
+   *
+   * `'side'` also means the right Sidebar, but it lands in a SECOND pane
+   * there (`preferNewPane`, the host's own split): that is the "open to the
+   * side" action, which must not fall back to the bottom workbench a native
+   * tab never lives in. A path-less editor seed is the file explorer page, so
+   * `'side'` only changes where a path seed lands.
    */
-  target?: 'right' | 'bottom'
+  target?: 'right' | 'bottom' | 'side'
 }
 
 /**
@@ -480,9 +486,9 @@ export interface NativeTabParams {
  */
 export interface SidebarSurface {
   /** Open a page type in one session's native surface. */
-  openTab(input: { sessionId: string; kind: string; params: NativeTabParams; revealIfOpened: boolean }): void
+  openTab(input: { sessionId: string; kind: string; params: NativeTabParams; revealIfOpened: boolean; preferNewPane?: boolean }): void
   /** Open a resource address in one session's native surface. */
-  openResource(input: { sessionId: string; address: string; line?: number; revealIfOpened: boolean }): void
+  openResource(input: { sessionId: string; address: string; line?: number; revealIfOpened: boolean; preferNewPane?: boolean }): void
   /** The file address of one path (the native surface owns the grammar). */
   fileAddress(sessionId: string, cwd: string | undefined, path: string): string
   /** Close one native tab; the closed record's type/title, or undefined when the id is not native. */
@@ -792,7 +798,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.24.0'
+export const SIDEBAR_SERVICE_VERSION = '0.24.1'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -1197,6 +1203,7 @@ export function createBetterSidebarService(
     // kernel provides the controller.
     if (surface !== undefined && seed.target !== 'bottom'
       && (surface.canPlace === undefined || surface.canPlace(targetSessionId))) {
+      const side = seed.target === 'side'
       const state = store.getSnapshot().state
       // The descriptor's own factory mints what a view needs beyond the seed:
       // the side chat's thread bootstrap / reattach meta, the terminal's
@@ -1224,7 +1231,8 @@ export function createBetterSidebarService(
             sessionId: targetSessionId,
             address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
             ...(seed.line === undefined ? {} : { line: seed.line }),
-            revealIfOpened: true,
+            revealIfOpened: side ? false : true,
+            ...(side ? { preferNewPane: true } : {}),
           })
         } else {
           // The path-less editor window IS the file explorer.
@@ -1244,7 +1252,8 @@ export function createBetterSidebarService(
             ...(seed.diff === undefined ? {} : { diff: seed.diff }),
             ...(synthetic.meta === undefined ? {} : { meta: synthetic.meta }),
           },
-          revealIfOpened,
+          revealIfOpened: side ? false : revealIfOpened,
+          ...(side ? { preferNewPane: true } : {}),
         })
       }
       // The native surface reports one open event, not create-vs-focus, so a

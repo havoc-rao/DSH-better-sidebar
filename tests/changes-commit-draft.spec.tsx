@@ -92,7 +92,7 @@ function mountChanges(
       store,
       scope: { sessionId },
       tab: tab(),
-      visible: false,
+      visible: true,
       onOpenFile: () => { /* no-op */ },
       onOpenDiff: () => { /* no-op */ },
     }))
@@ -219,7 +219,7 @@ describe('ChangesTab commit-draft persistence (bottom workbench: tab.meta)', () 
           store,
           scope: { sessionId },
           tab,
-          visible: false,
+          visible: true,
           onOpenFile: () => { /* no-op */ },
           onOpenDiff: () => { /* no-op */ },
         }))
@@ -235,6 +235,7 @@ describe('ChangesTab commit-draft persistence (bottom workbench: tab.meta)', () 
       // pending draft must flush to A immediately and B must re-seed from
       // its own (empty) meta.
       renderTab(tabIn(store, 'swap-b'), 'swap-b')
+      await flushEffects()
       expect(draftOf(store, 'swap-a')).toBe('typing to a')
       expect(draftOf(store, 'swap-b')).toBeUndefined()
       const input = container.querySelector<HTMLInputElement>('input')
@@ -280,14 +281,14 @@ describe('ChangesTab commit-draft persistence (bottom workbench: tab.meta)', () 
       // Switch to the session lens (unmounts the Git lens, NOT the tab) and
       // back: the draft is owned by the tab, so it survives without any
       // meta round-trip.
-      const group = view.container.querySelector('[role="group"]')
+      const group = view.container.querySelector('[role="tablist"]')
       const sessionButton = [...group!.querySelectorAll<HTMLButtonElement>('button')]
-        .find(button => button.getAttribute('aria-pressed') === 'false')
+        .find(button => button.getAttribute('aria-selected') === 'false')
       expect(sessionButton).toBeDefined()
       await act(async () => { sessionButton!.click() })
       await act(async () => { vi.advanceTimersByTime(1) })
       const gitButton = [...group!.querySelectorAll<HTMLButtonElement>('button')]
-        .find(button => button.getAttribute('aria-pressed') === 'false')
+        .find(button => button.getAttribute('aria-selected') === 'false')
       await act(async () => { gitButton!.click() })
       const input = view.container.querySelector<HTMLInputElement>('input')
       expect(input).not.toBeNull()

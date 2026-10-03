@@ -104,15 +104,14 @@ describe('GitLens resilience with a partial provider source', () => {
           onOpenFile: () => {},
           onPreview: () => {},
           selectedRef: null,
-          visible: false,
+          visible: true,
         }))
       })
       await flushEffects()
 
       // Status and branch render through the provider...
       expect(container.textContent).toContain('staged.ts')
-      const select = container.querySelector<HTMLSelectElement>('select')
-      expect(select?.value).toBe('main')
+      expect(container.textContent).toContain('main')
       // ...the history section is EMPTY (no log rows) instead of an error...
       expect(container.textContent).toContain('History')
       expect(container.textContent).not.toContain('not a function')
@@ -147,7 +146,7 @@ describe('GitLens resilience with a partial provider source', () => {
           onOpenFile: () => {},
           onPreview: () => {},
           selectedRef: null,
-          visible: false,
+          visible: true,
         }))
       })
       await flushEffects()
@@ -155,8 +154,7 @@ describe('GitLens resilience with a partial provider source', () => {
       // The status list survives; the branch select still shows the CURRENT
       // branch from the status result (names fell back to empty).
       expect(container.textContent).toContain('staged.ts')
-      const select = container.querySelector<HTMLSelectElement>('select')
-      expect(select?.value).toBe('main')
+      expect(container.textContent).toContain('main')
       expect(container.textContent).not.toContain('not a function')
       // The provider owns the surface: the host branch route was never hit.
       expect(hostBranch).not.toHaveBeenCalled()

@@ -62,7 +62,7 @@ async function mountLens(service: BetterSidebarService | undefined): Promise<{ r
       onOpenFile: () => {},
       onPreview: () => {},
       selectedRef: null,
-      visible: false,
+      visible: true,
     }))
   })
   await flushEffects()

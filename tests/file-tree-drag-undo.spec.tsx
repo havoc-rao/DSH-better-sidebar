@@ -39,6 +39,13 @@ const { fsRename, fsMove, fsCopy, fsRemove } = vi.hoisted(() => ({
 
 vi.mock('../src/client/api.ts', () => ({
   api: {
+    async fsTrees(scope: unknown, paths: readonly string[]) {
+      return { levels: await Promise.all(paths.map(async path => {
+        try { return { path, ...await this.fsTree(scope, path) } }
+        catch (error) { return { path, error: error instanceof Error ? error.message : String(error) } }
+      })) }
+    },
+    gitStatus: async () => ({ isRepo: false, entries: [] }),
     fsTree: async (_scope: unknown, path: string) => {
       if (path === '/tmp') {
         return {

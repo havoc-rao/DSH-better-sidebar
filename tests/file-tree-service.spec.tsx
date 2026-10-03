@@ -64,6 +64,13 @@ const { fsRename, fsMove, fsCopy, isOutsideWorkspaceMessage } = vi.hoisted(() =>
 
 vi.mock('../src/client/api.ts', () => ({
   api: {
+    async fsTrees(scope: unknown, paths: readonly string[]) {
+      return { levels: await Promise.all(paths.map(async path => {
+        try { return { path, ...await this.fsTree(scope, path) } }
+        catch (error) { return { path, error: error instanceof Error ? error.message : String(error) } }
+      })) }
+    },
+    gitStatus: async () => ({ isRepo: false, entries: [] }),
     fsTree: async (_scope: unknown, path: string) => {
       if (path === '/tmp') {
         return {
@@ -562,7 +569,7 @@ describe('FileTree via fileTreeUi v2 (service path)', () => {
     tree.unmount()
   })
 
-  it('renders the level error row and the fence notice as injected nodes (no white screen)', async () => {
+  it('renders server errors as injected nodes after workspace containment removal', async () => {
     seat.set(makeFileTreeUiService())
     const tree = await mountTree({ cwd: '/boom' })
     await vi.waitFor(() => {
@@ -572,9 +579,9 @@ describe('FileTree via fileTreeUi v2 (service path)', () => {
     vi.mocked(isOutsideWorkspaceMessage).mockReturnValue(true)
     const fenced = await mountTree({ cwd: '/boom', refreshTick: 1 })
     await vi.waitFor(() => {
-      expect(fenced.container.textContent).toContain('Turn off the workspace fence')
+      expect(fenced.container.textContent).toContain('denied by the server')
     })
-    expect(fenced.container.textContent).not.toContain('denied by the server')
+    expect(fenced.container.textContent).not.toContain('Turn off the workspace fence')
     fenced.unmount()
     tree.unmount()
   })

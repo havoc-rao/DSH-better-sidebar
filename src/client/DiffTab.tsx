@@ -5,211 +5,31 @@
  * addition from their content), a commit ref loads the commit's full patch
  * (`git.show`-style). The header carries a refresh button because the tab
  * stays mounted while the changes tab's staging/discard operations change the
- * very content it shows. Rendering goes through the shared {@link DiffFiles}
- * renderer — the same one the changes tab's inline preview uses.
+ * very content it shows. Loading IS the shared `useGitDiffTarget` hook (the
+ * changes tab's inline preview runs the same one, so the staged-side and
+ * untracked fallbacks and the per-file fold cache cannot drift apart);
+ * rendering goes through the shared {@link DiffFiles} renderer.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from './api.ts'
-import { api } from './api.ts'
-import { resolveGitSource, useGitSourceSeat } from './git-source.ts'
 import type { SidebarDiffRef } from './state.ts'
 import { DiffFiles } from './diff/DiffFiles.tsx'
-import { displayPath, foldRowsFromContents, parseUnifiedDiff, type DiffFile, type DiffRow, type FoldSegment } from './diff/rows.ts'
+import { parseUnifiedDiff } from './diff/rows.ts'
+import { useGitDiffTarget } from './diff/use-git-diff.ts'
 import { t } from './locales.ts'
-import { resolveSidebarPath } from './paths.ts'
 import css from './sidebar.module.css'
 
-/** The loaded diff surface (untracked content rendered as a full addition). */
-interface DiffData {
-  diff: string
-  untracked?: string
-}
-
-/** The header/tab title of one diff ref (a proposed patch carries its own). */
 function diffRefTitle(diff: SidebarDiffRef): string {
-  if (diff.kind === 'worktree') return diff.path
-  if (diff.kind === 'commit') return `${diff.hash} ${diff.subject}`
-  return diff.title
+  return diff.kind === 'proposed' ? diff.title : diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`
 }
+export function DiffTab(props: { sessionId: string; cwd: string | undefined; diff: SidebarDiffRef; onOpenFile?: (path: string) => void; onOpenRow?: (path: string, newLine: number | null) => void }) {
+  const { sessionId, cwd, diff } = props
+  const scope = useMemo<SessionScope>(() => ({ sessionId, cwd }), [sessionId, cwd])
+  const { loading, error, diffText, untracked, refresh, resolveFold } = useGitDiffTarget(diff, scope)
 
-export function DiffTab(props: {
-  sessionId: string
-  cwd: string | undefined
-  diff: SidebarDiffRef
-  onOpenFile?: (path: string) => void
-  /** Row-level open (proposed refs only): clicking a hunk row opens the
-   *  file at the row's new-side line (null for deleted rows). */
-  onOpenRow?: (path: string, newLine: number | null) => void
-}) {
-  const { sessionId, cwd, diff, onOpenFile, onOpenRow } = props
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [data, setData] = useState<DiffData | null>(null)
-  const [tick, setTick] = useState(0)
-  // The staged flag of the side ACTUALLY rendered: when the requested side's
-  // diff came back empty the load falls back to the other side, and the fold
-  // expansion must read that side's revisions (else the sliced line numbers
-  // land on the wrong contents).
-  const [effectiveStaged, setEffectiveStaged] = useState<boolean | null>(null)
-
-  /** The resolved git data source for this tab's session through the
-   *  client-ctx seat (the openTab seed carries no ctx prop): a matching
-   *  provider's GitDataSource shadows the host routes; undefined keeps them
-   *  byte for byte. Every git read below routes PER METHOD — a matched
-   *  source lacking a single method falls back to the host route for that
-   *  method alone, so a partial provider never breaks the tab. Live: the
-   *  seat re-renders on provider register/unregister. */
-  const providers = useGitSourceSeat()
-  const gitSource = useMemo(
-    () => providers === undefined ? undefined : resolveGitSource(providers, sessionId, cwd),
-    // Granular deps: resolution consumes only the provider list and the
-    // session identity; the diff ref's repoRoot is a per-call scope field
-    // (each read below builds its own scope from it).
-    [providers, sessionId, cwd],
-  )
-
-  const refresh = useCallback((): void => { setTick(value => value + 1) }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    const scope: SessionScope = { sessionId, cwd, ...(diff.repoRoot !== undefined ? { repoRoot: diff.repoRoot } : {}) }
-    setLoading(true)
-    setError(null)
-    setData(null)
-    setEffectiveStaged(null)
-    // A proposed patch is caller-supplied text: there is nothing to load, no
-    // git process to run, and no side to reconcile — render the patch as-is.
-    // (No async work is scheduled here, so no cancellation is needed.)
-    if (diff.kind === 'proposed') {
-      setData({ diff: diff.patch })
-      setLoading(false)
-      return
-    }
-    const load = async (): Promise<void> => {
-      try {
-        if (diff.kind === 'commit') {
-          const result = await (gitSource?.gitCommitDiff ?? api.gitCommitDiff)(scope, diff.hashFull, diff.worktree)
-          if (!cancelled) setData({ diff: result.diff })
-          return
-        }
-        let result = await (gitSource?.gitDiff ?? api.gitDiff)(scope, diff.path, diff.staged, diff.worktree)
-        if (result.diff === '') {
-          // The requested side is empty — try the OTHER side once: the ref
-          // may predate the staged-flag fix, or the change moved sides (a
-          // file staged after its tab opened). Both sides empty means the
-          // file genuinely has no text changes.
-          const other = await (gitSource?.gitDiff ?? api.gitDiff)(scope, diff.path, !diff.staged, diff.worktree)
-          if (other.diff !== '') {
-            result = other
-            if (!cancelled) setEffectiveStaged(!diff.staged)
-          }
-        }
-        if (result.diff !== '') {
-          if (!cancelled) setData({ diff: result.diff })
-          return
-        }
-        // Empty diff: an untracked file (git diff never lists it) falls back
-        // to a full-file addition; anything else is a genuine no-text-change.
-        if (diff.untracked === true && !diff.staged) {
-          // A child-repo path is relative to diff.repoRoot, not the session
-          // cwd or the linked-worktree root; resolve against whichever the
-          // diff ref carries so the untracked fallback reads the right file.
-          const text = await api.fsRead(scope, resolveSidebarPath(diff.repoRoot ?? diff.worktree ?? cwd, diff.path))
-          if (!cancelled) {
-            setData(text.kind === 'text' ? { diff: '', untracked: text.content } : { diff: '' })
-          }
-          return
-        }
-        if (!cancelled) setData({ diff: '' })
-      } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    void load()
-    return () => { cancelled = true }
-  }, [sessionId, cwd, diff, tick, gitSource])
-
-  // ── On-demand git fold expansion: a fold's hidden rows come from both
-  //    sides' full contents (git.show / fsRead), fetched ONCE per file so
-  //    sibling folds share the request, then sliced by each fold's line
-  //    ranges. The cache dies with the ref or a refresh tick. ──────────────
-  const foldContents = useRef(new Map<string, Promise<{ old: string; new: string }>>())
-  useEffect(() => { foldContents.current = new Map() }, [diff, tick])
-  const foldLoader = useMemo(() => {
-    // A proposed patch has no git revisions to expand folds from: leaving the
-    // resolver absent degrades a fold to its unavailable marker (the shared
-    // renderer's documented fallback) instead of guessing at content.
-    if (diff.kind === 'proposed') return undefined
-    const sidesOf = (file: DiffFile): Promise<{ old: string; new: string }> => {
-      // Both sides empty cannot cover a non-empty fold — treat it as a failed
-      // fetch so the fold degrades to the unavailable marker instead of
-      // silently expanding to nothing (the symptom of a bad rev or path
-      // reading null on both sides).
-      const ofSides = (oldContent: string | null, newContent: string | null): { old: string; new: string } => {
-        if ((oldContent ?? '') === '' && (newContent ?? '') === '') throw new Error('no content on either side')
-        return { old: oldContent ?? '', new: newContent ?? '' }
-      }
-      const fetchSides = async (): Promise<{ old: string; new: string }> => {
-        const scope: SessionScope = { sessionId, cwd, ...(diff.repoRoot !== undefined ? { repoRoot: diff.repoRoot } : {}) }
-        if (diff.kind === 'commit') {
-          // The patch's -m --first-parent shape: old side from the parent,
-          // new side from the commit (a root commit's parent read fails → '').
-          const [oldSide, newSide] = await Promise.all([
-            file.oldPath === '/dev/null'
-              ? Promise.resolve({ content: null })
-              : (gitSource?.gitShow ?? api.gitShow)(scope, `${diff.hashFull}^`, displayPath(file.oldPath), diff.worktree),
-            file.newPath === '/dev/null'
-              ? Promise.resolve({ content: null })
-              : (gitSource?.gitShow ?? api.gitShow)(scope, diff.hashFull, displayPath(file.newPath), diff.worktree),
-          ])
-          return ofSides(oldSide.content, newSide.content)
-        }
-        // Worktree change: staged is HEAD vs index, unstaged is index vs
-        // worktree (the worktree side reads the live file).
-        const staged = effectiveStaged ?? diff.staged
-        if (staged) {
-          const [oldSide, newSide] = await Promise.all([
-            file.oldPath === '/dev/null'
-              ? Promise.resolve({ content: null })
-              : (gitSource?.gitShow ?? api.gitShow)(scope, 'HEAD', displayPath(file.oldPath), diff.worktree),
-            file.newPath === '/dev/null'
-              ? Promise.resolve({ content: null })
-              : (gitSource?.gitShow ?? api.gitShow)(scope, ':0', displayPath(file.newPath), diff.worktree),
-          ])
-          return ofSides(oldSide.content, newSide.content)
-        }
-        const [oldSide, worktree] = await Promise.all([
-          file.oldPath === '/dev/null'
-            ? Promise.resolve({ content: null })
-            : (gitSource?.gitShow ?? api.gitShow)(scope, ':0', displayPath(file.oldPath), diff.worktree),
-          api.fsRead(scope, resolveSidebarPath(diff.repoRoot ?? diff.worktree ?? cwd, displayPath(file.newPath))).catch(() => null),
-        ])
-        return ofSides(oldSide.content, worktree !== null && worktree.kind === 'text' ? worktree.content : null)
-      }
-      const path = displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath)
-      let promise = foldContents.current.get(path)
-      if (promise === undefined) {
-        promise = fetchSides()
-        foldContents.current.set(path, promise)
-      }
-      return promise
-    }
-    return (file: DiffFile, segment: FoldSegment): Promise<readonly DiffRow[]> =>
-      sidesOf(file).then(sides => foldRowsFromContents(segment, sides.old, sides.new))
-  }, [sessionId, cwd, diff, effectiveStaged, gitSource])
-
-  // A proposed patch that is non-empty yet parses to zero files (garbage
-  // text, a mangled header) renders nothing through DiffFiles — surface an
-  // explicit notice instead of a blank pane.
   const isProposed = diff.kind === 'proposed'
-  const unparseable = useMemo(
-    () => isProposed && diff.patch.trim() !== '' && parseUnifiedDiff(diff.patch).files.length === 0,
-    [diff, isProposed],
-  )
-
+  const invalidPatch = isProposed && diff.patch.trim() !== '' && parseUnifiedDiff(diff.patch).files.length === 0
   return (
     <div className={css.gitDiffTab}>
       <div className={css.gitDiffTabHeader}>
@@ -235,16 +55,15 @@ export function DiffTab(props: {
           {diff.truncated === true ? ` · ${t('diffProposedTruncated')}` : null}
         </div>
       )}
+      {invalidPatch && <div className={css.gitError}>{t('diffUnparseable')}</div>}
       {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
       {!loading && error !== null && <div className={css.gitError}>{t('diffLoadError')}: {error}</div>}
-      {!loading && error === null && data !== null && (
+      {!loading && error === null && diffText !== null && (
         <>
-          {unparseable
-            ? <div className={css.gitEmpty}>{t('diffUnparseable')}</div>
-            : data.untracked !== undefined
-              ? <DiffFiles diff="" untrackedPath={diff.kind === 'worktree' ? diff.path : ''} untrackedContent={data.untracked} />
-              : <DiffFiles diff={data.diff} resolveFold={foldLoader} onOpenFile={isProposed ? onOpenFile : undefined} onOpenRow={isProposed ? onOpenRow : undefined} />}
-          {data.diff === '' && data.untracked === undefined && (
+          {untracked !== undefined
+            ? <DiffFiles diff="" untrackedPath={diff.kind === 'worktree' ? diff.path : ''} untrackedContent={untracked} />
+            : <DiffFiles diff={diffText} resolveFold={resolveFold} onOpenFile={props.onOpenFile} onOpenRow={props.onOpenRow} />}
+          {diffText === '' && untracked === undefined && (
             <div className={css.gitEmpty}>{t('diffEmpty')}</div>
           )}
         </>

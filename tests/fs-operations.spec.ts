@@ -7,6 +7,19 @@ import { copyWorkspaceEntry, moveWorkspaceEntry, renameWorkspaceEntry, removeWor
 /** The test workspace root (each suite gets its own temp tree). */
 const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-'))
 
+/** Symlink creation needs privileges on Windows; the link cases skip there. */
+const canSymlink = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-probe-'))
+  try {
+    symlinkSync(dir, join(dir, 'probe-link'))
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})()
+
 afterAll(() => {
   rmSync(root, { recursive: true, force: true })
 })
@@ -92,28 +105,38 @@ describe('writeWorkspaceUpload', () => {
     })).rejects.toMatchObject({ code: 'bad-request' })
   })
 
-  it('refuses an upload directory outside the workspace', async () => {
+  it('uploads into a directory outside the workspace (containment was removed)', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-outside-'))
     try {
-      await expect(writeWorkspaceUpload({
+      // ⚠️ PERMISSION CHANGE: the workspace fence is gone, so an absolute
+      // directory the host user can write is a valid upload target.
+      const result = await writeWorkspaceUpload({
         cwd: root, dir: outside, relativePath: 'x.txt', chunks: chunksOf('x'), limit: 1024,
-      })).rejects.toMatchObject({ code: 'forbidden' })
+      })
+      expect(result).toEqual({ path: join(outside, 'x.txt'), size: 1 })
+      expect(readFileSync(join(outside, 'x.txt'), 'utf8')).toBe('x')
     } finally {
       rmSync(outside, { recursive: true, force: true })
     }
   })
 
-  it('refuses upload directories and targets that resolve outside the workspace', async () => {
+  it('follows an upload directory symlink outside the workspace (no realpath guard)', async () => {
+    if (!canSymlink) return
     const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-symlink-outside-'))
     const link = join(root, 'upload-link')
     try {
       symlinkSync(outside, link)
-      await expect(writeWorkspaceUpload({
-        cwd: root, dir: link, relativePath: 'x.txt', chunks: chunksOf('x'), limit: 1024,
-      })).rejects.toMatchObject({ code: 'forbidden' })
-      await expect(writeWorkspaceUpload({
-        cwd: root, dir: root, relativePath: 'upload-link/x.txt', chunks: chunksOf('x'), limit: 1024,
-      })).rejects.toMatchObject({ code: 'forbidden' })
+      const viaLink = await writeWorkspaceUpload({
+        cwd: root, dir: link, relativePath: 'a.txt', chunks: chunksOf('a'), limit: 1024,
+      })
+      expect(viaLink.path).toBe(join(link, 'a.txt'))
+      // …and a relative path that walks through the link lands there too.
+      const viaRelative = await writeWorkspaceUpload({
+        cwd: root, dir: root, relativePath: 'upload-link/b.txt', chunks: chunksOf('b'), limit: 1024,
+      })
+      expect(viaRelative.path).toBe(join(root, 'upload-link', 'b.txt'))
+      expect(readFileSync(join(outside, 'a.txt'), 'utf8')).toBe('a')
+      expect(readFileSync(join(outside, 'b.txt'), 'utf8')).toBe('b')
     } finally {
       rmSync(link, { force: true })
       rmSync(outside, { recursive: true, force: true })
@@ -307,13 +330,11 @@ describe('moveWorkspaceEntry', () => {
     expect(readFileSync(join(root, 'target.txt'), 'utf8')).toBe('t')
   })
 
-  it('refuses a destination outside the workspace while the fence is armed', async () => {
+  it('allows outside destinations after containment removal, including legacy fence values', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-outside-'))
     try {
       writeFileSync(join(root, 'fenced.txt'), 'f')
-      await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'fenced.txt'), dir: outside }))
-        .rejects.toMatchObject({ code: 'forbidden' })
-      await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'fenced.txt'), dir: outside, fence: false }))
+      await expect(moveWorkspaceEntry({ cwd: root, path: join(root, 'fenced.txt'), dir: outside, fence: true }))
         .resolves.toMatchObject({})
     } finally {
       rmSync(outside, { recursive: true, force: true })
