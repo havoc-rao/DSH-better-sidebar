@@ -21,7 +21,8 @@ import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { readNativeSidebarOpen } from './sidebar/use-native-column.ts'
-import { CMD_W_SHORTCUT, claimCloseActiveTab, readDesktopShellBridge } from './desktop-shortcuts.ts'
+import { CMD_W_SHORTCUT, claimCloseActiveTab, installDesktopBottomClose, readDesktopShellBridge } from './desktop-shortcuts.ts'
+import { installBottomCloseShortcut } from './bottom-close-shortcut.ts'
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
@@ -249,6 +250,34 @@ export function apply(ctx: Context): void {
       })
     },
     'dsh-better-sidebar: desktop shell shortcut claims',
+  )
+  // Current Desktop native input bypasses DOM keydown and falls back through
+  // shortcuts.closeWindow. Wait for the optional service before adapting it.
+  ctx.inject(['shortcuts'], (scope) => {
+    const shortcuts = scope.get('shortcuts') as { closeWindow(): Promise<void> } | undefined
+    if (typeof shortcuts?.closeWindow !== 'function') return
+    scope.effect(() => installDesktopBottomClose(shortcuts, service, () => {
+      if (service.getSnapshot().state?.bottomOpen !== true) return false
+      sidebarStore.reduce(toggleBottomPanel)
+      return true
+    }), 'dsh-better-sidebar: native bottom close routing')
+  })
+  // The DOM-level Cmd+W claim (bottom-close-shortcut.ts): the shell bridge
+  // above exists only inside the deepseek-harness Electron shell (which
+  // swallows the key main-process-side, so the renderer never sees it — the
+  // two paths can never double-fire). Everywhere the press reaches the page
+  // (plain browsers, other shells), this listener claims Cmd+W / Ctrl+W
+  // while the FOCUSED element is inside the bottom workbench and closes the
+  // focused pane's active tab — the right sidebar's Cmd+W closes its tab,
+  // now the bottom workbench's closes its term instead of the whole app.
+  // Focus anywhere else leaves the press to the host / browser unchanged.
+  ctx.effect(
+    () => installBottomCloseShortcut(service, () => {
+      if (service.getSnapshot().state?.bottomOpen !== true) return false
+      sidebarStore.reduce(toggleBottomPanel)
+      return true
+    }),
+    'dsh-better-sidebar: bottom workbench Cmd+W claim',
   )
   ctx.effect(
     () => () => { nativeSurface.dispose(); service.setSurface(undefined) },

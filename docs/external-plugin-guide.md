@@ -927,6 +927,41 @@ interface DesktopShellBridge {
 - 便捷关闭的另一半：内核原生标签芯片的中键（鼠标中键）关闭由 harness 侧
   ui-dockkit 提供；插件底部工作台 TabBar 的 × 与中键关闭为插件自有实现。
 
+#### 7.1.2 底部工作台焦点与关闭（DOM / Desktop 原生输入）
+
+点击底部标签会显式聚焦其 `role="tab"` 元素（仅切换 store 的 active 不算键盘聚焦）。
+当前 Desktop 原生输入不发 DOM keydown：宿主 `page.close` 的关窗回退经公开的
+`shortcuts.closeWindow()` 调用。插件对该方法做 fiber 生命周期内的可释放适配，
+仅当实时焦点在展开的底部面板内时改为关闭焦点分栏的活动标签；否则调用原方法。
+旧 `dshDesktopShell` 桥也优先尊重底部焦点，不再让展开的右侧栏抢走底部关闭。
+不修改 DSH 源码、不抢注宿主的 `page.close` 命令。
+
+桥只存在于 deepseek-harness Electron 壳（主进程吞键）；**键能到达页面的环境**
+（纯浏览器、官方壳、任何无桥壳）由插件自己的 window 捕获期 keydown 监听认领：
+
+- **和弦**：`Cmd/Ctrl + W`（宿主桌面绑定）与 `Cmd/Ctrl + Alt + W`（宿主 web
+  绑定）；拒绝 Shift。`preventDefault()` 让宿主快捷键派发直接 `pass`
+  （`registry.dispatch` 对 defaultPrevented 手势跳过），`stopPropagation()` 不
+  再把按键交给 xterm / 编辑器；浏览器「关标签页」默认同样被拦下。
+- **范围门（关键）**：仅当 `document.activeElement`（或事件 composedPath）位于
+  插件底部工作台 `[data-dsh-bottom-panel]` 内、且工作台 `bottomOpen === true`
+  时认领。**焦点在面板外时完全放行**——右侧栏内的 Cmd+W 仍是宿主 `page.close`
+  （关其 tab），输入框 / 页面其它区域的 Cmd+W 行为与安装插件前一致（可正常关
+  应用 / 标签页）。本插件不劫持全局 Cmd+W。
+- **动作**：关闭焦点所在 `[data-dsh-pane]` 的活动标签（分栏工作台按格关闭；
+  焦点在面板 chrome 时回退 `activePane`）；该 pane 无可关 tab → 收起工作台；
+  一次按压关一个 tab（按住不放的 repeat 被认领但不重跑，镜像宿主派发）。
+- **终端例外**：纯 `Ctrl+W`（无 Cmd、无 Alt）焦点在 `.xterm` 内时放行给 shell
+  （readline delete-word，宿主 web 运行时同款放行）；`Cmd+W`（macOS）与
+  `Ctrl+Alt+W` 不是 shell 和弦，面板内一律认领。
+- DOM 契约（消费方只读）：`[data-dsh-bottom-panel]`（工作台面板）、
+  `[data-dsh-pane]`（分栏格，`data-dsh-pane` 值即格 id）、`.xterm`（终端内容，
+  宿主同款类名）。关闭路径与 TabBar × 完全一致（`service.closeTab` →
+  descriptor `onClose`、终端 close 帧与 pty 释放）。
+- 与 §7.1.1 桥互斥不双触：壳吞键的环境键到不了页面；键到页面的环境走本监听。
+  两条路径共用同一关闭解析（`closeBottomActiveTab`，pane 优先 → activePane →
+  首叶 → 收起）。
+
 ### 7.2 Git 提交区接缝 + gitGraph 服务消费 + 计划 diff 预览（v0.20.x，features 含 `gitCommitActions` / `planDiff`）
 
 外部插件（例如专用提交 Agent）在「Git 视角」提交区加自己的按钮、并把任意 patch 当 diff

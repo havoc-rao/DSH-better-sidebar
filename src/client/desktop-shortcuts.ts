@@ -60,6 +60,37 @@ export interface DesktopShellBridge {
   onShortcut(name: string, handler: () => boolean | undefined): () => void
 }
 
+/** Live focus, shared by legacy and current Desktop close routes. */
+export function focusedBottomAnchor(service: BetterSidebarService): Element | null {
+  if (typeof document === 'undefined' || service.getSnapshot().state?.bottomOpen !== true) return null
+  const active = document.activeElement
+  return active instanceof Element && active.closest('[data-dsh-bottom-panel]') !== null ? active : null
+}
+
+/**
+ * The current Desktop keyboard adapter invokes page.close without DOM keydown.
+ * The sidebar's fallback calls this public service method. Redirect only that
+ * fallback while focus belongs to our open workbench; leave all other calls
+ * on the original service implementation. Release the adapter on fiber disposal.
+ */
+export function installDesktopBottomClose(
+  shortcuts: { closeWindow(): Promise<void> },
+  service: BetterSidebarService,
+  collapseBottom: () => boolean,
+): () => void {
+  const original = shortcuts.closeWindow
+  const redirected = function (this: typeof shortcuts): Promise<void> {
+    const anchor = focusedBottomAnchor(service)
+    if (anchor === null) return original.call(this)
+    closeBottomActiveTab(service, collapseBottom, anchor.closest('[data-dsh-pane]')?.getAttribute('data-dsh-pane') ?? undefined)
+    return Promise.resolve()
+  }
+  shortcuts.closeWindow = redirected
+  return () => {
+    if (shortcuts.closeWindow === redirected) shortcuts.closeWindow = original
+  }
+}
+
 /** The kernel right-Sidebar face the claim reads (structural mirror). */
 interface SidebarRightCloseFace {
   isExpanded?: () => boolean
@@ -103,6 +134,11 @@ export function claimCloseActiveTab(
   service: BetterSidebarService,
   collapseBottom?: () => boolean,
 ): boolean {
+  const anchor = focusedBottomAnchor(service)
+  if (anchor !== null) {
+    closeBottomActiveTab(service, collapseBottom, anchor.closest('[data-dsh-pane]')?.getAttribute('data-dsh-pane') ?? undefined)
+    return true
+  }
   if (closeNativeActiveTab(ctx)) return true
   closeBottomActiveTab(service, collapseBottom)
   return true
@@ -165,14 +201,23 @@ function closeNativeActiveTab(ctx: DesktopShortcutContext): boolean {
  * The bottom workbench half of the claim (popup / detached-session windows
  * without a native column, and collapsed columns): close the active tab;
  * collapse an open workbench that has nothing to close; otherwise nothing.
+ *
+ * Shared with the DOM-level claim (bottom-close-shortcut.ts), which passes
+ * the pane the focus actually sits in: `paneId` overrides the
+ * activePane-first resolution so a click in one pane of a split workbench
+ * closes THAT pane's tab, not the last pane the user touched.
  * @param service - the plugin's own service.
  * @param collapseBottom - optional collapse callback (mount-point injected).
+ * @param paneId - optional pane the press belongs to (the DOM claim's focused
+ *   pane); falls back to activePane, then the first leaf.
  */
-function closeBottomActiveTab(service: BetterSidebarService, collapseBottom?: () => boolean): void {
+export function closeBottomActiveTab(service: BetterSidebarService, collapseBottom?: () => boolean, paneId?: string): void {
   const state = service.getSnapshot().state
   if (state === undefined || state.bottomOpen !== true) return
   const leaves = allLeaves(state.bottomSplits)
-  const leaf = leaves.find(candidate => candidate.id === state.activePane) ?? leaves[0]
+  const leaf = (paneId === undefined ? undefined : leaves.find(candidate => candidate.id === paneId))
+    ?? leaves.find(candidate => candidate.id === state.activePane)
+    ?? leaves[0]
   if (leaf === undefined) return
   const tab = leaf.tabs.find(candidate => candidate.id === leaf.active) ?? leaf.tabs[0]
   if (tab !== undefined) {

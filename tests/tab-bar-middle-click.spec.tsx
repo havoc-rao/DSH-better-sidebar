@@ -81,6 +81,21 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('TabBar focus ownership', () => {
+  it('moves keyboard focus from the chat input onto the clicked tab', () => {
+    const { tab1, onActivate, unmount } = mountBar()
+    const chat = document.createElement('textarea')
+    document.body.append(chat)
+    chat.focus()
+    try {
+      act(() => { mouse(tab1, 'click', 0) })
+      expect(document.activeElement).toBe(tab1)
+      expect(tab1.getAttribute('role')).toBe('tab')
+      expect(onActivate).toHaveBeenCalledWith('t2')
+    } finally { unmount(); chat.remove() }
+  })
+})
+
 describe('TabBar middle-click close', () => {
   it('closes when the middle mouseup lands on the same tab', () => {
     const { tab0, onClose, unmount } = mountBar()

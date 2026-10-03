@@ -621,6 +621,7 @@ All changes since v0.14.0:
 | Save edits | `Ctrl/Cmd + S` |
 | Git commit | `Ctrl + Enter` |
 | Close the active tab / fold the right sidebar (inside the deepseek-harness Electron shell; Cmd+W never triggers the app's close confirmation — quit via `Cmd+Q`) | `Cmd + W` |
+| Close the focused tab of the bottom workbench (Desktop native input / delivered page input; clicking a bottom tab gives it keyboard focus) | `Cmd + W` |
 | Close tab | Middle mouse button |
 | Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |
 | Split / merge panes | Drag tab to pane edge / middle |
@@ -652,6 +653,22 @@ All changes since v0.14.0:
 > `Cmd+Q` / the traffic lights / the shell menu. Plain browsers / the
 > official shell have no bridge and behave unchanged. Contract:
 > [guide §7.1.1](docs/external-plugin-guide.md).
+>
+> **Bottom-workbench focus and close**: clicking a tab gives it keyboard focus.
+> Current Desktop native input redirects the host's `shortcuts.closeWindow()`
+> fallback only while focus is in the open bottom panel. The legacy bridge also
+> prefers bottom focus. The following DOM path applies only when input reaches
+> the page (browser-reserved Cmd+W may not; Web uses `Cmd+Alt+W`): the plugin listens for `Cmd+W` /
+> `Ctrl+W` at window capture — while **focus is inside the bottom workbench**
+> the press closes the focused pane's active tab (the same close-a-tab shape
+> as the right sidebar; in a split workbench the pane holding focus wins, and
+> a workbench with nothing to close folds itself), instead of closing whole
+> dsh: `preventDefault()` keeps both the host's close-window fallback and the
+> browser's close-tab default from firing. Focus anywhere else behaves
+> exactly as before (Cmd+W outside the workbench still closes the app / tab
+> normally); on Windows/Linux a pure `Ctrl+W` inside a terminal is left to
+> the shell itself (readline). Contract:
+> [guide §7.1.2](docs/external-plugin-guide.md).
 
 ## 🔌 Service API
 

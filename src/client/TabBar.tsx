@@ -15,10 +15,7 @@ import {
 IconCloseFillRegular, IconFullscreenOutlineMedium, IconPlusOutlineRegular, Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
-import { isAgentTabId } from './state.ts'
-import { isPinnedVirtualTab } from './pinned.ts'
-import { useSubmenuFlip } from './menu-flip.ts'
-import { IconFullscreenExitOutline16, IconPinOutline16 } from './icons.tsx'
+import { IconFullscreenExitOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
@@ -90,7 +87,7 @@ export function TabBar(props: {
   onToggleFullscreen?: () => void
 }) {
   const {
-paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onPinTab, getTabIcon, getTabBadge,
+paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
     fullscreen, onToggleFullscreen,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -195,6 +192,9 @@ paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, o
             key={tab.id}
             className={clsx(css.tab, active === tab.id && css.tabActive)}
             title={tab.title}
+            role="tab"
+            aria-selected={active === tab.id}
+            tabIndex={active === tab.id ? 0 : -1}
             draggable
             onDragStart={(event) => {
               setTabDragging(true)
@@ -211,7 +211,15 @@ paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, o
               const payload = parseDrag(raw)
               if (payload !== null) onDropTab(payload, tab.id)
             }}
-            onClick={() => { onActivate(tab.id) }}
+            onClick={(event) => {
+              event.currentTarget.focus({ preventScroll: true })
+              onActivate(tab.id)
+            }}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+              event.preventDefault()
+              onActivate(tab.id)
+            }}
             onMouseDown={(event) => {
               // Middle-click close: record the press target and disarm
               // Chrome's middle-click autoscroll (its indicator is inert

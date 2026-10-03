@@ -625,6 +625,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 | 保存编辑 | `Ctrl/Cmd + S` |
 | Git 提交 | `Ctrl + Enter` |
 | 关闭活动标签 / 折叠右侧栏（deepseek-harness Electron 壳内；Cmd+W 永不触发应用的关闭确认，关应用走 `Cmd+Q`） | `Cmd + W` |
+| 关闭底部工作台的焦点标签（Desktop 原生输入 / 页面键盘输入；点击底部标签后关闭该分栏标签） | `Cmd + W` |
 | 关闭 Tab | 鼠标中键 |
 | Tab 右键菜单 | 关闭 / 关闭其他页签 / 关闭左侧页签 / 关闭右侧页签（当前标签组） |
 | 拆分/合并分栏 | 拖 Tab 到分栏边缘 / 中间 |
@@ -650,6 +651,18 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 > 领，因此插件挂载期间不会再看到「Close dsh?」确认框；关应用走 `Cmd+Q` / 红
 > 绿灯 / 壳菜单。纯浏览器 / 官方壳无桥时行为不变。契约见
 > [指南 §7.1.1](docs/external-plugin-guide.md)。
+>
+> **底部工作台焦点与关闭**：点击标签显式取得键盘焦点。当前 Desktop 原生输入
+> 经宿主 `shortcuts.closeWindow()` 的关窗回退适配为关闭底部焦点标签；旧桥也优先
+> 尊重底部焦点。只有键实际送到页面时才走以下 DOM 认领（浏览器保留的 Cmd+W
+> 不保证送达页面，Web 使用宿主的 `Cmd+Alt+W`）：
+> 插件在 window 捕获期监听 `Cmd+W` / `Ctrl+W`——**焦点在底部工作台内**时关掉焦
+> 点 pane 的活动标签（与右侧栏相同的「关标签」形态；分栏里按在哪格就关哪格，
+> 没有可关的 tab 时收起工作台），而不是关掉整个 dsh：`preventDefault()` 让宿主
+> 的关窗回退与浏览器的关标签页默认都不再触发。焦点在工作台之外时行为完全不变
+> （面板外 Cmd+W 仍可正常关应用）；Windows/Linux 下焦点在终端内时纯 `Ctrl+W`
+> 放行给 shell 自己（readline）。契约见
+> [指南 §7.1.2](docs/external-plugin-guide.md)。
 
 ## 🔌 服务化扩展
 

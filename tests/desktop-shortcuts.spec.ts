@@ -13,12 +13,13 @@
  *    The press is ALWAYS claimed — Cmd+W never falls through to the shell's
  *    window close confirmation while the plugin is mounted.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import { createSidebarStore, allLeaves, toggleBottomPanel } from '../src/client/state.ts'
 import {
   CMD_W_SHORTCUT,
   claimCloseActiveTab,
+  installDesktopBottomClose,
   readDesktopShellBridge,
   type DesktopShellBridge,
 } from '../src/client/desktop-shortcuts.ts'
@@ -109,6 +110,65 @@ function fakeSidebar(options: {
     get toggleCalls() { return toggleCalls },
   }
 }
+
+afterEach(() => { document.body.replaceChildren() })
+
+function focusBottom(service: ReturnType<typeof createBetterSidebarService>): HTMLButtonElement {
+  const panel = document.createElement('div')
+  panel.setAttribute('data-dsh-bottom-panel', '')
+  const pane = document.createElement('div')
+  pane.setAttribute('data-dsh-pane', allLeaves(service.getSnapshot().state!.bottomSplits)[0]!.id)
+  const tab = document.createElement('button')
+  pane.append(tab)
+  panel.append(pane)
+  document.body.append(panel)
+  tab.focus()
+  return tab
+}
+
+describe('current Desktop native close fallback', () => {
+  it('closes the focused bottom tab without invoking the native window close', async () => {
+    const { service } = mount()
+    const tabId = openBottomTerminal(service)
+    focusBottom(service)
+    const original = vi.fn(async () => {})
+    const shortcuts = { closeWindow: original }
+    const dispose = installDesktopBottomClose(shortcuts, service, () => true)
+    try {
+      await shortcuts.closeWindow()
+      expect(original).not.toHaveBeenCalled()
+      expect(allLeaves(service.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs).map(tab => tab.id)).not.toContain(tabId)
+    } finally { dispose() }
+    expect(shortcuts.closeWindow).toBe(original)
+  })
+
+  it('passes through outside focus and when the workbench is collapsed', async () => {
+    const { service, store } = mount()
+    openBottomTerminal(service)
+    const tab = focusBottom(service)
+    const original = vi.fn(async () => {})
+    const shortcuts = { closeWindow: original }
+    const dispose = installDesktopBottomClose(shortcuts, service, () => true)
+    try {
+      tab.blur()
+      await shortcuts.closeWindow()
+      tab.focus()
+      store.reduce(state => ({ ...state, bottomOpen: false }))
+      await shortcuts.closeWindow()
+      expect(original).toHaveBeenCalledTimes(2)
+    } finally { dispose() }
+  })
+
+  it('legacy bridge prefers bottom focus even with the right sidebar expanded', () => {
+    const { service } = mount()
+    const tabId = openBottomTerminal(service)
+    focusBottom(service)
+    const entry = fakeSidebar({ expanded: true, activeTab: 'files' })
+    expect(claimCloseActiveTab(makeCtx(entry.face), service)).toBe(true)
+    expect(entry.closeCalls).toEqual([])
+    expect(allLeaves(service.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs).map(tab => tab.id)).not.toContain(tabId)
+  })
+})
 
 describe('readDesktopShellBridge', () => {
   it('is undefined without the window global', () => {
