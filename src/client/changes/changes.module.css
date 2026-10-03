@@ -1,4 +1,4 @@
-/* The unified changes tab: the 36px lens header + Git lens + session lens +
+/* The unified changes tab: the 44px lens header + Git lens + session lens +
    the shared preview pane. Token-only by contract (`tests/theme.spec.ts` scans
    every module sheet) and cut to the plugin's native scale — 12px body, 11px
    meta, 28px rows/controls, 2/3/4px radii (see
@@ -13,7 +13,14 @@
 
 /* ── Lens header ───────────────────────────────────────────────────────── */
 
-.head { flex: none; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+/* The lens header carries the host `SegmentedControl`, whose track is 36px tall
+   (its own 4px track padding around a 28px tab) — one control taller than the
+   28px controls the rest of this plugin's headers are measured against. So this
+   band is 44px, not 36px: the 4px gutter above and below the track is the same
+   4px the 36px headers give their 28px controls (sidebar.module.css
+   `.explorerHeader`, SubagentView.module.css `.subagentHeader`). At 36px the
+   track filled the band edge to edge and read as no padding at all. */
+.head { flex: none; display: flex; align-items: center; gap: 8px; box-sizing: border-box; min-height: 44px; padding: 4px 8px 4px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .headAction { margin-left: auto; }
 
 /* ── Git lens (the former git panel) ───────────────────────────────────── */
