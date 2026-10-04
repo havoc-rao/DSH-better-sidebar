@@ -15,6 +15,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
 import { TAB_DRAG_TYPE } from '../src/client/TabBar.tsx'
+import { FILE_REFERENCE_MIME, TREE_DRAG_MIME } from '../src/client/file-reference-drag.ts'
 import type { UploadItem } from '../src/client/upload.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
@@ -117,6 +118,19 @@ describe('FileTree drag-drop surface', () => {
   afterEach(() => {
     harness.unmount()
     document.body.innerHTML = ''
+  })
+
+  it('exports both tree moves and conversation references from file and directory rows', () => {
+    for (const [name, path, isDir] of [['a.ts', '/tmp/a.ts', false], ['src', '/tmp/src', true]] as const) {
+      const event = new Event('dragstart', { bubbles: true, cancelable: true })
+      const transfer = { setData: vi.fn(), effectAllowed: '' }
+      Object.defineProperty(event, 'dataTransfer', { value: transfer })
+      act(() => { rowByName(harness.container, name).dispatchEvent(event) })
+      expect(transfer.setData).toHaveBeenCalledWith(TREE_DRAG_MIME, path)
+      expect(transfer.setData).toHaveBeenCalledWith(FILE_REFERENCE_MIME, JSON.stringify({ version: 1, path, isDir }))
+      expect(transfer.effectAllowed).toBe('copyMove')
+      fire(rowByName(harness.container, name), 'dragend', [])
+    }
   })
 
   it('shows the portaled drop zone with the generic hint while a file drag hovers the tree', () => {

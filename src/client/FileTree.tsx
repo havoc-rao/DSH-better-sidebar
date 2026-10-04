@@ -74,6 +74,7 @@ import { useFileTreeUi } from './file-tree-ui.ts'
 // row models built below; this plugin injects row content, expansion state
 // data and all DOM semantics (see file-tree-ui.ts for the service seat).
 import type { FileTreeRowModel, FileTreeNode, GuideColumn } from 'dsh-file-tree-ui/client-contract'
+import { writeFileReferenceDrag } from './file-reference-drag.ts'
 import { useDirectoryWatch } from './use-dir-watch.ts'
 import { usePolling } from './use-polling.ts'
 import css from './sidebar.module.css'
@@ -1171,8 +1172,7 @@ export function FileTree(props: {
   dragHandlers.current = { handleRowDragOver, handleDirDrop, clearDragSource, resetDrop }
   const actions = useMemo<RowActions>(() => ({
     dragStart(event, path, isDir) {
-      event.dataTransfer.setData('application/x-dsh-tree-drag', path)
-      event.dataTransfer.effectAllowed = 'copyMove'
+      writeFileReferenceDrag(event.dataTransfer, path, isDir)
       dragSource.current = { path, isDir }
       setDraggingPath(path)
     },
@@ -2022,10 +2022,7 @@ export function FileTree(props: {
           if (event.button === 2) handleContextMenu(event, entry.path, entry.isDir)
         },
         onDragStart: (event) => {
-          event.dataTransfer.setData('application/x-dsh-tree-drag', entry.path)
-          event.dataTransfer.effectAllowed = 'copyMove'
-          dragSource.current = { path: entry.path, isDir }
-          setDraggingPath(entry.path)
+          actions.dragStart(event, entry.path, isDir)
         },
         onDragEnd: () => { clearDragSource(); resetDrop() },
         onDragOver: (event) => { handleRowDragOver(event, dropDir) },
@@ -2079,6 +2076,7 @@ export function FileTree(props: {
   return (
     <div
       ref={bodyRef}
+      data-dsh-file-tree=""
       className={clsx(css.explorerBody, hidden === true && css.explorerHiddenPane)}
       hidden={hidden}
       tabIndex={-1}

@@ -29,6 +29,7 @@ import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shoul
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { installFileTreeUiSeat } from './file-tree-ui.ts'
+import { registerFileReferenceDrop } from './FileReferenceDrop.tsx'
 import { bindGitGraph, unbindGitGraph } from './git-lens-graph.ts'
 import { bindGitSourceSeat, unbindGitSourceSeat } from './git-source.ts'
 import { loadBootDecision } from './prefs.ts'
@@ -81,6 +82,7 @@ export const inject = ['slots', 'sessions', 'locale', 'modules', 'connection', '
  * @param ctx - the client cordis context (slots, sessions).
  */
 export function apply(ctx: Context): void {
+  ctx.effect(() => registerFileReferenceDrop(ctx), 'dsh-better-sidebar: file reference drops')
   // Optional fileTreeUi v2 service seat (provider: dsh-file-tree-ui): the
   // file tree renders through the provider's FileTree framework when the
   // v2 service is present (model injection; see FileTree.tsx), and falls

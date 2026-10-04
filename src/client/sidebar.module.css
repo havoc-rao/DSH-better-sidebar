@@ -1209,6 +1209,39 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    transient surface on top. The mask is deliberately light: the conversation
    column beneath it still takes drops into the chat natively, and the user
    never loses sight of the tree. */
+/* Reference drops mirror the host's full-viewport, pointer-inert drop mask. */
+.fileReferenceDropOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: var(--dsw-alias-bg-mask-drop);
+  backdrop-filter: blur(10px);
+}
+
+.fileReferenceDropHero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: -3%;
+  padding: 0 40px;
+  color: var(--dsw-alias-label-primary);
+  text-align: center;
+}
+
+.fileReferenceDropIcon { color: var(--dsw-alias-state-business-primary); }
+.fileReferenceDropBlocked { color: var(--dsw-alias-label-tertiary); }
+.fileReferenceDropTitle { margin-top: 16px; font: var(--dsw-font-l-20); }
+.fileReferenceDropDescription {
+  margin-top: 16px;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+}
+
 .uploadDropMask {
   position: fixed;
   inset: 0;
