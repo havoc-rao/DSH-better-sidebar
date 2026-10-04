@@ -39,6 +39,42 @@
 
 ---
 
+### 0.1 根级资源 Inspector（feature `inspectors`）
+
+与会话 tab 不同，Inspector 不需要激活 session，不读取/伪造 `SessionScope`。它在宿主根级右栏承载面显示，并与原生会话右栏共享一列几何；切换会话不会改变 Inspector 的资源身份。消费插件只调用 better-sidebar API，不直接碰宿主槽。
+
+```ts
+if (ctx.betterSidebar.features.includes('inspectors')) {
+  ctx.effect(() => ctx.betterSidebar.registerInspector({
+    id: 'dsh-gca-plan', // 稳定类型：每次激活都注册，支持冷恢复
+    title: 'Plan',
+    component: ({ resource, location, visible, close }) =>
+      <PlanDetail resource={resource} location={location} visible={visible} onClose={close} />,
+  }))
+  ctx.effect(() => ctx.betterSidebar.registerInspector({
+    id: 'dsh-gca-plans', title: 'Recent plans', entry: true,
+    component: RecentPlans,
+  }))
+  const shown = ctx.betterSidebar.openInspector({
+    type: 'dsh-gca-plan', id: planId, title: 'Implementation plan',
+    resource: { sourceSessionId, taskId, planId, revision, digest },
+    location: { section: 'commits', commitId, view: 'diff' },
+  })
+  // false：类型尚未注册、宿主根级承载面不存在/拒绝，或 payload 非 JSON 对象。
+  // 必须留原有详情页 fallback，不得把 false 当作“已经展示”。
+}
+```
+
+**公开协议**：
+- `registerInspector({ id, title, component, entry? }) -> disposer`：重复 id 抛错；`title` 是 string 或 `() => string`。`entry:true` 仅在 Inspector 面板内添加固定入口，不向左栏页脚添加按钮。点击打开 `{type:id,id,resource:{}}`，因此 RecentPlans 必须支持空资源对象。
+- `component` props 为 `{resource: InspectorObject, location: InspectorObject|undefined, visible:boolean, close():void}`。没有隐式当前 session；业务服务由消费插件自己的闭包注入。`visible:false` 时应暂停昂贵实时订阅。
+- `openInspector({type,id,title?,resource,location?}) -> boolean`：相同 `(type,id)` 去重，同时替换 resource/location（省略 location 即清除旧定位）；成功才选择/展开根级右栏，不会切换会话。
+- `getInspectors()`、`getInspectorSnapshot()` / `subscribeInspectors()` 供观察；`closeInspector(type,id)` 删除指定资源，关闭 active 时回到宿主会话右栏。未知 id 是 no-op。
+- 资源与定位必须为严格 JSON 对象（嵌套数组允许；undefined、函数、循环引用、Date、NaN 等拒绝）；边界复制，最多保留最近 32 项。类型与资源/定位在浏览器 localStorage 独立保存，无激活 session 也能保存。存储不可用时内存工作仍有效。
+- 冷恢复不持久化组件：等稳定类型重新注册后才恢复展示。类型卸载/HMR 保留资源但不调用旧组件；不要只在某个按钮点击时临时注册类型。旧宿主没有根级公开承载能力时返回 false，绝不造一个 fake session 兜底。
+
+**宿主集成契约**：适配器等待可选 `sidebarRightRoot` 服务与 `rightbar.root` keyed 槽同时存在。实际公开 controller 为 `{active,register(key):disposer,open(key):void,close(key):void}`；view id/key 为 `dsh-better-sidebar:inspectors`。先注册 key 和槽，再开放 Inspector surface；部分注册失败回滚 key，卸载释放槽和 key。宿主只挂载选中的 root，owner props 为 `width/viewportWidth/canShow/close()`，**没有 visible 或 Session 绑定**，所以适配器为已挂载正文注入 `visible:true`，关闭/切换 root 时正文卸载。宿主负责有效高度、宽度、展开/收起、窄视口覆盖，以及与 `rightbar.session` 互斥。固定入口只在 Inspector 面板内渲染，不注册 `sidebar.footer.action`，也不会假冒 main panel。消费插件不得依赖这层协议，应只调用上述 service API。
+
 ## 1. 总览：你能扩展什么
 
 better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：

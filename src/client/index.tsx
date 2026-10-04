@@ -24,6 +24,7 @@ import { readNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { CMD_W_SHORTCUT, claimCloseActiveTab, installDesktopBottomClose, readDesktopShellBridge } from './desktop-shortcuts.ts'
 import { installBottomCloseShortcut } from './bottom-close-shortcut.ts'
 import { createNativeSurface } from './native/surface.ts'
+import { registerInspectorSurface, type RootInspectorController } from './inspector-surface.tsx'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
@@ -212,6 +213,13 @@ export function apply(ctx: Context): void {
     }
   }, sessionId => ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd)
   ctx.provide('betterSidebar', service)
+  // Optional root capability: old hosts remain session-only, returning false
+  // from openInspector rather than queueing a phantom session open.
+  ctx.inject(['sidebarRightRoot'], (scope) => {
+    const controller = scope.get('sidebarRightRoot') as RootInspectorController | undefined
+    if (!controller || typeof controller.register !== 'function' || typeof controller.open !== 'function' || typeof controller.close !== 'function') return
+    scope.effect(() => registerInspectorSurface(scope as Context, service, controller), 'dsh-better-sidebar: root inspectors')
+  })
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays

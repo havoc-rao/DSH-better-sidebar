@@ -33,6 +33,8 @@ import { openWorkspaceTerminal, resolveWorkspaceTerminalBinding, updateTerminalS
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import type { TerminalProviderDescriptor } from './terminal-source.ts'
 import type { GitProviderDescriptor } from './git-source.ts'
+import { createInspectorApi, type InspectorApi } from './inspectors.ts'
+export type { InspectorComponentProps, InspectorDescriptor, InspectorObject, InspectorJson, OpenInspectorSeed, InspectorSnapshot } from './inspectors.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -568,7 +570,7 @@ export interface GitCommitActionDescriptor {
 /**
  * The registry service published as `ctx.betterSidebar`.
  */
-export interface BetterSidebarService {
+export interface BetterSidebarService extends InspectorApi {
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
@@ -852,6 +854,7 @@ export const SIDEBAR_FEATURES = [
   'terminalSource',
   'workspaceTerminalSource',
   'gitSource',
+  'inspectors',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -896,6 +899,10 @@ export function createBetterSidebarService(
   const notify = (): void => {
     for (const fn of [...listeners]) fn()
   }
+
+  let inspectorStorage: Storage | undefined
+  try { inspectorStorage = globalThis.localStorage } catch { /* private mode */ }
+  const inspectors = createInspectorApi(notify, inspectorStorage)
 
   const subscribe = (listener: () => void): (() => void) => {
     listeners.add(listener)
@@ -1464,6 +1471,7 @@ export function createBetterSidebarService(
   }
 
   return {
+    ...inspectors,
     registerTab,
     registerFileViewer,
     registerFileIcon,
