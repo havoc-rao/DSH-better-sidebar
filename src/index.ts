@@ -235,6 +235,56 @@ async function readText(path: string, readLimit: number): Promise<{
   }
 }
 
+/** Serialize this process's fs.write calls by normalized destination (including legacy writes).
+ * This is NOT a filesystem CAS: external processes, other plugin instances,
+ * symlink aliases and hard links can still race the final check and rename. */
+const fileWriteQueues = new Map<string, Promise<void>>()
+async function serializeFileWrite<T>(path: string, write: () => Promise<T>): Promise<T> {
+  const previous = fileWriteQueues.get(path) ?? Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>(resolve => { release = resolve })
+  fileWriteQueues.set(path, current)
+  await previous
+  try {
+    return await write()
+  } finally {
+    release()
+    if (fileWriteQueues.get(path) === current) fileWriteQueues.delete(path)
+  }
+}
+
+/** Compare only complete, losslessly decoded text, never a preview prefix.
+ * Read at most limit + 1 bytes, so file growth cannot turn a capped read into
+ * a false match. Recheck immediately before rename; external TOCTOU remains. */
+async function checkExpectedContent(path: string, expected: string, limit: number): Promise<void> {
+  const conflict = (reason: string) => new SidebarError('fs-error', `conflict: cannot write "${path}": ${reason}`, 409)
+  const handle = await open(path, 'r').catch(() => { throw conflict('file is missing or unreadable') })
+  try {
+    const info = await handle.stat()
+    if (!info.isFile()) throw conflict('destination is not a regular text file')
+    if (info.size > limit) throw conflict('file exceeds the complete text read limit')
+    const buffer = Buffer.alloc(limit + 1)
+    let length = 0
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length)
+      if (bytesRead === 0) break
+      length += bytesRead
+    }
+    if (length > limit) throw conflict('file exceeds the complete text read limit')
+    const bytes = buffer.subarray(0, length)
+    const text = bytes.toString('utf8')
+    if (bytes.includes(0) || !Buffer.from(text, 'utf8').equals(bytes)) {
+      throw conflict('destination is binary or not valid UTF-8 text')
+    }
+    if (text !== expected) throw conflict('file changed since it was read')
+  } catch (error) {
+    if (error instanceof SidebarError) throw error
+    throw conflict('file is unreadable')
+  } finally {
+    await handle.close()
+  }
+}
+
 /** One API method dispatch table entry. */
 type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
 
@@ -393,18 +443,32 @@ function buildApi(
     'fs.write': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
-      const content = requireString(payload, 'content')
-      const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
-      try {
-        await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, content, 'utf8')
-        await rename(tmp, path)
-      } catch (error) {
-        await rm(tmp, { force: true }).catch(() => {})
-        throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      const record = payload as { content?: unknown; expectedContent?: unknown }
+      if (typeof record.content !== 'string') throw new SidebarError('bad-request', 'missing or invalid "content"')
+      const content = record.content
+      const hasExpected = Object.prototype.hasOwnProperty.call(record, 'expectedContent')
+      if (hasExpected && typeof record.expectedContent !== 'string') {
+        throw new SidebarError('bad-request', 'invalid "expectedContent": expected a string')
       }
-      invalidateDirectoryCache(dirname(path))
-      return { ok: true }
+      const expected = hasExpected ? record.expectedContent as string : undefined
+      return serializeFileWrite(path, async () => {
+        const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
+        // The initial check avoids preparing a replacement for a known stale,
+        // binary or truncated base; the final check narrows external TOCTOU.
+        if (expected !== undefined) await checkExpectedContent(path, expected, resolved.readLimit)
+        try {
+          await mkdir(dirname(path), { recursive: true })
+          await writeFile(tmp, content, 'utf8')
+          if (expected !== undefined) await checkExpectedContent(path, expected, resolved.readLimit)
+          await rename(tmp, path)
+        } catch (error) {
+          await rm(tmp, { force: true }).catch(() => {})
+          if (error instanceof SidebarError) throw error
+          throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+        }
+        invalidateDirectoryCache(dirname(path))
+        return { ok: true }
+      })
     },
     // The tree row's rename: single-segment name, destination-existence and
     // workspace-root refusals, link-aware (renames the row, not its target).

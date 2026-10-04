@@ -16,6 +16,7 @@ import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
+import { registerCentralEditor } from './CentralEditor.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
@@ -215,6 +216,11 @@ export function apply(ctx: Context): void {
     }
   }, sessionId => ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd)
   ctx.provide('betterSidebar', service)
+  ctx.effect(() => {
+    const central = registerCentralEditor(ctx)
+    service.setCentralEditor(central)
+    return () => { service.setCentralEditor(undefined); central.dispose() }
+  }, 'dsh-better-sidebar: session central editor')
   // Optional root capability: old hosts remain session-only, returning false
   // from openInspector rather than queueing a phantom session open.
   ctx.inject(['sidebarRightRoot'], (scope) => {
