@@ -410,6 +410,7 @@ export function GitLens(props: GitLensProps) {
   const commitMsg = props.commitMsg ?? localCommitMsg
   const setCommitMsg = props.onCommitMsgChange ?? setLocalCommitMsg
   const [busy, setBusy] = useState(false)
+  const [actionLabel, setActionLabel] = useState<string | null>(null)
   const mutationLock = useRef(false)
   /** The commit bar's ONE status line (commit / stage / discard / revert). */
   const [actionError, setActionError] = useState<string | null>(null)
@@ -633,9 +634,11 @@ export function GitLens(props: GitLensProps) {
     action: () => Promise<unknown>,
     failure: (reason: unknown) => string = errorMessage,
     onSuccess?: () => void,
+    label?: string,
   ): Promise<void> => {
     if (mutationLock.current) return
     mutationLock.current = true
+    setActionLabel(label ?? null)
     setBusy(true)
     setActionError(null)
     try {
@@ -647,6 +650,7 @@ export function GitLens(props: GitLensProps) {
       setActionError(failure(reason))
     } finally {
       mutationLock.current = false
+      setActionLabel(null)
       setBusy(false)
     }
   }
@@ -674,11 +678,11 @@ export function GitLens(props: GitLensProps) {
   const commit = (): void => {
     if (!canCommit) return
     const message = commitMsg.trim()
-    void runAction(() => gitApi.gitCommit(gitScopeNow(), message, selectedWorktree), errorMessage, () => { setCommitMsg(''); props.onCommitMsgCommitted?.() })
+    void runAction(() => gitApi.gitCommit(gitScopeNow(), message, selectedWorktree), errorMessage, () => { setCommitMsg(''); props.onCommitMsgCommitted?.() }, t('commit'))
   }
   const push = (): void => {
     if (!canPush || pushApi === undefined) return
-    void runAction(() => pushApi(gitScopeNow(), selectedWorktree))
+    void runAction(() => pushApi(gitScopeNow(), selectedWorktree), errorMessage, undefined, t('gitPush'))
   }
   const commitAndPush = (): void => {
     if (!canCommit || !canPush || pushApi === undefined) return
@@ -692,7 +696,7 @@ export function GitLens(props: GitLensProps) {
       props.onCommitMsgCommitted?.()
       invalidateGitStatus(scope.sessionId)
       try { await pushApi(targetScope, targetWorktree) } finally { await refresh(false) }
-    })
+    }, errorMessage, undefined, t('gitCommitAndPush'))
   }
 
   /** Switching the selected checkout changes which rows are legitimate to act
@@ -1160,7 +1164,7 @@ export function GitLens(props: GitLensProps) {
           owner={{ ...commitTarget, ...(service === undefined ? {} : { service }),
             commitMessage: commitMsg, setCommitMessage: value => { setCommitMsg(value); setActionError(null) },
             busy, runAction, refresh, close: () => {} }}
-          canCommit={canCommit} canPush={canPush}
+          canCommit={canCommit} canPush={canPush} loadingLabel={actionLabel}
           commit={commit} push={push} commitAndPush={commitAndPush} stageAll={stageAll}
           actions={commitActionViews}
           error={actionError !== null ? <Notice kind="error" tone="inline" role="alert">{actionError}</Notice> : null}

@@ -1,5 +1,5 @@
 import { createElement, useEffect, useState, type ReactNode } from 'react'
-import { Button, IconEllipsisOutlineRegular, Input, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconEllipsisOutlineRegular, Input, Menu, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitCommitActionDescriptor, GitCommitActionProps } from '../service.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx'
 import { t } from '../locales.ts'
@@ -12,6 +12,7 @@ export function GitActionBar(props: {
   owner: GitActionSlotProps
   canCommit: boolean
   canPush: boolean
+  loadingLabel?: string | null
   commit(): void
   push(): void
   commitAndPush(): void
@@ -28,7 +29,7 @@ export function GitActionBar(props: {
     </RenderBoundary>
   )
   return (
-    <div className={css.commitBar} data-git-action-bar>
+    <div className={css.commitBar} data-git-action-bar aria-busy={owner.busy}>
       <div className={css.commitRow}>
         <Input className={css.commitInput} placeholder={t('commitPlaceholder')}
           value={owner.commitMessage} disabled={owner.busy}
@@ -61,6 +62,14 @@ export function GitActionBar(props: {
           {props.actions.map(renderAction)}
           <GitActionSlotHost owner={{ ...owner, close: () => { setOpen(false) } }} />
         </Menu>
+      </div>
+      <div role="status" aria-live="polite" aria-atomic="true" hidden={!owner.busy || props.loadingLabel == null}>
+        {owner.busy && props.loadingLabel != null && (
+          <span className={css.gitActionLoading}>
+            <StateDot state="ongoing" size={14} aria-hidden="true" />
+            {props.loadingLabel}…
+          </span>
+        )}
       </div>
       {props.error}
     </div>

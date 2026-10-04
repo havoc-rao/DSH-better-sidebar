@@ -226,6 +226,7 @@
   border-top: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-base);
 }
+.gitActionLoading { display: flex; align-items: center; gap: 6px; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxs-12); }
 .commitRow { display: flex; align-items: center; gap: 6px; }
 .commitRow > :not(.commitInput) { flex: none; }
 .commitInput { flex: 1; width: 0; min-width: 0; }

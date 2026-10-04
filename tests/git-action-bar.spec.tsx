@@ -164,6 +164,7 @@ describe('Git action bar common mutations and overflow', () => {
     await commitAndPush(container)
     expect(commit).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'test commit', LINKED)
     expect(push).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-git-action-bar] [role="status"]')?.textContent).toBe(`${t('gitCommitAndPush')}…`)
     await act(async () => { pending.resolve({ ok: true }) })
     await flush()
     expect(order).toEqual(['commit', 'push'])
@@ -171,6 +172,8 @@ describe('Git action bar common mutations and overflow', () => {
     expect(container.querySelector<HTMLInputElement>('[data-git-action-bar] input')!.value).toBe('')
     expect(committed).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('remote rejected')
+    expect(container.querySelector('[data-git-action-bar] [role="status"]')?.textContent).toBe('')
+    expect(container.querySelector('[data-git-action-bar]')?.getAttribute('aria-busy')).toBe('false')
   })
 
   it('does not push or clear the draft if the preceding commit fails', async () => {
@@ -199,6 +202,10 @@ describe('Git action bar common mutations and overflow', () => {
     await act(async () => { pushButton.click(); pushButton.click(); button(container, t('commit')).click() })
     expect(push).toHaveBeenCalledTimes(1)
     expect(commit).not.toHaveBeenCalled()
+    const actionBar = container.querySelector('[data-git-action-bar]')!
+    expect(actionBar.getAttribute('aria-busy')).toBe('true')
+    expect(actionBar.querySelector('[role="status"]')?.textContent).toBe(`${t('gitPush')}…`)
+    expect(actionBar.querySelector('[role="status"] svg')).not.toBeNull()
     expect(pushButton.isConnected).toBe(false)
     expect(document.body.querySelector('[role="menuitem"]')).toBeNull()
     expect(button(container, t('commit')).disabled).toBe(true)
@@ -207,6 +214,8 @@ describe('Git action bar common mutations and overflow', () => {
     await act(async () => { pending.resolve({ ok: true }) })
     await flush()
     expect(button(container, t('gitMoreActions')).disabled).toBe(false)
+    expect(actionBar.getAttribute('aria-busy')).toBe('false')
+    expect(actionBar.querySelector('[role="status"]')?.textContent).toBe('')
     await click(button(container, t('gitMoreActions')))
     expect(button(document.body, t('gitPush')).disabled).toBe(false)
   })
