@@ -16,21 +16,6 @@
 
 /** The ja dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const ja: Record<string, string> = {
-  centralEditorOpen: 'メイン領域で編集',
-  centralEditorTitle: '編集ワークベンチ',
-  centralEditorReturn: '会話に戻る',
-  centralEditorFiles: '開いているファイル',
-  centralEditorEmpty: '右側のファイルツリーからファイルを選択して編集します',
-  centralEditorSaveFirst: '先にサイドバーの変更を保存してください。未保存の内容は自動転送されません。',
-  centralEditorBinary: '編集可能なテキストではありません。サイドバーでプレビューしてください。',
-  centralEditorTruncated: '読み取り上限を超えています。切り詰めた内容の保存を防ぐため編集できません。',
-  centralEditorUnavailable: 'セッションの中央編集領域を利用できません。',
-  centralEditorDiscardConfirm: '未保存の変更を破棄して閉じますか？',
-  centralEditorCursor: '{line} 行、{column} 列',
-  centralEditorSessionStatus: 'バックグラウンドセッションの状態',
-  centralEditorRunning: '実行中',
-  centralEditorIdle: '実行していません',
-  centralEditorStatusHint: 'セッションはバックグラウンドで実行されます。確認が必要な場合は会話に戻り、編集内容は保持されます。',
   pluginMnemeName: "dsh-mneme メモリーライブラリ",
   pluginMnemeDesc: "セッション間の記憶、バックグラウンド整理、要約とユーザープロファイル。SQLite と編集可能な Markdown にローカル保存し、記憶・エンティティ・状態・設定をタブで表示",
   workspaceTerminals: 'ワークスペースのターミナル',

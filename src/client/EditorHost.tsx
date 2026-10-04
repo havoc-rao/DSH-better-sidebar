@@ -176,10 +176,6 @@ export function EditorHost(props: {
    * split mode opens a per-path dedupe tab through openSidebarFile.
    */
   const openFile = (absolute: string): void => {
-    if (service?.isCentralEditorActive?.(scope.sessionId) === true) {
-      service.openCentralFile(scope, absolute)
-      return
-    }
     if (inPlace) {
       ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
     } else {
@@ -275,14 +271,6 @@ export function EditorHost(props: {
   // without a toolbar — image, pdf, binary download).
   const [toolbar, setToolbar] = useState<EditorToolbarState | null>(null)
   const controlsRef = useRef<EditorToolbarControls | null>(null)
-  const openCentral = (): void => {
-    if (toolbar?.dirty === true) {
-      window.alert(t('centralEditorSaveFirst'))
-      return
-    }
-    // Only the saved path is reopened; no editor/draft instance is migrated.
-    service?.openCentralFile?.(scope, path)
-  }
   const onToolbarState = useCallback((next: EditorToolbarState) => {
     setToolbar(prev => prev !== null && JSON.stringify(prev) === JSON.stringify(next) ? prev : next)
   }, [])
@@ -482,15 +470,6 @@ export function EditorHost(props: {
               {t('edit')}
             </button>
           </div>
-        )}
-        {!showEmpty && typeof service?.openCentralFile === 'function' && (
-          <button
-            type="button"
-            className={css.editorModeButton}
-            onClick={openCentral}
-          >
-            {t('centralEditorOpen')}
-          </button>
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
         {toolbar?.editable === true && (

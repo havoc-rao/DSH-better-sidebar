@@ -7,4 +7,3 @@
  * the startup path.
  */
 export { TextEditor } from '../TextEditor.tsx'
-export { CentralCodeEditor, forgetCentralCodeDocument } from '../CentralCodeEditor.tsx'

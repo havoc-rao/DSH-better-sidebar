@@ -76,19 +76,6 @@ if (ctx.betterSidebar.features.includes('inspectors')) {
 
 **宿主集成契约**：适配器等待可选 `sidebarRightRoot` 服务与 `rightbar.root` keyed 槽同时存在。实际公开 controller 为 `{active,register(key):disposer,open(key):void,close(key):void}`；view id/key 为 `dsh-better-sidebar:inspectors`。先注册 key 和槽，再开放 Inspector surface；部分注册失败回滚 key，卸载释放槽和 key。宿主只挂载选中的 root，owner props 为 `width/viewportWidth/canShow/close()`，**没有 visible 或 Session 绑定**，所以适配器为已挂载正文注入 `visible:true`，关闭/切换 root 时正文卸载。宿主负责有效高度、宽度、展开/收起、窄视口覆盖，以及与 `rightbar.session` 互斥。固定入口只在 Inspector 面板内渲染，不注册 `sidebar.footer.action`，也不会假冒 main panel。消费插件不得依赖这层协议，应只调用上述 service API。
 
-### 0.2 中央会话编辑器（feature `centralEditor`）
-
-中央编辑器是**当前窗口内、按会话隔离的主槽承载面**，不是自由窗口，也不是根级全局 main panel。客户端入口负责安装主槽 controller 并在卸载/HMR 时调用 `setCentralEditor(undefined)`；是否存在可接入的会话主槽、是否能在目标会话打开，以及缺能力时的用户提示由 controller 负责。消费插件不要自行安装 controller 或修改宿主 DOM/源码。
-
-- 显式调用 `openCentralFile(scope, path): boolean` 打开文件；`false` 表示没有 controller 或 controller 拒绝。**不静默降级**到右栏、底部工作台或新窗口。方法存在（或 feature 声明）不等于当前宿主主槽一定可用，调用者必须检查返回值。
-- `isCentralEditorActive(sessionId): boolean` 是即时查询，无 controller 时为 `false`。当前会话中央编辑器激活后，EditorHost 的普通树点击/搜索/路径输入优先走中央打开；显式「新标签页」「在侧边打开」及旧 `openTab` / `openFile` 默认行为不变。
-- 文件树右键的中央打开入口**仅对文件**显示（按 service 方法存在探测）；编辑器工具栏有同名文字按钮。已有编辑器 `dirty` 时该按钮拒绝打开并提示先保存。
-- 这里只重开**已保存的文件路径**，不传输 CodeMirror 实例、光标/撤销栈或未保存草稿，**不是跨窗口迁移草稿**。窗口之间没有隐式状态同步；原编辑器也不会因这次打开自动关闭。
-
-当前实现通过 `main.conversation` 的 single 优先级注册（`-100`，不声明宿主 children）在编辑时接管，返回时注销；当前会话与原生右栏不变。宿主聊天显示子树会卸载/重挂载，宿主内存阅读锚点帮助恢复，但不承诺完整瞬态或跨刷新恢复。
-
-中央固定多文件标签按会话保存内存草稿；CodeMirror 缓存按 activation + session + document generation 隔离，关闭/卸载清理。返回对话后 header utilities 可重新进入工作台。保存传 `expectedContent`，磁盘完整文本变化则 HTTP409 并保留草稿；内部同路径写入串行，不是跨进程原子 CAS。截断/二进制禁止编辑。底部状态胶囊展示真实运行状态，出现审批/问题/计划确认自动回到宿主对话；未保存文档提供关闭确认与浏览器卸载提示，仍不保证 HMR/刷新后恢复。第一阶段不含中央预览分栏、拖动浮条或完整 IDE 能力。
-
 ## 1. 总览：你能扩展什么
 
 better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
@@ -777,7 +764,7 @@ interface BetterSidebarService {
   /** 能力清单（只增不删，唯一例外：v0.19.0 删除了 'floatWindows'）：
    *  'badge' | 'tabLifecycle' | 'updateTab' | 'openFile' | 'targetedOpen' |
    *  'stateSubscription' | 'tabMeta' | 'pluginSettings' | 'urlTarget' |
-   *  'settingSelect' | 'fileIcons' | 'panelFlags' | 'gitCommitActions' | 'planDiff' | 'centralEditor'
+   *  'settingSelect' | 'fileIcons' | 'panelFlags' | 'gitCommitActions' | 'planDiff'
    *  ——用 `features.includes('xxx')` 按能力 gate。
    *  'panelFlags'（v0.20.x，本节「7.1 dsh-hotkey 对接契约」）：
    *  getSnapshot() 携带顶层 bottomOpen/panelOpen，且「right」打开在内核
@@ -801,15 +788,6 @@ interface BetterSidebarService {
    *  注意：path 派生 id 只对 openFile/openSidebarFile 成立；editorExplorer 合并模式的
    *  原地切换经 updateTab 重写 path/title，tab id 保持稳定、不再对应 path。 */
   openFile(scope: SessionScope, path: string, title?: string): void
-  /** 显式在会话中央主槽打开已保存文件；无 controller/拒绝时 false，绝不静默降级。 */
-  openCentralFile(scope: SessionScope, path: string): boolean
-  /** 查询该会话是否正在显示中央编辑器；无 controller 时 false。 */
-  isCentralEditorActive(sessionId: string): boolean
-  /** 内部生命周期接缝：仅客户端入口安装/卸载，消费插件不得调用。 */
-  setCentralEditor(controller: {
-    openFile(scope: SessionScope, path: string): boolean
-    isActive(sessionId: string): boolean
-  } | undefined): void
 }
 
 /** openTab 的 seed（v0.12.0 起导出命名类型）。 */

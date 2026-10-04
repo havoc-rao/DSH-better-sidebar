@@ -353,12 +353,8 @@ export const api = {
     call<{ matches: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
-  /** Optional complete-text precondition; stale/unsafe bases return HTTP 409
-   * `fs-error` with a `conflict:` message. Omission keeps legacy overwrite. */
-  fsWrite: (scope: SessionScope, path: string, content: string, expectedContent?: string) =>
-    call<{ ok: true }>('fs.write', scopePayload(scope, {
-      path, content, ...(expectedContent === undefined ? {} : { expectedContent }),
-    })),
+  fsWrite: (scope: SessionScope, path: string, content: string) =>
+    call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
   /** Rename one tree row within its directory (single-segment name; the
    *  server refuses existing destinations, the workspace root, and — while
    *  the fence is armed — anything resolving outside the workspace). */
