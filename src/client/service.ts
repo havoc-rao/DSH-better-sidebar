@@ -29,7 +29,7 @@ import {
 import { baseName, extOf } from './paths.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { api, type GitStatusEntry, type GitStatusResult, type SessionScope } from './api.ts'
-import { openWorkspaceTerminal, updateTerminalSession } from './workspace-terminals.ts'
+import { openWorkspaceTerminal, resolveWorkspaceTerminalBinding, updateTerminalSession, workspaceTerminalViewId } from './workspace-terminals.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import type { TerminalProviderDescriptor } from './terminal-source.ts'
 import type { GitProviderDescriptor } from './git-source.ts'
@@ -850,6 +850,7 @@ export const SIDEBAR_FEATURES = [
   'gitCommitActions',
   'planDiff',
   'terminalSource',
+  'workspaceTerminalSource',
   'gitSource',
 ] as const
 
@@ -1156,23 +1157,30 @@ export function createBetterSidebarService(
     const targetSessionId = scope?.sessionId ?? store.getSnapshot().sessionId
     if (targetSessionId === undefined) return
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
-    // Only NEW ordinary terminals use workspace lifetime. Explicit identities
-    // remain the legacy/agent/provider seam; restored tabs are never migrated.
+    // New ordinary terminals use local or opt-in provider workspace lifetime.
+    // Explicit identities and legacy providers retain their original seam.
     if (seed.type === 'terminal' && seed.id === undefined && seed.meta === undefined) {
       const candidateId = `terminal:${typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`}`
       const cwd = scope?.cwd ?? sessionCwd?.(targetSessionId)
-      const remote = Array.from(terminalProviders.values()).some(provider => {
+      const remote = Array.from(terminalProviders.values()).find(provider => {
         try { return provider.match(targetSessionId, cwd, candidateId) } catch (error) {
           console.error('[dsh-better-sidebar] terminal provider match error:', error)
           return false
         }
       })
-      if (!remote) {
-        void api.workspaceTerminalCreate(targetSessionId, seed.title).then(info => {
-          openWorkspaceTerminal(store, targetSessionId, info)
+      if (remote === undefined || remote.createWorkspaceSource !== undefined) {
+        let binding: ReturnType<typeof resolveWorkspaceTerminalBinding>
+        try { binding = resolveWorkspaceTerminalBinding({ getTerminalProviders } as BetterSidebarService, targetSessionId, cwd, remote?.id, remote === undefined) }
+        catch (error) {
+          updateTerminalSession(store, targetSessionId, state => ({ ...state, bottomOpen: true,
+            workspaceTerminalError: error instanceof Error ? error.message : String(error) }))
+          return
+        }
+        void binding.source.create(seed.title).then(info => {
+          openWorkspaceTerminal(store, targetSessionId, info, binding.providerId)
           updateTerminalSession(store, targetSessionId, state => ({ ...state, workspaceTerminalError: undefined }))
-          safeCall(() => descriptor.onOpen?.({ id: `workspace-view:${info.terminalId}`, type: 'terminal', title: info.title,
-            meta: { workspaceTerminalId: info.terminalId } }, callbackScope))
+          safeCall(() => descriptor.onOpen?.({ id: workspaceTerminalViewId(info.terminalId, binding.providerId), type: 'terminal', title: info.title,
+            meta: { workspaceTerminalId: info.terminalId, ...(binding.providerId === undefined ? {} : { workspaceTerminalProviderId: binding.providerId }) } }, callbackScope))
         }).catch(error => {
           updateTerminalSession(store, targetSessionId, state => ({ ...state, bottomOpen: true,
             workspaceTerminalError: error instanceof Error ? error.message : String(error) }))

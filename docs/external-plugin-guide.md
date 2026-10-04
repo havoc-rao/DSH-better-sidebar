@@ -1408,6 +1408,7 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
     id: string
     match(sessionId: string, cwd: string | undefined, tabId: string): boolean
     createTransport(sessionId: string, cwd: string | undefined, tabId: string): TerminalTransport | undefined
+    createWorkspaceSource?(sessionId: string, cwd: string | undefined): WorkspaceTerminalSource | undefined
   }): () => void
   getTerminalProviders(): readonly TerminalProviderDescriptor[]
   ```
@@ -1417,13 +1418,35 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 - **本地回退与 workspace 终端**：新普通终端无 provider 认领时，服务异步创建 workspace 终端，以 `meta.workspaceTerminalId` 标识资源；视图使用本地 workspace WS 协议，绕过 provider 解析（不能将已有本地 PTY 因晚注册 provider 改接到远程机器）。既有未带该元数据的持久化终端仍使用历史 session/tab 本地路径。`agent:` tab（模型自有终端）与 `gb:`（全局共享终端窗口）由 provider 在 `match` 里自行拒绝——平台终端绝不允许被接管。普通 provider 终端继续通过 `src/client/builtins/tabs.tsx` 的 `TerminalTabTransport` 包装走同一解析面。
 - **消费方引导**：参考实现在 [dsh-remote](https://github.com/omdsh-dev/dsh-remote) 的 `terminalTunnel`（`lib/client.js`：`{ id, apiVersion, match(sessionId,cwd,tabId), createTransport(sessionId,cwd,tabId)→transport|null }` 注册点 + `makeRemoteTransport`）。`TerminalTransport` 词汇（`src/client/terminal-transport.ts`）：`{ kind, open(session) → handle }`；`handle = { input(data), resize(cols,rows), close(), park(), dispose(), retry?() }`；`session = { term: { write(data), cols, rows }, scope, tabId, cwd?, onOutput(data), onTitle?(title, info?), onConnected?(bool), onFatal?(reason|null), onEndpoint?(url) }`。类型与解析器从 `dsh-better-sidebar/client/index` 可导入（`TerminalProviderDescriptor` / `resolveTerminalSource` / `useTerminalTransport` / `TerminalTransport*`）。
 
-## Workspace 终端管理（本地终端）
+## Workspace 终端管理（本地与 Provider）
+
+### 远程管理槽位（feature `workspaceTerminalSource`）
+
+`TerminalProviderDescriptor` 可选声明同步工厂 `createWorkspaceSource(sessionId, cwd)`。消费方应先检查 `features.includes('workspaceTerminalSource')`。工厂返回：
+
+```ts
+interface WorkspaceTerminalSource {
+  create(title?: string): Promise<WorkspaceTerminalInfo>
+  list(signal?: AbortSignal): Promise<{ terminals: WorkspaceTerminalInfo[] }>
+  terminate(terminalId: string): Promise<unknown>
+  createTransport(terminalId: string): TerminalTransport
+}
+```
+
+- 管理页以 `terminal:workspace-management` 探测 `match`，首个命中的 provider 负责整个管理面；同步工厂抛错或能力缺失显示错误，**不回退本地镜像**。Provider 的 `match` 须同步识别已知绑定，缓存更新后通知注册表，不能用尚未预取到的缓存把已知远端会话判为本地。
+- 新建普通终端命中带该工厂的 provider 后，先 `source.create()`，再打开持有实例 ID 的视图；旧 provider 不带工厂时仍走原 transport，不自动迁移。
+- 页签持久化 `meta.workspaceTerminalProviderId` + `meta.workspaceTerminalId`。ID 是不透明非空字符串（允许 `term-*`），按 provider + ID 去重。已保存的远程身份只通过**同一 provider**复连；provider 缺席或不再授权时显示不可用，不能改接本地或另一 provider。既有本地实例仍绕过 provider。
+- `createTransport(existingId)` 只连接已存在进程，不创建 shell。managed transport 的 `close/park/dispose` 都只分离视图；只有 `terminate()` 明确结束进程。后台须自行保证 workspace/target 隔离、授权、配额、有界输出及卸载清理。
+- `TerminalTransportSession.onClosed?('exited'|'terminated'|'missing')` 用于结束/实例丢失状态，停止自动重连并提供重新启动；重启经同一 source 创建新 ID，只替换当前视图。`onFatal` 保留网络或权限错误，不可将越权当作重启许可。
+- source 与 binding 类型从 `dsh-better-sidebar/client` 导出。dsh-remote 的 tunnel 可透传此工厂，workbench 同时支持 tunnel 与 direct provider；不必 value-import 其他插件。
+
+### 本地后端
 
 新建本地终端独立于 session 的页签生命周期。右侧栏指南与底部工作台 `+` 新建菜单均提供「工作区终端」管理 tab（类型 ID `workspace-terminals`，每个承载面内按 session 单例），列表直接在 tab 内扩展展示。`openTab({type:'workspace-terminals'})` 或指定 `target:'right'` 时进入原生右侧栏；指定 `target:'bottom'` 时进入底部工作台，右侧栏不可用时也回退到底部。管理页内的「打开」仍将终端视图打开到底部工作台。同一 workspace 的 session B 可按需打开 A 创建的同一进程；关闭页签、切会话和刷新只断开视图，**只有明确的「结束终端」操作结束进程**。终端自行退出后可重新连接读取保留输出，不自动 spawn 新 shell。插件卸载和宿主重启不保证进程存活。
 
 - 管理页为自适应紧凑列表：标题/状态与辅助路径/来源分层，来源读宿主 `displayTitle`（未知时短 ID）。刷新保留现有列表，初次加载/空状态单独呈现；结束动作使用行内确认，可取消，窄面板自动换行，键盘焦点可见。视图隐藏或切 session 取消请求，不新增后台轮询。
 - `meta.workspaceTerminalId` 是本地终端资源引用，不是授权凭据；各 session 的页签可引用同一个稳定 ID。来源 session 仅作为创建记录，不拥有生命周期。
-- 新普通 `openTab({type:'terminal'})` 先检测 TerminalProvider；被认领的终端保留 provider 原生命周期，不调用本地 create。无人认领才异步建立本地资源，**workspace 终端总落插件底部工作台**（即使 seed 请求 `target:'right'`，不占宿主终端指南条目）。调用方不能假设打开后 PTY 已同步就绪，创建失败会在来源 session 的工作台显示。带显式 tab ID 或自定义 meta 的旧入口保持兼容，不自动迁移。
+- 新普通 `openTab({type:'terminal'})` 先检测 TerminalProvider；带管理工厂的 provider 使用其 workspace 生命周期；旧 provider 保留原生命周期，均不调用本地 create。无人认领才异步建立本地资源，**workspace 终端总落插件底部工作台**（即使 seed 请求 `target:'right'`，不占宿主终端指南条目）。调用方不能假设打开后 PTY 已同步就绪，创建失败会在来源 session 的工作台显示。带显式 tab ID 或自定义 meta 的旧入口保持兼容，不自动迁移。
 - 管理 HTTP 路由均为 `POST /sidebar/api/<method>`：`workspace-terminal.create`（`{sessionId,title?}`）、`workspace-terminal.list`（`{sessionId}` → `{terminals}`）、`workspace-terminal.terminate`（`{sessionId,terminalId}` → `{ok:true}`）。终端描述为 `{terminalId,title,cwd,createdBySessionId,createdAt,exited,exitCode?}`。
 - 连接：`/sidebar/ws/terminal?sessionId=<viewer>&terminalId=<id>`，仅附着已存在实例，不能借此创建。`terminal-exited` / `terminal-terminated`（1000）和拒绝连接（1008）都停止自动重连。视图区分自然退出与「被工作区终端管理结束」，提供显式「重新启动」：创建**新 terminalId** 并重新绑定当前页签，不复活旧进程，也不迁移其他视图；离线页签连接时发现 `terminal-not-found` 同样可新建。跨工作区拒绝不能当作重启许可。网络故障仍使用「重试连接」而不是新建进程。
 - 所有管理与连接请求经过既有 trust fence，并在服务端从真实 session header 解析 workspace；不信任请求 cwd。优先使用公开 workspace registry 的身份，缺失时使用当前宿主的 canonical 本地 root。**这不是远程 workspace 身份协议**，不会按远程路径偷偷创建本地 shell。

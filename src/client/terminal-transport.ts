@@ -39,6 +39,8 @@ export interface TerminalTransportSession {
   /** An unrecoverable failure → the view's fatal banner + retry button.
    *  A plain `null` reason clears the banner (a transport's retry uses it). */
   onFatal?(reason: string | null): void
+  /** Managed terminal finished/missing; stop reconnecting and offer restart. */
+  onClosed?(reason: 'exited' | 'terminated' | 'missing'): void
   /** The endpoint the current attempt targets (the fatal banner's URL line). */
   onEndpoint?(endpoint: string): void
 }
@@ -54,7 +56,7 @@ export interface TerminalTransport {
 export interface TerminalTransportHandle {
   input(data: string): void
   resize(cols: number, rows: number): void
-  /** The user closed the tab → kill the session immediately. */
+  /** Legacy: user closed the tab → kill. Managed workspace transport: detach only. */
   close(): void
   /** The user switched conversations (the tab stays open there) → keep the
    *  session alive for reattach. */
@@ -77,6 +79,7 @@ export interface TerminalViewProps {
   /** Absent → the built-in local pty WebSocket (byte for byte). Read ONCE
    *  at mount: pass a stable instance. */
   transport?: TerminalTransport
+  workspaceBinding?: import('./terminal-source.ts').WorkspaceTerminalBinding
   onTitleChange?: (title: string) => void
   visible?: boolean
   infoBar?: boolean

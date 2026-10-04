@@ -22,6 +22,21 @@
 import { useEffect, useMemo, useReducer } from 'react'
 import type { Context } from '../context-types.ts'
 import type { TerminalTransport } from './terminal-transport.ts'
+import type { WorkspaceTerminalInfo } from './api.ts'
+
+/** Managed process lifetime is independent of its views. All transport handle
+ * teardown methods detach only; terminate is the sole explicit kill operation. */
+export interface WorkspaceTerminalSource {
+  create(title?: string): Promise<WorkspaceTerminalInfo>
+  list(signal?: AbortSignal): Promise<{ terminals: WorkspaceTerminalInfo[] }>
+  terminate(terminalId: string): Promise<unknown>
+  createTransport(terminalId: string): TerminalTransport
+}
+
+export interface WorkspaceTerminalBinding {
+  providerId?: string
+  source: WorkspaceTerminalSource
+}
 
 /**
  * One registered terminal source provider (the registration descriptor).
@@ -60,6 +75,9 @@ export interface TerminalProviderDescriptor {
    *  is the recommended shape — one transport can own many tabs through
    *  its `open(session)` handles. */
   createTransport(sessionId: string, cwd: string | undefined, tabId: string): TerminalTransport | undefined
+  /** Optional managed-workspace backend (feature 'workspaceTerminalSource').
+   * Synchronous factory; a matched provider without it cannot use local management. */
+  createWorkspaceSource?(sessionId: string, cwd: string | undefined): WorkspaceTerminalSource | undefined
 }
 
 /**

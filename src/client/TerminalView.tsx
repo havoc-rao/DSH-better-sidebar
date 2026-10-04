@@ -144,6 +144,7 @@ export function TerminalView(props: {
   terminalId?: string
   store: SidebarStore
   transport?: TerminalTransport
+  workspaceBinding?: import('./terminal-source.ts').WorkspaceTerminalBinding
   /** Whether this tab is the visible active tab of the bottom workbench
    *  (Sidebar's renderTab: `state.bottomOpen && active`). Drives the
    *  open-focus behavior: a terminal opened in the bottom box takes keyboard
@@ -151,7 +152,7 @@ export function TerminalView(props: {
    *  → no auto-focus. */
   visible?: boolean
 }) {
-  const { ctx, scope, tabId, terminalId, store, transport, visible = false } = props
+  const { ctx, scope, tabId, terminalId, store, transport, workspaceBinding, visible = false } = props
   const hostRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
@@ -239,13 +240,13 @@ export function TerminalView(props: {
   }
 
   const restart = async (): Promise<void> => {
-    if (terminalId === undefined || transport !== undefined || restartPending.current) return
+    if (terminalId === undefined || (transport !== undefined && workspaceBinding === undefined) || restartPending.current) return
     const generation = mountGeneration.current
     restartPending.current = true
     setRestarting(true)
     setFatal(null)
     try {
-      await restartWorkspaceTerminal(store, scope.sessionId, tabId, terminalId)
+      await restartWorkspaceTerminal(store, scope.sessionId, tabId, terminalId, workspaceBinding)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       // Keep failures observable even when a session switch unmounted the view.
@@ -532,6 +533,7 @@ export function TerminalView(props: {
           if (connected) setFatal(null)
         },
         onFatal: (reason) => setFatal(reason),
+        onClosed: reason => { setConnected(false); setClosedReason(reason); setFatal(null) },
         onEndpoint: (endpoint) => setLastUrl(endpoint),
       })
       connectRef.current = () => {

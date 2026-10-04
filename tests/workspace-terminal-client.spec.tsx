@@ -11,7 +11,7 @@ import { act } from 'react-dom/test-utils'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import { createSidebarStore, allLeaves, closeTab, sanitizeState } from '../src/client/state.ts'
 import { api, type WorkspaceTerminalInfo } from '../src/client/api.ts'
-import { openWorkspaceTerminal, restartWorkspaceTerminal, workspaceTerminalIdOf } from '../src/client/workspace-terminals.ts'
+import { openWorkspaceTerminal, restartWorkspaceTerminal, resolveWorkspaceTerminalBinding, workspaceTerminalIdOf, workspaceTerminalProviderOf } from '../src/client/workspace-terminals.ts'
 import { WorkspaceTerminals } from '../src/client/WorkspaceTerminals.tsx'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 setupReactAct()
@@ -26,6 +26,83 @@ function fixture() {
   return { store, service }
 }
 describe('workspace terminal client', () => {
+  function remoteFixture() {
+    const fixtureResult = fixture()
+    const remoteInfo = { ...info, terminalId: 'term-remote', cwd: '/remote' }
+    const source = {
+      create: vi.fn(async () => remoteInfo),
+      list: vi.fn(async (_signal?: AbortSignal) => ({ terminals: [remoteInfo] })),
+      terminate: vi.fn(async (_id: string) => ({ ok: true })),
+      createTransport: vi.fn(() => ({ kind: 'remote-managed', open: () => ({ input() {}, resize() {}, close() {}, park() {}, dispose() {} }) })),
+    }
+    const off = fixtureResult.service.registerTerminalProvider({ id: 'remote', match: () => true,
+      createTransport: () => undefined, createWorkspaceSource: () => source })
+    return { ...fixtureResult, source, remoteInfo, off }
+  }
+  it('creates provider-managed resources with stable backend identity and opaque ids', async () => {
+    const { store, service, source, remoteInfo } = remoteFixture()
+    const local = vi.spyOn(api, 'workspaceTerminalCreate')
+    service.openTab({ type: 'terminal', target: 'bottom' })
+    await Promise.resolve(); await Promise.resolve()
+    expect(local).not.toHaveBeenCalled()
+    expect(source.create).toHaveBeenCalledOnce()
+    expect(workspaceTerminalIdOf(tabs(store)[0]!)).toBe(remoteInfo.terminalId)
+    expect(workspaceTerminalProviderOf(tabs(store)[0]!)).toBe('remote')
+    openWorkspaceTerminal(store, 'A', remoteInfo, 'other')
+    expect(tabs(store)).toHaveLength(2)
+  })
+  it('lists, opens and explicitly terminates through the captured remote backend', async () => {
+    const { store, service, source, remoteInfo } = remoteFixture()
+    const localList = vi.spyOn(api, 'workspaceTerminalList')
+    const localKill = vi.spyOn(api, 'workspaceTerminalTerminate')
+    const ctx = { betterSidebar: service } as Context
+    const root = renderRoot(createElement(WorkspaceTerminals, { sessionId: 'A', store, ctx }))
+    await act(async () => {})
+    expect(source.list).toHaveBeenCalledWith(expect.any(AbortSignal))
+    expect(localList).not.toHaveBeenCalled()
+    const open = root.container.querySelector<HTMLButtonElement>(`button[aria-label="${t('workspaceTerminalOpen')} · shared"]`)!
+    act(() => open.click())
+    expect(workspaceTerminalProviderOf(tabs(store)[0]!)).toBe('remote')
+    act(() => root.container.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click())
+    await act(async () => { root.container.querySelector<HTMLButtonElement>('[role="group"] button')!.click() })
+    expect(source.terminate).toHaveBeenCalledWith(remoteInfo.terminalId)
+    expect(localKill).not.toHaveBeenCalled()
+    root.unmount()
+  })
+  it('fails closed for legacy providers and saved providers that disappeared', async () => {
+    const { store, service } = fixture()
+    service.registerTerminalProvider({ id: 'legacy-remote', match: () => true, createTransport: () => undefined })
+    expect(() => resolveWorkspaceTerminalBinding(service, 'A')).toThrow('management unavailable')
+    expect(() => resolveWorkspaceTerminalBinding(service, 'A', undefined, 'gone')).toThrow('provider unavailable')
+    const local = vi.spyOn(api, 'workspaceTerminalList')
+    const root = renderRoot(createElement(WorkspaceTerminals, { sessionId: 'A', store, ctx: { betterSidebar: service } as Context }))
+    await act(async () => {})
+    expect(local).not.toHaveBeenCalled()
+    expect(root.container.querySelector('[role="alert"]')?.textContent).toContain('legacy-remote')
+    root.unmount()
+  })
+  it('does not replace an already remote catalog with local records after provider unload', async () => {
+    const { store, service, off } = remoteFixture()
+    const local = vi.spyOn(api, 'workspaceTerminalList')
+    const root = renderRoot(createElement(WorkspaceTerminals, { sessionId: 'A', store, ctx: { betterSidebar: service } as Context }))
+    await act(async () => {})
+    expect(root.container.querySelectorAll('[role="listitem"]')).toHaveLength(1)
+    await act(async () => { off() })
+    expect(local).not.toHaveBeenCalled()
+    expect(root.container.querySelector('[role="alert"]')?.textContent).toContain('provider unavailable')
+    root.unmount()
+  })
+  it('restarts provider views through the same backend, never local', async () => {
+    const { store, service, source, remoteInfo } = remoteFixture()
+    openWorkspaceTerminal(store, 'A', remoteInfo, 'remote')
+    const local = vi.spyOn(api, 'workspaceTerminalCreate')
+    source.create.mockResolvedValue({ ...remoteInfo, terminalId: 'term-fresh' })
+    const binding = resolveWorkspaceTerminalBinding(service, 'A', undefined, 'remote')
+    await restartWorkspaceTerminal(store, 'A', tabs(store)[0]!.id, remoteInfo.terminalId, binding)
+    expect(workspaceTerminalIdOf(tabs(store)[0]!)).toBe('term-fresh')
+    expect(workspaceTerminalProviderOf(tabs(store)[0]!)).toBe('remote')
+    expect(local).not.toHaveBeenCalled()
+  })
   it('opens the inline manager from the real TabBar + menu', async () => {
     const { store, service } = fixture()
     const ctx = { get: (name: string) => name === 'betterSidebar' ? service : undefined } as Context

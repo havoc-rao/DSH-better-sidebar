@@ -49,6 +49,33 @@ function mount(terminalId?: string, tabId = 'workspace-view:terminal:abc') {
   return { ...rendered, store, tabId, socket: Socket.instances[0]! }
 }
 describe('workspace terminal view lifetime', () => {
+  it('managed remote views only dispose on tab close and expose remote restart on settled callbacks', async () => {
+    const store = createSidebarStore(); store.setSession('B')
+    const tabId = 'workspace-view:remote:term-old'
+    store.reduce(state => openTabInBottomPane(state, { id: tabId, type: 'terminal', title: 'remote',
+      meta: { workspaceTerminalId: 'term-old', workspaceTerminalProviderId: 'remote' } }))
+    const handle = { input: vi.fn(), resize: vi.fn(), close: vi.fn(), park: vi.fn(), dispose: vi.fn() }
+    let session!: import('../src/client/terminal-transport.ts').TerminalTransportSession
+    const transport = { kind: 'remote-managed', open: vi.fn((value: typeof session) => { session = value; return handle }) }
+    const source = { create: vi.fn(async () => ({ ...replacement, terminalId: 'term-new' })),
+      list: vi.fn(async () => ({ terminals: [] })), terminate: vi.fn(async () => ({})), createTransport: () => transport }
+    const local = vi.spyOn(api, 'workspaceTerminalCreate')
+    const root = renderRoot(createElement(TerminalView, { ctx: {} as Context, scope: { sessionId: 'B' },
+      store, tabId, terminalId: 'term-old', transport, workspaceBinding: { providerId: 'remote', source } }))
+    expect(Socket.instances).toHaveLength(0)
+    expect(session.terminalId).toBe('term-old')
+    act(() => session.onClosed?.('exited'))
+    expect(root.container.textContent).toContain(t('workspaceTerminalExited'))
+    await act(async () => { root.container.querySelector<HTMLButtonElement>('button')!.click() })
+    expect(source.create).toHaveBeenCalledOnce()
+    expect(local).not.toHaveBeenCalled()
+    expect(tabs(store)[0]!.meta).toMatchObject({ workspaceTerminalId: 'term-new', workspaceTerminalProviderId: 'remote' })
+    act(() => store.reduce(state => closeTab(state, allLeaves(state.bottomSplits)[0]!.id, tabId)))
+    root.unmount()
+    expect(handle.dispose).toHaveBeenCalledOnce()
+    expect(handle.close).not.toHaveBeenCalled(); expect(handle.park).not.toHaveBeenCalled()
+    expect(source.terminate).not.toHaveBeenCalled()
+  })
   it('attaches with viewer and terminalId, never legacy tab/cwd, and tab close only detaches', () => {
     const view = mount('terminal:abc')
     const url = new URL(view.socket.url)

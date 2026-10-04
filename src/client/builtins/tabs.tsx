@@ -31,10 +31,10 @@ import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideCh
 import { api } from '../api.ts'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import { useTerminalTransport } from '../terminal-source.ts'
-import { workspaceTerminalIdOf } from '../workspace-terminals.ts'
+import { resolveWorkspaceTerminalBinding, terminalServiceOf, workspaceTerminalIdOf, workspaceTerminalProviderOf } from '../workspace-terminals.ts'
 import { WorkspaceTerminals } from '../WorkspaceTerminals.tsx'
 import type { TerminalTransport } from '../terminal-transport.ts'
-import type { ComponentType, ReactNode } from 'react'
+import { useEffect, useMemo, useReducer, type ComponentType, type ReactNode } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
 import type { TabComponentProps, TabDescriptor } from '../service.ts'
@@ -67,15 +67,36 @@ const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
 function TerminalTabTransport(props: TabComponentProps): ReactNode {
   const { ctx, tab, scope, store, visible } = props
   const terminalId = workspaceTerminalIdOf(tab)
-  const transport = useTerminalTransport(ctx, terminalId === undefined ? scope?.sessionId : undefined, scope?.cwd, tab.id)
+  const legacyTransport = useTerminalTransport(ctx, terminalId === undefined ? scope?.sessionId : undefined, scope?.cwd, tab.id)
+  const providerId = workspaceTerminalProviderOf(tab)
+  const service = terminalServiceOf(ctx)
+  const [revision, bump] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => service?.subscribe(bump), [service])
+  const managed = useMemo(() => {
+    if (terminalId === undefined || providerId === undefined) return undefined
+    try {
+      const binding = resolveWorkspaceTerminalBinding(service, scope.sessionId, scope.cwd, providerId)
+      return { binding, transport: binding.source.createTransport(terminalId) }
+    } catch (error) {
+      // Restored remote references must NEVER fall through to the local WS.
+      const message = error instanceof Error ? error.message : String(error)
+      const transport: TerminalTransport = { kind: 'workspace-provider-unavailable', open: session => {
+        session.onFatal?.(message)
+        return { input() {}, resize() {}, close() {}, park() {}, dispose() {} }
+      } }
+      return { transport }
+    }
+  }, [service, scope.sessionId, scope.cwd, terminalId, providerId, revision])
   return (
     <LazyTerminal
+      key={providerId === undefined ? tab.id : `${tab.id}:${terminalId}:${managed?.transport.kind}`}
       ctx={ctx}
       scope={scope}
       store={store}
       tabId={tab.id}
       terminalId={terminalId}
-      transport={transport}
+      transport={managed?.transport ?? legacyTransport}
+      workspaceBinding={managed?.binding}
       visible={visible}
     />
   )
@@ -92,6 +113,7 @@ interface TerminalViewProps {
    *  resolved for this terminal tab; absent → TerminalView's built-in
    *  local pty WebSocket (byte for byte). */
   transport?: TerminalTransport
+  workspaceBinding?: import('../terminal-source.ts').WorkspaceTerminalBinding
   /** Whether this tab is the visible active tab of the bottom workbench
    *  (Sidebar's renderTab: `state.bottomOpen && active`): the view focuses
    *  xterm on open — a terminal opened in the bottom box takes keyboard

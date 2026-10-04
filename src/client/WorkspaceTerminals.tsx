@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react'
 import { IconInfoOutlineRegular, IconRefreshOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { api, type WorkspaceTerminalInfo } from './api.ts'
+import type { WorkspaceTerminalInfo } from './api.ts'
 import type { SidebarStore } from './state.ts'
 import { terminalTabIcon } from './builtins/tab-icons.tsx'
-import { openWorkspaceTerminal, refreshWorkspaceTerminalTabs, updateTerminalSession } from './workspace-terminals.ts'
+import { openWorkspaceTerminal, refreshWorkspaceTerminalTabs, resolveWorkspaceTerminalBinding, terminalServiceOf, updateTerminalSession } from './workspace-terminals.ts'
 import { t } from './locales.ts'
 import css from './WorkspaceTerminals.module.css'
 
@@ -22,8 +22,20 @@ export function WorkspaceTerminals({ sessionId, store, visible = true, ctx }: { 
     useCallback((listener: () => void) => sessions?.subscribe(listener) ?? (() => {}), [sessions]),
     useCallback(() => sessions?.getSnapshot(), [sessions]),
   )
-  const [catalog, setCatalog] = useState<{ sessionId: string; store: SidebarStore; items: WorkspaceTerminalInfo[] } | null>(null)
-  const items = visible && catalog?.sessionId === sessionId && catalog.store === store ? catalog.items : []
+  const service = terminalServiceOf(ctx)
+  const [registry, bumpRegistry] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => service?.subscribe(bumpRegistry), [service])
+  const cwd = summaries?.byId[sessionId]?.cwd
+  const knownOwners = useRef(new Map<string, string>())
+  const backend = useMemo(() => {
+    try {
+      const binding = resolveWorkspaceTerminalBinding(service, sessionId, cwd, knownOwners.current.get(sessionId))
+      if (binding.providerId !== undefined) knownOwners.current.set(sessionId, binding.providerId)
+      return { binding }
+    } catch (error) { return { error } }
+  }, [service, sessionId, cwd, registry])
+  const [catalog, setCatalog] = useState<{ sessionId: string; store: SidebarStore; backend: typeof backend; items: WorkspaceTerminalInfo[] } | null>(null)
+  const items = visible && catalog?.sessionId === sessionId && catalog.store === store && catalog.backend === backend ? catalog.items : []
   const [loading, setLoading] = useState(false)
   const [revision, setRevision] = useState(0)
   const [pending, setPending] = useState<string | null>(null)
@@ -53,32 +65,37 @@ export function WorkspaceTerminals({ sessionId, store, visible = true, ctx }: { 
     setPending(null)
     setConfirmId(null)
     return () => { scope.current = current + 1 }
-  }, [sessionId, store, visible])
+  }, [sessionId, store, visible, backend])
   useEffect(() => {
     const current = ++generation.current
     if (!visible) { loadingRef.current = false; setLoading(false); return }
     const controller = new AbortController()
     loadingRef.current = true
     setLoading(true)
-    void api.workspaceTerminalList(sessionId, controller.signal).then(({ terminals }) => {
+    let request: Promise<{ terminals: WorkspaceTerminalInfo[] }>
+    try {
+      if (backend.binding === undefined) throw backend.error
+      request = backend.binding.source.list(controller.signal)
+    } catch (error) { request = Promise.reject(error) }
+    void request.then(({ terminals }) => {
       if (controller.signal.aborted || current !== generation.current) return
-      updateTerminalSession(store, sessionId, state => ({ ...refreshWorkspaceTerminalTabs(state, terminals), workspaceTerminalError: undefined }))
-      setCatalog({ sessionId, store, items: terminals })
+      updateTerminalSession(store, sessionId, state => ({ ...refreshWorkspaceTerminalTabs(state, terminals, backend.binding?.providerId), workspaceTerminalError: undefined }))
+      setCatalog({ sessionId, store, backend, items: terminals })
     }).catch(error => {
       if (!controller.signal.aborted && current === generation.current) requestError(error, sessionId)
     }).finally(() => {
       if (!controller.signal.aborted && current === generation.current) { loadingRef.current = false; setLoading(false) }
     })
     return () => { controller.abort(); generation.current = current + 1 }
-  }, [sessionId, store, visible, revision, requestError])
+  }, [sessionId, store, visible, revision, requestError, backend])
   const terminate = (info: WorkspaceTerminalInfo) => {
-    if (pendingRef.current !== null || loadingRef.current) return
+    if (pendingRef.current !== null || loadingRef.current || backend.binding === undefined) return
     const current = scope.current
     const sourceSession = sessionId
     pendingRef.current = info.terminalId
     setPending(info.terminalId)
     setConfirmId(null)
-    void api.workspaceTerminalTerminate(sourceSession, info.terminalId).then(() => {
+    void backend.binding.source.terminate(info.terminalId).then(() => {
       if (current === scope.current) setRevision(value => value + 1)
     }).catch(error => requestError(error, sourceSession)).finally(() => {
       if (current === scope.current) { pendingRef.current = null; setPending(null) }
@@ -98,7 +115,7 @@ export function WorkspaceTerminals({ sessionId, store, visible = true, ctx }: { 
             <IconInfoOutlineRegular size={14} />
           </button>
         </Tooltip>
-        <span className={css.count}>{catalog?.sessionId === sessionId && catalog.store === store ? items.length : '—'}</span>
+        <span className={css.count}>{catalog?.sessionId === sessionId && catalog.store === store && catalog.backend === backend ? items.length : '—'}</span>
       </div>
       <div className={css.summary}>
         {running > 0 && <span><i className={css.statDot} aria-hidden="true" />{running} {t('workspaceTerminalRunning')}</span>}
@@ -131,7 +148,7 @@ export function WorkspaceTerminals({ sessionId, store, visible = true, ctx }: { 
                 terminateTrigger.current = event.currentTarget
                 setConfirmId(info.terminalId)
               }}>{pending === info.terminalId ? t('loading') : t('workspaceTerminalTerminate')}</button>
-            <button className={css.open} type="button" disabled={pending !== null} aria-label={`${t('workspaceTerminalOpen')} · ${info.title}`} onClick={() => { setConfirmId(null); openWorkspaceTerminal(store, sessionId, info) }}>{t('workspaceTerminalOpen')}</button>
+            <button className={css.open} type="button" disabled={pending !== null} aria-label={`${t('workspaceTerminalOpen')} · ${info.title}`} onClick={() => { setConfirmId(null); openWorkspaceTerminal(store, sessionId, info, backend.binding?.providerId) }}>{t('workspaceTerminalOpen')}</button>
           </div>
           {confirmId === info.terminalId && <div id={confirmationId} className={css.confirmation} role="group" aria-label={t('workspaceTerminalTerminate')}>
             <div className={css.confirmText}><strong>{t('workspaceTerminalTerminate')} · {info.title}</strong><span>{t('workspaceTerminalTerminateConfirm')}</span></div>
