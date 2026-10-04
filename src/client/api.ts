@@ -397,6 +397,9 @@ export const api = {
     call<{ ok: true }>('git.unstage', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}) })),
   gitCommit: (scope: SessionScope, message: string, worktree?: string) =>
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
+  /** Ordinary push only; the host leaves remote/upstream setup to the user. */
+  gitPush: (scope: SessionScope, worktree?: string) =>
+    call<{ ok: true }>('git.push', gitPayload(scope, worktree, {})),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>

@@ -227,7 +227,37 @@
   background: var(--dsw-alias-bg-base);
 }
 .commitRow { display: flex; align-items: center; gap: 6px; }
-.commitInput { flex: 1; min-width: 0; }
+.commitRow > :not(.commitInput) { flex: none; }
+.commitInput { flex: 1; width: 0; min-width: 0; }
+.gitMoreMenu { max-width: min(360px, calc(100vw - 24px)); }
+.gitMoreMenu [data-better-sidebar-git-action-slot] { display: flex; flex-direction: column; gap: 4px; }
+.gitMoreMenu .gitCommitActionBoundary { max-width: 100%; }
+/* Public Git action label protocol: optional trailing provider subtitle/tag.
+   It is content, never a keyboard shortcut; consumers need no CSS import. */
+.gitMoreMenu [data-better-sidebar-git-action-label] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.gitMoreMenu [data-better-sidebar-git-action-title] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gitMoreMenu [data-better-sidebar-git-action-subtitle] {
+  flex: none;
+  margin-inline-start: auto;
+  padding: 1px 5px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  white-space: nowrap;
+}
 
 /* ── History ───────────────────────────────────────────────────────────── */
 

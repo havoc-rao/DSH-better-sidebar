@@ -231,6 +231,21 @@ describe('skin contract: the plugin owns no color of its own', () => {
     expect(block).not.toContain('--dsw-alias-bg-l2')
   })
 
+  it('Git More exposes a token-only trailing subtitle/tag without taking title space', () => {
+    const styles = readFileSync(resolve(ROOT, 'src/client/changes/changes.module.css'), 'utf8')
+    const label = /\[data-better-sidebar-git-action-label\] \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    const title = /\[data-better-sidebar-git-action-title\] \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    const subtitle = /\[data-better-sidebar-git-action-subtitle\] \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    expect(label).toContain('width: 100%')
+    expect(label).toContain('display: flex')
+    expect(title).toContain('flex: 1')
+    expect(title).toContain('text-overflow: ellipsis')
+    expect(subtitle).toContain('flex: none')
+    expect(subtitle).toContain('margin-inline-start: auto')
+    expect(subtitle).toContain('var(--dsw-alias-label-secondary)')
+    expect(subtitle).toContain('var(--dsw-font-xxxs-11)')
+  })
+
   it('no icon dataset is shipped as a lazy chunk', () => {
     const chunkDir = resolve(ROOT, 'src/client/chunks')
     const chunks = readdirSync(chunkDir).filter(name => /\.tsx?$/.test(name))

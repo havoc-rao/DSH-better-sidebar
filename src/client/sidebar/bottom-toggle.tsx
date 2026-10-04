@@ -17,6 +17,8 @@
 import type { Context } from '../../context-types.ts'
 import type { SidebarStore } from '../state.ts'
 import { BottomDockToggle } from '../Sidebar.tsx'
+import { GitActionSlotBridge } from '../changes/git-action-slot.tsx'
+import type { GitActionSlotRenderProps } from '../changes/git-action-slot.tsx'
 
 /** Register the header toggle; returns the disposer. */
 export function registerBottomToggle(ctx: Context, store: SidebarStore): () => void {
@@ -25,5 +27,10 @@ export function registerBottomToggle(ctx: Context, store: SidebarStore): () => v
     id: 'dsh-better-sidebar:bottom-toggle',
     order: 10,
     registrant: 'dsh-better-sidebar',
-  }, () => <BottomDockToggle store={store} />))
+    // One declaration per plugin registration, never one per mounted lens.
+    children: { 'betterSidebar.git.actions': { kind: 'list', scope: 'root' } },
+  }, ({ renderSlot }: GitActionSlotRenderProps) => <>
+    <BottomDockToggle store={store} />
+    <GitActionSlotBridge renderSlot={renderSlot} />
+  </>))
 }

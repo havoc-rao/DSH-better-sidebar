@@ -435,6 +435,12 @@ export async function commit(cwd: string, message: string, selected?: string): P
   await runGit(await repoRoot(cwd, selected), ['commit', '-m', message])
 }
 
+/** Push using the user's existing remote/upstream configuration. No force,
+ * refspec, or upstream setup: Git's ordinary safety checks remain in force. */
+export async function push(cwd: string, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['push'])
+}
+
 /** Branch names (current first). */
 export async function branches(cwd: string, selected?: string): Promise<{ current: string; names: string[] }> {
   const root = await repoRoot(cwd, selected)

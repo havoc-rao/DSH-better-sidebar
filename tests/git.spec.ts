@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
-import { parseLogLines, log, parsePorcelainZ, repoRoots, status, type GitLogPage } from '../src/git.ts'
+import { parseLogLines, log, parsePorcelainZ, push, repoRoots, resolveWorktree, status, type GitLogPage } from '../src/git.ts'
 
 const execFileAsync = promisify(execFile)
 const normalizePath = (path: string): string => path.replaceAll('\\', '/')
@@ -269,6 +269,92 @@ describe('git parsing', () => {
   it('parses an empty or junk diff into no files', () => {
     expect(parseUnifiedDiff('').files).toEqual([])
     expect(parseUnifiedDiff('no diff here\n').files).toEqual([])
+  })
+})
+
+describe('git.push (local bare remote only)', () => {
+  async function withRemote(fn: (ctx: {
+    workspace: string
+    root: string
+    remote: string
+    git: (args: string[], cwd?: string) => Promise<string>
+  }) => Promise<void>): Promise<void> {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-git-push-'))
+    const root = join(workspace, 'repo')
+    const remote = join(workspace, 'remote.git')
+    const git = async (args: string[], cwd = root): Promise<string> =>
+      (await execFileAsync('git', ['-C', cwd, ...args])).stdout.trim()
+    try {
+      await mkdir(root)
+      await git(['init', '-b', 'main'])
+      await git(['config', 'user.name', 'Test'])
+      await git(['config', 'user.email', 't@example.com'])
+      // Pin ordinary push semantics, independent of the developer's globals.
+      await git(['config', 'push.default', 'simple'])
+      await git(['config', 'push.autoSetupRemote', 'false'])
+      await git(['commit', '--allow-empty', '-m', 'base'])
+      await git(['init', '--bare', remote], workspace)
+      await git(['remote', 'add', 'origin', remote])
+      await fn({ workspace, root, remote, git })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  }
+
+  it('pushes the selected repository with an existing upstream', async () => {
+    await withRemote(async ({ workspace, root, remote, git }) => {
+      await git(['push', '-u', 'origin', 'main'])
+      await git(['commit', '--allow-empty', '-m', 'next'])
+      const tip = await git(['rev-parse', 'HEAD'])
+      await expect(push(workspace, canonical(root))).resolves.toBeUndefined()
+      expect(await git(['rev-parse', 'refs/heads/main'], remote)).toBe(tip)
+      expect(await git(['config', '--get', 'branch.main.remote'])).toBe('origin')
+    })
+  })
+
+  it('fails without an upstream instead of configuring or creating one', async () => {
+    await withRemote(async ({ root, remote, git }) => {
+      await expect(push(root)).rejects.toMatchObject({ code: 'git-error', command: 'push' })
+      expect(await git(['for-each-ref', '--format=%(refname)', 'refs/heads'], remote)).toBe('')
+      await expect(git(['config', '--get', 'branch.main.remote'])).rejects.toThrow()
+      await expect(git(['config', '--get', 'branch.main.merge'])).rejects.toThrow()
+    })
+  })
+
+  it('rejects a non-fast-forward update without changing the remote tip', async () => {
+    await withRemote(async ({ root, remote, git }) => {
+      const base = await git(['rev-parse', 'HEAD'])
+      await git(['push', '-u', 'origin', 'main'])
+      await git(['commit', '--allow-empty', '-m', 'remote tip'])
+      await push(root)
+      const remoteTip = await git(['rev-parse', 'refs/heads/main'], remote)
+      await git(['reset', '--hard', base])
+      await git(['commit', '--allow-empty', '-m', 'divergent local tip'])
+      await expect(push(root)).rejects.toMatchObject({ code: 'git-error', command: 'push' })
+      expect(await git(['rev-parse', 'refs/heads/main'], remote)).toBe(remoteTip)
+    })
+  })
+
+  it('pushes an allowlisted linked worktree and rejects an unrelated target', async () => {
+    await withRemote(async ({ workspace, root, remote, git }) => {
+      await git(['push', '-u', 'origin', 'main'])
+      const linked = join(workspace, 'linked')
+      await git(['worktree', 'add', '-b', 'topic', linked])
+      await git(['push', '-u', 'origin', 'topic'], linked)
+      await git(['commit', '--allow-empty', '-m', 'linked tip'], linked)
+      const tip = await git(['rev-parse', 'HEAD'], linked)
+      const mainTip = await git(['rev-parse', 'refs/heads/main'], remote)
+      await push(await resolveWorktree(root, canonical(linked)))
+      expect(await git(['rev-parse', 'refs/heads/topic'], remote)).toBe(tip)
+      expect(await git(['rev-parse', 'refs/heads/main'], remote)).toBe(mainTip)
+      const unrelated = join(workspace, 'unrelated')
+      await mkdir(unrelated)
+      await git(['init'], unrelated)
+      // This is the same target-resolution seam used by the host Git routes.
+      await expect(resolveWorktree(root, unrelated).then(target => push(target)))
+        .rejects.toMatchObject({ code: 'git-worktree' })
+      expect(await git(['rev-parse', 'refs/heads/topic'], remote)).toBe(tip)
+    })
   })
 })
 

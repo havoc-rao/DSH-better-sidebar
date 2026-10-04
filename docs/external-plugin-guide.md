@@ -1034,7 +1034,7 @@ interface DesktopShellBridge {
 ### 7.2 Git 提交区接缝 + gitGraph 服务消费 + 计划 diff 预览（v0.20.x，features 含 `gitCommitActions` / `planDiff`）
 
 外部插件（例如专用提交 Agent）在「Git 视角」提交区加自己的按钮、并把任意 patch 当 diff
-预览，走这两个**纯增量**接缝。未注册任何插件时提交区与 diff 行为与之前完全一致。
+预览，走这两个扩展接缝。Git 操作区默认仅展示 Commit / More，Push 收在 More 内，diff 行为不变。
 
 #### 7.2.1 提交区动作（feature `gitCommitActions`）
 
@@ -1066,9 +1066,15 @@ getGitCommitActions(): readonly GitCommitActionDescriptor[]              // 注�
 getGitCommitTarget(scope?: SessionScope): GitCommitTarget | undefined   // 时点读
 ```
 
-- **渲染位置**：Git 视角提交行（`src/client/changes/GitLens.tsx` 的 `css.gitCommit`）内、
-  内置 Commit 按钮**之后**；外层 `role="group"` + `aria-label`（i18n 键 `gitCommitActions`）。
-  组件自带控件（图标 / 文案 / disabled），宿主只负责位置与生命周期。
+- **渲染位置**：Git 视角消息输入框独占一行，下方默认**仅 Commit / More 两个按钮**。
+  Push、所有 `registerGitCommitAction` 扩展和 DSH slot 动作全部放在 More 菜单内，
+  不根据数量额外露出按钮；不解析插件 DOM 或代点按钮。组件自带控件（图标 / 文案 / disabled）。
+  More 使用宿主 portaled Menu，避免滚动区域裁剪；窄屏操作行允许换行。
+- **内置操作**：Commit 只提交已暂存内容，空消息 / 无暂存 / busy 下按钮和 Ctrl/Cmd+Enter
+  同样不可用。Push 仅普通 `git push`，不 force、不自动设 upstream；错误在操作栏显示。
+  More 提供「推送」「提交并推送」「全部暂存」「全部取消暂存」。提交并推送中 commit 成功立即清草稿，
+  后续 push 失败不会重做提交。所有内置操作复用当前 session / repoRoot / worktree 与互斥锁。
+  `GitDataSource.gitPush?` 是可选能力；匹配的远程 provider 未提供时禁用 Push，**不回退本地**。
 - **顺序与门槛**：`order` 升序、同序注册序；`available(target) === false` 跳过，`available`
   抛错记 console.error 并跳过。每个动作各自套 `RenderBoundary`——组件渲染抛错只显示一条
   内联错误条，提交行与兄弟动作照常。
@@ -1080,6 +1086,53 @@ getGitCommitTarget(scope?: SessionScope): GitCommitTarget | undefined   // 时�
   GitLens 卸载即清掉自己的 target。
 - **边界**：better-sidebar 只提供接缝与「用户正在看的 worktree」这一事实，**不**存业务状态、
   **不**建会话、**不**跑计划侧 git；这些都归消费插件。
+
+##### DSH 原生 action slot（推荐新插件使用）
+
+`betterSidebar.git.actions` 是 **list / root** 槽，扩展显示在 More 菜单内。
+槽由 better-sidebar 的 header entry 声明一次，授权 renderer 通过 portal 支持原生侧栏和
+独立 React root 的底部工作台。不要每个 GitLens 自行声明、不要从 DOM 获取当前目标。
+root scope 是刻意的：真实会话来自 `props.scope`，不能借 header 的 sessionId 推断。
+
+```tsx
+import type { GitActionSlotProps } from 'dsh-better-sidebar/client/service'
+import { MenuItemButton } from '@deepseek-ai/dsh-client-ui-primitives'
+
+// type-only import 也载入 SlotMap 的声明增强；运行时跨插件不 import。
+ctx.slots.inject('betterSidebar.git.actions', () => ctx.slots.register({
+  name: 'betterSidebar.git.actions',
+  id: 'my-plugin:git-action',
+  order: 100,
+}, (props: GitActionSlotProps) => (
+  <MenuItemButton disabled={props.busy} onSelect={() => {
+    props.close()
+    void props.runAction(() => myGitAction(props.scope, props.repoRoot, props.worktree))
+  }}>
+    <span data-better-sidebar-git-action-label="">
+      <span data-better-sidebar-git-action-title="">My action</span>
+      <span data-better-sidebar-git-action-subtitle="">agent</span>
+    </span>
+  </MenuItemButton>
+)))
+```
+
+`GitActionSlotProps` 包含全部 `GitCommitTarget` 字段，以及 `service?`、`commitMessage`、
+`setCommitMessage(value)`、`busy`、`runAction(action)`、`refresh()`、`close()`。
+`runAction` 与内置按钮共享互斥、错误行和成功后刷新；失败会被捕获并显示，Promise 不抛回插件。
+**可选右侧 subtitle/tag**：菜单项 children 使用上例的公共 `data-better-sidebar-git-action-label`
+容器，其中 `data-better-sidebar-git-action-title` 是左侧主标题、
+`data-better-sidebar-git-action-subtitle` 是右侧非交互标签（例如 `agent`）。
+宿主提供满宽 flex、长标题省略和主题令牌 badge 样式，插件无需导入 CSS；不需要 tag 时
+省略 subtitle span 即可。subtitle 是身份提示，不使用 `shortcut`（它只表示真实快捷键），
+也不要嵌套可点击按钮；标签文本保留在可访问名中。
+
+消费组件用 `MenuItemButton` 或遵循 `role="menuitem"` 的按钮，保持宿主菜单键盘导航；
+门槛不符可 return null，自带异步逻辑须尊重 busy，动作执行时使用当次 props 的 scope/worktree。
+插件 id 必须唯一、order 决定槽内顺序；`ctx.slots.inject` 的生命周期返回 disposer，
+父槽卸载后注销、重载后重注册。槽内动作与旧 registry 不应重复注册同一业务操作。
+旧 registry 与新 slot 动作统一在 More（均不占常用按钮位）。
+菜单关闭时扩展组件会卸载：打开对话框等持续 UI 时，须把 UI 状态及其渲染放在独立、
+持久的宿主组件中，而不能把 Dialog 放在该菜单 action 组件内。
 
 #### 7.2.2 计划 diff（feature `planDiff`）
 
@@ -1507,7 +1560,7 @@ git 数据面注入槽位（v0.23.0+，本构建 `0.23.0-mainslot.1`）：允许
 
 - **features 门**：`features` 含 `'gitSource'`；消费插件注册前先 `features.includes('gitSource')` 探测。
 - **解析语义**：注册顺序 first-match——`match(sessionId, cwd)` 逐字透传；`createSource` 返回 `undefined`（按会话拒接）或抛错 → 跳过并轮到下一个 provider（`resolveGitSource`，throwing-safe）；渲染侧 `useGitSource(ctx, scope)` hook 订阅注册表并随 `scope.sessionId / cwd / repoRoot` 变化重解析，无匹配 → `gitApi = api`（本地 host 路由逐字节不变）。独立 diff tab 的 seed 形态没有 ctx prop，经模块级 client-ctx 座位（`bindGitSourceSeat` / `useGitSourceSeat`，`src/client/index.tsx` apply 处绑定、卸载解绑——与 gitGraph 座位同一纪律）读取同一注册表后按自己的 scope 重新解析，语义与 `useGitSource` 完全一致。
-- **契约形状**：`GitDataSource` 是 host `api.git*` 路由面的**影子**（签名与返回形状逐字一致，`src/client/git-source.ts`），完整方法面：`gitStatus / gitWorktrees / gitBranch / gitLog(+options roots/cursor → GitLogPage) / gitDiff / gitCommitDiff / gitShow / gitStage / gitUnstage / gitCommit / gitCheckout / gitDiscard / gitRevert / gitCherryPick`；变更类操作返回 `{ ok: true }`。`tests/git-source.spec.tsx` 以 `const _hostShadowsContract: GitDataSource = api` 在编译期守护形状（api.ts 漂移即 typecheck 失败）。
+- **契约形状**：`GitDataSource` 是 host `api.git*` 路由面的**影子**（签名与返回形状逐字一致，`src/client/git-source.ts`），完整方法面：`gitStatus / gitWorktrees / gitBranch / gitLog(+options roots/cursor → GitLogPage) / gitDiff / gitCommitDiff / gitShow / gitStage / gitUnstage / gitCommit / gitPush? / gitCheckout / gitDiscard / gitRevert / gitCherryPick`；变更类操作返回 `{ ok: true }`。`tests/git-source.spec.tsx` 以 `const _hostShadowsContract: GitDataSource = api` 在编译期守护形状（api.ts 漂移即 typecheck 失败）。
 - **路由语义**：**无 provider（或无匹配）时所有 git 读与写逐字节落回宿主路由**；**有 provider 时按面整块接管**——Git lens 把 source 当作原子影子（`gitApi = gitSource ?? api`），缺方法只降级该面（如缺 `gitLog` → 历史区空、status/branch 照常，读调用先回 Promise 再执行，缺方法的同步 TypeError 不会炸掉整次刷新）；**diff 预览与独立 diff tab 则逐方法回退**（`(gitSource?.gitCommitDiff ?? api.gitCommitDiff)(...)` 等）——provider 面缺单个方法时仅该方法落回宿主，绝不因缺方法炸掉预览。
 - **本地回退**：无 provider 匹配（或无注册）、`ctx` 缺失（独立/测试组合）、座位未绑定 → 全部 git 调用保持 host 路由，逐字节原行为。
 - **消费方引导**：参考实现在 [dsh-remote-workbench](https://github.com/omdsh-dev/dsh-remote-workbench) 的 `buildGitSource`（`lib/client.js`：按 `(sessionId, cwd)` 记忆化构建 14 方法 source，`/git/read` + `/git/mutate` 远程 RPC；未覆盖操作显式 reject）。类型与解析器从 `dsh-better-sidebar/client/index` 可导入（`GitProviderDescriptor` / `GitDataSource` / `GitOkResult` / `resolveGitSource` / `useGitSource`）。

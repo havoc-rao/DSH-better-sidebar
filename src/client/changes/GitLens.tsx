@@ -29,14 +29,13 @@
 import { Component, createElement, memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconPlusOutlineRegular,
-  IconTrashOutlineRegular, Input, Menu, writeClipboard,
+  IconTrashOutlineRegular, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
 import { api } from '../api.ts'
 import type { BetterSidebarService, GitCommitActionProps, GitCommitTarget } from '../service.ts'
 import { useGitSource } from '../git-source.ts'
-import { RenderBoundary } from '../RenderBoundary.tsx'
 import type { GraphTreeProps, GraphTreeRow } from 'dsh-git-graph/client-contract'
 import { useGitGraph } from '../git-lens-graph.ts'
 import { builtinFileIcon, builtinFolderIcon } from '../file-icons.tsx'
@@ -50,6 +49,7 @@ import {
   useGitStatus, type GitFileStatus, type GitTone, type StatusTone,
 } from '../ui/index.ts'
 import { buildChangeTree, type ChangeDir, type ChangeFile, type ChangeNode } from './change-tree.ts'
+import { GitActionBar } from './GitActionBar.tsx'
 import css from './changes.module.css'
 
 /** A GraphTree render crash must restore the original history list, not an
@@ -410,6 +410,7 @@ export function GitLens(props: GitLensProps) {
   const commitMsg = props.commitMsg ?? localCommitMsg
   const setCommitMsg = props.onCommitMsgChange ?? setLocalCommitMsg
   const [busy, setBusy] = useState(false)
+  const mutationLock = useRef(false)
   /** The commit bar's ONE status line (commit / stage / discard / revert). */
   const [actionError, setActionError] = useState<string | null>(null)
   /** The lens-level error banner (refresh / branch switch / history paging). */
@@ -633,6 +634,8 @@ export function GitLens(props: GitLensProps) {
     failure: (reason: unknown) => string = errorMessage,
     onSuccess?: () => void,
   ): Promise<void> => {
+    if (mutationLock.current) return
+    mutationLock.current = true
     setBusy(true)
     setActionError(null)
     try {
@@ -643,6 +646,7 @@ export function GitLens(props: GitLensProps) {
     } catch (reason) {
       setActionError(failure(reason))
     } finally {
+      mutationLock.current = false
       setBusy(false)
     }
   }
@@ -663,10 +667,32 @@ export function GitLens(props: GitLensProps) {
     )
   }
 
+  const canCommit = !busy && commitMsg.trim() !== '' && snapshot?.entries.some(isStagedEntry) === true
+  // A remote provider without Push must NOT run local git on its behalf.
+  const pushApi = gitSource === undefined ? api.gitPush : gitSource.gitPush?.bind(gitSource)
+  const canPush = !busy && pushApi !== undefined
   const commit = (): void => {
+    if (!canCommit) return
     const message = commitMsg.trim()
-    if (message === '' || busy) return
     void runAction(() => gitApi.gitCommit(gitScopeNow(), message, selectedWorktree), errorMessage, () => { setCommitMsg(''); props.onCommitMsgCommitted?.() })
+  }
+  const push = (): void => {
+    if (!canPush || pushApi === undefined) return
+    void runAction(() => pushApi(gitScopeNow(), selectedWorktree))
+  }
+  const commitAndPush = (): void => {
+    if (!canCommit || !canPush || pushApi === undefined) return
+    const message = commitMsg.trim()
+    const targetScope = gitScopeNow()
+    const targetWorktree = selectedWorktree
+    void runAction(async () => {
+      await gitApi.gitCommit(targetScope, message, targetWorktree)
+      // The commit is durable even when push fails: do not keep its draft.
+      setCommitMsg('')
+      props.onCommitMsgCommitted?.()
+      invalidateGitStatus(scope.sessionId)
+      try { await pushApi(targetScope, targetWorktree) } finally { await refresh(false) }
+    })
   }
 
   /** Switching the selected checkout changes which rows are legitimate to act
@@ -1129,43 +1155,16 @@ export function GitLens(props: GitLensProps) {
         </>
       )}
 
-      {isRepo && (
-        <div className={css.commitBar}>
-          <div className={css.commitRow}>
-            <Input
-              className={css.commitInput}
-              placeholder={t('commitPlaceholder')}
-              value={commitMsg}
-              disabled={busy}
-              onChange={(event) => { setCommitMsg(event.target.value); setActionError(null) }}
-              onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') commit()
-              }}
-            />
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={busy || commitMsg.trim() === '' || stagedEntries.length === 0}
-              onClick={commit}
-            >
-              {t('commit')}
-            </Button>
-            {commitActionViews.length > 0 && (
-              <div className={css.gitCommitActions} role="group" aria-label={t('gitCommitActions')}>
-                {commitActionViews.map(({ descriptor, props }) => (
-                  // The action is created as an ELEMENT inside the boundary, so
-                  // a throwing component is caught by it (invoking the
-                  // component directly here would throw during GitLens' own
-                  // render, outside the boundary).
-                  <RenderBoundary key={descriptor.id} className={css.gitCommitActionBoundary}>
-                    {createElement(descriptor.component, props)}
-                  </RenderBoundary>
-                ))}
-              </div>
-            )}
-          </div>
-          {actionError !== null && <Notice kind="error" tone="inline" role="alert">{actionError}</Notice>}
-        </div>
+      {isRepo && commitTarget !== null && (
+        <GitActionBar
+          owner={{ ...commitTarget, ...(service === undefined ? {} : { service }),
+            commitMessage: commitMsg, setCommitMessage: value => { setCommitMsg(value); setActionError(null) },
+            busy, runAction, refresh, close: () => {} }}
+          canCommit={canCommit} canPush={canPush}
+          commit={commit} push={push} commitAndPush={commitAndPush} stageAll={stageAll}
+          actions={commitActionViews}
+          error={actionError !== null ? <Notice kind="error" tone="inline" role="alert">{actionError}</Notice> : null}
+        />
       )}
 
       {isRepo && (

@@ -28,7 +28,7 @@ import {
 } from './state.ts'
 import { baseName, extOf } from './paths.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
-import { api, type GitStatusEntry, type GitStatusResult, type SessionScope } from './api.ts'
+import type { GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { openWorkspaceTerminal, resolveWorkspaceTerminalBinding, updateTerminalSession, workspaceTerminalViewId } from './workspace-terminals.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import type { TerminalProviderDescriptor } from './terminal-source.ts'
@@ -540,6 +540,9 @@ export interface GitCommitTarget {
   staged: readonly GitStatusEntry[]
 }
 
+/** Native DSH Git action slot owner contract (includes the SlotMap augmentation). */
+export type { GitActionSlotProps } from './changes/git-action-slot.tsx'
+
 /** Everything one registered commit action receives on render. */
 export interface GitCommitActionProps extends GitCommitTarget {
   /** The live service (for `openTab`, `getSnapshot`, …). */
@@ -550,8 +553,9 @@ export interface GitCommitActionProps extends GitCommitTarget {
 
 /**
  * One action rendered inside the Git lens' commit row (feature
- * `gitCommitActions`). The component is mounted AFTER the built-in Commit
- * button, ordered by `order` ascending then registration order; a descriptor
+ * `gitCommitActions`). All contributed components mount inside More (the
+ * closed bar shows only Commit / More), ordered by `order` ascending then
+ * registration order; a descriptor
  * whose `available` returns false is skipped. The component owns its own
  * control (glyph, label, disabled state) — the host owns only placement and
  * lifecycle — and rendering is crash-isolated per action (a throwing

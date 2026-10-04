@@ -54,6 +54,8 @@ export interface GitDataSource {
   gitStage(scope: SessionScope, path?: string, worktree?: string): Promise<GitOkResult>
   gitUnstage(scope: SessionScope, path?: string, worktree?: string): Promise<GitOkResult>
   gitCommit(scope: SessionScope, message: string, worktree?: string): Promise<GitOkResult>
+  /** Optional for existing providers. Missing capability disables Push; never falls back to local git. */
+  gitPush?(scope: SessionScope, worktree?: string): Promise<GitOkResult>
   gitCheckout(scope: SessionScope, branch: string, worktree?: string): Promise<GitOkResult>
   gitDiscard(scope: SessionScope, path: string, worktree?: string): Promise<GitOkResult>
   gitRevert(scope: SessionScope, hash: string, worktree?: string): Promise<GitOkResult>

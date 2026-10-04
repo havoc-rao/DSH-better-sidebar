@@ -262,10 +262,13 @@ describe('ChangesTab', () => {
       const alert = [...container.querySelectorAll<HTMLElement>('[role="alert"]')]
         .find(node => (node.textContent ?? '').includes(t('changesStageFailed', { message: 'index.lock exists' })))
       expect(alert).toBeDefined()
-      // The ONE status line sits in the commit bar, directly under its input row.
+      // The ONE status line stays inside the operation bar, below the now
+      // separate input and button rows (not a lens-level refresh banner).
       const input = container.querySelector(`input[placeholder="${t('commitPlaceholder')}"]`)
       expect(input).not.toBeNull()
-      expect(alert!.previousElementSibling?.contains(input)).toBe(true)
+      const bar = alert!.closest('[data-git-action-bar]')
+      expect(bar?.contains(input)).toBe(true)
+      expect(bar?.lastElementChild).toBe(alert)
     } finally {
       act(() => { root.unmount() })
       container.remove()

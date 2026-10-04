@@ -6,10 +6,11 @@ const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }))
 
 vi.mock('node:child_process', () => ({ spawn: spawnMock }))
 
-import { isGitRepo, worktrees } from '../src/git.ts'
+import { isGitRepo, push, worktrees } from '../src/git.ts'
 
 afterEach(() => {
   spawnMock.mockReset()
+  vi.useRealTimers()
 })
 
 describe('git subprocess spawning', () => {
@@ -37,6 +38,41 @@ describe('git subprocess spawning', () => {
       ['-C', 'C:\\repo', '--no-pager', '-c', 'color.ui=false', 'rev-parse', '--is-inside-work-tree'],
       expect.objectContaining({ windowsHide: true }),
     )
+  })
+
+  it('runs exactly ordinary push and retains the existing 30s command timeout', async () => {
+    vi.useFakeTimers()
+    const kill = vi.fn()
+    const root = '/push-timeout-repo'
+    spawnMock.mockImplementation((_file: string, args: string[]) => {
+      const child = new EventEmitter()
+      const stdout = new PassThrough()
+      const stderr = new PassThrough()
+      Object.assign(child, { stdout, stderr, kill })
+      if (args.includes('rev-parse')) {
+        queueMicrotask(() => {
+          stdout.end(`${root}\n`)
+          stderr.end()
+          child.emit('close', 0)
+        })
+      }
+      return child
+    })
+
+    const pending = push(root)
+    const rejected = expect(pending).rejects.toMatchObject({
+      code: 'git-error', command: 'push', message: 'git push timed out after 30000ms',
+    })
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(kill).not.toHaveBeenCalled()
+    expect(spawnMock).toHaveBeenLastCalledWith(
+      'git',
+      ['-C', root, '--no-pager', '-c', 'color.ui=false', 'push'],
+      expect.objectContaining({ windowsHide: true }),
+    )
+    await vi.advanceTimersByTimeAsync(1)
+    await rejected
+    expect(kill).toHaveBeenCalledWith('SIGKILL')
   })
 
   it('falls back when worktree list does not support -z', async () => {
