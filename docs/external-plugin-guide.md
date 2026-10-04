@@ -1439,6 +1439,7 @@ interface WorkspaceTerminalSource {
 - `createTransport(existingId)` 只连接已存在进程，不创建 shell。managed transport 的 `close/park/dispose` 都只分离视图；只有 `terminate()` 明确结束进程。后台须自行保证 workspace/target 隔离、授权、配额、有界输出及卸载清理。
 - `TerminalTransportSession.onClosed?('exited'|'terminated'|'missing')` 用于结束/实例丢失状态，停止自动重连并提供重新启动；重启经同一 source 创建新 ID，只替换当前视图。`onFatal` 保留网络或权限错误，不可将越权当作重启许可。
 - source 与 binding 类型从 `dsh-better-sidebar/client` 导出。dsh-remote 的 tunnel 可透传此工厂，workbench 同时支持 tunnel 与 direct provider；不必 value-import 其他插件。
+- **能力诊断与部署**：`Workspace terminal management unavailable: <provider>` 表示已命中 provider，但同步工厂没有返回 source；它不是本地 PTY 依赖错误。请核对 profile 实际引用的发行副本是否包含该工厂，以及被委托后端是否有对应会话绑定。源码目录测试通过不代表 profile 的 `deploy-pkg` 已更新；新增 host 管理路由需要重载宿主，单刷新浏览器不能加载新后端。`rw_connect/rw_pick_workspace` 与独立 workbench target/binding 不等价；不得复制凭据或伪造绑定来掩盖缺能力。Provider 加载新能力并通知注册表后，已打开的管理页会重新解析 source、清除旧错误并加载列表，无需删除本地或远程实例引用。
 
 ### 本地后端
 

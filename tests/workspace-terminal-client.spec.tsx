@@ -81,6 +81,27 @@ describe('workspace terminal client', () => {
     expect(root.container.querySelector('[role="alert"]')?.textContent).toContain('legacy-remote')
     root.unmount()
   })
+  it('recovers an unavailable remote manager when the same provider gains a native source', async () => {
+    const { store, service } = fixture()
+    const off = service.registerTerminalProvider({ id: 'dsh-remote:term', match: () => true,
+      createTransport: () => undefined, createWorkspaceSource: () => undefined })
+    const local = vi.spyOn(api, 'workspaceTerminalList')
+    const root = renderRoot(createElement(WorkspaceTerminals, { sessionId: 'A', store, ctx: { betterSidebar: service } as Context }))
+    await act(async () => {})
+    expect(root.container.querySelector('[role="alert"]')?.textContent).toContain('management unavailable: dsh-remote:term')
+    const list = vi.fn(async () => ({ terminals: [{ ...info, terminalId: 'remote-workspace:existing' }] }))
+    await act(async () => {
+      off()
+      service.registerTerminalProvider({ id: 'dsh-remote:term', match: () => true, createTransport: () => undefined,
+        createWorkspaceSource: () => ({ create: async () => info, list, terminate: async () => ({}),
+          createTransport: () => ({ kind: 'remote-native-managed', open: () => ({ input() {}, resize() {}, close() {}, park() {}, dispose() {} }) }) }) })
+    })
+    expect(list).toHaveBeenCalledOnce()
+    expect(local).not.toHaveBeenCalled()
+    expect(root.container.querySelector('[role="alert"]')).toBeNull()
+    expect(root.container.querySelector('[data-terminal-id="remote-workspace:existing"]')).not.toBeNull()
+    root.unmount()
+  })
   it('does not replace an already remote catalog with local records after provider unload', async () => {
     const { store, service, off } = remoteFixture()
     const local = vi.spyOn(api, 'workspaceTerminalList')
