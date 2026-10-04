@@ -2282,6 +2282,9 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === false && onOpenFileSide !== undefined
             ? [{ id: 'open-side', label: t('openFileSide'), icon: <IconFolderOpenRegular size={14} /> }]
             : []),
+          ...(rowMenu?.isDir === false && typeof service?.openCentralFile === 'function'
+            ? [{ id: 'open-central', label: t('centralEditorOpen'), icon: <IconCodeOutlineRegular size={14} /> }]
+            : []),
           // Download applies to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutlineRegular size={14} /> }]
@@ -2317,6 +2320,11 @@ export function FileTree(props: {
           }
           if (id === 'open-side') {
             onOpenFileSide?.(target.path)
+            return
+          }
+          if (id === 'open-central') {
+            // The controller owns capability/refusal feedback; no sidebar fallback.
+            if (!target.isDir) service?.openCentralFile?.({ sessionId, cwd }, target.path)
             return
           }
           if (id === 'open-in-app:default') {

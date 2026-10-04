@@ -752,6 +752,18 @@ export interface BetterSidebarService extends InspectorApi {
   activateTab(tabId: string, scope?: SessionScope): void
   /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
   openFile(scope: SessionScope, path: string, title?: string): void
+  /** Open saved file content in the session's central editor. False when the
+   *  controller is absent or refuses; never falls back to another surface. */
+  openCentralFile(scope: SessionScope, path: string): boolean
+  /** Whether this session is currently showing the central editor. */
+  isCentralEditorActive(sessionId: string): boolean
+  /** Install/clear the central session-slot controller (client lifecycle).
+   *  This does not transfer editor instances or unsaved drafts across windows.
+   *  @internal Installed by the client half, not by consumer plugins. */
+  setCentralEditor(controller: {
+    openFile(scope: SessionScope, path: string): boolean
+    isActive(sessionId: string): boolean
+  } | undefined): void
   /**
    * Publish (or clear with `null`) the live Git target of one Git lens
    * instance (v0.20.x). Keyed by an instance owner id so two mounted Git
@@ -836,6 +848,9 @@ export const SIDEBAR_SERVICE_VERSION = '0.24.1'
  *   unified-diff text rendered through the shared diff stack via
  *   `openTab({ type: 'diff', diff: { kind: 'proposed', … } })`.
  *
+ * - 'centralEditor': openCentralFile / isCentralEditorActive — explicit
+ *   session main-slot file opens; absent/refusing controller returns false.
+ *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
  * Consumers must not gate on it any more.
@@ -859,6 +874,7 @@ export const SIDEBAR_FEATURES = [
   'workspaceTerminalSource',
   'gitSource',
   'inspectors',
+  'centralEditor',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -899,6 +915,7 @@ export function createBetterSidebarService(
   const listeners = new Set<() => void>()
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
+  let centralEditor: Parameters<BetterSidebarService['setCentralEditor']>[0]
 
   const notify = (): void => {
     for (const fn of [...listeners]) fn()
@@ -1508,6 +1525,9 @@ export function createBetterSidebarService(
     updateTab,
     activateTab,
     openFile,
+    openCentralFile: (scope, path) => centralEditor?.openFile(scope, path) ?? false,
+    isCentralEditorActive: sessionId => centralEditor?.isActive(sessionId) ?? false,
+    setCentralEditor: controller => { centralEditor = controller },
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
   }
 }
