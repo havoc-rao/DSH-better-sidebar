@@ -331,7 +331,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
       onDragStart={(event) => { actions.dragStart(event, entry.path, entry.isDir) }}
       onDragEnd={() => { actions.dragEnd() }}
       className={clsx(
-        css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
+        css.explorerRow, entry.hidden && css.explorerHidden,
         selected && css.explorerRowSelected,
         props.dragging && css.explorerRowDragging,
         dropTarget && css.explorerRowDropTarget,
@@ -1968,7 +1968,6 @@ export function FileTree(props: {
         junction: isOpen,
         style: treeRowStyle,
         className: clsx(
-          isDir && css.explorerDir,
           selected.has(entry.path) && css.explorerRowSelected,
           entry.hidden && css.explorerHidden,
           draggingPath === entry.path && css.explorerRowDragging,

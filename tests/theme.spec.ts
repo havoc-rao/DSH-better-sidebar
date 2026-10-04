@@ -98,6 +98,19 @@ describe('effectiveTokenValue', () => {
 // jsdom has no file:// import.meta.url; vitest runs from the repo root.
 const ROOT = process.cwd()
 
+describe('file-tree name typography', () => {
+  it('pins file, folder and root names to one regular token on both render paths', () => {
+    const css = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
+    const names = css.match(/^\.explorerName\s*\{([^}]+)\}/m)?.[1]
+    expect(names).toMatch(/font:\s*var\(--dsw-font-xxs-12\)/)
+    // A directory-only shorthand previously overrode the provider's inherited
+    // font and made folders smaller/bolder than files.
+    expect(css).not.toMatch(/\.explorerDir\s*\{/)
+    const tree = readFileSync(resolve(ROOT, 'src/client/FileTree.tsx'), 'utf8')
+    expect(tree).not.toMatch(/css\.explorerDir\b/)
+  })
+})
+
 /** `color` as a property — never `background-color` / `scrollbar-color` / `-webkit-text-fill-color`. */
 const COLOR_PROPERTY = /(?:^|[;{\s])color\s*:\s*([^;}]+)/g
 

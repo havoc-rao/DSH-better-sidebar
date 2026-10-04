@@ -925,10 +925,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-bottom-right-radius: 0;
 }
 
-.explorerDir {
-  font: var(--dsw-font-xxs-strong-12);
-}
-
 .explorerHidden {
   opacity: 0.45;
 }
@@ -959,6 +955,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .explorerName {
+  /* Pin every name (file, folder and workspace root) to the same type token.
+     Framework rows inherit the host font, unlike our fallback rows. */
+  font: var(--dsw-font-xxs-12);
   /* min-width: 0 lets the flex item shrink below its content so the label
      truncates with an ellipsis instead of widening the row. */
   min-width: 0;
