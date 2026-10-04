@@ -1,4 +1,4 @@
-/* The unified changes tab: the 44px lens header + Git lens + session lens +
+/* The unified changes tab: the 36px lens header + Git lens + session lens +
    the shared preview pane. Token-only by contract (`tests/theme.spec.ts` scans
    every module sheet) and cut to the plugin's native scale — 12px body, 11px
    meta, 28px rows/controls, 2/3/4px radii (see
@@ -13,14 +13,10 @@
 
 /* ── Lens header ───────────────────────────────────────────────────────── */
 
-/* The lens header carries the host `SegmentedControl`, whose track is 36px tall
-   (its own 4px track padding around a 28px tab) — one control taller than the
-   28px controls the rest of this plugin's headers are measured against. So this
-   band is 44px, not 36px: the 4px gutter above and below the track is the same
-   4px the 36px headers give their 28px controls (sidebar.module.css
-   `.explorerHeader`, SubagentView.module.css `.subagentHeader`). At 36px the
-   track filled the band edge to edge and read as no padding at all. */
-.head { flex: none; display: flex; align-items: center; gap: 8px; box-sizing: border-box; min-height: 44px; padding: 4px 8px 4px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+/* Keep the host track's 4px inset so its sliding indicator stays aligned.
+   Compact only this lens switcher: 20px tabs + 8px inset = a 28px control. */
+.head { flex: none; display: flex; align-items: center; gap: 8px; box-sizing: border-box; min-height: 36px; padding: 4px 8px 4px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.lensControl [role='tab'] { height: 20px; padding: 0 10px; font: var(--dsw-font-xxs-12); }
 .headAction { margin-left: auto; }
 
 /* ── Git lens (the former git panel) ───────────────────────────────────── */
@@ -41,17 +37,33 @@
    for real choices) and nothing else — the counts live in the section bands. */
 .selectors { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 12px 0; }
 
+.selectorMenu { flex: 1; min-width: 0; }
 .select {
-  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   height: 28px;
-  padding: 0 6px;
+  padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 3px;
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xxs-12);
+  cursor: pointer;
 }
+.select:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.select:disabled { cursor: default; opacity: 0.4; }
+.select:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-alias-state-business-primary); outline-offset: -2px; }
+.selectorLabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.selectorChevron { flex: none; }
+.selectorList[role='menu'] {
+  background: var(--dsw-alias-bg-base);
+  max-height: min(280px, calc(100dvh - 12px - max(12px, var(--dsh-frame-overlay-top, 12px))));
+}
+.selectorList[role='menu'] > [role='presentation'] { min-height: 0; overflow-y: auto; }
 
 /* A single branch has nothing to choose: it reads as the row's label. */
 .branchLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); }
@@ -249,19 +261,10 @@
 .logMeta { margin-left: auto; font: var(--dsw-font-xxxs-11); color: var(--dsw-alias-label-tertiary); white-space: nowrap; }
 
 .logMore {
-  display: block;
+  flex: none;
   width: calc(100% - 24px);
   margin: 4px 12px 8px;
-  height: 28px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 3px;
-  background: transparent;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
 }
-.logMore:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.logMore:disabled { opacity: 0.5; cursor: default; }
 
 /* ── Session lens (this round's files) ─────────────────────────────────── */
 
@@ -321,7 +324,7 @@
 
 /* Keyboard focus rings match the shared sidebar convention (the kit atoms and
    the tree rows carry their own). */
-.logRow:focus-visible, .logMore:focus-visible, .select:focus-visible, .dragHandle:focus-visible {
+.logRow:focus-visible, .select:focus-visible, .dragHandle:focus-visible {
   outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
   outline-offset: -1px;
 }

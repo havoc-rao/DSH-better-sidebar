@@ -1,5 +1,5 @@
 /**
- * The unified changes tab shell: the 44px header's lens switcher swaps the
+ * The unified changes tab shell: the 36px header's lens switcher swaps the
  * Git lens for the session lens, a Git-lens file row opens the shared preview
  * pane (loaded through the mocked git API, rendered by the shared DiffFiles
  * stack), and the session ops ride the mocked `changes.ops` poll — the event

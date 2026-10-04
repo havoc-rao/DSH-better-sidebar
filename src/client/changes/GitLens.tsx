@@ -28,7 +28,7 @@
  */
 import { Component, createElement, memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
-  Button, IconChevronRightOutlineRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconPlusOutlineRegular,
+  Button, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconPlusOutlineRegular,
   IconTrashOutlineRegular, Input, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
@@ -64,6 +64,58 @@ class GraphBoundary extends Component<{ onFail(): void; children: ReactNode }, {
     this.props.onFail()
   }
   render() { return this.state.failed ? null : this.props.children }
+}
+
+/** Compact preference-style picker; the host owns the portaled menu and its
+ * keyboard navigation, while selection returns focus before publishing. */
+function GitSelector(props: {
+  kind: 'repository' | 'worktree' | 'branch'
+  value: string
+  title?: string | undefined
+  disabled: boolean
+  options: readonly { id: string; label: string }[]
+  onSelect(value: string): void
+}): ReactNode {
+  const [open, setOpen] = useState(false)
+  const selectorRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => { if (props.disabled) setOpen(false) }, [props.disabled])
+  const selected = props.options.find(option => option.id === props.value) ?? props.options[0]
+  const selectedId = selected?.id ?? props.value
+  const selectedLabel = selected?.label ?? props.value
+  return (
+    <Menu
+      className={css.selectorMenu}
+      listClassName={css.selectorList}
+      open={open && !props.disabled}
+      onClose={() => { setOpen(false) }}
+      items={props.options}
+      selectedId={selectedId}
+      onSelect={(id) => {
+        selectorRef.current?.focus({ preventScroll: true })
+        setOpen(false)
+        if (id !== props.value) props.onSelect(id)
+      }}
+      align="end"
+      portal
+      anchor={(
+        <button
+          ref={selectorRef}
+          type="button"
+          className={css.select}
+          data-git-selector={props.kind}
+          value={selectedId}
+          title={props.title}
+          disabled={props.disabled}
+          aria-haspopup="menu"
+          aria-expanded={open && !props.disabled}
+          onClick={() => { setOpen(value => !value) }}
+        >
+          <span className={css.selectorLabel}>{selectedLabel}</span>
+          <IconChevronDownOutlineRegular size={14} className={css.selectorChevron} />
+        </button>
+      )}
+    />
+  )
 }
 
 /** Monotonic Git-lens instance id: keys the live-target registry so two
@@ -983,42 +1035,37 @@ export function GitLens(props: GitLensProps) {
       {(repoChoices.length > 1 || worktrees.length > 1 || branch !== '') && (
         <div className={css.selectors}>
           {repoChoices.length > 1 && (
-            <select
-              className={css.select}
+            <GitSelector
+              kind="repository"
               value={repoRoot ?? ''}
               title={repoRoot}
               disabled={busy}
-              onChange={(event) => { chooseRepo(event.target.value) }}
-            >
-              {repoChoices.map(root => <option key={root} value={root}>{baseName(root)}</option>)}
-            </select>
+              options={repoChoices.map(root => ({ id: root, label: baseName(root) }))}
+              onSelect={chooseRepo}
+            />
           )}
           {worktrees.length > 1 && (
-            <select
-              className={css.select}
+            <GitSelector
+              kind="worktree"
               value={selectedWorktree ?? ''}
               title={selectedWorktree}
               disabled={busy}
-              onChange={(event) => { chooseWorktree(event.target.value) }}
-            >
-              {worktrees.map(entry => (
-                <option key={entry.path} value={entry.path}>
-                  {entry.branch} · {baseName(entry.path)} ({entry.changes})
-                </option>
-              ))}
-            </select>
+              options={worktrees.map(entry => ({
+                id: entry.path, label: `${entry.branch} · ${baseName(entry.path)} (${entry.changes})`,
+              }))}
+              onSelect={chooseWorktree}
+            />
           )}
           {branch !== '' && (branchOptions.length > 1
             ? (
-              <select
-                className={css.select}
+              <GitSelector
+                kind="branch"
                 value={branch}
                 title={t('branch')}
                 disabled={busy}
-                onChange={(event) => { void checkout(event.target.value) }}
-              >
-                {branchOptions.map(name => <option key={name} value={name}>{name}</option>)}
-              </select>
+                options={branchOptions.map(name => ({ id: name, label: name }))}
+                onSelect={(name) => { void checkout(name) }}
+              />
             )
             : <span className={css.branchLabel} title={`${t('branch')}: ${branch}`}>{branch}</span>)}
         </div>
@@ -1163,14 +1210,15 @@ export function GitLens(props: GitLensProps) {
             </div>
           ))}
           {!logEnded && (
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="sm"
               className={css.logMore}
               disabled={logLoadingMore || busy}
               onClick={() => { void loadMoreLog() }}
             >
               {logLoadingMore ? t('loading') : t('loadMore')}
-            </button>
+            </Button>
           )}
           </>)}
         </>

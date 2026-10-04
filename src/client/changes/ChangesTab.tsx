@@ -2,10 +2,8 @@
  * The unified changes tab: one tab, two lenses on "what changed?" — Git
  * (repository truth: staged/unstaged files, commit box, history) and the
  * session round (agent truth: every file the model read, wrote, or edited).
- * A 44px header carries the host {@link SegmentedControl} and the current
- * lens's refresh action (44px, not the plugin's usual 36px, because the host
- * track is itself 36px tall — see changes.module.css `.head`); both lenses
- * preview their selections in a shared
+ * A 36px header carries a compact host {@link SegmentedControl} and the
+ * current lens's refresh action; both lenses preview their selections in a shared
  * resizable bottom pane ({@link DiffPane}), and git targets expand into the
  * dedicated diff tab docked in the workbench's diff pane. The active lens and
  * the pane height persist in the tab's meta, so the tab reopens exactly where
@@ -375,6 +373,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
     <div className={css.root}>
       <div className={css.head}>
         <SegmentedControl
+          className={css.lensControl}
           id={`changes-lens-${tab.id}`}
           value={lens}
           options={[

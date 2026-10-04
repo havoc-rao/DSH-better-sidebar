@@ -69,6 +69,36 @@ async function flushEffects(): Promise<void> {
   for (let round = 0; round < 5; round += 1) await act(async () => { await Promise.resolve() })
 }
 
+function selectorButton(container: HTMLElement, selector: 'repository' | 'worktree' | 'branch'): HTMLButtonElement {
+  const button = container.querySelector<HTMLButtonElement>(`button[data-git-selector="${selector}"]`)
+  expect(button).not.toBeNull()
+  return button!
+}
+
+async function openSelector(button: HTMLButtonElement): Promise<HTMLElement[]> {
+  expect(button.getAttribute('aria-expanded')).toBe('false')
+  await act(async () => {
+    button.focus()
+    button.click()
+  })
+  expect(button.getAttribute('aria-expanded')).toBe('true')
+  // Host Menu options live in a body portal, not inside the GitLens root.
+  const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+  expect(items.length).toBeGreaterThan(0)
+  for (const item of items) expect(button.parentElement!.contains(item)).toBe(false)
+  return items
+}
+
+async function chooseMenuItem(button: HTMLButtonElement, label: string): Promise<void> {
+  const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    .find(node => node.textContent?.trim() === label)
+  expect(item).toBeDefined()
+  await act(async () => { item!.click() })
+  expect(button.getAttribute('aria-expanded')).toBe('false')
+  expect(document.body.querySelector('[role="menuitem"]')).toBeNull()
+  expect(document.activeElement).toBe(button)
+}
+
 /** Mount one GitLens. Visible by default: a hidden tab owns no live git data
  *  — the shared status store only polls/loads while a consumer is on screen. */
 function mountGit(
@@ -126,24 +156,22 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       mountGit(root)
       await flushEffects()
 
-      const selects = container.querySelectorAll<HTMLSelectElement>('select')
-      const worktreeSelect = selects[0]!
+      const worktreeButton = selectorButton(container, 'worktree')
       // A clean primary + exactly one dirty linked checkout auto-selects the
       // linked checkout and loads every target-derived surface from it.
-      expect(worktreeSelect.value).toBe(AGENT)
+      expect(worktreeButton.value).toBe(AGENT)
       expect(container.textContent).toContain('agent-change.ts')
       expect(container.textContent).toContain('Agent checkout commit')
       expect(container.textContent).not.toContain('Main checkout commit')
       expect(branch).toHaveBeenCalledWith(expect.anything(), AGENT)
       expect(log).toHaveBeenCalledWith(expect.anything(), 20, 0, AGENT, { roots: [] })
 
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(worktreeSelect, MAIN)
-        worktreeSelect.dispatchEvent(new Event('change', { bubbles: true }))
-      })
+      const worktreeItems = await openSelector(worktreeButton)
+      expect(worktreeItems.map(item => item.textContent?.trim())).toEqual(['main · main (0)', 'agent · agent (1)'])
+      await chooseMenuItem(worktreeButton, 'main · main (0)')
       await flushEffects()
 
-      expect(worktreeSelect.value).toBe(MAIN)
+      expect(worktreeButton.value).toBe(MAIN)
       expect(container.textContent).toContain('main-change.ts')
       expect(container.textContent).toContain('Main checkout commit')
       expect(container.textContent).not.toContain('Agent checkout commit')
@@ -196,16 +224,15 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       mountGit(root)
       await flushEffects()
 
-      const worktreeSelect = container.querySelectorAll<HTMLSelectElement>('select')[0]!
+      const worktreeButton = selectorButton(container, 'worktree')
       const loadMore = [...container.querySelectorAll<HTMLButtonElement>('button')]
         .find(button => /Load more|加载更多/.test(button.textContent ?? ''))
       expect(loadMore).not.toBeUndefined()
       await act(async () => { loadMore!.click() })
 
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(worktreeSelect, MAIN)
-        worktreeSelect.dispatchEvent(new Event('change', { bubbles: true }))
-      })
+      const worktreeItems = await openSelector(worktreeButton)
+      expect(worktreeItems.map(item => item.textContent?.trim())).toEqual(['main · main (0)', 'agent · agent (1)'])
+      await chooseMenuItem(worktreeButton, 'main · main (0)')
       await flushEffects()
       expect(container.textContent).toContain('Main checkout commit 0')
 
@@ -248,14 +275,13 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       await flushEffects()
 
       // The workspace container's two child repositories are the repo choices.
-      const repoSelect = container.querySelectorAll<HTMLSelectElement>('select')[0]!
-      expect([...repoSelect.options].map(option => option.textContent)).toEqual(['a', 'b'])
+      const repoButton = selectorButton(container, 'repository')
+      expect(repoButton.value).toBe(REPO_A)
+      const repoItems = await openSelector(repoButton)
+      expect(repoItems.map(item => item.textContent?.trim())).toEqual(['a', 'b'])
       const listingsBefore = worktrees.mock.calls.length
 
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(repoSelect, REPO_B)
-        repoSelect.dispatchEvent(new Event('change', { bubbles: true }))
-      })
+      await chooseMenuItem(repoButton, 'b')
       await flushEffects()
 
       // The listing carries the selected repoRoot — a container's own listing
@@ -266,8 +292,9 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       expect(worktrees.mock.calls.length).toBe(listingsBefore + 1)
       // The shared status follows the same selection.
       expect(status.mock.calls.some(([scope]) => scope.cwd === REPO_B)).toBe(true)
-      const worktreeSelect = container.querySelectorAll<HTMLSelectElement>('select')[1]!
-      expect(worktreeSelect.value).toBe(REPO_B)
+      expect(repoButton.value).toBe(REPO_B)
+      const worktreeButton = selectorButton(container, 'worktree')
+      expect(worktreeButton.value).toBe(REPO_B)
     } finally {
       act(() => { root.unmount() })
       container.remove()
@@ -296,15 +323,15 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
     try {
       mountGit(root)
       await flushEffects()
-      const worktreeSelect = container.querySelectorAll<HTMLSelectElement>('select')[0]!
-      expect(worktreeSelect.value).toBe(AGENT)
+      const worktreeButton = selectorButton(container, 'worktree')
+      expect(worktreeButton.value).toBe(AGENT)
 
       // A later inventory pass prefers the brand-new dirty checkout; the user
       // never chose a checkout, but the ONE automatic pass already ran.
       mountGit(root, { refreshTick: 1 })
       await flushEffects()
 
-      expect(worktreeSelect.value).toBe(AGENT)
+      expect(worktreeButton.value).toBe(AGENT)
       expect(container.textContent).toContain('agent-change.ts')
       expect(container.textContent).not.toContain('agent-2-change.ts')
     } finally {
@@ -442,11 +469,11 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       mountGit(root)
       await flushEffects()
 
-      const branchSelect = container.querySelectorAll<HTMLSelectElement>('select')[0]!
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(branchSelect, 'feature')
-        branchSelect.dispatchEvent(new Event('change', { bubbles: true }))
-      })
+      const branchButton = selectorButton(container, 'branch')
+      expect(branchButton.value).toBe('main')
+      const branchItems = await openSelector(branchButton)
+      expect(branchItems.map(item => item.textContent?.trim())).toEqual(['main', 'feature'])
+      await chooseMenuItem(branchButton, 'feature')
       await flushEffects()
 
       const banner = [...container.querySelectorAll<HTMLElement>('[role="alert"]')]
