@@ -28,7 +28,7 @@
 - 完整typecheck通过；新增核心代码ESLint、diff --check通过。
 - build通过，消费者声明测试通过（浏览器无Node；严格模式只过滤既有上游声明噪音）。manifest/chunk/icon出口15项通过。
 - 新增4组测试：registry16、UI12、client data23、host route9。覆盖cancel卸载/跨session/真实TextEditor报告、未知归属failclosed、ticket代际/跨文档/容量、真实git/文件IO、字节cap、chmod、截断路径等。
-- 完整回归排除已在基线确认的git-commit-actions.spec.tsx后：172文件通过，1901项通过，9跳过，fs-watch一个并行超时；单worker复跑watcher6项与新增测试合计66项全部通过。不得表述无条件全套全绿。
+- 完整回归排除已在基线确认的git-commit-actions.spec.tsx后：172文件通过，1901项通过，9跳过，fs-watch一个并行超时；单worker复跑watcher6项与新增测试合计66项全部通过。最终排除同一已知基线spec、单worker完整复跑：173文件通过，1902项通过、9跳过（watcher包含在内）。仍不得表述包含基线失败的无条件全套全绿。
 - 未变package版本（仍0.24.1）、未发布；消费插件通过本地引用与feature+方法探测开发，peer最低发布版本待后续发版核定。
 
 ## 向新工作台的实施交接
