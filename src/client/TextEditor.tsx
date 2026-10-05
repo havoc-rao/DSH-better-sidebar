@@ -420,12 +420,14 @@ export function TextEditor(props: FileViewerProps) {
   // JSON key guards redundant calls), and register the commands on mount.
   const hostToolbar = props.toolbar === 'host'
   const lastToolbarRef = useRef('')
+  const lastToolbarCallbackRef = useRef(props.onToolbarState)
   useEffect(() => {
     if (!hostToolbar) return
     const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, saveState }
     const key = JSON.stringify(state)
-    if (lastToolbarRef.current === key) return
+    if (lastToolbarRef.current === key && lastToolbarCallbackRef.current === props.onToolbarState) return
     lastToolbarRef.current = key
+    lastToolbarCallbackRef.current = props.onToolbarState
     props.onToolbarState?.(state)
   })
   useEffect(() => {

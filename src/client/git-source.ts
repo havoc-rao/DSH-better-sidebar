@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useReducer, useSyncExternalStore } from 'react'
 import type { Context } from '../context-types.ts'
 import type { GitLogEntry, GitLogOptions, GitLogPage, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
+import type { ResourceReadOptions, ResourceStrictDiff, WorktreeRef } from './resource-data.ts'
 
 /** A successful git mutation ({ok:true}, mirror of the host route's shape). */
 export interface GitOkResult { ok: true }
@@ -33,6 +34,8 @@ export interface GitOkResult { ok: true }
  * that method alone — a partial provider never breaks a preview.
  */
 export interface GitDataSource {
+  /** Strict resource API only: missing capability fails closed, never legacy/local fallback. */
+  readStrictDiff?(scope: SessionScope, ref: WorktreeRef, options?: ResourceReadOptions): Promise<ResourceStrictDiff>
   gitStatus(scope: SessionScope, worktree?: string, signal?: AbortSignal): Promise<GitStatusResult>
   gitWorktrees(scope: SessionScope, signal?: AbortSignal): Promise<GitWorktree[]>
   gitBranch(scope: SessionScope, worktree?: string, signal?: AbortSignal): Promise<{ current: string; names: string[] }>

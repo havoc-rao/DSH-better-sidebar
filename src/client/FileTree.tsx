@@ -77,6 +77,8 @@ import type { FileTreeRowModel, FileTreeNode, GuideColumn } from 'dsh-file-tree-
 import { writeFileReferenceDrag } from './file-reference-drag.ts'
 import { useDirectoryWatch } from './use-dir-watch.ts'
 import { usePolling } from './use-polling.ts'
+import type { ResourceActionContext } from './resource-actions.ts'
+import { isResourceAbort, resourceErrorMessage, resourceActionLabel, resourceActionIcon } from './ResourceActions.tsx'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -1145,7 +1147,29 @@ export function FileTree(props: {
     // Plain click: the original semantics, plus dropping any selection.
     clearSelection()
     if (isDir) propsRef.current.onToggle(path)
-    else propsRef.current.onOpenFile(path)
+    else {
+      const live = propsRef.current
+      if (live.service?.dispatchFileActivation === undefined) { live.onOpenFile(path); return }
+      setActionError(null)
+      void (async () => {
+        try {
+          const handled = await live.service!.dispatchFileActivation(() => {
+            const current = propsRef.current
+            if (current.sessionId !== live.sessionId || current.cwd !== live.cwd || current.service !== live.service) {
+              throw new DOMException('File activation scope changed', 'AbortError')
+            }
+            const scope = { sessionId: current.sessionId, cwd: current.cwd }
+            return { intent: 'activate', scope, absolutePath: path,
+              ...(current.service?.getFileDocumentState?.(scope, path) ?? { dirty: false, readOnly: false }) }
+          })
+          // Never navigate an old gesture into a newly displayed session.
+          const current = propsRef.current
+          if (!handled && current.sessionId === live.sessionId && current.cwd === live.cwd && current.service === live.service) current.onOpenFile(path)
+        } catch (error) {
+          if (!isResourceAbort(error)) setActionError(resourceErrorMessage(error))
+        }
+      })()
+    }
   }, [clearSelection, selectRange, toggleSelect])
 
   const handleContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void }, path: string, isDir: boolean): void => {
@@ -2073,6 +2097,25 @@ export function FileTree(props: {
     children: data[treeRoot] === undefined ? [] : buildLevelRows(treeRoot, 1, treeRoot),
   })
 
+  const readResourceContext = (absolutePath: string): ResourceActionContext => {
+    const current = propsRef.current
+    const scope = { sessionId: current.sessionId, cwd: current.cwd }
+    return { kind: 'file', surface: 'file-tree-context', scope, absolutePath, isDirectory: false,
+      ...(current.service?.getFileDocumentState?.(scope, absolutePath) ?? { dirty: false, readOnly: false }) }
+  }
+  let resourceEntries: MenuEntry[] = []
+  let resourceRenderError: string | null = null
+  try {
+    if (rowMenu?.isDir === false) {
+      resourceEntries = (service?.getResourceActions?.(readResourceContext(rowMenu.path)) ?? []).map(action => ({
+        id: `resource-action:${action.id}`, label: resourceActionLabel(action), icon: resourceActionIcon(action),
+      }))
+    }
+  } catch (error) {
+    if (!isResourceAbort(error)) resourceRenderError = resourceErrorMessage(error)
+  }
+  useEffect(() => { if (resourceRenderError !== null) setActionError(resourceRenderError) }, [resourceRenderError])
+
   return (
     <div
       ref={bodyRef}
@@ -2272,6 +2315,7 @@ export function FileTree(props: {
           // 1-3: the "打开方式" group heads the menu — the host's default
           // handler, the one submenu holding every application (host + the
           // plugin's own, per the visibility rule) and the host's reveal.
+          ...resourceEntries,
           ...(rowMenu === null ? [] : openWithSection(rowMenu)),
           // 4: the explicit open escapes (files only).
           ...(rowMenu?.isDir === false && onOpenFileNewTab !== undefined
@@ -2309,6 +2353,14 @@ export function FileTree(props: {
           const target = rowMenu
           if (target === null) return
           setRowMenu(null)
+          if (id.startsWith('resource-action:') && !target.isDir) {
+            setActionError(null)
+            void (async () => {
+              try { await propsRef.current.service?.runResourceAction?.(id.slice('resource-action:'.length), () => readResourceContext(target.path)) }
+              catch (error) { if (!isResourceAbort(error)) setActionError(resourceErrorMessage(error)) }
+            })()
+            return
+          }
           if (id === 'open-new-tab') {
             onOpenFileNewTab?.(target.path)
             return

@@ -76,6 +76,42 @@ if (ctx.betterSidebar.features.includes('inspectors')) {
 
 **宿主集成契约**：适配器等待可选 `sidebarRightRoot` 服务与 `rightbar.root` keyed 槽同时存在。实际公开 controller 为 `{active,register(key):disposer,open(key):void,close(key):void}`；view id/key 为 `dsh-better-sidebar:inspectors`。先注册 key 和槽，再开放 Inspector surface；部分注册失败回滚 key，卸载释放槽和 key。宿主只挂载选中的 root，owner props 为 `width/viewportWidth/canShow/close()`，**没有 visible 或 Session 绑定**，所以适配器为已挂载正文注入 `visible:true`，关闭/切换 root 时正文卸载。宿主负责有效高度、宽度、展开/收起、窄视口覆盖，以及与 `rightbar.session` 互斥。固定入口只在 Inspector 面板内渲染，不注册 `sidebar.footer.action`，也不会假冒 main panel。消费插件不得依赖这层协议，应只调用上述 service API。
 
+### 0.2 可选工作台的资源扩展面（本地开发能力 v1）
+
+本体不再内置中央编辑工作台；可选消费插件通过下面公共能力贡献入口和数据请求。当前仍是本地开发能力，包版本未抬升、未发布，**不能把 npm v0.24.1 当作已经具备这些接口**。先检查方法与 `features` 中的 `resourceActions:v1`、`fileOpenTargets:v1`、`textDocuments:v1`、`strictGitDiff:v1`。类型从 `dsh-better-sidebar/client/service` 导入，禁止跨包引用本体 `src/*`、私有 HTTP 路由或宿主内部视图。
+
+#### 资源动作与普通文件打开目标
+
+`registerResourceAction({id,surfaces,label,icon?,order?,available?,run})` 返回幂等 disposer；三个承载面：`file-tree-context`、`file-viewer-toolbar`、`git-preview-toolbar`。`ResourceActionContext` 判别 `kind:'file'|'git-diff'`，携带完整 `scope`；file 带绝对路径、`dirty:boolean|'unknown'`、`readOnly`，diff 带完整 `SidebarDiffRef`。目录不提供file动作。无注册动作则现有菜单/toolbar不增加任何入口。order 升序（默认100），同order注册顺序；同类别重复id抛错。
+
+`getResourceActions(context)` 同步查询；`runResourceAction(id, readContext)` 在实际执行前重新读取实时上下文，重新检查available，异常由承载面可见展示。available必须同步无IO。注销会移除已挂载入口，并abort在途run的signal；consumer仍需尊重signal，部分导航由其回滚。本体不把失败/取消当成功，也不静默fallback。
+
+`registerFileOpenTarget({id,priority,accept,open})` 只拦文件树普通点击；priority较小先运行，同值注册顺序。open返回`handled|declined`（可Promise）；全部declined才回原文件打开，异常/取消停止这次打开。显式新标签、侧边、外部应用和聊天文件地址不被抢占。异步期间session/cwd/service改变会拒绝旧gesture继续导航。
+
+`setFileDocumentState(ownerId,scope,path,state|undefined)` / `reportFileDocument(...)` / `getFileDocumentState(scope,path)` 供viewer上报及动作读取草稿状态。多owner合并dirty为true优先于unknown优先于false，readOnly为OR。EditorHost加载/未上报toolbar时unknown/readonly，只有实际toolbar可编辑状态才提供确定信息。无mounted viewer报告时返回false/false，仅表示本体目前没有报告的草稿，**不是资源归属或写权限证明**。consumer不得把unknown当clean，不支持隐式跨surface草稿转移。
+
+#### 文件数据、来源确认与保存票据
+
+新增 `registerDocumentProvider({id,match,createSource})` / `getDocumentProviders()`。Document provider与现有Git provider的第一个TRUE match锁定；工厂为空/抛错/缺能力均`unsupported-provider`，match抛错为`unavailable`，不跳到另一provider或本地。既有Git provider匹配但没有Document provider时禁止本地文件读写。
+
+`readText(scope,absolutePath,{signal?,authority?})` 返回text/binary判别与`providerId/providerEpoch`；完整、可写、未截断的text额外签发`baselineId`。`writeText(scope,path,content,condition,{authority?})` 的 condition 必须含 **expectedContent、providerId、providerEpoch、baselineId**。票据绑定具体session/cwd/repoRoot/path、完整内容、服务activation和来源代际；不能伪造或跨文档/服务复用。保存期间相同ticket不能重入；保存成功返回新的baselineId，下一次保存使用实际提交文本与新票据。写入失败需重新读，不盲重试；保存期间的新输入不能因此标为已保存。
+
+关闭或替换文档时调用 `releaseTextBaseline(id)`；pending返回false不会解除锁。最多64活票据，满时`too-large`，不会静默淘汰旧baseline。provider注册/注销清票据并abort读。稳定provider对象在内部绑定来源改变时必须调用 `invalidateResourceProviders()` 推进epoch并通知 `subscribe`；不能仅换内部闭包而维持旧来源票据。
+
+**无provider匹配不证明本地。**当前DSH summary没有资源authority标记，因此默认拒绝并给`ResourceDataError(code:'unavailable',reason:'authority-required')`。仅针对这一reason可向用户明确确认“运行DSH服务的宿主机器”并展示session/路径；确认后这次调用传`authority:'host-local'`。它不授权远端、不绕过provider veto，不按cwd或provider缺席自动确认。读确认不自动授权写；写还要显式authority和有效读取票据。消费者不得将确认跨session/来源代际持久化或静默refresh。普通unavailable/网络失败/provider缺能力绝不能提示本地降级。
+
+`getResourceCapabilities(scope,{authority?})` 给出具体方法支持、document/diff error及reason、providerEpoch、condition:'content'和默认/配置限额标记。仅是能力探测，不是authority证明。v1 client默认文本512KiB、patch4MiB；host文本配置可不同（以实际结果truncated为准），64票据上限仍执行客户端文本额度。服务未就绪不可贡献死入口。
+
+#### 严格Git比较
+
+`readDiff(scope,worktreeRef,{signal?,authority?})` 首版只接受kind worktree。Git source 可实现 optional `readStrictDiff(scope,ref,{signal?})`；匹配旧provider缺此方法直接拒绝，不调用旧gitDiff或本地fs补读。不改变旧侧栏兼容resolver的行为。
+
+结果含requestedSide、patch、empty、binary、truncated、untracked、files，以及providerId/providerEpoch。staged严格HEAD→index；unstaged严格index→disk，empty不跨侧重试。完整repoRoot/worktree传递、冲突拒绝，**不能把cwd填worktree**。本地metadata使用`--raw -z`完整路径，并结合同侧`--numstat -z`区分纯mode与正文变化，删除不提供editableAbsolutePath；截断NUL记录不造错误编辑地址。未跟踪数据由同源受限读取。宿主Git stdout在读取时每命令4MiB封顶、stderr8KiB、30s超时；文本/untracked默认512KiB；现有JSON请求总body1MiB仍限制保存正文+expectedContent，超限会拒绝。
+
+`ResourceDataError` 稳定code：conflict、not-found、permission-denied、invalid-path、invalid-scope、too-large、unsupported-provider、provider-changed、unavailable、aborted、write-outcome-unknown。`ambiguous:true` 表示写可能已生效，必须重新读取确认而非自动重试。provider变更时读会取消、旧结果拒绝；写不以abort冒充未提交，会等待真实结果并报告过期/不确定。
+
+条件保存是同进程canonical路径串行与rename前基线复查，**不是filesystem CAS**，外部进程/别名/多实例仍有TOCTOU；rename更新inode，不承诺保留owner/ACL/xattrs。所有新本地路由要求显式host-local及attached/persisted真实会话权威cwd，不信client-only cwd或process回退。现有fs/git路由与默认打开行为未改变。
+
 ## 1. 总览：你能扩展什么
 
 better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：

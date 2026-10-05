@@ -96,6 +96,26 @@ const prefs: SidebarPrefs = snap.prefs
 const store: SidebarStore = null as unknown as SidebarStore
 void prefs; void store; void ctx.betterSidebar.version; void ctx.betterSidebar.features
 void SIDEBAR_SERVICE_VERSION; void SIDEBAR_FEATURES
+// Public resource extension surface: browser-only, no private source imports.
+import type { ResourceActionDescriptor, FileOpenTargetDescriptor, DocumentProviderDescriptor, ResourceWriteBaseline, WorktreeRef } from 'dsh-better-sidebar/client/service'
+const resourceAction: ResourceActionDescriptor = {
+  id: 'consumer:edit', surfaces: ['file-tree-context', 'file-viewer-toolbar'], label: 'Edit',
+  available: c => c.kind === 'file' && c.dirty === false,
+  run: (c, signal) => { void c.scope; void signal },
+}
+const openTarget: FileOpenTargetDescriptor = {
+  id: 'consumer:target', priority: 10, accept: c => c.dirty === false,
+  open: () => 'declined',
+}
+ctx.betterSidebar.registerResourceAction(resourceAction)
+ctx.betterSidebar.registerFileOpenTarget(openTarget)
+declare const provider: DocumentProviderDescriptor
+ctx.betterSidebar.registerDocumentProvider(provider)
+declare const baseline: ResourceWriteBaseline
+ctx.betterSidebar.writeText({sessionId:'s1'}, '/p/a.csv', 'next', baseline, {authority:'host-local'})
+declare const diffRef: WorktreeRef
+ctx.betterSidebar.readDiff({sessionId:'s1'}, diffRef, {authority:'host-local'})
+ctx.betterSidebar.readText({sessionId:'s1'}, '/p/a.csv', {authority:'host-local'})
 // Vendored-cordis augmentation path.
 declare const vctx: VendoredContext
 vctx.betterSidebar.registerTab(tab)

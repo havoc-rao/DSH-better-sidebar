@@ -53,6 +53,9 @@ export { resolveTerminalSource, useTerminalTransport } from './terminal-source.t
 export type { TerminalTransport, TerminalTransportHandle, TerminalTransportSession, TerminalTransportSurface, TerminalViewProps } from './terminal-transport.ts'
 export type { GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
 export { resolveGitSource, useGitSource } from './git-source.ts'
+export type { ResourceActionContext, ResourceActionDescriptor, FileActivationContext, FileOpenTargetDescriptor, FileDocumentState } from './resource-actions.ts'
+export type { ResourceTextReadResult, ResourceTextWriteOutcome, ResourceWriteBaseline, ResourceDataSource, DocumentProviderDescriptor, ResourceDataOptions, ResourceProviderMetadata, ResourceCapabilities, WorktreeRef } from './resource-data.ts'
+export { ResourceDataError } from './resource-data.ts'
 
 /** Services required before mounting (provided by the client runtime; the
  *  locale service backs the sidebar's copy — see locales.ts). `modules`
@@ -215,6 +218,7 @@ export function apply(ctx: Context): void {
     }
   }, sessionId => ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd)
   ctx.provide('betterSidebar', service)
+  ctx.effect(() => () => service.dispose(), 'dsh-better-sidebar: resource extension cleanup')
   // Optional root capability: old hosts remain session-only, returning false
   // from openInspector rather than queueing a phantom session open.
   ctx.inject(['sidebarRightRoot'], (scope) => {

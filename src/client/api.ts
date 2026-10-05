@@ -16,6 +16,7 @@ import type {
   SidebarUpdateTeamTaskRequest,
 } from '../context-types.ts'
 import type { WorkflowRunView } from '../workflow-runs.ts'
+import type { ResourceTextRead, ResourceTextWriteResult, ResourceStrictDiff, WorktreeRef } from './resource-data.ts'
 
 /** Terminal dependency status (mirror of the host's depsStatus; issue #140). */
 export type TerminalDepsStatus =
@@ -330,6 +331,12 @@ function openExternal(payload: OpenExternalPayload): Promise<OpenExternalResult>
 
 /** The sidebar API surface (session scope threaded through every call). */
 export const api = {
+  documentRead: (scope: SessionScope, path: string, options?: { signal?: AbortSignal }) =>
+    call<ResourceTextRead>('document.read', scopePayload(scope, { path, authority: 'host-local' }), options?.signal),
+  documentWrite: (scope: SessionScope, path: string, content: string, condition: { expectedContent: string }) =>
+    call<ResourceTextWriteResult>('document.write', scopePayload(scope, { path, content, expectedContent: condition.expectedContent, authority: 'host-local' })),
+  gitDiffStrict: (scope: SessionScope, ref: WorktreeRef, options?: { signal?: AbortSignal }) =>
+    call<ResourceStrictDiff>('git.diff-strict', scopePayload(scope, { ref, authority: 'host-local' }), options?.signal),
   workspaceTerminalCreate: (sessionId: string, title?: string) =>
     call<WorkspaceTerminalInfo>('workspace-terminal.create', { sessionId, ...(title === undefined ? {} : { title }) }),
   workspaceTerminalList: (sessionId: string, signal?: AbortSignal) =>

@@ -22,7 +22,7 @@
  * The strategy dispatch is pure (planFirstMatch / planFsReadOutcome in
  * editor-load.ts); this component only wires it to the host APIs.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
 import { IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -37,6 +37,8 @@ import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTar
 import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
+import { ResourceActions, isResourceAbort } from './ResourceActions.tsx'
+import type { FileDocumentState } from './resource-actions.ts'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './paths.ts'
@@ -270,10 +272,27 @@ export function EditorHost(props: {
   // its state and registers its commands (both null/absent for viewers
   // without a toolbar — image, pdf, binary download).
   const [toolbar, setToolbar] = useState<EditorToolbarState | null>(null)
+  const documentOwner = useId()
+  const documentIdentity = JSON.stringify([scope.sessionId, scope.cwd, path, reloadSeq])
+  const toolbarIdentity = useRef<string | null>(null)
+  const documentState: FileDocumentState = toolbar !== null && toolbarIdentity.current === documentIdentity
+    ? { dirty: toolbar.dirty ?? 'unknown', readOnly: toolbar.editable !== true }
+    : { dirty: 'unknown', readOnly: true }
+  useLayoutEffect(() => {
+    if (showEmpty || isDir || service?.setFileDocumentState === undefined) return
+    const reportScope = { sessionId: scope.sessionId, cwd: scope.cwd }
+    service.setFileDocumentState(documentOwner, reportScope, path, documentState)
+    return () => {
+      try { service.setFileDocumentState(documentOwner, reportScope, path, undefined) }
+      catch (error) { if (!isResourceAbort(error)) throw error }
+    }
+  }, [service, documentOwner, scope.sessionId, scope.cwd, path, showEmpty, isDir, documentIdentity, documentState.dirty, documentState.readOnly])
   const controlsRef = useRef<EditorToolbarControls | null>(null)
   const onToolbarState = useCallback((next: EditorToolbarState) => {
-    setToolbar(prev => prev !== null && JSON.stringify(prev) === JSON.stringify(next) ? prev : next)
-  }, [])
+    const sameDocument = toolbarIdentity.current === documentIdentity
+    toolbarIdentity.current = documentIdentity
+    setToolbar(prev => sameDocument && prev !== null && JSON.stringify(prev) === JSON.stringify(next) ? prev : { ...next })
+  }, [documentIdentity])
   const onToolbarControls = useCallback((controls: EditorToolbarControls | null) => {
     controlsRef.current = controls
   }, [])
@@ -323,7 +342,9 @@ export function EditorHost(props: {
   useEffect(() => {
     // A (re)load or a path-less tab clears any hoisted toolbar state — the
     // fresh viewer re-registers its own.
-    setToolbar(null)
+    // A newly mounted viewer may have reported in its layout effect already.
+    // Do not erase that current-identity report from this later passive effect.
+    if (toolbarIdentity.current !== documentIdentity) setToolbar(null)
     // The seeded home tab (no path) never loads a viewer — the empty-state
     // hint renders until the user picks a file. A folder tab never loads a
     // viewer either — its tree is rooted at the folder.
@@ -444,6 +465,11 @@ export function EditorHost(props: {
     <div className={css.editor}>
       <div className={css.editorHeader}>
         <EditorPathInput key={path} path={path} cwd={scope.cwd} onOpen={openFile} />
+        {!showEmpty && !isDir && <ResourceActions service={service} readContext={() => ({
+          kind: 'file', surface: 'file-viewer-toolbar', scope: { ...scope },
+          absolutePath: path, isDirectory: false,
+          ...(service?.getFileDocumentState?.(scope, path) ?? documentState),
+        })} />}
         {toolbar?.modes === true && (
           <div className={css.editorModeToggle}>
             <button

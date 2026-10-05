@@ -28,12 +28,17 @@ import {
 } from './state.ts'
 import { baseName, extOf } from './paths.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
-import type { GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
+import { api, type GitStatusEntry, type GitStatusResult, type SessionScope } from './api.ts'
+import { createResourceDataService, type ResourceDataService } from './resource-data.ts'
+export type { ResourceTextRead, ResourceTextWriteResult, ResourceStrictDiff, WorktreeRef, ResourceDataSource, DocumentProviderDescriptor, ResourceDataOptions, ResourceDataErrorCode, ResourceWriteBaseline, ResourceProviderMetadata, ResourceCapabilities, ResourceTextReadResult, ResourceTextWriteOutcome } from './resource-data.ts'
+export { ResourceDataError } from './resource-data.ts'
 import { openWorkspaceTerminal, resolveWorkspaceTerminalBinding, updateTerminalSession, workspaceTerminalViewId } from './workspace-terminals.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import type { TerminalProviderDescriptor } from './terminal-source.ts'
 import type { GitProviderDescriptor } from './git-source.ts'
 import { createInspectorApi, type InspectorApi } from './inspectors.ts'
+import { createResourceActionRegistry, type ResourceActionRegistry } from './resource-actions.ts'
+export type { ResourceActionContext, ResourceActionDescriptor, FileActivationContext, FileOpenTargetDescriptor, FileDocumentState } from './resource-actions.ts'
 export type { InspectorComponentProps, InspectorDescriptor, InspectorObject, InspectorJson, OpenInspectorSeed, InspectorSnapshot } from './inspectors.ts'
 
 /**
@@ -574,7 +579,7 @@ export interface GitCommitActionDescriptor {
 /**
  * The registry service published as `ctx.betterSidebar`.
  */
-export interface BetterSidebarService extends InspectorApi {
+export interface BetterSidebarService extends InspectorApi, ResourceActionRegistry, Omit<ResourceDataService, 'dispose'> {
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
@@ -859,6 +864,10 @@ export const SIDEBAR_FEATURES = [
   'workspaceTerminalSource',
   'gitSource',
   'inspectors',
+  'resourceActions:v1',
+  'fileOpenTargets:v1',
+  'textDocuments:v1',
+  'strictGitDiff:v1',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -897,6 +906,7 @@ export function createBetterSidebarService(
   const commitTargets = new Map<string, { seq: number; target: GitCommitTarget }>()
   let commitTargetSeq = 0
   const listeners = new Set<() => void>()
+  const dataRegistryListeners = new Set<() => void>()
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
 
@@ -907,6 +917,13 @@ export function createBetterSidebarService(
   let inspectorStorage: Storage | undefined
   try { inspectorStorage = globalThis.localStorage } catch { /* private mode */ }
   const inspectors = createInspectorApi(notify, inspectorStorage)
+  const resources = createResourceActionRegistry(notify)
+  const data = createResourceDataService({
+    local: { readText: api.documentRead, writeText: api.documentWrite, readStrictDiff: api.gitDiffStrict },
+    getGitProviders: () => Array.from(gitProviders.values()),
+    subscribeRegistry: listener => { dataRegistryListeners.add(listener); return () => { dataRegistryListeners.delete(listener) } },
+    notify,
+  })
 
   const subscribe = (listener: () => void): (() => void) => {
     listeners.add(listener)
@@ -997,10 +1014,12 @@ export function createBetterSidebarService(
       throw new Error(`[dsh-better-sidebar] git provider "${provider.id}" already registered`)
     }
     gitProviders.set(provider.id, provider)
+    for (const listener of [...dataRegistryListeners]) listener()
     notify()
     return () => {
       if (gitProviders.get(provider.id) === provider) {
         gitProviders.delete(provider.id)
+        for (const listener of [...dataRegistryListeners]) listener()
         notify()
       }
     }
@@ -1476,6 +1495,9 @@ export function createBetterSidebarService(
 
   return {
     ...inspectors,
+    ...resources,
+    ...data,
+    dispose: () => { resources.dispose(); data.dispose() },
     registerTab,
     registerFileViewer,
     registerFileIcon,

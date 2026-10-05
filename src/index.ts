@@ -61,6 +61,7 @@ import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { readPersistedSession } from './session-store.ts'
+import { buildResourceDataApi } from './resource-data-routes.ts'
 import { buildWorkspaceTerminalApi, resolveTerminalWorkspace, WorkspaceTerminalManager } from './workspace-terminal.ts'
 export type { WorkspaceTerminalInfo } from './workspace-terminal.ts'
 
@@ -738,6 +739,27 @@ function buildApi(
     // identities are fenced from the generic session RPCs (agent-lookup
     // ownership), and the thread is created with a CUSTOM seed the stock
     // fork APIs cannot express.
+    ...buildResourceDataApi({
+      cwdOf: async (payload) => {
+        if ((payload as { authority?: unknown } | null)?.authority !== 'host-local') {
+          throw new SidebarError('invalid-scope', 'resource routes require explicit host-local authority')
+        }
+        const sessionId = requireString(payload, 'sessionId')
+        let header = ctx.sessions.get(sessionId)?.header
+        if (header === undefined) {
+          const persistence = ctx.get('sessionPersistence')
+          if (persistence !== undefined) {
+            try { header = (await readPersistedSession(persistence, sessionId)).header }
+            catch { throw new SidebarError('not-found', 'resource session is not available', 404) }
+          }
+        }
+        if (header?.cwd === undefined || header.cwd === '') {
+          throw new SidebarError('invalid-scope', 'resource routes require an authoritative session cwd')
+        }
+        return { sessionId, cwd: requireAbsolute(header.cwd) }
+      },
+      readLimit: resolved.readLimit,
+    }),
     ...buildSidechatApi(ctx, assistantLive),
     ...buildWorkspaceTerminalApi(ctx, workspaceTerminals, () => shellOverridesOf(getSettings)),
   }
