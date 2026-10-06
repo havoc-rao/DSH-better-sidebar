@@ -39,9 +39,8 @@ function tokenSpanClass(type: TokenType, changed: boolean): string {
   return changed ? `${color} ${css.inlineChange}` : color
 }
 
-/** Render scanned tokens as colored nodes; uncolored runs stay text. */
-function tokensToNodes(tokens: readonly CodeToken[], changed = false): ReactNode[] {
-  const nodes: ReactNode[] = []
+/** Append scanned tokens to a line's nodes; keys stay unique across runs. */
+function tokensToNodes(tokens: readonly CodeToken[], changed = false, nodes: ReactNode[] = []): ReactNode[] {
   for (const token of tokens) {
     if (!changed && !isColored(token)) nodes.push(token.text)
     else nodes.push(<span key={String(nodes.length)} className={tokenSpanClass(token.type, changed)}>{token.text}</span>)
@@ -221,7 +220,7 @@ export function DiffRows({ segments, lang, resolveFold, onOpenRow }: DiffRowsPro
             for (const seg of side) {
               const scan = scanLine(seg.text, lang, state)
               state = scan.inBlock
-              nodes.push(...tokensToNodes(scan.tokens, seg.changed))
+              tokensToNodes(scan.tokens, seg.changed, nodes)
             }
             return nodes
           })()}
