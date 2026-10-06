@@ -12,7 +12,7 @@
  * Shared by the plugin's own panel and the native right-Sidebar tab body, so
  * both surfaces behave identically.
  */
-import type { Context } from '../context-types.ts'
+import type { Context, SidebarConversation } from '../context-types.ts'
 import { appendToDraft, insertFileReference } from './conversation-draft.ts'
 import { relativeTo } from './paths.ts'
 
@@ -32,11 +32,20 @@ export function referenceInChat(
   isDir: boolean,
 ): void {
   const rel = relativeTo(cwd ?? '', path)
-  if (isDir) {
-    appendToDraft(ctx, sessionId, `@${rel === '.' ? './' : `${rel}/`}`)
-    return
-  }
-  if (!insertFileReference(ctx, sessionId, rel)) {
-    appendToDraft(ctx, sessionId, `@${rel}`)
+  const inserted = isDir
+    ? appendToDraft(ctx, sessionId, `@${rel === '.' ? './' : `${rel}/`}`)
+    : insertFileReference(ctx, sessionId, rel) || appendToDraft(ctx, sessionId, `@${rel}`)
+  if (!inserted) return
+
+  // Let the host editor restore its retained selection (DOM focus alone can
+  // reset Lexical's caret). Keep this click-only: other draft writers must not
+  // unexpectedly take keyboard focus from their own surfaces.
+  try {
+    const actx = ctx.sessions.scope(sessionId)
+    if (actx === undefined) return
+    const conversation = ctx.get('conversation') as SidebarConversation | undefined
+    conversation?.input.for(actx).focus?.()
+  } catch (error) {
+    console.warn('[dsh-better-sidebar] composer focus failed:', error)
   }
 }

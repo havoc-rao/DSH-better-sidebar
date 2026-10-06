@@ -612,6 +612,8 @@ export interface SidebarSessionInput {
   }
   /** Replace the draft text (the input machine's single public write path). */
   setDraft(text: string): void
+  /** Restore the editor's focus and retained selection when supported by the host. */
+  focus?(): void
 }
 
 /** The composer draft face the sidebar reaches through `ctx.get('conversation')`. */
