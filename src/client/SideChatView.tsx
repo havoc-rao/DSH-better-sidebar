@@ -503,8 +503,8 @@ export function SideChatView(props: {
     }
   }, [])
 
-  // Reset the transcript cache whenever the binding changes, then focus
-  // the composer — it owns the first message of a fresh thread.
+  // Reset the transcript cache whenever the binding changes. Composer
+  // focus is handled separately so visibility changes cancel its timer.
   useEffect(() => {
     cacheRef.current = { entries: [], live: [] }
     prevRowsRef.current = []
@@ -514,9 +514,24 @@ export function SideChatView(props: {
     setInfo(null)
     if (threadId !== undefined) {
       void fetchInfo(threadId)
-      window.setTimeout(() => composerRef.current?.focus(), 0)
     }
   }, [threadId, fetchInfo])
+
+  // A retained tab may be hidden before this deferred focus runs. Never
+  // focus into the host's collapsed/parked seat, and cancel on hide/unmount.
+  useEffect(() => {
+    if (!visible || threadId === undefined) return
+    const timer = window.setTimeout(() => {
+      const composer = composerRef.current
+      if (composer === null || !composer.isConnected
+        || composer.closest('[hidden], [aria-hidden="true"], [inert]') !== null) return
+      // A host modal opened in the meantime owns focus, not this pane.
+      const modal = document.querySelector('[aria-modal="true"]')
+      if (modal !== null && !modal.contains(composer)) return
+      composer.focus()
+    }, 0)
+    return () => { window.clearTimeout(timer) }
+  }, [threadId, visible])
 
   // One transcript pull on every input change (attach, visibility flip,
   // run-state flip — the last one catches a thread's terminal state once it

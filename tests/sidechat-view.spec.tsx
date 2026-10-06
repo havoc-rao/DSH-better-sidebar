@@ -162,6 +162,43 @@ function threadStore(): ReturnType<typeof makeStore> {
 }
 
 describe('SideChatView rendering', () => {
+  it.each(['hidden', 'aria-hidden', 'inert', 'modal', 'parked', 'unmount'])(
+    'does not steal focus when the deferred composer focus is blocked by %s', async blocker => {
+      vi.useFakeTimers()
+      const props = viewProps(makeCtx(threadStore()))
+      const outside = document.createElement('button')
+      document.body.append(outside)
+      outside.focus()
+      const view = renderRoot(createElement(SideChatView, props))
+      let unmounted = false
+      try {
+        await act(async () => {})
+        if (blocker === 'hidden') view.container.hidden = true
+        if (blocker === 'aria-hidden') view.container.setAttribute('aria-hidden', 'true')
+        if (blocker === 'inert') view.container.setAttribute('inert', '')
+        if (blocker === 'modal') outside.setAttribute('aria-modal', 'true')
+        if (blocker === 'parked') view.rerender(createElement(SideChatView, { ...props, visible: false }))
+        if (blocker === 'unmount') { view.unmount(); unmounted = true }
+        act(() => { vi.advanceTimersByTime(1) })
+        expect(document.activeElement).toBe(outside)
+      } finally {
+        if (!unmounted) view.unmount()
+        outside.remove()
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it('focuses the composer when its thread is visible and unobstructed', async () => {
+    vi.useFakeTimers()
+    const view = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
+    try {
+      await act(async () => {})
+      act(() => { vi.advanceTimersByTime(1) })
+      expect(document.activeElement).toBe(view.container.querySelector('textarea'))
+    } finally { view.unmount(); vi.useRealTimers() }
+  })
+
   it('renders the bash pair as a TerminalBlock and the turn tail with usage + duration', async () => {
     const props = viewProps(makeCtx(threadStore()))
     const { container, unmount } = renderRoot(createElement(SideChatView, props))
