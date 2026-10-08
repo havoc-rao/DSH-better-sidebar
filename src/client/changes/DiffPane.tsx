@@ -13,6 +13,7 @@ import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineR
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { useGitSource } from '../git-source.ts'
+import { diffScrollIdentity } from '../TabScrollMemory.tsx'
 import { htmlUrl } from '../api.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
@@ -328,7 +329,8 @@ export function DiffPane({ ctx, target, scope, height, onHeightCommit, onClose, 
   const stats = gitStats ?? (target.kind === 'op' && op !== null && op.kind !== 'read' && !op.isError ? opStats : null)
 
   return (
-    <div className={css.diffPane} style={{ height: paneHeight }}>
+    <div className={css.diffPane} style={{ height: paneHeight }}
+      data-dsh-scroll-key={JSON.stringify(target.kind === 'git' ? diffScrollIdentity(target.ref) : [target.path, target.op.callId])}>
       <div
         className={css.dragHandle}
         role="separator"

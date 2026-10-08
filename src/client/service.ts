@@ -20,6 +20,8 @@
  *   then `exts`; `exts: []` is a catch-all that matches any path.
  */
 import type { ReactNode } from 'react'
+import { sharedRendering, type SharedRenderingService } from './rendering.tsx'
+export type { MarkdownRenderProps, MarkdownCopyLabels, CodeEditorRenderProps, CodeRendering, SharedRenderingService } from './rendering.tsx'
 import type { Context } from '../context-types.ts'
 import {
   activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer,
@@ -579,7 +581,7 @@ export interface GitCommitActionDescriptor {
 /**
  * The registry service published as `ctx.betterSidebar`.
  */
-export interface BetterSidebarService extends InspectorApi, ResourceActionRegistry, Omit<ResourceDataService, 'dispose'> {
+export interface BetterSidebarService extends SharedRenderingService, InspectorApi, ResourceActionRegistry, Omit<ResourceDataService, 'dispose'> {
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
@@ -868,6 +870,7 @@ export const SIDEBAR_FEATURES = [
   'fileOpenTargets:v1',
   'textDocuments:v1',
   'strictGitDiff:v1',
+  'sharedRendering:v1',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -1494,6 +1497,7 @@ export function createBetterSidebarService(
   }
 
   return {
+    ...sharedRendering,
     ...inspectors,
     ...resources,
     ...data,

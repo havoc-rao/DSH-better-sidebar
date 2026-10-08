@@ -28,6 +28,7 @@ import type { ComponentType, ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx'
+import { TabScrollMemory } from '../TabScrollMemory.tsx'
 import { OrphanedTab } from '../OrphanedTab.tsx'
 import { referenceInChat } from '../reference-in-chat.ts'
 import type { BetterSidebarService } from '../service.ts'
@@ -407,29 +408,32 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
     createElement(
       'div',
       { className: css.nativeTabHost, 'data-dsh-native-tab-host': '' },
-      createElement(descriptor.component, {
-        ctx,
-        store,
-        scope,
-        tab: view.tab,
-        visible: nativeTab.visible,
-        expanded: view.expanded,
-        revealed: view.revealed,
-        onToggleDir: (path: string) => {
-          records.toggleExpanded(nativeTab.id, path, () => ({ tab: view.tab, scope }))
-        },
-        onReferenceFile: (path: string, isDir: boolean) => { referenceInChat(ctx, sessionId, cwd, path, isDir) },
-        onOpenDiff: (tab: SidebarTab) => {
-          service.openTab({
-            type: 'diff',
-            title: tab.title,
-            id: tab.id,
-            ...(tab.diff === undefined ? {} : { diff: tab.diff }),
-          }, scope)
-        },
-        onSubagentJump: (childSessionId: string) => {
-          service.openTab({ type: 'subagent', meta: { childSessionId } }, scope)
-        },
+      createElement(TabScrollMemory, {
+        scope, tab: view.tab, visible: nativeTab.visible, surface: 'native',
+        children: createElement(descriptor.component, {
+          ctx,
+          store,
+          scope,
+          tab: view.tab,
+          visible: nativeTab.visible,
+          expanded: view.expanded,
+          revealed: view.revealed,
+          onToggleDir: (path: string) => {
+            records.toggleExpanded(nativeTab.id, path, () => ({ tab: view.tab, scope }))
+          },
+          onReferenceFile: (path: string, isDir: boolean) => { referenceInChat(ctx, sessionId, cwd, path, isDir) },
+          onOpenDiff: (tab: SidebarTab) => {
+            service.openTab({
+              type: 'diff',
+              title: tab.title,
+              id: tab.id,
+              ...(tab.diff === undefined ? {} : { diff: tab.diff }),
+            }, scope)
+          },
+          onSubagentJump: (childSessionId: string) => {
+            service.openTab({ type: 'subagent', meta: { childSessionId } }, scope)
+          },
+          }),
       }),
     ),
   )

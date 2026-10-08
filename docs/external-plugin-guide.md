@@ -8,6 +8,27 @@
 
 ---
 
+### 共享文件渲染（feature `sharedRendering:v1`）
+
+消费插件通过 `ctx.betterSidebar` 复用侧栏渲染，不得 value-import 侧栏私有源码。公开类型可从 `dsh-better-sidebar/client/service` **type-only import**：`MarkdownRenderProps`、`MarkdownCopyLabels`、`CodeEditorRenderProps`、`CodeRendering`。
+
+```tsx
+service.renderMarkdown({ text, scope, path, codeLabels, className: styles.preview })
+service.renderCodeEditor({
+  documentKey: `${sessionId}:${path}`, path, content,
+  onChange: updateWorkbenchDraft,
+  onSave: requestWorkbenchSave,
+  className: styles.editor,
+  stateCache: workbenchEditorStates, // stable Map<string, unknown>，关闭文档/卸载工作台时删除
+})
+```
+
+- `renderMarkdown(props): ReactNode`：纯预览，隐藏闭合的前置 YAML，统一 `MarkdownDocument` 的 HTML 清洗、本地图片路径、Mermaid 懒加载和 `MdToc` 目录。`codeLabels` 必填五字段（copyLabel/copiedLabel/codeLabel/wrapLabel/unwrapLabel）。`className` 可选：提供时生成消费者拥有的滚动容器；省略时内容与目录直接挂到调用方滚动容器，不多包一层。消费者负责容器高度、overflow、选区/滚动记忆。
+- `renderCodeEditor(props): ReactNode`：受控 CodeMirror 视图；`documentKey/path/content/onChange` 必填，`onSave/className/readOnly/stateCache` 可选。`onSave(): void` 只发出 Ctrl/Cmd+S 保存请求，调用方持有缓存、脏状态、写入基线、异步保存和错误。普通 content 更新不重建视图、不回触 onChange、不增加 undo 项；documentKey/path/readOnly/stateCache 身份变化重建视图。`stateCache?: { get(key: string): unknown; set(key: string, value: unknown): void }` 可直接传稳定的 `Map<string, unknown>`：内部在卸载时以 documentKey 缓存 EditorState/path/双轴 scroll，同 path 的 tab/preview/seat 重挂恢复 undo、选区、折叠、搜索状态和滚动；重挂完整 reconfigure 替换扩展，确保不残留旧 onChange/onSave 闭包，缓存内容与受控 content 不一致时静默同步。调用方在关闭文档时应先卸载编辑器再 delete(key)，卸载工作台后 clear()，否则 cleanup 写入会重新创建刚删除的缓存。值是当前 sidebar chunk runtime 的不透明内存对象，不可序列化或跨窗口/不同 CM runtime 复用；不兼容/过期缓存与不同 path 的缓存会被忽略。不提供 stateCache 则卸载不保留视图状态。内置 search/searchKeymap、foldGutter/foldKeymap、bracketMatching 和 indentWithTab。不得把 sidebar 的 TextEditor 草稿/保存逻辑迁入工作台。
+- 两个方法第一次挂载从现有 `/sidebar/bundle/editor.js` 加载组件；共用已缓存 chunk 和宿主 React，无新增 chunk。等待期间返回空内容；失败向消费者 ErrorBoundary 抛错，卸载后重挂可重试。
+- `loadCodeRendering(): Promise<CodeRendering>` 返回现有 chunk 的 `{ languageForPath, cmSurfaceTheme, CmThemeCompartment, isDarkScheme, subscribeColorScheme }` 原始工具（语言/主题为 CodeMirror Extension）。**它们属于侧栏 editor chunk 的 CM runtime**：不能将其放入消费插件另行打包的 EditorState，版本号一致也不能保证 instanceof 身份一致。推荐使用 renderCodeEditor 并删除消费端 CM value imports，而不是混用 extension。该低层 API 只适合已经确保同一运行时的集成。
+- 部署必须同步核心 `lib/client.js`、`lib/client-editor.js`、完整 `lib/types` 和消费插件构建产物；消费者 typecheck 时依赖本次构建的侧栏声明（旧版 0.24.1 声明没有此增量 API，应 feature/method 探测）。没有新增安装依赖，也不要求修改 DSH。本地服务更新仍需当前 profile 同步安装产物并刷新原页面。
+
 ## 0. 承载面：DSH 原生右侧栏 + 插件底部工作台（v0.19.0-alpha.0 起）
 
 从 v0.19.0-alpha.0 起，**右列完全属于 DSH**：你的 tab 渲染在 **DSH 自己的右侧栏**里（`ctx.sidebarRight` / `ctx.sidebarRightTabs`），插件把每个 `TabDescriptor` 注册成原生 tab 类型（`kind = descriptor.id`）+ 一个原生 tab 体。插件自己只保留**底部工作台**（分栏树、会话内持久化；**本地终端已在本合并基线恢复**，并新增 workspace 级终端管理；宿主右侧栏终端仍是宿主自己的承载面）。对你的接入代码**没有影响**——仍然只调用 `ctx.betterSidebar`：
@@ -395,6 +416,7 @@ interface TabComponentProps {
 实践建议：
 
 - **用 `visible` 做性能门**：subagent 内置页在 `visible === false` 时暂停轮询；你的页面若有轮询/订阅，同样处理。
+- **DOM 滚动记忆**：原生右侧栏与底部工作台自动记住插件 tab 内普通 `overflow:auto/scroll` 容器的纵向、横向位置；按承载面、会话、工作目录、tab 资源身份隔离，仅保留当前页面内的有界内存缓存（整页刷新不保留）。异步内容暂时过短时等待 DOM/尺寸变化再恢复，用户在容器内滚轮、按键或按下指针会取消待恢复，隐藏页不记录夹零位置。多个动态子视图可在滚动容器或其祖先加 `data-dsh-scroll-key="稳定的子资源身份"`，避免不同目标共用位置；没有标记时按 DOM 结构和 class 区分。**自有滚动管理**的容器应加 `data-dsh-scroll-managed` 退出通用恢复（文件树、Markdown 预览、CodeMirror、xterm 已退出）；iframe 内部及 portal 弹窗不属于 tab DOM 子树，不在自动恢复范围。侧边对话仅在靠近底部时跟随新增记录，上翻阅读不强制滚底。
 - **用 `scope.sessionId`（+ `scope.cwd`）访问会话数据**：所有 `/sidebar/api/*` 请求都要带这两个字段（见 §6）。
 
 ### 4.3 注册示例

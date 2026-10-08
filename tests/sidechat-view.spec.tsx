@@ -162,6 +162,35 @@ function threadStore(): ReturnType<typeof makeStore> {
 }
 
 describe('SideChatView rendering', () => {
+  it('重开异步加载的转录时保留上翻阅读状态，不强制滚底', async () => {
+    const props = { ...viewProps(makeCtx(threadStore())), scope: { sessionId: 'scroll-reading', cwd: '/p' } }
+    const first = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    const scroller = first.container.querySelector<HTMLElement>('[data-dsh-scroll-key]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 100 })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000 })
+    scroller.scrollTop = 0
+    act(() => {
+      scroller.dispatchEvent(new Event('wheel', { bubbles: true }))
+      scroller.dispatchEvent(new Event('scroll'))
+    })
+    first.unmount()
+    let resolve!: (value: Response) => void
+    vi.stubGlobal('fetch', async (url: string | URL) => {
+      if (String(url).endsWith('sidechat.events')) return new Promise<Response>(done => { resolve = done })
+      return jsonResponse({ ok: true, value: {} })
+    })
+    const reopened = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    const body = reopened.container.querySelector<HTMLElement>('[data-dsh-scroll-key]')!
+    Object.defineProperty(body, 'clientHeight', { value: 100 })
+    Object.defineProperty(body, 'scrollHeight', { value: 1000 })
+    body.scrollTop = 0
+    act(() => body.dispatchEvent(new Event('scroll')))
+    await act(async () => { resolve(jsonResponse({ ok: true, value: { events: EVENTS } })) })
+    expect(body.scrollTop).toBe(0)
+    reopened.unmount()
+  })
   it.each(['hidden', 'aria-hidden', 'inert', 'modal', 'parked', 'unmount'])(
     'does not steal focus when the deferred composer focus is blocked by %s', async blocker => {
       vi.useFakeTimers()

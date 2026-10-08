@@ -10,6 +10,7 @@ import type { SidebarState, SidebarStore, SidebarTab } from '../state.ts'
 import type { SessionScope } from '../api.ts'
 import { OrphanedTab } from '../OrphanedTab.tsx'
 import { RenderBoundary } from '../RenderBoundary.tsx'
+import { TabScrollMemory } from '../TabScrollMemory.tsx'
 import { tabContentCompare, type TabContentMemoKey } from '../tab-content-memo.ts'
 import type { NewTabOption } from '../TabBar.tsx'
 import css from '../sidebar.module.css'
@@ -42,10 +43,12 @@ export const TabContent = memo(function TabContent(props: TabContentProps) {
   return createElement(
     RenderBoundary,
     { className: css.tabBoundaryError },
-    createElement(descriptor.component, {
-      ctx, store, scope, tab, visible, expanded, revealed,
-      onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
-    }),
+    <TabScrollMemory scope={scope} tab={tab} visible={visible} surface="workbench">
+      {createElement(descriptor.component, {
+        ctx, store, scope, tab, visible, expanded, revealed,
+        onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
+      })}
+    </TabScrollMemory>,
   )
 }, tabContentCompare)
 

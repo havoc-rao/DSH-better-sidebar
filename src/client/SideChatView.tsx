@@ -80,6 +80,8 @@ import css from './SideChatView.module.css'
 const POLL_MS = 2000
 /** Textarea auto-grow ceiling (px) — the composer scrolls beyond it. */
 const COMPOSER_MAX_HEIGHT = 132
+/** Reading mode survives closing/reopening a thread, separately from DOM geometry. */
+const sidechatFollowMemory = new Map<string, boolean>()
 
 /** The thread a tab is bound to (durable in tab.meta across refreshes). */
 export function sidechatThreadIdOf(tab: SidebarTab): string | undefined {
@@ -408,6 +410,9 @@ export function SideChatView(props: {
   const prevRowsRef = useRef<SidechatTranscriptRow[]>([])
   const controllerRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const followKey = JSON.stringify([scope.sessionId, scope.cwd, threadId ?? tab.id])
+  const followLatestRef = useRef(sidechatFollowMemory.get(followKey) ?? true)
+  const scrollInteractionRef = useRef(false)
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
 
   const summary = threadId === undefined ? undefined : list.byId[threadId]
@@ -502,6 +507,11 @@ export function SideChatView(props: {
       // The badge is decorative; a wire failure keeps the last value.
     }
   }, [])
+
+  useEffect(() => {
+    followLatestRef.current = sidechatFollowMemory.get(followKey) ?? true
+    scrollInteractionRef.current = false
+  }, [followKey])
 
   // Reset the transcript cache whenever the binding changes. Composer
   // focus is handled separately so visibility changes cancel its timer.
@@ -603,9 +613,9 @@ export function SideChatView(props: {
   // Follow the stream: stick to the bottom while the log grows.
   useEffect(() => {
     const scroller = scrollRef.current
-    if (scroller === null) return
+    if (scroller === null || !followLatestRef.current || visible === false) return
     scroller.scrollTop = scroller.scrollHeight
-  }, [rows.length, threadId])
+  }, [rows.length, threadId, visible])
 
   /** Open a NEW thread tab (createTab mints the autoCreate tab; its view
    *  creates the thread on mount). */
@@ -783,7 +793,23 @@ export function SideChatView(props: {
         && <div className={css.sidechatHint}>{t('sideChatPendingDrop')}</div>}
       {saved && <div className={css.sidechatHint}>{t('sideChatSaved')}</div>}
       {error !== null && <div className={css.sidechatError}>{t('sideChatError', { message: error })}</div>}
-      <div ref={scrollRef} className={css.sidechatScroll}>
+      <div ref={scrollRef} className={css.sidechatScroll}
+        data-dsh-scroll-key={`sidechat:${threadId ?? tab.id}`}
+        onWheel={() => { scrollInteractionRef.current = true }}
+        onPointerDown={() => { scrollInteractionRef.current = true }}
+        onKeyDown={() => { scrollInteractionRef.current = true }}
+        onScroll={(event) => {
+          const el = event.currentTarget
+          // A loading/empty transcript cannot turn a remembered reading mode
+          // back into follow-latest just because its temporary height is short.
+          if (rows.length === 0 || el.scrollHeight <= el.clientHeight) return
+          if (!followLatestRef.current && !scrollInteractionRef.current) return
+          followLatestRef.current = el.scrollHeight - el.clientHeight - el.scrollTop <= 24
+          sidechatFollowMemory.delete(followKey)
+          sidechatFollowMemory.set(followKey, followLatestRef.current)
+          if (sidechatFollowMemory.size > 100) sidechatFollowMemory.delete(sidechatFollowMemory.keys().next().value!)
+        }}
+      >
         {rows.map(row => renderRow(row, rowLabels))}
       </div>
       {running && (

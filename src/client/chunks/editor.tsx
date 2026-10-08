@@ -7,3 +7,8 @@
  * the startup path.
  */
 export { TextEditor } from '../TextEditor.tsx'
+export { MarkdownPreview } from '../MarkdownPreview.tsx'
+export { ControlledCodeEditor } from '../ControlledCodeEditor.tsx'
+export { languageForPath } from '../lang.ts'
+export { cmSurfaceTheme, CmThemeCompartment } from '../cm-themes.ts'
+export { isDarkScheme, subscribeColorScheme } from '../theme.ts'
