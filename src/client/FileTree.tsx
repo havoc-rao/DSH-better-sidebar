@@ -77,6 +77,7 @@ import type { FileTreeRowModel, FileTreeNode, GuideColumn } from 'dsh-file-tree-
 import { writeFileReferenceDrag } from './file-reference-drag.ts'
 import { useDirectoryWatch } from './use-dir-watch.ts'
 import { usePolling } from './use-polling.ts'
+import { useTreeScroll } from './use-tree-scroll.ts'
 import type { ResourceActionContext } from './resource-actions.ts'
 import { isResourceAbort, resourceErrorMessage, resourceActionLabel, resourceActionIcon } from './ResourceActions.tsx'
 import css from './sidebar.module.css'
@@ -581,6 +582,11 @@ export function FileTree(props: {
   const dropDepth = useRef(0)
   /** Explorer body element; its viewport rect anchors the portaled drop zone. */
   const bodyRef = useRef<HTMLDivElement>(null)
+  const scrollReady = cwd !== undefined && [cwd, ...expanded].every(path => {
+    const level = data[path]
+    return level?.entries !== undefined || level?.error !== undefined
+  })
+  const rememberScroll = useTreeScroll(bodyRef, sessionId, cwd, scrollReady, hidden !== true && visible !== false)
   /** The body's viewport rect captured at drag entry (null = not measured). */
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
   /** Context-menu "upload here" target directory. */
@@ -2120,6 +2126,7 @@ export function FileTree(props: {
     <div
       ref={bodyRef}
       data-dsh-file-tree=""
+      onScroll={rememberScroll}
       className={clsx(css.explorerBody, hidden === true && css.explorerHiddenPane)}
       hidden={hidden}
       tabIndex={-1}
