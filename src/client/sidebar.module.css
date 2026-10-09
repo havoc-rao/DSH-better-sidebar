@@ -829,8 +829,11 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* Deep trees truncate their labels instead of scrolling horizontally. */
-  overflow-x: hidden;
+  /* A deep tree's long labels are never squeezed into an ellipsis: the
+     content column grows to its widest row (see .explorerTree) and this body
+     scrolls horizontally to reach it — the same axis VSCode's explorer
+     scrolls. */
+  overflow-x: auto;
   padding: 4px 8px 8px;
 }
 
@@ -844,8 +847,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   align-items: center;
   gap: 6px;
   /* border-box keeps the inline indent padding (depth * 22 + 6) INSIDE the
-     row's 100% width — without it deep rows overflow and force a horizontal
-     scrollbar on the tree body. */
+     row's width — a deep row must not stick out of the shared content column
+     (every row is 100% of it, so the whole tree scrolls as one block instead
+     of per-row ragged widths). */
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
@@ -991,9 +995,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-color: var(--dsw-alias-state-business-primary);
 }
 
+/* The transient strips above the rows (mutation failure / load failure /
+   archive progress) belong to the VIEWPORT, not to the scrolled content
+   column: the tree body scrolls horizontally under them, so they stay pinned
+   with `left` while their width keeps tracking the scrollport. */
+.explorerStrip {
+  position: sticky;
+  left: 0;
+}
+
 /* The dismissable mutation-failure strip above the root row (rename/delete
    refusals — raw server text, same policy as the fence notice). */
 .explorerActionError {
+  position: sticky;
+  left: 0;
   display: flex;
   align-items: flex-start;
   gap: 6px;
@@ -1018,12 +1033,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    it docks at the panel's bottom edge (sticky) and its appearance never
    pushes the rows around the way a top bar did. Sticky (not absolute) keeps
    it in flow: scrolled to the bottom it sits below the last row and covers
-   nothing, while mid-scroll it stays reachable. It WRAPS instead of
-   overflowing, so a narrow panel gets a second line of chips rather than a
-   clipped control or a horizontal scrollbar. 28px rhythm, token-only (§1). */
+   nothing, while mid-scroll it stays reachable. `left: 0` is the horizontal
+   half of that same contract — the bar spans the scrollport, so the tree's
+   own horizontal scrolling must not carry it off the edge. It WRAPS instead
+   of overflowing, so a narrow panel gets a second line of chips rather than
+   a clipped control or a horizontal scrollbar. 28px rhythm, token-only (§1). */
 .explorerSelectionBar {
   position: sticky;
   bottom: 0;
+  left: 0;
   z-index: 1;
   display: flex;
   align-items: center;
@@ -1071,20 +1089,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: none;
 }
 
-/* The hover-revealed @-reference button at the row's far right (and the
+/* The hover-revealed @-reference button at the row's trailing edge (and the
    transient "copied" label that replaces it after a copy). The only auto
    margin in the row absorbs the filename's spare width, so a short name
-   cannot leave either affordance stranded in the middle. */
+   cannot leave either affordance stranded in the middle; `sticky right`
+   keeps it at the scrollport's right edge once a long name widens the whole
+   tree past the viewport (the built-in rows' counterpart of the framework's
+   sticky actions slot). */
 .explorerRef,
 .explorerCopied {
   margin-left: auto;
+  position: sticky;
+  right: 0;
 }
 
-/* Hidden rows keep the name at full width; hovering or focusing the row
-   reveals the reference button. */
+/* Laid out but invisible at rest (NOT display:none): the pill's width stays
+   part of the row's intrinsic width, so revealing it on hover can never
+   re-squeeze a long filename back into an ellipsis. Hovering or focusing the
+   row reveals it. */
 .explorerRef {
   flex: none;
-  display: none;
+  display: inline-flex;
+  visibility: hidden;
   align-items: center;
   height: 20px;
   padding: 0 8px;
@@ -1103,7 +1129,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .explorerRow:hover .explorerRef,
 .explorerRow:focus-within .explorerRef {
-  display: inline-flex;
+  visibility: visible;
 }
 
 .explorerCopied {
@@ -1121,9 +1147,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    guaranteed), and background-color (never the shorthand) leaves the
    rows' inline guide-line gradients intact. */
 
+/* The tree's content column — the framework root's container class (passed to
+   renderFileTree) AND the wrapper the built-in fallback renders its rows in,
+   so both paths scroll as one block of uniform rows.
+
+   The two custom properties are the provider's documented horizontal-scroll
+   opt-in (dsh-file-tree-ui owns the row chrome): the column grows to its
+   widest row instead of being pinned to the scrollport, and the rows' actions
+   slot sticks to the scrollport's right edge instead of riding the wide row's
+   (off-screen) end. A provider too old to read them simply keeps the previous
+   scrollport-wide layout. */
 .explorerTree {
   display: flex;
   flex-direction: column;
+  --dsh-ftr-root-width: max-content;
+  --dsh-ftr-actions-position: sticky;
+}
+
+/* Without a provider there is no .listRoot to consume the variable above, so
+   the built-in row wrapper declares the same wide column directly. */
+.explorerTreeBuiltin {
+  width: max-content;
+  min-width: 100%;
 }
 
 .explorerTree .explorerRowRevealed {

@@ -50,6 +50,13 @@ const SEEDED_MD_FILE = 'diagram.md'
  *  prove raw-HTML runs render as sanitized DOM and the TOC outline works. */
 const SEEDED_README_FILE = 'readme-style.md'
 
+/** A file whose NAME is far wider than any sidebar panel (≈120 characters):
+ *  the tree body must grow a horizontal scroll range for it instead of
+ *  squeezing the label into an ellipsis (and the row's @-reference pill must
+ *  stay at the scrollport's right edge, not ride the wide row's off-screen
+ *  end). */
+const SEEDED_LONG_NAME_FILE = 'applypatch-msg.sample-with-a-very-long-file-name-indeed-and-then-some-more-filler-text-so-no-panel-can-hold-it.tar.gz'
+
 /**
  * The plugin's crash markers. The client mounts inside an error boundary that
  * renders a strip whose text starts with these prefixes instead of crashing
@@ -85,6 +92,10 @@ let seededSessionId: string
 async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
   writeFileSync(join(WORKSPACE_PATH, SEEDED_FILE), 'hello from the mount lane\n')
+  // The horizontal-scroll probe file: its name alone is wider than the tree
+  // panel, so the tree's content column must grow and the body must actually
+  // scroll on the x axis (asserted right after the explorer opens below).
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_LONG_NAME_FILE), 'wide label probe\n')
   // The mermaid-chunk probe file: a markdown doc whose preview must fetch
   // client-mermaid.js and render the fence into an SVG diagram. The
   // reference-style link's definition sits AFTER the fence: it only
@@ -486,6 +497,47 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.locator('[data-sidebar-right-guide-entry="files"]').click()
   const fileRow = pane.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
   await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the plugin's explorer`).toHaveCount(1, { timeout: 30_000 })
+
+  // The horizontal axis (the tree panel here is narrow; the long seed alone
+  // is wider): the body must own a horizontal scroll range instead of
+  // squeezing every label into an ellipsis, and the row's @-reference pill
+  // must stay pinned at the scrollport's right edge rather than sitting at
+  // the wide row's off-screen end. Both facts are observable only in a real
+  // browser — hence this lane.
+  const treeBody = pane.locator('[data-dsh-file-tree]:visible').first()
+  await expect(treeBody, 'the explorer body must be on screen').toHaveCount(1, { timeout: 30_000 })
+  const overflowX = await treeBody.evaluate(el => getComputedStyle(el).overflowX)
+  expect(overflowX, 'the tree body must scroll horizontally (not clip)').toBe('auto')
+  const longRow = pane.locator(`[role="button"][title$="${SEEDED_LONG_NAME_FILE}"]:visible`)
+  await expect(longRow, 'the long-named seed must render one row').toHaveCount(1, { timeout: 30_000 })
+  const widths = await treeBody.evaluate(el => ({ scroll: el.scrollWidth, client: el.clientWidth }))
+  // The label's own box is wider than the panel (so the only alternatives are
+  // "squeeze it" or "scroll") — and the body chose the scroll range.
+  const labelWidth = (await longRow.locator('[class*="explorerName"]').boundingBox())!.width
+  expect(labelWidth, `the long label (${labelWidth}px) must not fit the panel (${widths.client}px)`)
+    .toBeGreaterThan(widths.client)
+  expect(widths.scroll, `the long seeded name must widen the tree (scroll ${widths.scroll} vs client ${widths.client})`)
+    .toBeGreaterThan(widths.client)
+  // Hover reveals the pill; with the row wider than the panel the pill may
+  // only stay inside the body if it is sticky.
+  await longRow.hover()
+  const pillBox = await longRow.locator('[class*="explorerRef"]').boundingBox()
+  const bodyBox = await treeBody.boundingBox()
+  expect(pillBox, 'the @-reference pill must be laid out').not.toBeNull()
+  expect(bodyBox).not.toBeNull()
+  expect(
+    pillBox!.x + pillBox!.width,
+    `the pill must stay at the scrollport edge (pill right ${pillBox!.x + pillBox!.width}, body right ${bodyBox!.x + bodyBox!.width})`,
+  ).toBeLessThanOrEqual(bodyBox!.x + bodyBox!.width + 1)
+  // Scrolled fully right the label itself is readable end to end.
+  await treeBody.evaluate(el => { el.scrollLeft = el.scrollWidth })
+  const nameBox = await longRow.locator('[class*="explorerName"]').boundingBox()
+  expect(
+    nameBox!.x + nameBox!.width,
+    'the full label must fit inside the scrolled body',
+  ).toBeLessThanOrEqual(bodyBox!.x + bodyBox!.width + 1)
+  await treeBody.evaluate(el => { el.scrollLeft = 0 })
+
   // Click near the row's LEFT edge: hovering reveals an @-reference button at
   // the row's right end, and a center click on a narrow dock lands on it
   // (referencing the file into the composer instead of opening it).

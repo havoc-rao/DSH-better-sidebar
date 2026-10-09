@@ -2196,10 +2196,10 @@ export function FileTree(props: {
           {/* A refresh whose batch request failed: the rows above are the
               PREVIOUS listing, so the hint explains why nothing changed. */}
           {loadError !== null && (
-            <Notice kind="warn" tone="inline">{loadError}</Notice>
+            <Notice kind="warn" tone="inline" className={css.explorerStrip}>{loadError}</Notice>
           )}
           {archiveBusy && (
-            <Notice kind="loading" tone="inline" role="status">
+            <Notice kind="loading" tone="inline" role="status" className={css.explorerStrip}>
               {archiveProgress === null
                 ? t('loading')
                 : `${t('zipProgress', { done: archiveProgress.done, total: archiveProgress.total })} · ${archivePercent(archiveProgress)}%`}
@@ -2223,18 +2223,25 @@ export function FileTree(props: {
               role: 'tree',
               ariaLabel: t('files'),
             })
-          ) : (<>
-          <RootRow
-            path={root}
-            iconsVersion={iconsVersion}
-            service={service}
-            dropTarget={dropTarget === root}
-            gitChanged={gitStatus.dirHasChanges(root)}
-            copied={copiedPath === root}
-            actions={actions}
-          />
-          {renderLevel(root, 1)}
-          </>)}
+          ) : (
+            /*
+             * The built-in fallback wraps its rows in the same content column
+             * the framework root carries, so both paths widen identically for
+             * the body's horizontal scrolling (see .explorerTreeBuiltin).
+             */
+            <div className={clsx(css.explorerTree, css.explorerTreeBuiltin)}>
+              <RootRow
+                path={root}
+                iconsVersion={iconsVersion}
+                service={service}
+                dropTarget={dropTarget === root}
+                gitChanged={gitStatus.dirHasChanges(root)}
+                copied={copiedPath === root}
+                actions={actions}
+              />
+              {renderLevel(root, 1)}
+            </div>
+          )}
           {/* The selection bar closes the scroll container (sticky bottom): it
               sits BELOW every row, never over them, and its appearance never
               shifts the tree the way a top bar did. */}
