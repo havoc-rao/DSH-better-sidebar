@@ -16,8 +16,9 @@ import { useGitSource } from '../git-source.ts'
 import { diffScrollIdentity } from '../TabScrollMemory.tsx'
 import { htmlUrl } from '../api.ts'
 import { t } from '../locales.ts'
-import { baseName } from '../paths.ts'
-import { resolveSidebarPath } from '../paths.ts'
+import { baseName, isAbsolutePath, resolveSidebarPath } from '../paths.ts'
+import type { BetterSidebarService } from '../service.ts'
+import { ResourceActions } from '../ResourceActions.tsx'
 import { HTML_IFRAME_SANDBOX } from '../html-preview.ts'
 import type { SidebarDiffRef, SidebarTab } from '../state.ts'
 import { DiffRows, ReadRows } from '../diff/DiffRows.tsx'
@@ -155,6 +156,8 @@ export interface DiffPaneProps {
    *  for this scope. Absent (standalone/test compositions) → local host
    *  routes, byte for byte. */
   ctx?: Context
+  /** Optional extension action seat for the preview's current resource. */
+  service?: BetterSidebarService
   target: ChangesPreview
   scope: SessionScope
   /** The persisted pane height (px); drag commits a new one upwards. */
@@ -165,7 +168,8 @@ export interface DiffPaneProps {
   onExpand: () => void
 }
 
-export function DiffPane({ ctx, target, scope, height, onHeightCommit, onClose, onExpand }: DiffPaneProps) {
+export function DiffPane({ ctx, service, target, scope, height, onHeightCommit, onClose, onExpand }: DiffPaneProps) {
+  const absolutePath = target.kind === 'op' ? resolveSidebarPath(scope.cwd, target.path) : null
   // ── Git target loading (the shared loader: staged-side fallback, the
   //    untracked full-addition fallback, refresh by tick, fold cache). ─────
   const gitRef = target.kind === 'git' ? target.ref : null
@@ -361,6 +365,17 @@ export function DiffPane({ ctx, target, scope, height, onHeightCommit, onClose, 
             {stats.added > 0 && <span className={diffCss.statAdd}>+{String(stats.added)}</span>}
             {stats.deleted > 0 && <span className={diffCss.statDel}>−{String(stats.deleted)}</span>}
           </span>
+        )}
+        {service && target.kind === 'git' && (
+          <ResourceActions service={service} readContext={() => ({
+            kind: 'git-diff', surface: 'git-preview-toolbar', scope: { ...scope }, ref: target.ref,
+          })} />
+        )}
+        {service && absolutePath !== null && isAbsolutePath(absolutePath) && (
+          <ResourceActions service={service} readContext={() => ({
+            kind: 'file', surface: 'file-viewer-toolbar', scope: { ...scope }, absolutePath,
+            isDirectory: false, ...service.getFileDocumentState(scope, absolutePath),
+          })} />
         )}
         {target.kind === 'git' && (
           <>

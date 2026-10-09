@@ -26,7 +26,6 @@ import { IconRefreshOutlineRegular, SegmentedControl } from '@deepseek-ai/dsh-cl
 import type { SidebarSessionEvent } from '../../context-types.ts'
 import type { TabComponentProps } from '../service.ts'
 import { t } from '../locales.ts'
-import { ResourceActions } from '../ResourceActions.tsx'
 import { api } from '../api.ts'
 import { usePolling } from '../use-polling.ts'
 import { updatePluginSettings } from '../plugin-settings.ts'
@@ -416,16 +415,11 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
             selectedCallId={selection !== null && selection.kind === 'op' ? selection.callId : null}
           />
         )}
-      {previewTarget?.kind === 'git' &&
-        <ResourceActions service={service} containerClassName={css.head} readContext={() => ({
-          kind: 'git-diff', surface: 'git-preview-toolbar', scope: { ...scope },
-          ref: previewTarget.ref,
-        })} />
-      }
       {previewTarget !== null && (
         <DiffPane
           key={previewKey(previewTarget)}
           ctx={ctx}
+          service={service}
           target={previewTarget}
           scope={scope}
           height={paneHeight}

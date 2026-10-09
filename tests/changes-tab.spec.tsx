@@ -20,6 +20,9 @@ import { api, type GitStatusResult, type GitWorktree } from '../src/client/api.t
 import { t } from '../src/client/locales.ts'
 import type { Context } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
+import type { BetterSidebarService } from '../src/client/service.ts'
+import { createResourceActionRegistry } from '../src/client/resource-actions.ts'
+import css from '../src/client/changes/changes.module.css'
 
 import { setupReactAct } from './test-utils.ts'
 setupReactAct()
@@ -40,10 +43,10 @@ function fakeContext(): Context {
   } as unknown as Context
 }
 
-function mount(root: Root, tab: SidebarTab = { id: 'git', type: 'git', title: 'Changes' }): void {
+function mount(root: Root, tab: SidebarTab = { id: 'git', type: 'git', title: 'Changes' }, service?: BetterSidebarService): void {
   act(() => {
     root.render(createElement(ChangesTab, {
-      ctx: fakeContext(),
+      ctx: service ? { get: (key: string) => key === 'betterSidebar' ? service : undefined } as unknown as Context : fakeContext(),
       store: createSidebarStore(),
       scope: { sessionId: 'session', cwd: MAIN },
       tab,
@@ -103,7 +106,9 @@ describe('ChangesTab', () => {
     document.body.append(container)
     const root: Root = createRoot(container)
     try {
-      mount(root)
+      const registry = createResourceActionRegistry(() => {})
+      registry.registerResourceAction({ id: 'edit-box', label: 'Edit box', surfaces: ['git-preview-toolbar'], run: () => {} })
+      mount(root, undefined, { ...registry, fileIcon: () => createElement('svg'), folderIcon: () => createElement('svg'), updateTab: () => {} } as unknown as BetterSidebarService)
       await flushEffects()
 
       // Git lens: the change reads as a TREE — the directory row owns the
@@ -123,6 +128,9 @@ describe('ChangesTab', () => {
       await act(async () => { row!.click() })
       await flushEffects()
       expect(container.textContent).toContain('new')
+      const actions = container.querySelectorAll('button[aria-label="Edit box"]')
+      expect(actions).toHaveLength(1)
+      expect(actions[0]!.parentElement?.classList.contains(css.diffHead!)).toBe(true)
 
       // The preview survives a lens switch (it is a dock, not lens state).
       const sessionTab = lensTab(container, t('changesSessionLens'))

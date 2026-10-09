@@ -105,6 +105,8 @@ if (ctx.betterSidebar.features.includes('inspectors')) {
 
 `registerResourceAction({id,surfaces,label,icon?,order?,available?,run})` 返回幂等 disposer；三个承载面：`file-tree-context`、`file-viewer-toolbar`、`git-preview-toolbar`。`ResourceActionContext` 判别 `kind:'file'|'git-diff'`，携带完整 `scope`；file 带绝对路径、`dirty:boolean|'unknown'`、`readOnly`，diff 带完整 `SidebarDiffRef`。目录不提供file动作。无注册动作则现有菜单/toolbar不增加任何入口。order 升序（默认100），同order注册顺序；同类别重复id抛错。
 
+文件变动页的预览头部也复用这些承载面：Git 预览在 `diffHead` 内提供 `git-preview-toolbar`（传递完整 diff ref），会话文件操作预览提供 `file-viewer-toolbar`（路径按当前 scope.cwd 解析；无法得到绝对路径则不显示）。文件动作执行时重新读取当前文档的 dirty/readOnly 状态，而不是使用历史操作快照；权限、会话与 worktree 适用性仍由 consumer 的 available 判断，不新增专用 surface。
+
 `getResourceActions(context)` 同步查询；`runResourceAction(id, readContext)` 在实际执行前重新读取实时上下文，重新检查available，异常由承载面可见展示。available必须同步无IO。注销会移除已挂载入口，并abort在途run的signal；consumer仍需尊重signal，部分导航由其回滚。本体不把失败/取消当成功，也不静默fallback。
 
 `registerFileOpenTarget({id,priority,accept,open})` 只拦文件树普通点击；priority较小先运行，同值注册顺序。open返回`handled|declined`（可Promise）；全部declined才回原文件打开，异常/取消停止这次打开。显式新标签、侧边、外部应用和聊天文件地址不被抢占。异步期间session/cwd/service改变会拒绝旧gesture继续导航。
