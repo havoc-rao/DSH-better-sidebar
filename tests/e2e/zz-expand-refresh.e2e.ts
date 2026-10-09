@@ -209,7 +209,10 @@ test('a folder toggle re-lists that folder and nothing else', async ({ page }) =
   const addTab = page.locator('[data-dockkit-add-tab]').first()
   if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
   await page.locator('[data-sidebar-right-guide-entry="files"]').click()
-  const dirRow = (name: string) => pane.locator(`[class*="explorerDir"]:has([class*="explorerName"]:text-is("${name}"))`)
+  // A directory row is a `.explorerRow` (the old `.explorerDir` row class was
+  // dropped in 9e4c77a "统一文件树名称字体" and this selector was left stale —
+  // it matched nothing, so the whole case failed before its first assertion).
+  const dirRow = (name: string) => pane.locator(`[class*="explorerRow"]:has([class*="explorerName"]:text-is("${name}"))`)
   await expect(dirRow(BIG), 'the seeded big directory must be listed').toHaveCount(1, { timeout: 60_000 })
   await expect(
     pane.locator('[role="button"][title$="top.txt"]:visible'),
