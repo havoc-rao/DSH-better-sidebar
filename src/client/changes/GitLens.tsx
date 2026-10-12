@@ -26,30 +26,31 @@
  * failures used to land under the commit box, which read as "your commit
  * failed" for an action the user never ran.
  */
-import { Component, createElement, memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { Component, createElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
-  Button, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconPlusOutlineRegular,
-  IconTrashOutlineRegular, Menu, writeClipboard,
+  Button, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconEllipsisOutlineRegular, IconPlusOutlineRegular,
+  IconSparkleRegular, IconTrashOutlineRegular, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
-import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
-import { api } from '../api.ts'
+import type { GitLineCounts, GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
+import { api, SidebarApiError } from '../api.ts'
 import type { BetterSidebarService, GitCommitActionProps, GitCommitTarget } from '../service.ts'
 import { useGitSource } from '../git-source.ts'
 import type { GraphTreeProps, GraphTreeRow } from 'dsh-git-graph/client-contract'
 import { useGitGraph } from '../git-lens-graph.ts'
+import { RenderBoundary } from '../RenderBoundary.tsx' 
 import { builtinFileIcon, builtinFolderIcon } from '../file-icons.tsx'
 import { usePolling } from '../use-polling.ts'
 import { baseName, relativeTo } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
-import { relativeTime, t } from '../locales.ts'
+import { isZh, relativeTime, t } from '../locales.ts'
 import type { SidebarDiffRef, SidebarStore } from '../state.ts'
 import {
   ConfirmDialog, IconButton, Notice, SectionHeader, StatusBadge, invalidateGitStatus, statusOfXY,
   useGitStatus, type GitFileStatus, type GitTone, type StatusTone,
 } from '../ui/index.ts'
-import { buildChangeTree, type ChangeDir, type ChangeFile, type ChangeNode } from './change-tree.ts'
-import { GitActionBar } from './GitActionBar.tsx'
+import { buildChangeTree, sumLineCounts, type ChangeDir, type ChangeFile, type ChangeNode } from './change-tree.ts'
+import diffCss from '../diff/diff.module.css' 
 import css from './changes.module.css'
 
 /** A GraphTree render crash must restore the original history list, not an
@@ -224,6 +225,12 @@ const LOG_BATCH = 20
  *  within ~30s, without a second git process per status tick. */
 const WORKTREE_POLL_MS = 30_000
 
+/** Commit-box growth contract: one line is 18px with 6px of padding above and
+ *  below (mirrored by `changes.module.css`), and it scrolls past six lines. */
+const COMMIT_BOX_LINE_HEIGHT = 18
+const COMMIT_BOX_PADDING_Y = 6
+const COMMIT_BOX_MAX_ROWS = 6
+
 /** A stable empty entry list: the tree memo must not rebuild on every render
  *  just because `snapshot?.entries ?? []` minted a new array. */
 const NO_ENTRIES: readonly GitStatusEntry[] = []
@@ -232,14 +239,52 @@ const NO_ENTRIES: readonly GitStatusEntry[] = []
  * A CONTENT key for one status answer. The shared store mints a brand-new
  * entries array for every poll — idle polls with byte-identical content
  * included — so array identity cannot decide whether the tree must be rebuilt.
- * This string can: the same paths and porcelain codes always produce the same
- * key, and a key change is exactly when the tree, its counts and the row
- * objects need to be recomputed.
+ * This string can: the same paths, porcelain codes and line counts always
+ * produce the same key, and a key change is exactly when the tree, its totals
+ * and the row objects need to be recomputed. The counts belong in the key
+ * because an edit that only moves lines leaves `xy` alone (#131): without them
+ * the memoized rows would keep printing their first reading.
  */
 function entriesKey(entries: readonly GitStatusEntry[]): string {
   let key = ''
-  for (const entry of entries) key += `${entry.xy}\u0000${entry.path}\n`
+  for (const entry of entries) {
+    const counts = entry.counts
+    const lines = counts === undefined
+      ? ''
+      : 'additions' in counts ? `${counts.additions}/${counts.deletions}` : 'binary'
+    key += `${entry.xy}\u0000${entry.path}\u0000${lines}\n`
+  }
   return key
+}
+
+/** The `+N` / `−M` pair, ink and sign included: shared by a file row and its
+ *  group header so the two can never drift apart. A zero side is omitted (the
+ *  diff pane's own convention), and both numbers stay on the element as
+ *  `data-` attributes for the row's tests. */
+function PlusMinus(props: { additions: number; deletions: number; note?: string }): ReactNode {
+  return (
+    <span className={css.lineCounts} data-lines={props.note ?? 'count'}
+      data-added={props.additions} data-deleted={props.deletions}>
+      {props.additions > 0 && <span className={diffCss.statAdd}>+{props.additions}</span>}
+      {props.deletions > 0 && <span className={diffCss.statDel}>−{props.deletions}</span>}
+    </span>
+  )
+}
+
+/** One row's line counts (#131): the numbers for a text change, the binary
+ *  mark when git has none for a blob, and "new file" for an untracked entry —
+ *  git never diffs those, so there is no numstat row and `+0 −0` would be an
+ *  invented number. An entry with no counts that is NOT untracked (a status
+ *  answer whose numstat read failed) shows nothing at all. */
+function LineCounts(props: { counts?: GitLineCounts; untracked: boolean }): ReactNode {
+  const { counts } = props
+  if (counts === undefined) {
+    return props.untracked
+      ? <span className={css.lineNote} data-lines="new">{t('changesNewFile')}</span>
+      : null
+  }
+  if (!('additions' in counts)) return <span className={css.lineNote} data-lines="binary">{t('diffBinary')}</span>
+  return <PlusMinus additions={counts.additions} deletions={counts.deletions} />
 }
 
 /** The preview ref for one changed file (one ref per path+side). */
@@ -286,6 +331,9 @@ const FileRow = memo(function FileRow(props: {
         <span className={css.rowIcon} aria-hidden="true">{props.glyph(node.path)}</span>
         <StatusBadge tone={BADGE_TONE[node.status.tone]} title={node.path}>{node.status.letter}</StatusBadge>
         <span className={css.rowName}>{node.name}</span>
+        {/* The row's own line counts (#131): read straight off the node, so a
+            poll that answered different numbers re-renders this row with them. */}
+        <LineCounts counts={node.counts} untracked={node.status.tone === 'untracked'} />
       </button>
       <IconButton
         size="sm"
@@ -406,12 +454,49 @@ export function GitLens(props: GitLensProps) {
   /** The history's own failure state: an empty list must not claim "no commits"
    *  when the log call failed. */
   const [logFailed, setLogFailed] = useState(false)
-  const [localCommitMsg, setLocalCommitMsg] = useState('')
-  const commitMsg = props.commitMsg ?? localCommitMsg
-  const setCommitMsg = props.onCommitMsgChange ?? setLocalCommitMsg
+/** Commit drafts, one per scope: the Commit button asks only for a message
+   *  and a staged row, so a draft typed against another project would submit
+   *  verbatim under this one. Keyed rather than cleared on a scope swap, so a
+   *  kept-mounted tab shows a conversation its own message when it comes back
+   *  (#712). The ChangesTab-owned draft prop (when wired) remains the
+   *  authoritative lift across scope swaps and is mirrored here. */
+  const [commitDrafts, setCommitDrafts] = useState<Record<string, string>>({})
+  const draftKey = `${scope.sessionId}\u0000${scope.cwd ?? ''}`
+  const commitMsg = props.commitMsg ?? commitDrafts[draftKey] ?? ''
+  const writeDraft = (text: string): void => {
+    setCommitDrafts(prev => ({ ...prev, [draftKey]: text }))
+  }
+  const setCommitMsg = (text: string): void => {
+    if (props.onCommitMsgChange !== undefined) props.onCommitMsgChange(text)
+    else writeDraft(text)
+  }
   const [busy, setBusy] = useState(false)
   const [actionLabel, setActionLabel] = useState<string | null>(null)
   const mutationLock = useRef(false)
+  /** Whether a commit-message suggestion is being generated host-side (the
+   *  host streams the diff through the harness LLM — no agent is spawned). */
+  const [suggesting, setSuggesting] = useState(false)
+  /** The route the next suggestion would use, for the button's tooltip. */
+  const [commitModel, setCommitModel] = useState<string | undefined>(undefined)
+  /** Whether a COMMIT is in flight (a subset of `busy`, which also covers
+   *  staging/checkout): the input reports it with its own busy label. */
+  const [committing, setCommitting] = useState(false)
+  /** The commit box grows with its text, up to the scroll cap below. */
+  const commitBoxRef = useRef<HTMLTextAreaElement | null>(null)
+  /** The More menu (commitAndPush / stage-all / registered commit actions). */
+  const [moreOpen, setMoreOpen] = useState(false)
+  useLayoutEffect(() => {
+    const box = commitBoxRef.current
+    // A layout-less environment (tests) reports 0: leave the CSS height alone.
+    if (box === null || box.scrollHeight === 0) return
+    const max = COMMIT_BOX_LINE_HEIGHT * COMMIT_BOX_MAX_ROWS + COMMIT_BOX_PADDING_Y * 2
+    // Reset first: a scrollHeight measured against the current height can only
+    // ever grow, so a deleted line would leave the box too tall.
+    box.style.height = 'auto'
+    const next = Math.min(box.scrollHeight, max)
+    box.style.height = `${next}px`
+    box.style.overflowY = box.scrollHeight > max ? 'auto' : 'hidden'
+  }, [commitMsg])
   /** The commit bar's ONE status line (commit / stage / discard / revert). */
   const [actionError, setActionError] = useState<string | null>(null)
   /** The lens-level error banner (refresh / branch switch / history paging). */
@@ -454,9 +539,26 @@ export function GitLens(props: GitLensProps) {
     return repoRootRef.current === undefined ? { ...base } : { ...base, repoRoot: repoRootRef.current }
   }, [])
 
-  // The status store keys on the checkout being LISTED: a selected child
-  // repository becomes the effective cwd, which is also what makes the status
-  // and the inventory agree after a repo switch.
+  /** Label the generate button with the model the next suggestion would use.
+   *  Re-read whenever the panel becomes visible: the pinned route lives in the
+   *  side card settings, so a change made there lands on the next visit. */
+  const scopeSessionId = scope.sessionId
+  const scopeCwd = scope.cwd
+  useEffect(() => {
+    if (!visible) return
+    let cancelled = false
+    api.gitCommitModel({ sessionId: scopeSessionId, ...(scopeCwd === undefined ? {} : { cwd: scopeCwd }) })
+      .then(view => {
+        if (cancelled) return
+        setCommitModel(view.route === undefined ? undefined : `${view.route.provider}/${view.route.model}`)
+      })
+      .catch(() => { if (!cancelled) setCommitModel(undefined) })
+    return () => { cancelled = true }
+  }, [visible, scopeSessionId, scopeCwd])
+
+  // Keep the session cwd and pass the child selection explicitly: an attached
+  // session overrides client cwd, so changing cwd alone still reads the first
+  // repository. The status store includes repoRoot in its cache key.
   // The status store keys on `worktree`; the PRIMARY checkout is exactly what
   // an unscoped status call resolves to, so passing its path would mint a
   // second key (and a second 2.5s `git status` poll) for the same answer the
@@ -466,8 +568,8 @@ export function GitLens(props: GitLensProps) {
     ? selectedWorktree
     : undefined
   const status = useGitStatus(
-    { sessionId: scope.sessionId, cwd: repoRoot ?? scope.cwd },
-    { worktree: statusWorktree, visible, source: gitSource },
+{ sessionId: scope.sessionId, cwd: scope.cwd, repoRoot },
+    { worktree: statusWorktree, visible, source: gitSource }
   )
   const snapshot: GitStatusResult | null = status.snapshot
   useEffect(() => {
@@ -593,6 +695,15 @@ export function GitLens(props: GitLensProps) {
     setRepoChoices([])
     clearDerived()
     setViewError(null)
+    // The three destructive entry points are aimed at a ROW of the previous
+    // scope: the menus carry that row's path and `confirmPending` executes a
+    // closure over it, while `gitScopeNow()` already reads the NEW scope — so
+    // a discard/revert/cherry-pick confirmed here would land in the project
+    // that took over the pane (same class as the file tree's cross-session
+    // delete).
+    setFileMenu(null)
+    setHistoryMenu(null)
+    setConfirm(null)
     if (visible) void refresh(false)
     // Granular scope fields: the refresh identity is stable, only a real
     // session/cwd change restarts the chain.
@@ -657,6 +768,11 @@ export function GitLens(props: GitLensProps) {
 
   const stageError = (reason: unknown): string => t('changesStageFailed', { message: errorMessage(reason) })
 
+  /** The remote actions prepend their own label: git's message for a missing
+   *  upstream or a diverged branch says nothing about which button ran. */
+  const pushError = (reason: unknown): string => `${t('pushError')}: ${errorMessage(reason)}`
+  const pullError = (reason: unknown): string => `${t('pullError')}: ${errorMessage(reason)}`
+
   const stageEntry = (path: string, staged: boolean): void => {
     void runAction(
       () => (staged ? gitApi.gitUnstage(gitScopeNow(), path, selectedWorktree) : gitApi.gitStage(gitScopeNow(), path, selectedWorktree)),
@@ -676,14 +792,56 @@ export function GitLens(props: GitLensProps) {
   const pushApi = gitSource === undefined ? api.gitPush : gitSource.gitPush?.bind(gitSource)
   const canPush = !busy && pushApi !== undefined
   const commit = (): void => {
-    if (!canCommit) return
+    // The keyboard shortcut commits even without staged rows (git's own
+    // "nothing to commit" error crosses the wire); the primary button keeps
+    // its staged gate below.
     const message = commitMsg.trim()
-    void runAction(() => gitApi.gitCommit(gitScopeNow(), message, selectedWorktree), errorMessage, () => { setCommitMsg(''); props.onCommitMsgCommitted?.() }, t('commit'))
+    if (message === '' || busy || suggesting) return
+    setCommitting(true)
+    void runAction(
+      () => gitApi.gitCommit(gitScopeNow(), message, selectedWorktree),
+      errorMessage,
+      () => { setCommitMsg(''); props.onCommitMsgCommitted?.() },
+      t('commit'),
+    ).finally(() => { setCommitting(false) })
   }
+
+  /** The generate button's label/tooltip: names the model when one resolves,
+   *  so the user knows which provider the draft will run on. */
+  const generateLabel = commitModel === undefined
+    ? t('generateCommitMessage')
+    : t('generateCommitMessageWith', { model: commitModel })
+
+  /** Ask the host to draft a commit message from the pending changes, then
+   *  fill the message box (still editable; regenerating is allowed). */
+  const suggestMessage = async (): Promise<void> => {
+    if (busy || suggesting) return
+    setSuggesting(true)
+    setActionError(null)
+    try {
+      const { message } = await api.gitSuggestMessage(gitScopeNow(), isZh() ? 'zh' : 'en', selectedWorktree)
+      setCommitMsg(message)
+    } catch (reason) {
+      if (reason instanceof SidebarApiError && reason.code === 'git-suggest-empty') {
+        setActionError(t('suggestCommitEmpty'))
+      } else {
+        setActionError(`${t('suggestCommitError')}: ${errorMessage(reason)}`)
+      }
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
   const push = (): void => {
     if (!canPush || pushApi === undefined) return
-    void runAction(() => pushApi(gitScopeNow(), selectedWorktree), errorMessage, undefined, t('gitPush'))
+    void runAction(() => pushApi(gitScopeNow(), selectedWorktree), pushError, undefined, t('gitPush'))
   }
+
+  /** Pull into the selected checkout (fast-forward only host-side). */
+  const pull = (): void => {
+    void runAction(() => api.gitPull(gitScopeNow(), selectedWorktree), pullError)
+  }
+
   const commitAndPush = (): void => {
     if (!canCommit || !canPush || pushApi === undefined) return
     const message = commitMsg.trim()
@@ -824,6 +982,10 @@ export function GitLens(props: GitLensProps) {
     // memoized rows below keep their props and never re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentKey])
+  // The band totals (#131) sum the very nodes the rows render, so the header
+  // can never disagree with the numbers printed under it.
+  const unstagedTotal = useMemo(() => sumLineCounts(unstagedTree), [unstagedTree])
+  const stagedTotal = useMemo(() => sumLineCounts(stagedTree), [stagedTree])
   const isRepo = snapshot?.isRepo === true
   const branch = snapshot?.branch ?? ''
   const branchOptions = branch === '' ? branchNames : [branch, ...branchNames.filter(name => name !== branch)]
@@ -1061,9 +1223,12 @@ export function GitLens(props: GitLensProps) {
   )
 
   return (
-    <div className={css.git}>
+    <div className={css.git} data-git-root>
+      {/* The non-scrolling head: the branch / repository / worktree band stays
+          on screen while the change list and the history scroll under it
+          (#194). */}
       {(repoChoices.length > 1 || worktrees.length > 1 || branch !== '') && (
-        <div className={css.selectors}>
+        <div className={css.selectors} data-git-head>
           {repoChoices.length > 1 && (
             <GitSelector
               kind="repository"
@@ -1101,75 +1266,73 @@ export function GitLens(props: GitLensProps) {
         </div>
       )}
 
-      {viewError !== null && <Notice kind="error" role="alert">{viewError}</Notice>}
+      {/* The ONE scroll body: the change groups and the history scroll here,
+          between the fixed head band and the fixed commit bar (#194). */}
+      <div className={css.gitScroll} data-git-scroll>
+        {viewError !== null && <Notice kind="error" role="alert">{viewError}</Notice>}
 
-      {snapshot === null && status.loading && <Notice kind="loading" tone="page">{t('loading')}</Notice>}
-      {snapshot === null && !status.loading && status.error && <Notice kind="error" tone="page">{t('error')}</Notice>}
-      {snapshot !== null && !isRepo && <Notice kind="empty" tone="page">{t('notRepo')}</Notice>}
-      {snapshot?.truncated === true && <Notice kind="warn">{t('statusTruncated')}</Notice>}
+        {snapshot === null && status.loading && <Notice kind="loading" tone="page">{t('loading')}</Notice>}
+        {snapshot === null && !status.loading && status.error && <Notice kind="error" tone="page">{t('error')}</Notice>}
+        {snapshot !== null && !isRepo && <Notice kind="empty" tone="page">{t('notRepo')}</Notice>}
+        {snapshot?.truncated === true && <Notice kind="warn">{t('statusTruncated')}</Notice>}
 
-      {clean && <Notice kind="empty" tone="page">{t('changesClean')}</Notice>}
+        {clean && <Notice kind="empty" tone="page">{t('changesClean')}</Notice>}
 
-      {isRepo && !clean && (
-        <>
-          {/* Each group is its own block so its sticky header is released (and
-              replaced) exactly when the group scrolls away. */}
-          <div className={css.group} data-group="unstaged">
-            <SectionHeader
-              className={css.groupHeader}
-              label={t('unstaged')}
-              action={unstagedEntries.length > 0
-                ? (
-                  <IconButton
-                    className={css.headerAction}
-                    size="sm"
-                    disabled={busy}
-                    label={t('stageAll')}
-                    icon={<IconPlusOutlineRegular size={14} />}
-                    onClick={() => { stageAll(false) }}
-                  />
-                )
-                : undefined}
-            >
-              <span className={css.countPill} data-count={unstagedEntries.length}>{unstagedEntries.length}</span>
-            </SectionHeader>
-            {renderTree(unstagedTree, false)}
-          </div>
-          <div className={css.group} data-group="staged">
-            <SectionHeader
-              className={css.groupHeader}
-              label={t('staged')}
-              action={stagedEntries.length > 0
-                ? (
-                  <IconButton
-                    className={css.headerAction}
-                    size="sm"
-                    disabled={busy}
-                    label={t('unstageAll')}
-                    icon={<IconTrashOutlineRegular size={14} />}
-                    onClick={() => { stageAll(true) }}
-                  />
-                )
-                : undefined}
-            >
-              <span className={css.countPill} data-count={stagedEntries.length}>{stagedEntries.length}</span>
-            </SectionHeader>
-            {renderTree(stagedTree, true)}
-          </div>
-        </>
-      )}
-
-      {isRepo && commitTarget !== null && (
-        <GitActionBar
-          owner={{ ...commitTarget, ...(service === undefined ? {} : { service }),
-            commitMessage: commitMsg, setCommitMessage: value => { setCommitMsg(value); setActionError(null) },
-            busy, runAction, refresh, close: () => {} }}
-          canCommit={canCommit} canPush={canPush} loadingLabel={actionLabel}
-          commit={commit} push={push} commitAndPush={commitAndPush} stageAll={stageAll}
-          actions={commitActionViews}
-          error={actionError !== null ? <Notice kind="error" tone="inline" role="alert">{actionError}</Notice> : null}
-        />
-      )}
+        {isRepo && !clean && (
+          <>
+            {/* Each group is its own block so its sticky header is released (and
+                replaced) exactly when the group scrolls away. */}
+            <div className={css.group} data-group="unstaged">
+              <SectionHeader
+                className={css.groupHeader}
+                label={t('unstaged')}
+                action={unstagedEntries.length > 0
+                  ? (
+                    <IconButton
+                      className={css.headerAction}
+                      size="sm"
+                      disabled={busy}
+                      label={t('stageAll')}
+                      icon={<IconPlusOutlineRegular size={14} />}
+                      onClick={() => { stageAll(false) }}
+                    />
+                  )
+                  : undefined}
+              >
+                <span className={css.countPill} data-count={unstagedEntries.length}>{unstagedEntries.length}</span>
+                {/* The group's line total (#131): the sum of its file rows. */}
+                {unstagedTotal.files > 0 && (
+                  <PlusMinus additions={unstagedTotal.additions} deletions={unstagedTotal.deletions} note="group" />
+                )}
+              </SectionHeader>
+              {renderTree(unstagedTree, false)}
+            </div>
+            <div className={css.group} data-group="staged">
+              <SectionHeader
+                className={css.groupHeader}
+                label={t('staged')}
+                action={stagedEntries.length > 0
+                  ? (
+                    <IconButton
+                      className={css.headerAction}
+                      size="sm"
+                      disabled={busy}
+                      label={t('unstageAll')}
+                      icon={<IconTrashOutlineRegular size={14} />}
+                      onClick={() => { stageAll(true) }}
+                    />
+                  )
+                  : undefined}
+              >
+                <span className={css.countPill} data-count={stagedEntries.length}>{stagedEntries.length}</span>
+                {stagedTotal.files > 0 && (
+                  <PlusMinus additions={stagedTotal.additions} deletions={stagedTotal.deletions} note="group" />
+                )}
+              </SectionHeader>
+              {renderTree(stagedTree, true)}
+            </div>
+          </>
+        )}
 
       {isRepo && (
         <>
@@ -1225,6 +1388,106 @@ export function GitLens(props: GitLensProps) {
           )}
           </>)}
         </>
+      )}
+      </div>
+
+      {isRepo && (
+        <div className={css.commitBar} data-commit-bar data-git-action-bar aria-busy={busy || suggesting || committing}>
+          <div className={css.commitRow}>
+            <span className={css.commitInputWrap}>
+              {/* A native textarea (the primitives ship no multiline input):
+                  commit messages carry a subject AND a body, and Enter must
+                  insert a newline — submitting stays on Ctrl/Cmd+Enter. */}
+              <textarea
+                ref={commitBoxRef}
+                className={css.commitInput}
+                // While busy the placeholder steps aside for the sweep label.
+                placeholder={busy || suggesting ? '' : t('commitPlaceholder')}
+                value={commitMsg}
+                disabled={busy || suggesting}
+                aria-busy={busy || suggesting}
+                aria-label={t('commitPlaceholder')}
+                rows={1}
+                onChange={(event) => { setCommitMsg(event.currentTarget.value); setActionError(null) }}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') commit()
+                  // Ctrl/Cmd+G drafts the message, mirroring the button (the
+                  // placeholder advertises it).
+                  if ((event.ctrlKey || event.metaKey) && (event.key === 'g' || event.key === 'G')) {
+                    event.preventDefault()
+                    void suggestMessage()
+                  }
+                }}
+              />
+              {/* Only the two per-input operations get a label: other `busy`
+                  work (staging, checkout) disables the box silently. */}
+              {(suggesting || committing) && (
+                <span className={css.commitBusyText} role="status" aria-live="polite">
+                  {suggesting ? t('generatingCommitMessage') : t('committingMessage')}
+                </span>
+              )}
+            </span>
+            <button
+              type="button"
+              className={suggesting ? `${css.suggestButton} ${css.suggestBusy}` : css.suggestButton}
+              aria-label={generateLabel}
+              aria-busy={suggesting}
+              title={generateLabel}
+              disabled={busy || suggesting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
+              onClick={() => { void suggestMessage() }}
+            >
+              <IconSparkleRegular size={14} />
+            </button>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={busy || suggesting || commitMsg.trim() === '' || stagedEntries.length === 0}
+              onClick={commit}
+            >
+              {t('commit')}
+            </Button>
+            {/* Shipping the commit without leaving the panel: the two remote
+                actions ride the SAME row and the SAME busy lock as commit /
+                stage, so their failures land on the bar's one status line
+                below instead of opening a second error channel. */}
+            <Button variant="ghost" size="sm" disabled={busy || suggesting} onClick={push}>{t('push')}</Button>
+            <Button variant="ghost" size="sm" disabled={busy || suggesting} onClick={pull}>{t('pull')}</Button>
+                      <Menu
+        open={moreOpen && !busy}
+        onClose={() => { setMoreOpen(false) }}
+        portal
+        side="top"
+        align="end"
+        listClassName={css.gitMoreMenu}
+        anchor={<Button variant="outline" size="sm" icon={<IconEllipsisOutlineRegular size={16} />}
+          disabled={busy || suggesting} aria-label={t('gitMoreActions')} title={t('gitMoreActions')}
+          aria-haspopup="menu" aria-expanded={moreOpen && !busy}
+          onClick={() => { setMoreOpen(value => !value) }} />}
+        items={[
+          { id: 'commit-push', label: t('gitCommitAndPush'), disabled: !canCommit || !canPush },
+          { id: 'stage-all', label: t('stageAll'), disabled: busy || suggesting || !snapshot?.entries.some(entry => entry.xy === '??' || entry.xy[1] !== ' ') },
+          { id: 'unstage-all', label: t('unstageAll'), disabled: busy || suggesting || stagedEntries.length === 0 },
+        ]}
+        onSelect={id => {
+          setMoreOpen(false)
+          if (id === 'commit-push') commitAndPush()
+          else stageAll(id === 'unstage-all')
+        }}>
+        {commitActionViews.map(({ descriptor, props: actionProps }) => (
+          <RenderBoundary key={descriptor.id} className={css.gitCommitActionBoundary}>
+            {createElement(descriptor.component, actionProps)}
+          </RenderBoundary>
+        ))}
+      </Menu>
+          </div>
+          {/* The bar's ONE status line stays directly under the message row it
+              belongs to (the placement `changes-tab.spec.tsx` pins), so it keeps
+              reading as "your commit/stage/push failed" rather than as a tab-level
+              banner. */}
+          {actionError !== null && <Notice kind="error" tone="inline" role="alert">{actionError}</Notice>}
+          {actionLabel !== null && <span role="status">{actionLabel}…</span>}
+
+        </div>
       )}
 
       {/*

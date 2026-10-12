@@ -9,12 +9,13 @@
  * git targets can expand into a dedicated diff tab via the shell.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { useGitSource } from '../git-source.ts'
 import { diffScrollIdentity } from '../TabScrollMemory.tsx'
 import { htmlUrl } from '../api.ts'
+import { hostTransportBase } from '../desktop-env.ts'
 import { t } from '../locales.ts'
 import { baseName, isAbsolutePath, resolveSidebarPath } from '../paths.ts'
 import type { BetterSidebarService } from '../service.ts'
@@ -31,6 +32,7 @@ import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
 import { redactText } from '../redact.ts'
 import { rewriteLocalImageUrls } from '../markdown-images.ts'
 import { markdownTextProps } from '../markdown-labels.tsx'
+import { useMarkdownSurface } from '../use-markdown-surface.ts'
 import { splitMermaidBlocks } from '../mermaid-blocks.ts'
 import { LazyMermaidMarkdown } from '../mermaid-lazy.tsx'
 import { createFrameBatcher } from '../frame-batcher.ts'
@@ -111,8 +113,12 @@ function PaneToggle(props: { on: boolean; label: string; title?: string; onClick
  *  the caller). Mermaid fences render through the same chunk-resident
  *  renderer the editor preview uses (one MarkdownText pass with the fences
  *  lifted out); the plain path stays byte-for-byte for documents without
- *  any. */
-function MdReadingView(props: { text: string }) {
+ *  any.
+ *
+ *  The body is also a markdown SURFACE: heading slugs, anchor jumps and `.md`
+ *  link claiming, with relative targets resolved against the previewed file's
+ *  own directory (see use-markdown-surface). */
+function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope; path: string }) {
   const codeLabels = {
     copyLabel: t('copy'),
     copiedLabel: t('copied'),
@@ -120,13 +126,24 @@ function MdReadingView(props: { text: string }) {
     wrapLabel: t('codeBlockWrap'),
     unwrapLabel: t('codeBlockUnwrap'),
   }
-  const hasMermaid = splitMermaidBlocks(props.text).some((block) => block.kind === 'mermaid')
+  const surface = useMarkdownSurface({
+    ctx: props.ctx,
+    sessionId: props.scope.sessionId,
+    cwd: props.scope.cwd,
+    path: props.path,
+  })
+  // The caller already rewrote local IMAGE destinations; this pass is the link
+  // half (and is idempotent, so the two can be composed in either order).
+  const text = surface.rewrite(props.text)
+  const hasMermaid = splitMermaidBlocks(text).some((block) => block.kind === 'mermaid')
   return (
-    <div className={css.paneBody}>
+    <div className={css.paneBody} ref={surface.surfaceRef}>
       <div className={css.mdBody}>
-        {hasMermaid
-          ? <LazyMermaidMarkdown text={props.text} codeLabels={codeLabels} />
-          : <MarkdownText {...markdownTextProps(props.text, codeLabels)} />}
+        <MarkdownDelegateProvider openFile={surface.openFile}>
+          {hasMermaid
+            ? <LazyMermaidMarkdown text={text} codeLabels={codeLabels} />
+            : <MarkdownText {...markdownTextProps(text, codeLabels)} />}
+        </MarkdownDelegateProvider>
       </div>
     </div>
   )
@@ -155,7 +172,7 @@ export interface DiffPaneProps {
   /** The client context: resolves the git data source (feature `gitSource`)
    *  for this scope. Absent (standalone/test compositions) → local host
    *  routes, byte for byte. */
-  ctx?: Context
+  ctx: Context
   /** Optional extension action seat for the preview's current resource. */
   service?: BetterSidebarService
   target: ChangesPreview
@@ -252,7 +269,7 @@ export function DiffPane({ ctx, service, target, scope, height, onHeightCommit, 
   }, [mdOp, op, prior])
   const readingText = useMemo(
     () => (mdOp && reading && readingSrc !== '' && target.kind === 'op'
-      ? rewriteLocalImageUrls(readingSrc, scope, target.path, window.location.origin)
+      ? rewriteLocalImageUrls(readingSrc, scope, target.path, hostTransportBase())
       : ''),
     [mdOp, reading, readingSrc, scope, target],
   )
@@ -442,7 +459,7 @@ export function DiffPane({ ctx, service, target, scope, height, onHeightCommit, 
           </div>
         )
         : target.kind === 'op' && mdOp && reading && readingText !== ''
-        ? <MdReadingView text={readingText} />
+        ? <MdReadingView text={readingText} ctx={ctx} scope={scope} path={target.kind === 'op' ? target.path : ''} />
         : target.kind === 'op' && op !== null && op.isError
         ? (
           <div className={css.paneBody}>

@@ -45,6 +45,8 @@ const files = [
   'lib/client-terminal.js.map',
   'lib/client-locale.js',
   'lib/client-locale.js.map',
+  'lib/client-terminal.js',
+  'lib/client-terminal.js.map',
   'README.md',
   'LICENSE',
 ]

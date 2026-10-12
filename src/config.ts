@@ -16,21 +16,20 @@
 
 import z from '@deepseek-ai/schemastery'
 import {
-  TERMINAL_FONT_SIZE_DEFAULT,
+TERMINAL_FONT_SIZE_DEFAULT,
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
   TITLE_BAR_STRIP_DEFAULT,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
+  EXPLORER_EXCLUDE_DEFAULTS,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
 export {
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
-  TITLE_BAR_STRIP_DEFAULT,
-  TITLE_BAR_STRIP_MAX,
-  TITLE_BAR_STRIP_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
@@ -86,7 +85,9 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
  * Asserted as `z<SidebarPrefs>` (the interface lives in `prefs-shared.ts`; the
  * explicit annotation is also what keeps the emitted declaration portable).
  * Unknown keys are TOLERATED by this schema and pass through untouched, which
- * is what keeps a legacy `workspaceFence: true` in an old profile harmless.
+ * is what keeps a legacy `workspaceFence: true` in an old profile harmless
+ * instead of fatal. (The upstream line removed the title-bar compatibility
+ * keys; this fork keeps them as live preferences — see `titleBarScheme`.)
  */
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
@@ -100,13 +101,15 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   editorExplorer: z.boolean().default(false),
-  terminalShell: z.string().default(''),
+terminalShell: z.string().default(''),
   terminalShellArgs: z.string().default(''),
-  titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),
-  titleBarPresetId: z.string(),
-  customCss: z.string(),
+  titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]).default('auto'),
+  titleBarPresetId: z.string().default(''),
   titleBarCompat: z.boolean().default(false),
   titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),
+  editorGitGutter: z.boolean().default(true),
+  explorerExclude: z.array(z.string()).default([...EXPLORER_EXCLUDE_DEFAULTS]),
+  customCss: z.string(),
   htmlViewerNoSandbox: z.boolean().default(false),
   htmlViewerDefaultUnsafe: z.boolean().default(false),
   // Per-feature enable switches are OPEN maps (any tab/viewer id, built-in or

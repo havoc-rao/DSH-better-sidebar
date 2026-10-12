@@ -123,9 +123,31 @@ export interface SidebarPrefs {
    */
   titleBarPresetId: string
   /**
+   * Whether the `code` editor paints its uncommitted changes the way VS Code
+   * does (issue #212): the line number takes the tone of its change, a thin
+   * colored bar sits at the left of the numbers, and hovering a line shows
+   * that line's blame as a plain-text tooltip. On by default — there is ONE
+   * switch for the whole feature (no per-part toggles: no author / hash /
+   * date / summary switches, no end-of-line widget).
+   */
+  editorGitGutter: boolean
+  /**
+   * VS Code `files.exclude`-style glob patterns (the editor card's gear
+   * popup manages the list): matched entries are REMOVED from the file tree
+   * and the name search entirely — dot-prefixed rows otherwise render
+   * dimmed as usual. Supported shapes: a bare name
+   * (`Thumbs.db`) at any depth, a cwd-anchored path (`build/out`), a
+   * doublestar head for any depth (doublestar + slash + name), and `*` /
+   * `?` wildcards.
+   * Excluded entries never block the breadcrumb fold either (the host probe
+   * and the listing share the one compiled matcher).
+   */
+  explorerExclude: string[]
+  /**
    * Free-form CSS injected into the page (last in the cascade, so it can
    * override the plugin's styles; use `!important` to override JS-written
-   * inline CSS variables). Applied while `titleBarScheme` is `custom`.
+   * inline CSS variables). The escape hatch for anything the settings rows
+   * do not cover — applied whenever it is non-empty.
    */
   customCss: string
   /**
@@ -201,6 +223,9 @@ export const TITLE_BAR_STRIP_DEFAULT = 40
 export const TITLE_BAR_SCHEMES = ['auto', 'web', 'preset', 'custom'] as const
 export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 
+/** The stock exclude list (VS Code ships a similar files.exclude default). */
+export const EXPLORER_EXCLUDE_DEFAULTS: readonly string[] = ['.DS_Store', 'Thumbs.db']
+
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   autoOpenSubagent: true,
@@ -216,10 +241,12 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   editorExplorer: false,
-  terminalShell: '',
+terminalShell: '',
   terminalShellArgs: '',
   titleBarScheme: 'auto',
   titleBarPresetId: '',
+  editorGitGutter: true,
+  explorerExclude: [...EXPLORER_EXCLUDE_DEFAULTS],
   customCss: '',
   titleBarCompat: false,
   titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,

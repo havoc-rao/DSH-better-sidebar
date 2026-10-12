@@ -5,12 +5,13 @@ import { markdownPreviewSource } from './markdown-frontmatter.ts'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { MdToc } from './md-toc.tsx'
+import { hostTransportBase } from './desktop-env.ts'
 
 export function MarkdownPreview({ text, scope, path, codeLabels, className }: MarkdownRenderProps) {
   const source = useMemo(() => markdownPreviewSource(text), [text])
   const info = useMemo(() => analyzeMarkdownHtml(source), [source])
   const media = useMemo<MarkdownHtmlMedia>(
-    () => ({ scope, path, origin: window.location.origin }),
+    () => ({ scope, path, origin: window.location.origin, baseUrl: hostTransportBase() }),
     [scope.sessionId, scope.cwd, path],
   )
   const children = <><MdToc /><MarkdownDocument info={info} media={media} codeLabels={codeLabels} /></>

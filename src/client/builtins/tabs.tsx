@@ -23,6 +23,7 @@ import { openSidebarFile, openSidebarFileAt } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
 import { LocalePreferenceRow } from '../SideCardSection.tsx'
+import { CommitModelSettings } from '../changes/CommitModelSettings.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { ChangesTab, opCountOf } from '../changes/ChangesTab.tsx'
 import { DiffTab } from '../DiffTab.tsx'
@@ -187,6 +188,16 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
               desc: () => t('editorExplorerSplitDesc'),
             },
           ],
+        }, {
+          // VS Code files.exclude-style patterns (official line): matching
+          // paths never enter the tree rows. Rendered as a gitignore-style
+          // box; values live in `pluginSettings['editor'].explorerExclude`
+          // (stock defaults: .DS_Store / Thumbs.db).
+          key: 'explorerExclude',
+          type: 'patterns',
+          title: () => t('explorerExclude'),
+          desc: () => t('explorerExcludeDesc'),
+          patternsPlaceholder: t('explorerExcludePlaceholder'),
         }],
         // Plugin-owned rows (values live in `pluginSettings['editor']`): the
         // plugin's own open-with targets are shown only when the host reports
@@ -227,13 +238,19 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       icon: changesTabIcon,
       order: 20,
       single: true,
-      // Custom settings panel: the DSH interface-language picker — the
-      // second entry point to the same Host-backed `locale.preference`
-      // the General section's Language row drives, so both stay in sync.
-      // It is the changes tab's ONLY setting: the diff view stays docked
-      // (no diff-placement preference here).
+      // Custom settings panels, stacked: the pinned commit-message model
+      // (official line: picked from the DISCOVERED catalog, so the option
+      // list only exists at render time), and the DSH interface-language
+      // picker — the second entry point to the same Host-backed
+      // `locale.preference` the General section's Language row drives, so
+      // both stay in sync.
       settings: {
-        render: () => <LocalePreferenceRow ctx={ctx} />,
+        render: (props) => (
+          <>
+            <CommitModelSettings {...props} />
+            <LocalePreferenceRow ctx={ctx} />
+          </>
+        ),
       },
       badge: (_ctx, scope) => {
         const count = opCountOf(scope.sessionId)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { loadBootDecision, loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
-import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
+import { SIDEBAR_PREFS_DEFAULTS, TITLE_BAR_STRIP_DEFAULT } from '../src/prefs-shared.ts'
 
 /** A fake settings wire face whose settingsGet resolves to one raw value. */
 const wire = (value: unknown): SidebarSettingsClient => ({
@@ -43,13 +43,15 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         editorExplorer: false,
-        terminalShell: '',
+terminalShell: '',
         terminalShellArgs: '',
         titleBarScheme: 'auto',
         titleBarPresetId: '',
-        customCss: '',
         titleBarCompat: false,
         titleBarStripPx: 40,
+        editorGitGutter: true,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
+        customCss: '',
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
         tabsEnabled: {},
@@ -72,13 +74,15 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         editorExplorer: false,
-        terminalShell: '',
+terminalShell: '',
         terminalShellArgs: '',
         titleBarScheme: 'auto',
         titleBarPresetId: '',
-        customCss: '',
         titleBarCompat: false,
         titleBarStripPx: 40,
+        editorGitGutter: true,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
+        customCss: '',
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
         tabsEnabled: {},
@@ -101,13 +105,15 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         editorExplorer: false,
-        terminalShell: '',
+terminalShell: '',
         terminalShellArgs: '',
         titleBarScheme: 'auto',
         titleBarPresetId: '',
-        customCss: '',
         titleBarCompat: false,
         titleBarStripPx: 40,
+        editorGitGutter: true,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
+        customCss: '',
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
         tabsEnabled: {},
@@ -143,6 +149,18 @@ describe('side card preferences', () => {
     }
   })
 
+  it('defaults explorerExclude to the stock junk list; only a valid string array overrides it', async () => {
+    // Absent or malformed → the stock list.
+    expect((await loadPrefs(wire({}))).explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
+    expect((await loadPrefs(wire({ explorerExclude: 'node_modules' }))).explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
+    expect((await loadPrefs(wire({ explorerExclude: { a: 1 } }))).explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
+    // Non-string entries drop out; blanks drop out; entries trim.
+    expect((await loadPrefs(wire({ explorerExclude: ['node_modules', 42, '  *.log  ', '', null] }))).explorerExclude)
+      .toEqual(['node_modules', '*.log'])
+    // An explicit empty array means "exclude nothing" and survives verbatim.
+    expect((await loadPrefs(wire({ explorerExclude: [] }))).explorerExclude).toEqual([])
+  })
+
   it('defaults editorExplorer to false; only an explicit true enables the merged editor-explorer', async () => {
     // Absent or malformed → off (separate file windows are the default).
     expect((await loadPrefs(wire({}))).editorExplorer).toBe(false)
@@ -162,7 +180,7 @@ describe('side card preferences', () => {
     expect('workspaceFence' in await loadPrefs(wire({ workspaceFence: false }))).toBe(false)
   })
 
-  it('drops the retired read-boundary pref with workspace containment', async () => {
+it('drops the retired read-boundary pref with workspace containment', async () => {
     expect('allowOpenOutsideWorkspace' in await loadPrefs(wire({ allowOpenOutsideWorkspace: true }))).toBe(false)
   })
 
@@ -173,48 +191,37 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ titleBarScheme: 1 }))).titleBarScheme).toBe('auto')
     expect((await loadPrefs(wire({}))).titleBarPresetId).toBe('')
     expect((await loadPrefs(wire({ titleBarPresetId: 5 }))).titleBarPresetId).toBe('')
+  })
+
+  it('defaults customCss to the empty string; only a stored string survives', async () => {
+    // The custom-CSS escape hatch is inert until the user writes something.
+    // (the escape hatch itself keeps applying while the title-bar scheme is
+    // `custom`; the retried keys above pin the conservative defaults)
     expect((await loadPrefs(wire({}))).customCss).toBe('')
     expect((await loadPrefs(wire({ customCss: 7 }))).customCss).toBe('')
-    // Valid values survive verbatim (including the explicit web scheme).
-    const picked = await loadPrefs(wire({ titleBarScheme: 'preset', titleBarPresetId: 'dsh-desktop', customCss: 'html { }' }))
-    expect(picked.titleBarScheme).toBe('preset')
-    expect(picked.titleBarPresetId).toBe('dsh-desktop')
-    expect(picked.customCss).toBe('html { }')
-    expect((await loadPrefs(wire({ titleBarScheme: 'web' }))).titleBarScheme).toBe('web')
+    expect((await loadPrefs(wire({ customCss: 'html { }' }))).customCss).toBe('html { }')
   })
 
-  it('migrates LEGACY documents that ALREADY HAVE VALUES into the custom scheme', async () => {
-    // A pre-scheme document with the manual compat flag on maps to the
-    // custom scheme, keeping the strip px the user chose.
-    const migrated = await loadPrefs(wire({ titleBarCompat: true, titleBarStripPx: 56 }))
-    expect(migrated.titleBarScheme).toBe('custom')
-    expect(migrated.titleBarStripPx).toBe(56)
-    // A non-default strip px alone (only reachable through the old gear
-    // popup) also counts as "already has values" → custom.
-    const stripOnly = await loadPrefs(wire({ titleBarStripPx: 48 }))
-    expect(stripOnly.titleBarScheme).toBe('custom')
-    expect(stripOnly.titleBarStripPx).toBe(48)
-    // A stored scheme always wins over the legacy fields (round-trip of the
-    // mirrored write: preset stays preset even though the mirror is true).
-    const roundTrip = await loadPrefs(wire({ titleBarScheme: 'preset', titleBarCompat: true }))
-    expect(roundTrip.titleBarScheme).toBe('preset')
-    // Legacy off / absent / default strip → the conservative auto scheme.
-    expect((await loadPrefs(wire({ titleBarCompat: false }))).titleBarScheme).toBe('auto')
-    expect((await loadPrefs(wire({ titleBarStripPx: 40 }))).titleBarScheme).toBe('auto')
-    expect((await loadPrefs(wire({}))).titleBarScheme).toBe('auto')
-  })
-
-  it('defaults titleBarStripPx to 40 and clamps stored values into the contract range', async () => {
-    // Absent or malformed → 40 (the strip default).
-    expect((await loadPrefs(wire({}))).titleBarStripPx).toBe(40)
-    expect((await loadPrefs(wire({ titleBarStripPx: 'yes' }))).titleBarStripPx).toBe(40)
-    // Out-of-range numbers clamp into 0–120.
-    expect((await loadPrefs(wire({ titleBarStripPx: -5 }))).titleBarStripPx).toBe(0)
-    expect((await loadPrefs(wire({ titleBarStripPx: 200 }))).titleBarStripPx).toBe(120)
-    expect((await loadPrefs(wire({ titleBarStripPx: 47.6 }))).titleBarStripPx).toBe(48)
-    // In-range values survive verbatim.
-    expect((await loadPrefs(wire({ titleBarStripPx: 0 }))).titleBarStripPx).toBe(0)
-    expect((await loadPrefs(wire({ titleBarStripPx: 64 }))).titleBarStripPx).toBe(64)
+  it('CARRIES the title-bar keys (this fork keeps the strip mechanism): stored values parse', async () => {
+    // Upstream removed the whole title-bar strip mechanism; this fork keeps
+    // it (shell-presets/titlebar-strip), so the four keys are LIVE
+    // preferences again — the host schema is OPEN, they resolve through it
+    // untouched, and parsePrefs reads them from the declared fields.
+    const stored = {
+      titleBarScheme: 'preset',
+      titleBarPresetId: 'dsh-desktop',
+      titleBarCompat: true,
+      titleBarStripPx: 56,
+    }
+    const parsed = await loadPrefs(wire({ ...stored, agentOpenTools: true }))
+    expect(parsed).toMatchObject({ ...SIDEBAR_PREFS_DEFAULTS, ...stored, agentOpenTools: true })
+    for (const key of Object.keys(stored)) {
+      expect(key in parsed, `${key} must survive into the parsed prefs`).toBe(true)
+    }
+    // A malformed value is still harmless (falls back to the typed default).
+    const junk = await loadPrefs(wire({ titleBarScheme: 42, titleBarStripPx: 'yes' }))
+    expect(junk.titleBarScheme).toBe('auto')
+    expect(junk.titleBarStripPx).toBe(TITLE_BAR_STRIP_DEFAULT)
   })
 
   it('validates the per-tab / per-viewer enable maps (absent keys mean enabled)', async () => {
@@ -266,8 +273,8 @@ describe('boot decision (one fetch for prefs + external disable)', () => {
   })
 
   it('reads suspended false when the flag is absent', async () => {
-    const decision = await loadBootDecision(wire({ titleBarStripPx: 60 }))
+    const decision = await loadBootDecision(wire({ customCss: 'html { }' }))
     expect(decision.suspended).toBe(false)
-    expect(decision.prefs.titleBarStripPx).toBe(60)
+    expect(decision.prefs.customCss).toBe('html { }')
   })
 })

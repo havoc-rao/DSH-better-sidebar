@@ -108,10 +108,10 @@ function mountChanges(
 
 /** Type into the controlled commit box (native setter + input event). */
 function setDraftInput(container: HTMLElement, value: string): void {
-  const input = container.querySelector<HTMLInputElement>('input')
+  const input = container.querySelector<HTMLTextAreaElement>('textarea')
   expect(input).not.toBeNull()
   act(() => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, value)
     input!.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }
@@ -141,7 +141,7 @@ describe('ChangesTab commit-draft persistence (bottom workbench: tab.meta)', () 
     const view = mountChanges(ctx, store, () => tabIn(store, 'seed-session'), 'seed-session')
     try {
       await flushEffects()
-      const input = view.container.querySelector<HTMLInputElement>('input')
+      const input = view.container.querySelector<HTMLTextAreaElement>('textarea')
       expect(input).not.toBeNull()
       expect(input!.value).toBe('persisted draft')
     } finally {
@@ -170,7 +170,7 @@ describe('ChangesTab commit-draft persistence (bottom workbench: tab.meta)', () 
     const view2 = mountChanges(ctx, store, () => tabIn(store, 'typing-session'), 'typing-session')
     try {
       await flushEffects()
-      const input = view2.container.querySelector<HTMLInputElement>('input')
+      const input = view2.container.querySelector<HTMLTextAreaElement>('textarea')
       expect(input).not.toBeNull()
       expect(input!.value).toBe('WIP: fix the thing')
     } finally {
@@ -238,7 +238,7 @@ describe('ChangesTab commit-draft persistence (bottom workbench: tab.meta)', () 
       await flushEffects()
       expect(draftOf(store, 'swap-a')).toBe('typing to a')
       expect(draftOf(store, 'swap-b')).toBeUndefined()
-      const input = container.querySelector<HTMLInputElement>('input')
+      const input = container.querySelector<HTMLTextAreaElement>('textarea')
       expect(input).not.toBeNull()
       expect(input!.value).toBe('')
     } finally {
@@ -290,7 +290,7 @@ describe('ChangesTab commit-draft persistence (bottom workbench: tab.meta)', () 
       const gitButton = [...group!.querySelectorAll<HTMLButtonElement>('button')]
         .find(button => button.getAttribute('aria-selected') === 'false')
       await act(async () => { gitButton!.click() })
-      const input = view.container.querySelector<HTMLInputElement>('input')
+      const input = view.container.querySelector<HTMLTextAreaElement>('textarea')
       expect(input).not.toBeNull()
       expect(input!.value).toBe('WIP: lens round-trip')
       // The debounced write eventually lands — MERGED into the lens keys the
@@ -320,7 +320,7 @@ describe('ChangesTab commit-draft persistence (native right Sidebar: pluginSetti
     const view = mountChanges(ctx, store, () => ({ id: 'git', type: 'git', title: 'Changes' }), 'native-session')
     try {
       await flushEffects()
-      const input = view.container.querySelector<HTMLInputElement>('input')
+      const input = view.container.querySelector<HTMLTextAreaElement>('textarea')
       expect(input).not.toBeNull()
       expect(input!.value).toBe('persisted draft')
     } finally {

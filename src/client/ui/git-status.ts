@@ -5,7 +5,7 @@
  * (a 2 s poll inside `changes/GitLens.tsx`) while the file tree had no git
  * data at all — so a VS Code-style "color the changed rows" feature would
  * have added a SECOND poller of the same `git status --porcelain` call. The
- * store keeps one snapshot per `sessionId + cwd + worktree`, one poller per
+ * store keeps one snapshot per `sessionId + cwd + repoRoot + worktree`, one poller per
  * key while at least one VISIBLE consumer is subscribed, and one path index
  * built lazily per snapshot, so the tree (coloring) and the changes page
  * (list) read the same answer.
@@ -21,7 +21,7 @@
  * returned early, so a click during the poll silently did nothing).
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import { api, type GitStatusResult } from '../api.ts'
+import { api, type GitLineCounts, type GitStatusResult, type SessionScope } from '../api.ts'
 import { resolveGitSource, useGitSourceSeat, type GitDataSource } from '../git-source.ts'
 import { useMemo } from 'react'
 
@@ -93,6 +93,22 @@ function joinRoot(root: string, rel: string): string {
 }
 
 /**
+ * Whether two entries carry the same line counts. A numstat-only change — an
+ * edit that adds lines without touching either porcelain letter, e.g. more
+ * lines appended to an already-modified file — must still publish a NEW
+ * snapshot: keeping the previous identity would freeze the row's numbers at
+ * their first reading for as long as the porcelain codes stay put.
+ */
+function sameCounts(left: GitLineCounts | undefined, right: GitLineCounts | undefined): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined) return false
+  if ('additions' in left && 'additions' in right) {
+    return left.additions === right.additions && left.deletions === right.deletions
+  }
+  return 'binary' in left && 'binary' in right
+}
+
+/**
  * Whether two status snapshots carry the same information. Compared field by
  * field (never by serializing the whole object): the entries are the payload
  * and their order is stable, so a length + pairwise compare is enough.
@@ -106,7 +122,7 @@ function sameStatus(a: GitStatusResult, b: GitStatusResult): boolean {
     && a.repositories.some((root, index) => root !== b.repositories![index])) return false
   return a.entries.every((entry, index) => {
     const other = b.entries[index]!
-    return entry.path === other.path && entry.xy === other.xy
+    return entry.path === other.path && entry.xy === other.xy && sameCounts(entry.counts, other.counts)
   })
 }
 
@@ -144,6 +160,7 @@ interface Slot {
   key: string
   sessionId: string
   cwd: string | undefined
+  repoRoot: string | undefined
   worktree: string | undefined
   snapshot: GitStatusResult | null
   loading: boolean
@@ -166,13 +183,13 @@ const slots = new Map<string, Slot>()
 const sourceIds = new WeakMap<GitDataSource, number>()
 let nextSourceId = 0
 
-function slotOf(sessionId: string, cwd: string | undefined, worktree: string | undefined, source?: GitDataSource): Slot {
+function slotOf(sessionId: string, cwd: string | undefined, repoRoot: string | undefined, worktree: string | undefined, source?: GitDataSource): Slot {
   if (source !== undefined && !sourceIds.has(source)) sourceIds.set(source, ++nextSourceId)
-  const key = `${sessionId}\u0000${cwd ?? ''}\u0000${worktree ?? ''}\u0000${source === undefined ? 0 : sourceIds.get(source)}`
+  const key = `${sessionId}\u0000${cwd ?? ''}\u0000${repoRoot ?? ''}\u0000${worktree ?? ''}\u0000${source === undefined ? 0 : sourceIds.get(source)}`
   const existing = slots.get(key)
   if (existing !== undefined) return existing
   const slot: Slot = {
-    key, sessionId, cwd, worktree, source,
+    key, sessionId, cwd, repoRoot, worktree, source,
     snapshot: null, loading: false, error: false, version: 0, generation: 0,
     running: false, pending: false, visible: 0, pollMs: 2_500, timer: undefined,
     listeners: new Set(),
@@ -197,7 +214,11 @@ function fetchSlot(slot: Slot): void {
   const generation = ++slot.generation
   slot.loading = slot.snapshot === null
   notify(slot)
-  const scope = { sessionId: slot.sessionId, ...(slot.cwd !== undefined ? { cwd: slot.cwd } : {}) }
+const scope: SessionScope = {
+    sessionId: slot.sessionId,
+    ...(slot.cwd !== undefined ? { cwd: slot.cwd } : {}),
+    ...(slot.repoRoot !== undefined ? { repoRoot: slot.repoRoot } : {}),
+  }
   Promise.resolve().then(() => (slot.source?.gitStatus ?? api.gitStatus)(scope, slot.worktree))
     .then((snapshot) => {
       if (generation !== slot.generation) return
@@ -301,18 +322,21 @@ export interface GitStatusView {
  * linked worktree). The poll runs while `visible` is true, at `pollMs`.
  */
 export function useGitStatus(
-  scope: { sessionId: string; cwd?: string },
+scope: { sessionId: string; cwd?: string; repoRoot?: string },
   options: { worktree?: string; visible?: boolean; pollMs?: number; source?: GitDataSource } = {},
 ): GitStatusView {
   const { worktree, visible = true, pollMs = 2_500 } = options
   const providers = useGitSourceSeat()
   const seatedSource = useMemo(() => providers === undefined ? undefined : resolveGitSource(providers, scope.sessionId, scope.cwd), [providers, scope.sessionId, scope.cwd])
-  const slot = slotOf(scope.sessionId, scope.cwd, worktree, options.source ?? seatedSource)
+  const slot = slotOf(scope.sessionId, scope.cwd, scope.repoRoot, worktree, options.source ?? seatedSource)
   const subscribe = useCallback((listener: () => void) => {
     slot.listeners.add(listener)
     return () => { slot.listeners.delete(listener) }
   }, [slot])
-  useSyncExternalStore(subscribe, () => slot.version)
+  // The third argument (server snapshot) keeps a consumer that is rendered to
+  // a string alive — the editor does exactly that in the markdown specs, and
+  // the slot's version is 0 on both sides.
+  useSyncExternalStore(subscribe, () => slot.version, () => slot.version)
 
   useEffect(() => {
     slot.pollMs = pollMs

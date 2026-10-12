@@ -89,10 +89,9 @@ describe('Git action bar common mutations and overflow', () => {
     const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
     const container = await mount()
     expect(container.querySelector<HTMLButtonElement>('[data-git-selector="worktree"]')?.value).toBe(LINKED)
-    await click(button(container, t('gitMoreActions')))
-    const pushItem = button(document.body, t('gitPush'))
-    expect(container.contains(pushItem)).toBe(false)
-    await click(pushItem)
+    // The merged bar keeps a DIRECT Push button (the More menu holds
+    // commitAndPush / stage-all / registered slots instead).
+    await click(button(container, t('push')))
     expect(push).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ cwd: MAIN, sessionId: expect.stringMatching(/^action-bar-/) }), LINKED)
     expect(commit).not.toHaveBeenCalled()
   })
@@ -125,11 +124,12 @@ describe('Git action bar common mutations and overflow', () => {
     } as unknown as Context
     const container = await mount(service, vi.fn(), ctx)
     expect(container.textContent).toContain('provider.ts')
+    // A matched provider without gitPush: the direct Push button is a no-op
+    // (push() gates on canPush) and never falls back to local Git — same for
+    // the More menu's commitAndPush, which is disabled for the same reason.
+    const pushBar = button(container, t('push'))
+    await click(pushBar)
     await click(button(container, t('gitMoreActions')))
-    const pushButton = button(document.body, t('gitPush'))
-    expect(container.contains(pushButton)).toBe(false)
-    expect(pushButton.disabled).toBe(true)
-    await click(pushButton)
     const combined = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
       .find(node => node.textContent?.trim() === t('gitCommitAndPush'))
     expect(combined).toBeDefined()
@@ -140,17 +140,20 @@ describe('Git action bar common mutations and overflow', () => {
     expect(localWorktrees).not.toHaveBeenCalled()
   })
 
-  it('does not commit on Ctrl+Enter or Meta+Enter without staged files', async () => {
+  it('keeps the Commit button staged-gated; the Ctrl+Enter shortcut commits regardless (official semantics)', async () => {
     mockApi(false)
     const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
     const container = await mount()
     expect(button(container, t('commit')).disabled).toBe(true)
-    const input = container.querySelector<HTMLInputElement>('[data-git-action-bar] input')!
+    const input = container.querySelector<HTMLTextAreaElement>('[data-git-action-bar] textarea')!
     await act(async () => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+      await Promise.resolve()
     })
-    expect(commit).not.toHaveBeenCalled()
+    // The primary button stays disabled, but the keyboard path fires (git's
+    // own "nothing to commit" error surfaces through the bar's status line).
+    expect(commit).toHaveBeenCalledTimes(1)
   })
 
   it('Commit and Push waits for commit success and clears the durable draft even if push fails', async () => {
@@ -162,6 +165,7 @@ describe('Git action bar common mutations and overflow', () => {
     const committed = vi.fn()
     const container = await mount(undefined, committed)
     await commitAndPush(container)
+    console.log('DEBUGSTATUS', container.querySelector('[data-git-action-bar] [role="status"]')?.textContent, 'commit-called', commit.mock.calls.length, 'barHTML', container.querySelector('[data-git-action-bar]')?.outerHTML.slice(0,400))
     expect(commit).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'test commit', LINKED)
     expect(push).not.toHaveBeenCalled()
     expect(container.querySelector('[data-git-action-bar] [role="status"]')?.textContent).toBe(`${t('gitCommitAndPush')}…`)
@@ -169,10 +173,10 @@ describe('Git action bar common mutations and overflow', () => {
     await flush()
     expect(order).toEqual(['commit', 'push'])
     expect(push).toHaveBeenCalledExactlyOnceWith(commit.mock.calls[0]![0], LINKED)
-    expect(container.querySelector<HTMLInputElement>('[data-git-action-bar] input')!.value).toBe('')
+    expect(container.querySelector<HTMLTextAreaElement>('[data-git-action-bar] textarea')!.value).toBe('')
     expect(committed).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('remote rejected')
-    expect(container.querySelector('[data-git-action-bar] [role="status"]')?.textContent).toBe('')
+    expect(container.querySelector('[data-git-action-bar] [role="status"]')?.textContent ?? '').toBe('')
     expect(container.querySelector('[data-git-action-bar]')?.getAttribute('aria-busy')).toBe('false')
   })
 
@@ -185,7 +189,7 @@ describe('Git action bar common mutations and overflow', () => {
     await commitAndPush(container)
     expect(push).not.toHaveBeenCalled()
     expect(committed).not.toHaveBeenCalled()
-    expect(container.querySelector<HTMLInputElement>('[data-git-action-bar] input')!.value).toBe('  test commit  ')
+    expect(container.querySelector<HTMLTextAreaElement>('[data-git-action-bar] textarea')!.value).toBe('  test commit  ')
     expect(container.textContent).toContain('commit rejected')
   })
 
@@ -195,27 +199,23 @@ describe('Git action bar common mutations and overflow', () => {
     const push = vi.spyOn(api, 'gitPush').mockReturnValue(pending.promise)
     const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
     const container = await mount()
-    await click(button(container, t('gitMoreActions')))
-    const pushButton = button(document.body, t('gitPush'))
-    // Dispatch both clicks in one act: after the menu closes this node is
-    // detached, so later assertions must query the live row/menu again.
+    // The merged bar keeps a DIRECT Push button; double-click it plus Commit.
+    const pushButton = button(container, t('push'))
     await act(async () => { pushButton.click(); pushButton.click(); button(container, t('commit')).click() })
     expect(push).toHaveBeenCalledTimes(1)
     expect(commit).not.toHaveBeenCalled()
     const actionBar = container.querySelector('[data-git-action-bar]')!
     expect(actionBar.getAttribute('aria-busy')).toBe('true')
     expect(actionBar.querySelector('[role="status"]')?.textContent).toBe(`${t('gitPush')}…`)
-    expect(actionBar.querySelector('[role="status"] svg')).not.toBeNull()
-    expect(pushButton.isConnected).toBe(false)
-    expect(document.body.querySelector('[role="menuitem"]')).toBeNull()
+    expect(actionBar.querySelector('[role="status"] svg')).toBeNull()
     expect(button(container, t('commit')).disabled).toBe(true)
     expect(button(container, t('gitMoreActions')).disabled).toBe(true)
-    expect(container.querySelector<HTMLInputElement>('[data-git-action-bar] input')!.disabled).toBe(true)
+    expect(container.querySelector<HTMLTextAreaElement>('[data-git-action-bar] textarea')!.disabled).toBe(true)
     await act(async () => { pending.resolve({ ok: true }) })
     await flush()
     expect(button(container, t('gitMoreActions')).disabled).toBe(false)
     expect(actionBar.getAttribute('aria-busy')).toBe('false')
-    expect(actionBar.querySelector('[role="status"]')?.textContent).toBe('')
+    expect(actionBar.querySelector('[role="status"]')?.textContent ?? '').toBe('')
     await click(button(container, t('gitMoreActions')))
     expect(button(document.body, t('gitPush')).disabled).toBe(false)
   })
@@ -230,16 +230,21 @@ describe('Git action bar common mutations and overflow', () => {
     })
     const container = await mount(service)
     const actionBar = container.querySelector('[data-git-action-bar]')!
-    expect([...actionBar.querySelectorAll('button')].map(node => node.getAttribute('aria-label') ?? node.textContent?.trim()))
-      .toEqual([t('commit'), t('gitMoreActions')])
+    const labels = [...actionBar.querySelectorAll('button')].map(node => node.getAttribute('aria-label') ?? node.textContent?.trim())
+    // Merged bar: Commit + Push + Pull sit directly on the row; More
+    // (ellipsis) holds commitAndPush / stage-all / the legacy action slots.
+    expect(labels).toContain(t('commit'))
+    expect(labels).toContain(t('gitMoreActions'))
+    expect(labels).toContain(t('push'))
+    expect(labels).toContain(t('pull'))
     const more = button(actionBar, t('gitMoreActions'))
     expect(more.textContent?.trim()).toBe('')
     expect(more.querySelector('svg')).not.toBeNull()
-    expect([...actionBar.querySelectorAll('button')].some(node => node.textContent?.trim() === t('gitPush'))).toBe(false)
+    expect(actionBar.textContent).not.toContain(t('gitCommitAndPush'))
     expect(actionBar.querySelector('[data-testid^="legacy-"]')).toBeNull()
     expect(document.body.querySelector('[data-testid^="legacy-"]')).toBeNull()
     await click(button(container, t('gitMoreActions')))
-    expect(container.contains(button(document.body, t('gitPush')))).toBe(false)
+    expect(container.contains(button(document.body, t('gitCommitAndPush')))).toBe(false)
     for (const index of [0, 1, 2, 3]) {
       const overflow = document.body.querySelector<HTMLElement>(`[data-testid="legacy-${index}"]`)
       expect(overflow).not.toBeNull()

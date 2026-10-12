@@ -160,18 +160,33 @@ describe('openTab without a native controller (popup-window fallback)', () => {
 })
 
 describe('cross-session queueing is preserved when the controller EXISTS', () => {
-  it('queues an open for a session with no mounted surface, then flushes it', () => {
-    const controller: { openTab: ReturnType<typeof vi.fn>; openResource: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; openTabIn?: ReturnType<typeof vi.fn> } = { openTab: vi.fn(), openResource: vi.fn(), close: vi.fn() }
-    const surface = createNativeSurface(makeCtx(controller) as never, { get: () => undefined } as never)
+  it('queues an open for a session with no mounted surface, then flushes it once that session mounts', () => {
+    const mounted: { current: string | undefined } = { current: undefined }
+    const controller = {
+      openTab: vi.fn(), openResource: vi.fn(), close: vi.fn(),
+      mounted: { getSnapshot: () => mounted.current, subscribe: vi.fn(() => () => {}) },
+    }
+    const ctx = {
+      get: (name: string) => (name === 'sidebarRight' ? controller : undefined),
+      sessions: {
+        list: { subscribe: () => () => {}, getSnapshot: () => ({ current: 's1', byId: { s1: { sessionId: 's1', cwd: '/work' }, s2: { sessionId: 's2', cwd: '/work2' } } }) },
+      },
+    }
+    const surface = createNativeSurface(ctx as never, { get: () => undefined } as never)
     const { service } = mount()
     service.setSurface(surface)
-    // s2 is not the active session and the controller has no openTabIn yet.
+    // s2 is not the mounted session: the entry queues (0.2.0 semantics — the
+    // kernel's openTabIn is a silent no-op for a store the runtime never
+    // adopted, so a queued entry must wait for the session to come on screen).
     service.openTab({ type: 'editor' }, { sessionId: 's2' })
     expect(controller.openTab).not.toHaveBeenCalled()
-    // The controller gains the per-session write face — the flush replays.
-    controller.openTabIn = vi.fn()
     surface.flushPending()
-    expect(controller.openTabIn).toHaveBeenCalledWith('s2', 'files', { params: {}, revealIfOpened: true })
+    expect(controller.openTab).not.toHaveBeenCalled()
+    // s2 becomes the mounted seat — the flush replays through the on-screen
+    // write face.
+    mounted.current = 's2'
+    surface.flushPending()
+    expect(controller.openTab).toHaveBeenCalledWith('files', { params: {}, revealIfOpened: true })
   })
 })
 // ─── DOM contract (the real Sidebar shell) ───────────────────────────────

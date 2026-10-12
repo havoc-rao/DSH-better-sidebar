@@ -154,8 +154,16 @@ function LeafView(props: {
   /** Maximized-over-the-chat-box mode (the tab strip's fullscreen toggle). */
   fullscreen?: boolean
   onToggleFullscreen?: () => void
+  /** Unread mark resolver (see TabBar's `isTabUnread`). */
+  isTabUnread?: (tab: SidebarTab) => boolean
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  /**
+   * Reveal a tab's file in the OS file manager (the tab context menu's
+   * reveal row; see TabBar). Absent → that row stays disabled.
+   */
+  onRevealInFileManager?: (path: string) => void
 }) {
-  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, fullscreen, onToggleFullscreen } = props
+  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, fullscreen, onToggleFullscreen, getTabRightActions, onRevealInFileManager, isTabUnread } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const activeTab = leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
 
@@ -211,6 +219,9 @@ function LeafView(props: {
         newTabOptions={newTabOptions}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        isTabUnread={isTabUnread}
+        getTabRightActions={getTabRightActions}
+        onRevealInFileManager={onRevealInFileManager}
         onDropTab={(payload, before) => {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
@@ -255,8 +266,12 @@ function NodeView(props: {
   getTabBadge?: (tab: SidebarTab) => ReactNode
   fullscreen?: boolean
   onToggleFullscreen?: () => void
+  /** Unread mark resolver (see TabBar's `isTabUnread`). */
+  isTabUnread?: (tab: SidebarTab) => boolean
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  onRevealInFileManager?: (path: string) => void
 }) {
-  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, fullscreen, onToggleFullscreen } = props
+  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, fullscreen, onToggleFullscreen, getTabRightActions, onRevealInFileManager, isTabUnread } = props
   if (node.kind === 'leaf') {
     return (
       <LeafView
@@ -269,6 +284,9 @@ function NodeView(props: {
         getTabBadge={getTabBadge}
         fullscreen={fullscreen}
         onToggleFullscreen={onToggleFullscreen}
+        isTabUnread={isTabUnread}
+        getTabRightActions={getTabRightActions}
+        onRevealInFileManager={onRevealInFileManager}
       />
     )
   }
@@ -298,6 +316,9 @@ function NodeView(props: {
               getTabBadge={getTabBadge}
               fullscreen={fullscreen}
               onToggleFullscreen={onToggleFullscreen}
+              isTabUnread={isTabUnread}
+              getTabRightActions={getTabRightActions}
+              onRevealInFileManager={onRevealInFileManager}
             />
           </div>
         </Fragment>
@@ -321,8 +342,14 @@ export function Workbench(props: {
   getTabBadge?: (tab: SidebarTab) => ReactNode
   fullscreen?: boolean
   onToggleFullscreen?: () => void
+  /** Unread mark resolver (see TabBar's `isTabUnread`). */
+  isTabUnread?: (tab: SidebarTab) => boolean
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  /** Reveal a tab's file in the OS file manager (see TabBar); absent → the
+   *  tab context menu's reveal row is disabled. */
+  onRevealInFileManager?: (path: string) => void
 }) {
-  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, fullscreen, onToggleFullscreen } = props
+  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, fullscreen, onToggleFullscreen, getTabRightActions, onRevealInFileManager, isTabUnread } = props
   return (
     <div className={css.workbench}>
       <NodeView
@@ -336,6 +363,9 @@ export function Workbench(props: {
         getTabBadge={getTabBadge}
         fullscreen={fullscreen}
         onToggleFullscreen={onToggleFullscreen}
+        isTabUnread={isTabUnread}
+        getTabRightActions={getTabRightActions}
+        onRevealInFileManager={onRevealInFileManager}
       />
     </div>
   )

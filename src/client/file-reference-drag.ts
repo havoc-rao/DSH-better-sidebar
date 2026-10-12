@@ -1,6 +1,6 @@
 /** File-tree moves and conversation references have separate drop owners. */
 import type { InputActions, ReferenceInsert, TokenSpan } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { fileMention } from './conversation-draft.ts'
+import { mentionFor } from './conversation-draft.ts'
 import { isAbsolutePath, relativeTo } from './paths.ts'
 
 export const FILE_REFERENCE_MIME = 'application/x-dsh-sidebar-file-reference+json'
@@ -13,7 +13,7 @@ export function parseFileReferenceDrag(raw: string): FileReferenceDrag | undefin
     if (!value || typeof value !== 'object') return undefined
     const { version, path, isDir } = value as Partial<FileReferenceDrag>
     if (version !== 1 || typeof path !== 'string' || typeof isDir !== 'boolean'
-      || !isAbsolutePath(path) || !fileMention(path)) return undefined
+      || !isAbsolutePath(path) || !mentionFor(path, isDir ? 'folder' : 'file')) return undefined
     return { version, path, isDir }
   } catch { return undefined }
 }
@@ -41,7 +41,7 @@ export function insertDroppedFileReference(actions: FileReferenceActions, payloa
   if (!canInsertFileReference(actions)) return false
   const relative = relativeTo(cwd ?? '', payload.path)
   // Format the trailing slash INSIDE quotes for directory names with spaces.
-  const reference = fileMention(relative)
+  const reference = mentionFor(relative, payload.isDir ? 'folder' : 'file')
   if (!reference) return false
   const span = actions.captureInsertion()
   const folder = relative === '.' ? './' : `${relative.replace(/[\\/]+$/, '')}/`

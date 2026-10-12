@@ -150,7 +150,7 @@ describe('/sidebar/bundle route', () => {
   })
 
   it('exports the chunk allowlist (mirror of src/client/chunk-loader.ts)', () => {
-    expect([...CHUNK_NAMES]).toEqual(['editor', 'terminal', 'mermaid', 'locale'])
+expect([...CHUNK_NAMES]).toEqual(['editor', 'terminal', 'mermaid', 'locale'])
   })
 
   it('the allowlist covers every chunk tsdown builds (mirror of tsdown.config.ts CHUNKS)', () => {

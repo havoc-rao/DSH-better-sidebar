@@ -35,6 +35,7 @@ async function render(target: ChangesPreview, service?: BetterSidebarService, cu
   }
   await act(async () => { root!.render(createElement(DiffPane, {
     target, service, scope: currentScope, height: 300, onHeightCommit: () => {}, onClose: () => {}, onExpand: () => {},
+    ctx: undefined as never,
   })) })
 }
 afterEach(() => { act(() => root?.unmount()); root = undefined; container?.remove() })

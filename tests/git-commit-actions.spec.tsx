@@ -72,20 +72,30 @@ async function mountLens(service: BetterSidebarService | undefined): Promise<{ r
 
 function expectDefaultRow(container: HTMLElement): void {
   const row = container.querySelector('[data-git-action-bar]')!
-  expect([...row.querySelectorAll('button')].map(button => button.textContent?.trim()))
-    .toEqual([t('commit'), t('gitMoreActions')])
-  expect(row.textContent).not.toContain(t('gitPush'))
+  const labels = [...row.querySelectorAll('button')]
+    .map(button => button.getAttribute('aria-label') ?? button.textContent?.trim())
+  // Merged bar: Commit + the two remote actions sit directly on the row;
+  // More (ellipsis) holds commitAndPush / stage-all / registered action slots.
+  expect(labels).toContain(t('commit'))
+  expect(labels).toContain(t('gitMoreActions'))
+  expect(labels).toContain(t('push'))
+  expect(labels).toContain(t('pull'))
+  expect(row.textContent).not.toContain(t('gitCommitAndPush'))
   expect(row.querySelector('[data-testid]')).toBeNull()
 }
 
 async function openMore(container: HTMLElement): Promise<void> {
-  const more = [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === t('gitMoreActions'))!
+  const more = [...container.querySelectorAll('button')].find(button =>
+    (button.getAttribute('aria-label') ?? button.textContent?.trim()) === t('gitMoreActions'))!
   await act(async () => { more.click() })
   await flushEffects()
   expect(more.getAttribute('aria-expanded')).toBe('true')
-  const push = [...document.body.querySelectorAll('[role="menuitem"]')].find(item => item.textContent?.trim() === t('gitPush'))
-  expect(push).toBeDefined()
-  expect(container.contains(push!)).toBe(false)
+  // The merged bar keeps Push on the row; the More portal carries
+  // commitAndPush / stage-all / the registered action slots.
+  const combined = [...document.body.querySelectorAll('[role="menuitem"]')]
+    .find(item => item.textContent?.trim() === t('gitCommitAndPush'))
+  expect(combined).toBeDefined()
+  expect(container.contains(combined!)).toBe(false)
 }
 
 describe('GitLens More-menu actions (feature gitCommitActions)', () => {

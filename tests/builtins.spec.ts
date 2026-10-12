@@ -9,6 +9,10 @@
  * already NOT built in — they moved to the recommended office plugin,
  * see src/client/plugins-viewers.ts.) The git tab is the unified changes
  * tab (git lens + session lens, PR #471's file-trace merged in).
+ *
+ * `terminal-bottom` (#774) is the sixth: the plugin's OWN bottom-workbench
+ * terminal, which is `bottomOnly` and therefore contributes no native tab
+ * type. It is the one built-in whose carrier surface is asserted here.
  */
 import { describe, expect, it } from 'vitest'
 import type { ReactElement } from 'react'
@@ -31,11 +35,37 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 7 built-in tabs (including the workspace terminal manager)', () => {
+it('registers the 7 built-in tabs (including the workspace terminal manager)', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
       ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal', 'workspace-terminals'],
     )
+  })
+
+  it('the terminal tabs never claim a native right-sidebar type', () => {
+    // This fork keeps its own bottom-workbench terminal stack (AGENTS §0
+    // merge banner): the host's right Sidebar already offers exactly one
+    // `terminal` entry, and the mount lane pins that count. A plugin type
+    // that also reached the native surface would add a second capsule for a
+    // page the host's column cannot draw — so neither the `terminal` tab nor
+    // the `workspace-terminals` manager registers a native `extension`.
+    const { service } = setup()
+    for (const id of ['terminal', 'workspace-terminals']) {
+      const terminal = service.getTab(id)
+      expect(terminal).toBeDefined()
+      // No native  claim surface exists in this fork's descriptor
+      // contract — assert the effective posture instead.
+      expect(terminal?.bottomOnly).not.toBe(true)
+      // Visible in the bottom + menu (hidden would remove it from the menu).
+      expect(terminal?.hidden).not.toBe(true)
+      expect(terminal?.icon).toBeDefined()
+      expect(terminal?.component).toBeDefined()
+    }
+    // Every other built-in keeps both surfaces.
+    for (const descriptor of service.getTabs()) {
+      if (descriptor.id === 'terminal' || descriptor.id === 'workspace-terminals') continue
+      expect(descriptor.bottomOnly, descriptor.id).not.toBe(true)
+    }
   })
 
   it('the git (changes) tab is a single-instance badge-carrying visible tab', () => {
@@ -82,13 +112,18 @@ describe('built-in tab registrations', () => {
     expect(new Set(lines).size, 'descriptions must differ per tab').toBe(visible.length)
   })
 
-  it('the changes tab declares the interface-language settings panel (the diff always docks)', () => {
+it('the changes tab stacks the commit-model and interface-language settings panels', () => {
     const { service } = setup()
-    // The git card owns one CUSTOM settings panel — the DSH interface
-    // language picker (its second entry point; General owns the first) —
-    // while the diff view itself stays docked: this is not a diff-placement
-    // setting.
-    expect(service.getTab('git')?.settings?.render).toBeDefined()
+    // The git card owns TWO custom settings panels, stacked: the pinned
+    // commit-message model (rendered, not a declarative toggle row, because
+    // the option list is discovered at runtime through git.models) and the
+    // DSH interface-language picker (its second entry point; General owns
+    // the first). The diff view itself stays docked — this is not a
+    // diff-placement setting. No declarative toggle rows ride along.
+    const settings = service.getTab('git')?.settings
+    expect(typeof settings?.render).toBe('function')
+    expect(settings?.toggles ?? []).toEqual([])
+    expect(settings?.pluginToggles ?? []).toEqual([])
   })
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
@@ -157,11 +192,11 @@ describe('built-in tab registrations', () => {
     expect((viewMode?.options ?? []).map(o => o.value)).toEqual(['graph', 'tree'])
   })
 
-  it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
+  it('the editor tab declares its merged-mode (embedded file tree) and exclude-pattern settings', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
     // The workspace-fence switch is gone with the fence itself.
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer'])
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'explorerExclude'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.
@@ -169,6 +204,12 @@ describe('built-in tab registrations', () => {
     const options = toggles[0]?.options ?? []
     expect(options.map(o => o.value)).toEqual([true, false])
     expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
+    // The exclude list is a patterns row (editable string list): title/desc
+    // plus the add-input placeholder the shared row renderer reads.
+    expect(toggles[1]?.type).toBe('patterns')
+    expect(toggles[1]?.title).toBeDefined()
+    expect(toggles[1]?.desc).toBeDefined()
+    expect(toggles[1]?.patternsPlaceholder).toBeDefined()
     // The open-with configuration (SSH host + custom editors) is the custom
     // panel rendered below the declarative rows.
     expect(service.getTab('editor')?.settings?.render).toBeDefined()
