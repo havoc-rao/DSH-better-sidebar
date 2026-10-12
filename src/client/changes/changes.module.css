@@ -547,6 +547,9 @@
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-xxxs-11);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* The badge keeps its full width under any shrink pressure. */
 .commitModelOptionNote {
