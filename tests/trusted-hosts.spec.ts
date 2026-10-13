@@ -89,7 +89,7 @@ function mount(initialTrustedHosts: readonly string[] = []): {
     inject: () => () => {},
     // The session/agent event feeds: nothing emits in these tests.
     on: () => () => {},
-    get: () => undefined,
+    get: (key: string) => key === 'webRuntime' ? runtime : undefined,
   }
   apply(ctx as never)
   const api = routes.find(route => route.path === '/sidebar/api')?.handler
