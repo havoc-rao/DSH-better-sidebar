@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    # `dev` is the alpha integration branch (AGENTS.md §0): everything lands
-    # there first, so its post-merge state needs the same green signal `main`
-    # gets. `pull_request` below has no branch filter, so PRs targeting `dev`
-    # are already covered.
+    # `main` is the single integration branch (AGENTS.md §0). `dev` was
+    # retired locally on 2026-10-13, but the official line (offical/dev)
+    # still lives on, so pushes there keep their green signal. `pull_request`
+    # below has no branch filter, so PRs targeting any base are covered.
     branches: [main, dev]
   pull_request:
   workflow_dispatch:

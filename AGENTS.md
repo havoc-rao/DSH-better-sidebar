@@ -12,12 +12,12 @@
 
 ---
 
-## 0. 分支模型：`dev` 集成 / `main` 只收发版
+## 0. 分支模型：`main` 主分支（唯一集成分支）
 
-- **`dev` 是 alpha 开发的集成分支**：所有功能与修复先进 `dev`；**`main` 只在发新版本时从 `dev` 合入**。主题分支从 `dev` 切出（`feat/*` / `fix/*` / `chore/*` / `docs/*` / `test/*`），合回 `dev`。**不要用 `dev/` 前缀命名分支**：本地已有 `refs/heads/dev`，`dev/x` 会撞上 ref 的目录/文件冲突（`cannot lock ref 'refs/heads/dev/x': 'refs/heads/dev' exists`），`git checkout -b dev/x` 直接失败；回填贡献者 PR 时沿用对方分支名，自有改动用 `<kind>/<slug>`。
-- **发版路径**：`dev` → `main` 合并后，tag `vX.Y.Z` 从 `main` 打，`.github/workflows/release.yml` 自动发 npm（版本号含 `-` → `alpha` dist-tag，否则 `latest`）。
-- **纯文档改动**（README / AGENTS.md / docs/）仍允许直推 `main`（见 §1）——规则文件本身不受「只发版才合 main」约束，否则规范无法在 `main` 上生效。
-- **CI**：`.github/workflows/ci.yml` 的 push 触发同时覆盖 `main` 与 `dev`；`pull_request` 触发与 base 无关，所以合进 `dev` 的每一批都有门禁。
+- **`main` 是唯一集成分支**：所有功能与修复在 `feat/*` / `fix/*` / `chore/*` / `docs/*` / `test/*` 主题分支开发，合回 `main`。**`dev` 已退役（2026-10-13 并入 `main` 后本地删除）**：不要再创建 `dev` 作集成分支——远端 `offical/dev`（官方线）仍存在且独立演进，本地同名分支只会制造混淆；回填贡献者 PR 时沿用对方分支名，自有改动用 `<kind>/<slug>`。
+- **发版路径**：tag `vX.Y.Z` 直接从 `main` 打，`.github/workflows/release.yml` 自动发 npm（版本号含 `-` → `alpha` dist-tag，否则 `latest`）。
+- **纯文档改动**（README / AGENTS.md / docs/）仍允许直推 `main`（见 §1）——规则文件本身不受「主题分支」约束，否则规范无法在 `main` 上生效。
+- **CI**：`.github/workflows/ci.yml` 的 push 触发覆盖 `main`（远端 `offical/dev` 仍在官方仓库活动，其 push 同样受覆盖）；`pull_request` 触发与 base 无关，所以合进 `main` 的每一批都有门禁。
 - **本地并行开发**：git worktree 放 `.worktrees/`（已在 `.git/info/exclude` 与 `vitest.config.ts` 的 `exclude` 里），每槽独立 `node_modules`；**集成只在单一 worktree 串行做**，避免并发写同一分支。
 
 ---
@@ -25,7 +25,7 @@
 ## 1. 仓库硬约束（必须遵守）
 
 - **禁止修改 DSH 源码**：对官方 checkout（`~/.dsh/source/current`）零写入。
-- **代码改动必须走分支**：非文档改动在 `feat/*` / `fix/*` 等主题分支开发，**合入 `dev`**（§0；发版时才随 `dev` 进 `main`）——对外部贡献者走 `gh pr create` + review，维护者本地的批量整合可以直接 `git merge --no-ff` 进 `dev` 后推送，但每批都必须跑门禁；**仅纯文档改动**（README / AGENTS.md / docs/）允许直推 `main`。
+- **代码改动必须走分支**：非文档改动在 `feat/*` / `fix/*` 等主题分支开发，**合入 `main`**（§0）——对外部贡献者走 `gh pr create` + review，维护者本地的批量整合可以直接 `git merge --no-ff` 进 `main` 后推送，但每批都必须跑门禁；**仅纯文档改动**（README / AGENTS.md / docs/）允许直推 `main`。
 - **挂载只走 `cordis.patch.yml` + profile 机制**（`~/.dsh/profiles/<profile>/`），插件作为独立包被 profile 引用，不反向侵入 DSH。
 - **市场受管安装约束**：`dependencies` / `peerDependencies` / `optionalDependencies` **一律不得出现 `cordis`**（按名硬拒，optional 无效），`scripts` 不得含 `preinstall` / `install` / `postinstall` / `prepare`。由 `tests/market-manifest.spec.ts` 守护。
 - 缺能力时用 DSH 现成只读/公开 API 或插件自有路由（会话事件日志回放是既有手段之一，但后台任务已有宿主客户端 `ctx.jobs`，别再自建回放路由）；做不到先向用户说明取舍，不改 DSH。
