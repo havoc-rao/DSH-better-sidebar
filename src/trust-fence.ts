@@ -19,6 +19,22 @@ interface ApiTrustRequest {
   url?: string
 }
 
+/** Resolve current Host trust authorities, retaining the supported rc.2 provider. */
+export function sidebarTrustedHosts(ctx: { get(key: string): unknown }): readonly string[] {
+  const startup = ctx.get('webStartup') as { trustedHosts?: readonly string[] } | undefined
+  if (startup !== undefined) {
+    // Current Connection also accepts the listener's concrete bind authority.
+    // Wildcard bind addresses are not client authorities.
+    const server = ctx.get('webServer') as { host?: string } | undefined
+    const host = server?.host
+    const bind = host === undefined || host === '0.0.0.0' || host === '::' ? []
+      : [host.includes(':') && !host.startsWith('[') ? `[${host}]` : host]
+    return [...(startup.trustedHosts ?? []), ...bind]
+  }
+  const runtime = ctx.get('webRuntime') as { trustedHosts?: readonly string[] } | undefined
+  return runtime?.trustedHosts ?? []
+}
+
 function header(headers: IncomingHttpHeaders, name: string): string | undefined {
   const value = headers[name]
   return typeof value === 'string' ? value : undefined
