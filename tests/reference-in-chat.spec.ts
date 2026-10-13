@@ -65,18 +65,21 @@ interface EmittedReference {
  * the separating space the composer adds next to a chip is not part of the
  * reference, so it is left out.
  */
-function fakeComposer(initial = ''): {
+function fakeComposer(initial = '', options: { structured?: boolean; acceptReference?: boolean; focus?: boolean } = {}): {
   ctx: Context
   drafts: string[]
   emitted: EmittedReference[]
   read: () => string
+  focus: ReturnType<typeof vi.fn>
 } {
   const drafts: string[] = []
   const emitted: EmittedReference[] = []
   let text = initial
   let draftRev = 0
+  const focus = vi.fn(() => { expect(text).not.toBe(initial) })
   const input = {
-    state: { getSnapshot: (): { draft: string; draftRev: number } => ({ draft: text, draftRev }) },
+    focus: options.focus === false ? undefined : focus,
+    state: { getSnapshot: (): { draft: string; draftRev?: number } => ({ draft: text, draftRev: options.structured === false ? undefined : draftRev }) },
     setDraft: (next: string): void => {
       text = next
       drafts.push(next)
@@ -84,7 +87,7 @@ function fakeComposer(initial = ''): {
   }
   const scope = {
     emit: (name: string, payload: unknown): void => {
-      if (name !== 'slash/input-insert-reference') return
+      if (name !== 'slash/input-insert-reference' || options.acceptReference === false) return
       const { reference } = payload as { reference: EmittedReference }
       emitted.push(reference)
       text += reference.ref
@@ -104,8 +107,49 @@ function fakeComposer(initial = ''): {
         : name === 'workspaces' ? workspaces : undefined
     ),
   } as unknown as Context
-  return { ctx, drafts, emitted, read: () => text }
+  return { ctx, drafts, emitted, read: () => text, focus }
 }
+
+describe('referenceInChat composer focus', () => {
+  it.each([
+    ['structured file', false, {}],
+    ['folder', true, {}],
+    ['legacy file fallback', false, { structured: false }],
+    ['rejected chip fallback', false, { acceptReference: false }],
+  ] as const)('focuses the host editor after inserting a %s', (_label, isDir, options) => {
+    const composer = fakeComposer('', options)
+    referenceInChat(composer.ctx, 's1', '/w/notes.md', isDir)
+    expect(composer.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not steal focus when the reference cannot be inserted', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const composer = fakeComposer()
+      referenceInChat(composer.ctx, 's1', '/outside/notes.md', false)
+      expect(composer.focus).not.toHaveBeenCalled()
+      expect(composer.read()).toBe('')
+    } finally { warn.mockRestore() }
+  })
+
+  it('does not duplicate a successful chip when host focus throws', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const composer = fakeComposer()
+      composer.focus.mockImplementation(() => { throw new Error('editor unavailable') })
+      referenceInChat(composer.ctx, 's1', '/w/notes.md', false)
+      expect(composer.read()).toBe('@notes.md')
+      expect(composer.emitted).toHaveLength(1)
+      expect(composer.drafts).toEqual([])
+    } finally { warn.mockRestore() }
+  })
+
+  it('keeps insertion working on hosts without the optional focus API', () => {
+    const composer = fakeComposer('', { focus: false })
+    referenceInChat(composer.ctx, 's1', '/w/notes.md', false)
+    expect(composer.read()).toBe('@notes.md')
+  })
+})
 
 describe('referenceInChat folder mentions', () => {
   it('quotes a folder whose path contains whitespace so the host reads it as a folder (#479)', () => {

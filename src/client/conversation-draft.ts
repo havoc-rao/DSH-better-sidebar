@@ -32,8 +32,19 @@
  * separating space on the left, so stacked inserts stay at their running
  * position (A|B + C + D → ACD|B).
  */
-import type { Context, SidebarConversation } from '../context-types.ts'
+import type { Context, SidebarConversation, SidebarSessionInput } from '../context-types.ts'
 import { workspaceRelativePath } from './paths.ts'
+
+/** Use the host editor binding (Lexical on current DSH), not a DOM focus
+ * that loses its retained selection. A focus failure must not turn a successful
+ * chip insert into a second, plain-text fallback insert. */
+function focusComposer(input: SidebarSessionInput): void {
+  try {
+    input.focus?.()
+  } catch (error) {
+    console.warn('[dsh-better-sidebar] composer focus failed:', error)
+  }
+}
 
 /** A resolved composer caret/selection in draft coordinates. */
 export interface DraftCaret {
@@ -188,6 +199,7 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
     // lands — see the module doc for why this keeps stacked inserts at the
     // running position.
     placeComposerCaretAfterInsert(next, caretAfter)
+    focusComposer(input)
     return true
   } catch (error) {
     console.warn('[dsh-better-sidebar] draft insert failed:', error)
@@ -308,7 +320,9 @@ export function insertFileReference(ctx: Context, sessionId: string, relativePat
       },
     })
     const after = input.state.getSnapshot()
-    return after.draftRev !== before.draftRev
+    const inserted = after.draftRev !== before.draftRev
+    if (inserted) focusComposer(input)
+    return inserted
   } catch (error) {
     console.warn('[dsh-better-sidebar] file-reference insert failed:', error)
     return false
