@@ -83,6 +83,7 @@ import { useFileTreeUi } from './file-tree-ui.ts'
 import type { FileTreeRowModel, FileTreeNode, GuideColumn } from 'dsh-file-tree-ui/client-contract'
 import { writeFileReferenceDrag } from './file-reference-drag.ts'
 import { useDirectoryWatch } from './use-dir-watch.ts'
+import { strictExplorerApi, type FileExplorerSource } from './file-explorer.tsx'
 import { usePolling } from './use-polling.ts'
 import { useTreeScroll } from './use-tree-scroll.ts'
 import type { ResourceActionContext } from './resource-actions.ts'
@@ -521,6 +522,7 @@ function sameScope(armed: FsScope | undefined, live: FsScope | undefined): boole
 }
 
 export function FileTree(props: {
+  source?: FileExplorerSource
   /** Legacy caller shape; expansion is now owned by the session store. */
   store?: import('./state.ts').SidebarStore
   sessionId: string
@@ -615,6 +617,10 @@ export function FileTree(props: {
     openWithShowPluginTargets, exclude,
     onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, hidden, visible, service,
   } = props
+  const source = props.source
+  const sourceController = useMemo(() => new AbortController(), [source])
+  useEffect(() => () => { sourceController.abort() }, [sourceController])
+  const fs = useMemo(() => source === undefined ? api : strictExplorerApi(source, sourceController.signal), [source, sourceController])
   const sort = props.sort ?? DEFAULT_FILE_TREE_SORT
   /** The live props for the stable callbacks below (identity churns per render). */
   const propsRef = useRef(props)
@@ -791,7 +797,7 @@ export function FileTree(props: {
     if (cwd === undefined || !canDropInto(source, dir, isCopy)) return
     const from = source.path
     if (isCopy) {
-      api.fsCopy({ sessionId, cwd }, from, dir)
+      fs.fsCopy({ sessionId, cwd }, from, dir)
         .then((result) => {
           setActionError(null)
           pruneTree(result.path)
@@ -802,7 +808,7 @@ export function FileTree(props: {
         })
       return
     }
-    api.fsMove({ sessionId, cwd }, from, dir)
+    fs.fsMove({ sessionId, cwd }, from, dir)
       .then((result) => {
         setActionError(null)
         settleTransfer(from, result.path)
@@ -999,7 +1005,7 @@ export function FileTree(props: {
       | { batch: string[]; ok: false; message: string }
     void Promise.all(batches.map(async (batch): Promise<BatchOutcome> => {
       try {
-        return { batch, ok: true, levels: (await api.fsTrees({ sessionId, cwd }, batch, excludeKey === '' ? undefined : excludeKey.split('\0'))).levels }
+        return { batch, ok: true, levels: (await fs.fsTrees({ sessionId, cwd }, batch, excludeKey === '' ? undefined : excludeKey.split('\0'))).levels }
       } catch (error: unknown) {
         return { batch, ok: false, message: error instanceof Error ? error.message : String(error) }
       }
@@ -1033,7 +1039,7 @@ export function FileTree(props: {
       // fresher. With nothing to keep, the per-level rows already say it.
       if (failure !== '') setLoadError(keptListing ? failure : null)
     })
-  }, [sessionId, cwd, excludeKey, storeLevel])
+  }, [sessionId, cwd, excludeKey, storeLevel, fs])
 
   /**
    * Re-list one directory in place (a watch notice, or the parent of a landed
@@ -1083,7 +1089,7 @@ export function FileTree(props: {
       if (name !== baseName(path) && !validName(name)) setActionError(t('renameInvalid'))
       return
     }
-    api.fsRename({ sessionId, cwd }, path, name)
+    fs.fsRename({ sessionId, cwd }, path, name)
       .then((result) => {
         setActionError(null)
         pruneTree(path)
@@ -1119,12 +1125,12 @@ export function FileTree(props: {
     const run = (): Promise<{ path: string }> => {
       if (op.kind === 'rename') {
         return reverse
-          ? api.fsRename(scope, op.to, baseName(op.from))
-          : api.fsRename(scope, op.from, baseName(op.to))
+          ? fs.fsRename(scope, op.to, baseName(op.from))
+          : fs.fsRename(scope, op.from, baseName(op.to))
       }
       const destDir = reverse ? parentOf(op.from) : parentOf(op.to)
-      if (op.kind === 'move') return api.fsMove(scope, reverse ? op.to : op.from, destDir)
-      return reverse ? api.fsRemove(scope, op.to) : api.fsCopy(scope, op.from, destDir)
+      if (op.kind === 'move') return fs.fsMove(scope, reverse ? op.to : op.from, destDir)
+      return reverse ? fs.fsRemove(scope, op.to) : fs.fsCopy(scope, op.from, destDir)
     }
     run()
       .then((result) => {
@@ -1207,7 +1213,7 @@ export function FileTree(props: {
   // re-listed instead of the whole tree. Without it a folder listed once when
   // it was opened stayed stale for the rest of the session.
   useDirectoryWatch({
-    sessionId,
+    sessionId: source === undefined ? sessionId : undefined,
     root: cwd,
     dirs: expanded,
     onStale: retryDir,
@@ -1377,7 +1383,7 @@ export function FileTree(props: {
   const performDelete = (target: { path: string; isDir: boolean; scope: FsScope }): void => {
     if (!sameScope(target.scope, scopeOf(propsRef.current))) return
     const generation = scopeGenRef.current
-    api.fsRemove(target.scope, target.path)
+    fs.fsRemove(target.scope, target.path)
       .then(() => {
         // A swap mid-flight retires the settle: it is state of the project on
         // screen, which is no longer the one this request ran in.
@@ -1504,7 +1510,7 @@ if (isDir) {
       setActionError(t('newFolderInvalid'))
       return
     }
-    api.fsMkdir({ sessionId: live.sessionId, cwd: live.cwd }, dir, name)
+    fs.fsMkdir({ sessionId: live.sessionId, cwd: live.cwd }, dir, name)
       .then(() => {
         setActionError(null)
         if (dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
@@ -1555,7 +1561,7 @@ if (isDir) {
       setActionError(t('newFileExists'))
       return
     }
-    api.fsCreateFile({ sessionId: live.sessionId, cwd: live.cwd }, dir, name)
+    fs.fsCreateFile({ sessionId: live.sessionId, cwd: live.cwd }, dir, name)
       .then(() => {
         setActionError(null)
         if (dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
@@ -1598,7 +1604,7 @@ if (isDir) {
       const removed: string[] = []
       for (const path of paths) {
         try {
-          await api.fsRemove(armed, path)
+          await fs.fsRemove(armed, path)
         } catch (error: unknown) {
           if (generation !== scopeGenRef.current) return
           setActionError(error instanceof Error ? error.message : String(error))
@@ -1871,6 +1877,7 @@ if (isDir) {
    * only duplicate the plain download row.
    */
   const zipEntries = (target: { path: string; isDir: boolean }): MenuEntry[] => {
+    if (source !== undefined) return []
     const count = selected.size
     if (count >= 2) {
       return [{
@@ -1887,6 +1894,10 @@ if (isDir) {
 
   /** Download a file through the host route (raw bytes, binary-safe). */
   const downloadFile = (path: string): void => {
+    if (source !== undefined) {
+      void Promise.resolve().then(() => source.download?.({ sessionId, cwd }, path)).catch(error => setActionError(String(error)))
+      return
+    }
     const url = downloadUrl({ sessionId, cwd }, path)
     const anchor = document.createElement('a')
     anchor.href = url
@@ -2016,7 +2027,7 @@ if (isDir) {
   }, [cwd, sessionId]), { intervalMs: 250, mode: 'self-scheduling', immediate: true })
 
   const downloadArchive = (paths: readonly string[]): void => {
-    if (archiveBusyRef.current) return
+    if (source !== undefined || archiveBusyRef.current) return
     const name = paths.length === 1 ? `${baseName(paths[0]!)}.zip` : 'archive.zip'
     const generation = scopeGenRef.current
     archiveBusyRef.current = true
@@ -2047,7 +2058,7 @@ if (isDir) {
 
   /** The tree's shared git status (the changes page reads the same snapshot);
    *  a parked tab unsubscribes from the poll. */
-  const gitStatus = useGitStatus({ sessionId, cwd }, { visible: visible !== false })
+  const gitStatus = useGitStatus({ sessionId, cwd }, { visible: source === undefined && visible !== false })
 
   /**
    * Fold chains (VSCode "compact folders"): resolved ONCE per level-cache
@@ -2793,18 +2804,18 @@ dragging={draggingPath === entry.path}
             ? [{ id: 'open-side', label: t('openFileSide'), icon: <IconFolderOpenRegular size={14} /> }]
             : []),
           // Download applies to files only (the host route refuses directories).
-          ...(rowMenu?.isDir === false
+          ...(rowMenu?.isDir === false && (source === undefined || source.download !== undefined)
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutlineRegular size={14} /> }]
             : []),
           // Directory actions: upload into, and create inside (the workspace
           // root row included).
-          ...(rowMenu?.isDir === true
+          ...(rowMenu?.isDir === true && (source === undefined || source.upload !== undefined)
             ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={14} /> }]
             : []),
-          ...(rowMenu?.isDir === true
+          ...(rowMenu?.isDir === true && (source === undefined || source.fsMkdir !== undefined)
             ? [{ id: 'new-folder', label: t('newFolder'), icon: <IconPlusOutlineRegular size={14} /> }]
             : []),
-          ...(rowMenu?.isDir === true
+          ...(rowMenu?.isDir === true && (source === undefined || source.fsCreateFile !== undefined)
             ? [{ id: 'new-file', label: t('newFile'), icon: <IconCodeOutlineRegular size={14} /> }]
             : []),
           // 5: ZIP of the current selection (≥2 rows, or one lone directory).
@@ -2815,8 +2826,8 @@ dragging={draggingPath === entry.path}
           ...(rowMenu !== null && rowMenu.path !== cwd
             ? [
                 { id: 'mutate-sep', type: 'separator' } as MenuEntry,
-                { id: 'rename', label: t('rename'), icon: <IconEditOutlineRegular size={14} /> },
-                { id: 'delete', label: t('delete'), icon: <IconTrashOutlineRegular size={14} />, danger: true },
+                ...(source === undefined || source.fsRename !== undefined ? [{ id: 'rename', label: t('rename'), icon: <IconEditOutlineRegular size={14} /> }] : []),
+                ...(source === undefined || source.fsRemove !== undefined ? [{ id: 'delete', label: t('delete'), icon: <IconTrashOutlineRegular size={14} />, danger: true }] : []),
               ]
             : []),
         ]}

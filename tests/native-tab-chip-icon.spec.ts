@@ -96,6 +96,20 @@ function renderTitle(props: {
 }
 
 describe('NativeTabTitle file glyph', () => {
+  it('supports opted-in custom file tabs without changing ordinary path-bearing tabs', () => {
+    const service = createService()
+    service.registerTab({ id: 'dsh-remote:file', title: 'Remote', fileTab: true,
+      icon: () => createElement('i', { 'data-type-icon': '' }), component: () => null })
+    service.registerTab({ id: 'url', title: 'URL', icon: () => createElement('i', { 'data-type-icon': '' }), component: () => null })
+    for (const kind of ['dsh-remote:file', 'url']) {
+      const { host, unmount } = renderTitle({ records: createNativeTabRecords(), service,
+        info: nativeInfo('custom', kind, 'notes.md', `sidebar://${kind}`), descriptorId: kind,
+        paramsOf: () => ({ path: '/remote/notes.md' }) })
+      expect(host.querySelector('[data-file-glyph="md"]') !== null).toBe(kind === 'dsh-remote:file')
+      expect(host.querySelector('[data-type-icon]') !== null).toBe(kind === 'url')
+      unmount()
+    }
+  })
   it('draws the file glyph from the tab ADDRESS while no record exists yet', () => {
     const records = createNativeTabRecords()
     const service = createService()

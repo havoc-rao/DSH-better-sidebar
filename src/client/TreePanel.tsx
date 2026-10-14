@@ -23,6 +23,8 @@ import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
+import { strictExplorerApi, type FileExplorerSource } from './file-explorer.tsx'
+import { useMemo } from 'react'
 import type { BetterSidebarService } from './service.ts'
 import { ancestorDirs } from './state.ts'
 import { FileTree } from './FileTree.tsx'
@@ -51,6 +53,7 @@ interface UploadSession {
 }
 
 export function TreePanel(props: {
+  source?: FileExplorerSource
   sessionId: string
   cwd: string | undefined
   expanded: string[]
@@ -101,6 +104,10 @@ export function TreePanel(props: {
     openWithShowPluginTargets, exclude,
     onReferenceFile, onPathRenamed, onPathDeleted, visible, full, service,
   } = props
+  const source = props.source
+  const fs = useMemo(() => source === undefined ? api : strictExplorerApi(source), [source])
+  const activeRef = useRef(true)
+  useEffect(() => { activeRef.current = true; return () => { activeRef.current = false } }, [])
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; dirs: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -138,21 +145,26 @@ export function TreePanel(props: {
   /** Set by cancelUpload; the settle path shows 'upload cancelled' instead of
    *  summarizing the partial results. */
   const cancelledRef = useRef(false)
+  const uploadControllerRef = useRef<AbortController | null>(null)
+  useEffect(() => () => { uploadControllerRef.current?.abort() }, [])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
 
   /** Start one upload session into `dir` (absolute, inside the workspace). */
   const startUpload = (dir: string, items: UploadItem[]): void => {
-    if (items.length === 0 || cwd === undefined || upload !== null) return
+    if (items.length === 0 || cwd === undefined || upload !== null || (source !== undefined && source.upload === undefined)) return
     cancelledRef.current = false
     const controller = new AbortController()
+    uploadControllerRef.current = controller
     setUploadFailed(false)
     setUploadStatus(uploadHintText(0, items.length, '', dir, t))
     setUpload({ dir, done: 0, total: items.length, current: '', controller })
-    void uploadToDir({ sessionId, cwd }, dir, items, (done, total, current) => {
+    void (source === undefined ? uploadToDir : source.upload!)({ sessionId, cwd }, dir, items, (done, total, current) => {
+      if (!activeRef.current) return
       if (current !== '') setUploadStatus(uploadHintText(done, total, current, dir, t))
       setUpload(session => session === null ? session : { ...session, done, total, current })
     }, controller.signal).then((results) => {
+      if (!activeRef.current) return
       setUpload(null)
       setCancelling(false)
       // Reload the tree whatever the outcome: files may have landed before a
@@ -172,7 +184,7 @@ export function TreePanel(props: {
           setUploadStatus(current => current === status ? '' : current)
         }, UPLOAD_HINT_MS)
       }
-    })
+    }).catch((failure: unknown) => { if (activeRef.current) { setUpload(null); setUploadFailed(true); setUploadStatus(String(failure)) } })
   }
 
   /** Cancel the in-flight upload (aborts the request; the host drops its temp). */
@@ -202,7 +214,8 @@ export function TreePanel(props: {
     const controller = new AbortController()
     const patterns = excludeKey === '' ? undefined : excludeKey.split('\0')
     const timer = window.setTimeout(() => {
-      api.fsSearch({ sessionId, cwd }, needle, patterns, controller.signal).then((found) => {
+      fs.fsSearch({ sessionId, cwd }, needle, patterns, controller.signal).then((found) => {
+        if (controller.signal.aborted) return
         setResults(found)
         setError(null)
       }).catch((failure: unknown) => {
@@ -215,7 +228,7 @@ export function TreePanel(props: {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [sessionId, cwd, needle, excludeKey])
+  }, [sessionId, cwd, needle, excludeKey, fs])
 
   const busy = upload !== null
   /** Directory hits (the host reports them separately): a click navigates the
@@ -252,6 +265,7 @@ export function TreePanel(props: {
           className={css.editorSearchInput}
           value={query}
           placeholder={t('editorSearchPlaceholder')}
+          disabled={source !== undefined && source.fsSearch === undefined}
           spellCheck={false}
           onChange={(event) => { setQuery(event.target.value) }}
         />
@@ -298,13 +312,13 @@ export function TreePanel(props: {
         <IconButton
           label={t('uploadFiles')}
           icon={<IconUploadOutline16 size={14} />}
-          disabled={busy}
+          disabled={busy || (source !== undefined && source.upload === undefined)}
           onClick={() => { fileInputRef.current?.click() }}
         />
         <IconButton
           label={t('uploadFolder')}
           icon={<IconFolderOpenRegular size={14} />}
-          disabled={busy}
+          disabled={busy || (source !== undefined && source.upload === undefined)}
           onClick={() => { folderInputRef.current?.click() }}
         />
         <input
@@ -374,6 +388,7 @@ export function TreePanel(props: {
       {/* The tree stays MOUNTED while searching: its level cache and the
           directory watcher survive a query, so clearing the box is free. */}
       <FileTree
+        source={source}
         sessionId={sessionId}
         cwd={cwd}
         expanded={expanded}

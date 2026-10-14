@@ -1243,6 +1243,65 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 
 ---
 
+## 16. 受控文件内容 slot（`fileViewerChrome:v1`）
+
+自定义文件 tab（例如 `dsh-remote:file`）可复用 sidebar 的文件图标、header/chrome 与资源操作承载面，而不把远程传输与保存语义交给本地 `EditorHost`。运行时只调用服务方法；类型可从 `dsh-better-sidebar/client/service` 导入 `FileViewerRenderProps`。
+
+```tsx
+if (service.features.includes('fileViewerChrome:v1')) {
+  return service.renderFileViewer({
+    scope, path, title,
+    content: service.renderCodeEditor({
+      documentKey, path, content: draft, readOnly,
+      onChange: setDraft, onSave: save,
+    }),
+    actions: <RemoteFileActions onSave={save} onDownload={download} />,
+    status: readOnly ? 'Remote · read-only' : 'Remote',
+    documentState: { dirty, readOnly },
+  })
+}
+return <LegacyRemoteFileTab />
+```
+
+完整参数：`{ scope: SessionScope; path: string; title?: string; content: ReactNode; actions?: ReactNode; status?: ReactNode; documentState?: FileDocumentState; showResourceActions?: boolean }`，返回 `ReactNode`。`path` 为绝对资源路径；标题缺省为 basename，完整路径显示在 header（溢出省略，tooltip 保留完整路径）。`content` 可承载编辑器、markdown、加载、错误、二进制或下载面板；`actions` 和 `status` 是消费者拥有的 slot（含翻译与按钮行为）。
+
+- **纯受控渲染，无 IO**：不会匹配/加载 FileViewerDescriptor，不会 fs.read/write、构造本地下载链接或导航。消费者负责 authority/provider、取消、冲突、刷新、预览模式、下载与错误处理。不要将远程路径交给本地 `EditorHost` 作为 fallback。
+- **状态所有权不变**：不会自动 `reportFileDocument`；消费者继续登记并释放文档状态及 dirty/close guards。资源按钮执行时读取最新 `documentState`；缺省保守为 `{ dirty: 'unknown', readOnly: true }`，不假定可写。`showResourceActions` 缺省 true，若外部已渲染操作承载面可设 false 避免重复。
+- **不强制 remount 内容**：更新状态/注册文件图标不会重新创建内容组件身份或抛弃草稿；编辑器 `key`/documentKey、缓存与关闭释放由消费者管理。
+- **自定义文件 tab 图标**：注册 `TabDescriptor` 时设 `fileTab: true`，native 芯片与底部工作台均从非空 `tab.path` 经 `service.fileIcon(path, 14)` 取图标；无路径时仍用 descriptor.icon。此字段不改变文件认领、dispatchFileActivation、tab type、持久化或打开策略，普通 URL/path tab 不受影响。与旧 `RemoteFileTab` fallback 兼容：仅在 capability 存在时使用新方法。
+- **复用统一 chrome**：公共 renderer 与内置 EditorHost 共用 FileViewerHeader 与 editor 样式令牌；不需跨插件 runtime import 组件或复制 CSS。
+
+## 17. 公共远程文件树（`fileExplorer:v1`）
+
+`service.renderFileExplorer(props)` **直接挂载现有 TreePanel + FileTree**：包含搜索/刷新/排序工具栏、真实目录行/折叠、多选、右键、创建/重命名/删除/拖拽与上传 overlay，而非复制近似 UI。`FileTree` 继续使用可选 `fileTreeUi` v2 framework；该服务缺席时仍用 sidebar 原有树实现。本仓库没有 `fileTreeSectionSource` 注册机制；此接口是组件级严格数据源 seat，与 document provider / file activation 分工独立。
+
+```tsx
+if (service.features.includes('fileExplorer:v1')) {
+  return service.renderFileExplorer({
+    scope: { sessionId, cwd: remoteRoot },
+    sourceKey: `${machineId}:${connectionGeneration}`,
+    source: remoteExplorerSource, // useMemo 保持稳定
+    expanded, onToggle, onOpenFile,
+    onReferenceFile: (absolutePath, isDir) => insertRemoteReference(absolutePath, isDir),
+    onOpenFileNewTab, onOpenFileSide,
+  })
+}
+return <StandaloneRemoteExplorer />
+```
+
+`FileExplorerRenderProps`：必填 `scope`、`sourceKey`、`source`、`expanded: string[]`、`onToggle(path)`、`onOpenFile(path)`、`onReferenceFile(path,isDir)`；可选 `revealed`（默认 []）、`onOpenFileNewTab`、`onOpenFileSide`、`onPathRenamed(old,new)`、`onPathDeleted(path,isDir)`、`visible`、`exclude`。所有路径均为远程绝对路径，@ 引用不由 sidebar 拼接或写入 composer，交给消费者保留远程语法。
+
+`FileExplorerSource` 必填 `fsTrees(scope,paths,exclude?,signal?) => Promise<{levels:FsLevel[]}>`，每个 level `{path,entries,truncated,error?}`；entries 使用导出的 `FsEntry`（`name,path,isDir,isSymlink,hidden,broken,compact?`）。可选：
+
+- `fsSearch(scope,query,exclude?,signal?) => Promise<{matches:string[],dirs:string[],truncated:boolean}>`（matches/dirs 可为根相对路径或绝对路径）；缺席时禁用搜索。
+- `fsRename(scope,path,name)`、`fsMove(scope,path,dir)`、`fsCopy(scope,path,dir)`、`fsRemove(scope,path)`、`fsMkdir(scope,dir,name)`、`fsCreateFile(scope,dir,name)`：均返回 `Promise<{path:string}>`，与既有 api 方法参数一致。
+- `download(scope,path): void | Promise<void>`，消费者负责远程字节下载。
+- `upload(scope,dir,items:UploadItem[],onProgress(done,total,current),signal?):Promise<UploadResult[]>`；类型从服务合同 type-only 导入。消费者负责路径准入、上传限额与错误转换。
+
+**严格 authority**：source 不与本地 api 合并。缺少操作即隐藏相应右键项/禁用上传，键盘或 undo 等入口同样拒绝，不可能回退本地 fs；远程树关闭本地 directory-watch、git polling 与 host ZIP/archive/download/open-in-app。复制路径与消费者回调仍可用。资源操作继续走现有注册表，注册者须按 scope 准入远程权限。
+
+**生命周期与 fencing**：source 对象应按连接稳定 memoize；machine/连接/provider generation 改变必须更新 `sourceKey`。`sessionId/cwd/sourceKey` 构成组件 key，切换会清空旧 cache/选择/确认框/undo 与搜索/上传状态；旧读取 signal abort，忽略不遵守取消的晚到结果。旧 mutation 完成后拒绝旧 UI 成功回调，不会把旧操作登记到新源；已发出的远程写入不能撤销，source 必须自行确保机器/权限绑定，不能从可变全局“当前连接”选择目标。上传在卸载时取消；`visible:false` 不允许任何本地 polling，远程 live watch 可由消费者订阅后触发 `dsh-sidebar:refresh-files` 或自己的 source generation 刷新。
+
 ## 附录 A：本 fork 保留的扩展 API（官方 baseline 之外）
 
 > 本仓库合入官方 v0.25.0 线后保留的本地扩展面（`SIDEBAR_FEATURES` 含各能力标记；功能开关与内置终端见 AGENTS.md 顶部「合并状态」节）。

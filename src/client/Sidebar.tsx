@@ -711,10 +711,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * descriptor icon.
    */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
-    if (tab.type === 'editor' && tab.path !== undefined && (tab.meta as { dir?: boolean } | undefined)?.dir !== true) {
+    const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
+    if ((tab.type === 'editor' || descriptor?.fileTab === true) && tab.path !== undefined && tab.path !== '' && (tab.meta as { dir?: boolean } | undefined)?.dir !== true) {
       return ctx.get('betterSidebar')?.fileIcon(tab.path, 14) ?? null
     }
-    const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
     if (descriptor === undefined) return null
     return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon
   }

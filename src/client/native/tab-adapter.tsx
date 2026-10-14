@@ -563,7 +563,7 @@ export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkP
   // was just activated and the body has not rendered) or has already been
   // dropped (the body unmounted when the tab was switched away).
   const path = record?.tab.path ?? paramsOf?.(info)?.path
-  const icon = path !== undefined && descriptorId === EDITOR_KIND
+  const icon = path !== undefined && path !== '' && (descriptorId === EDITOR_KIND || descriptor?.fileTab === true)
     ? service.fileIcon(path, CHIP_ICON_SIZE)
     : undefined
   const glyph = icon ?? (typeof descriptor?.icon === 'function'

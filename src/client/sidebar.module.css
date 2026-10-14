@@ -1573,6 +1573,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
+.fileViewerPath {
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
 /* Merged mode (the editorExplorer pref): the header's path input replaces
    the plain title, and a toggleable file tree docks at the tab's right edge. */
 .editorPathInput {

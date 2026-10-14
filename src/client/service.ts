@@ -20,6 +20,10 @@
  *   then `exts`; `exts: []` is a catch-all that matches any path.
  */
 import type { ReactNode } from 'react'
+import { renderFileExplorer, type FileExplorerRenderProps } from './file-explorer.tsx'
+export type { FileExplorerRenderProps, FileExplorerSource, FsEntry, FsLevel, UploadItem, UploadResult } from './file-explorer.tsx'
+import { renderFileViewer, type FileViewerRenderProps } from './FileViewer.tsx'
+export type { FileViewerRenderProps } from './FileViewer.tsx'
 import { sharedRendering, type SharedRenderingService } from './rendering.tsx'
 export type { MarkdownRenderProps, MarkdownCopyLabels, CodeEditorRenderProps, CodeRendering, SharedRenderingService } from './rendering.tsx'
 import type { Context } from '../context-types.ts'
@@ -200,6 +204,9 @@ export interface TabDescriptor {
   order?: number
   /** Hide from the + menu (the editor tab is opened by file-open, not by the menu). */
   hidden?: boolean
+  /** File-backed custom tab: use tab.path's file icon in native/bottom chips.
+   * Does not claim resources or change navigation/activation semantics. */
+  fileTab?: boolean
   /**
    * Bottom-workbench-only type (v0.26.0+): offered in the plugin's OWN bottom
    * + menu and nowhere else. Without this flag every registered type also
@@ -661,6 +668,11 @@ export interface GitCommitActionDescriptor {
  * The registry service published as `ctx.betterSidebar`.
  */
 export interface BetterSidebarService extends SharedRenderingService, InspectorApi, ResourceActionRegistry, Omit<ResourceDataService, 'dispose'> {
+  /** Controlled file chrome/content slot (feature fileViewerChrome:v1).
+   * No IO, viewer selection, document registration or navigation is performed. */
+  renderFileViewer(props: FileViewerRenderProps): ReactNode
+  /** Actual explorer UI with strict consumer data/operations; feature fileExplorer:v1. */
+  renderFileExplorer(props: FileExplorerRenderProps): ReactNode
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
@@ -983,6 +995,8 @@ export const SIDEBAR_FEATURES = [
   'textDocuments:v1',
   'strictGitDiff:v1',
   'sharedRendering:v1',
+  'fileViewerChrome:v1',
+  'fileExplorer:v1',
   'rightActions',
   'settingPatterns',
   'hostRouteUrl',
@@ -1679,7 +1693,9 @@ export function createBetterSidebarService(
     openTab({ type: 'editor', title: title ?? baseNameOf(path), path, id: `editor:${path}` }, scope)
   }
 
-  return {
+  const service: BetterSidebarService = {
+    renderFileViewer: (props) => renderFileViewer(service, props),
+    renderFileExplorer: (props) => renderFileExplorer(service, props),
     ...sharedRendering,
     ...inspectors,
     ...resources,
@@ -1721,6 +1737,7 @@ export function createBetterSidebarService(
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
     clearUnread: clearUnreadFor,
   }
+  return service
 }
 
 /**
