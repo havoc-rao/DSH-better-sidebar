@@ -22,7 +22,7 @@
 import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
-import { api } from './api.ts'
+import { api, type SessionScope } from './api.ts'
 import { strictExplorerApi, type FileExplorerSource } from './file-explorer.tsx'
 import { useMemo } from 'react'
 import type { BetterSidebarService } from './service.ts'
@@ -54,6 +54,7 @@ interface UploadSession {
 
 export function TreePanel(props: {
   source?: FileExplorerSource
+  activationScope?: SessionScope
   sessionId: string
   cwd: string | undefined
   expanded: string[]
@@ -389,6 +390,7 @@ export function TreePanel(props: {
           directory watcher survive a query, so clearing the box is free. */}
       <FileTree
         source={source}
+        activationScope={props.activationScope}
         sessionId={sessionId}
         cwd={cwd}
         expanded={expanded}

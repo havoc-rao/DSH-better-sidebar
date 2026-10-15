@@ -14,6 +14,9 @@ export type FileExplorerSource = Pick<typeof api, 'fsTrees'> & Partial<Pick<type
 }
 export interface FileExplorerRenderProps {
   scope: SessionScope
+  /** File activation/document authority (e.g. the session's local remote mirror).
+   * Defaults to scope; never changes listing scope or absolute row paths. */
+  activationScope?: SessionScope
   /** Change on machine/connection/provider generation change; fences cached data/actions. */
   sourceKey: string
   source: FileExplorerSource

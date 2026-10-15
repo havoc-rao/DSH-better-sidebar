@@ -53,7 +53,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
-import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type FsEntry, type FsLevel } from './api.ts'
+import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type FsEntry, type FsLevel, type SessionScope } from './api.ts'
 import { compactChain, compactLoadTargets } from './file-tree-compact.ts'
 import { DEFAULT_FILE_TREE_SORT, sortEntries, type FileTreeSort } from './file-tree-sort.ts'
 import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
@@ -522,6 +522,8 @@ function sameScope(armed: FsScope | undefined, live: FsScope | undefined): boole
 }
 
 export function FileTree(props: {
+  /** Only file activation/document state; listing and mutations keep sessionId/cwd. */
+  activationScope?: SessionScope
   source?: FileExplorerSource
   /** Legacy caller shape; expansion is now owned by the session store. */
   store?: import('./state.ts').SidebarStore
@@ -625,6 +627,16 @@ export function FileTree(props: {
   /** The live props for the stable callbacks below (identity churns per render). */
   const propsRef = useRef(props)
   propsRef.current = props
+  const activationScope = props.activationScope ?? { sessionId, cwd }
+  // Value dependencies avoid cancelling on object churn; a fresh token also
+  // fences A → B → A swaps and changes visible before passive effects run.
+  const activationToken = useMemo(() => ({}), [sessionId, cwd, activationScope.sessionId, activationScope.cwd, source, service])
+  const activationTokenRef = useRef(activationToken)
+  activationTokenRef.current = activationToken
+  useEffect(() => {
+    activationTokenRef.current = activationToken
+    return () => { if (activationTokenRef.current === activationToken) activationTokenRef.current = {} }
+  }, [activationToken])
   const { onToggle, onReferenceFile } = props
   const fileTreeUi = useFileTreeUi()
   const [data, setData] = useState<Record<string, LevelData>>({})
@@ -1425,22 +1437,23 @@ if (isDir) {
       const live = propsRef.current
       if (live.service?.dispatchFileActivation === undefined) { live.onOpenFile(path); return }
       setActionError(null)
+      const token = activationTokenRef.current
       void (async () => {
         try {
           const handled = await live.service!.dispatchFileActivation(() => {
             const current = propsRef.current
-            if (current.sessionId !== live.sessionId || current.cwd !== live.cwd || current.service !== live.service) {
+            if (activationTokenRef.current !== token) {
               throw new DOMException('File activation scope changed', 'AbortError')
             }
-            const scope = { sessionId: current.sessionId, cwd: current.cwd }
+            const scope = current.activationScope ?? { sessionId: current.sessionId, cwd: current.cwd }
             return { intent: 'activate', scope, absolutePath: path,
               ...(current.service?.getFileDocumentState?.(scope, path) ?? { dirty: false, readOnly: false }) }
           })
           // Never navigate an old gesture into a newly displayed session.
           const current = propsRef.current
-          if (!handled && current.sessionId === live.sessionId && current.cwd === live.cwd && current.service === live.service) current.onOpenFile(path)
+          if (!handled && activationTokenRef.current === token) current.onOpenFile(path)
         } catch (error) {
-          if (!isResourceAbort(error)) setActionError(resourceErrorMessage(error))
+          if (activationTokenRef.current === token && !isResourceAbort(error)) setActionError(resourceErrorMessage(error))
         }
       })()
     }
@@ -2229,6 +2242,14 @@ if (isDir) {
     )
   }
 
+  // Both renderers must keep the in-flight `{}` cache marker visible, not
+  // mistake it for a successfully loaded empty directory.
+  const renderLoadingLevel = (dir: string, depth: number): ReactNode => (
+    <div key={`loading:${dir}`} className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }} aria-busy="true">
+      <Notice kind="loading" tone="inline" role="status">{t('loading')}</Notice>
+    </div>
+  )
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
     // Only ONE inline creator is open at a time (each start closes the other),
@@ -2248,7 +2269,7 @@ if (isDir) {
       return (
         <>
           {head}
-          <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>{t('loading')}</div>
+          {renderLoadingLevel(dir, depth)}
         </>
       )
     }
@@ -2414,16 +2435,8 @@ dragging={draggingPath === entry.path}
    */
   const buildLevelRows = (baseDir: string, depth: number, treeRoot: string): FileTreeNode[] => {
     const level = data[baseDir]
-    if (level === undefined) {
-      return [(
-        <div
-          key={`loading:${baseDir}`}
-          className={css.explorerRow}
-          style={{ paddingLeft: depth * 22 + 6 }}
-        >
-          {t('loading')}
-        </div>
-      )]
+    if (level === undefined || (level.entries === undefined && level.error === undefined)) {
+      return [renderLoadingLevel(baseDir, depth)]
     }
     if (level.error !== undefined) {
       return [(

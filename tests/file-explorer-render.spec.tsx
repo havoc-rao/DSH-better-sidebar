@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
-import { createBetterSidebarService, type FileExplorerRenderProps, type FsLevel } from '../src/client/service.ts'
+import { createBetterSidebarService, type FileExplorerRenderProps, type FsLevel, type FileActivationContext } from '../src/client/service.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import { api } from '../src/client/api.ts'
 import { strictExplorerApi } from '../src/client/file-explorer.tsx'
@@ -44,6 +44,61 @@ describe('public strict file explorer', () => {
     expect(service.features).toContain('fileExplorer:v1')
     await act(async () => { root.unmount() }); host.remove(); service.dispose(); vi.restoreAllMocks()
   })
+  it.each(['handled', 'declined'] as const)('keeps remote listing paths but uses mirror document authority (%s)', async result => {
+    const service = createBetterSidebarService(createSidebarStore())
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host)
+    const scope = { sessionId: 's', cwd: '/remote' }
+    const activationScope = { sessionId: 's', cwd: '/local/mirror' }
+    const remote = vi.fn(async (_scope: FileExplorerRenderProps['scope']) => ({ levels: [level('/remote', '.gitignore')] }))
+    const open = vi.fn()
+    const state = vi.spyOn(service, 'getFileDocumentState').mockReturnValue({ dirty: true, readOnly: true })
+    let finish!: (result: 'handled' | 'declined') => void
+    const target = vi.fn((_context: FileActivationContext) => new Promise<'handled' | 'declined'>(resolve => { finish = resolve }))
+    service.registerFileOpenTarget({ id: 'deferred', priority: 1, accept: () => true, open: target })
+    try {
+      await act(async () => { root.render(service.renderFileExplorer({ scope, activationScope, sourceKey: 'machine', source: { fsTrees: remote }, expanded: [], onToggle: vi.fn(), onOpenFile: open, onReferenceFile: vi.fn() })) })
+      expect(remote.mock.calls[0]?.[0]).toEqual(scope)
+      const row = host.querySelector<HTMLElement>('[role="button"][title="/remote/.gitignore"]')!
+      await act(async () => { row.click() })
+      expect(target.mock.calls[0]?.[0]).toMatchObject({ scope: activationScope, absolutePath: '/remote/.gitignore', dirty: true, readOnly: true })
+      expect(state).toHaveBeenCalledWith(activationScope, '/remote/.gitignore')
+      expect(open).not.toHaveBeenCalled()
+      await act(async () => { finish(result) })
+      if (result === 'declined') expect(open).toHaveBeenCalledExactlyOnceWith('/remote/.gitignore')
+      else expect(open).not.toHaveBeenCalled()
+    } finally { await act(async () => { root.unmount() }); host.remove(); service.dispose(); vi.restoreAllMocks() }
+  })
+
+  it.each(['scope', 'roundtrip', 'unmount'] as const)('fences deferred activation after %s without invoking another target or fallback', async change => {
+    const service = createBetterSidebarService(createSidebarStore())
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host)
+    let finish!: (result: 'declined') => void
+    const next = vi.fn(() => 'handled' as const)
+    service.registerFileOpenTarget({ id: 'deferred', priority: 1, accept: () => true, open: () => new Promise<'declined'>(resolve => { finish = resolve }) })
+    // Scope case exercises the next target's readContext fence; roundtrip and
+    // unmount leave no next target, exercising the post-dispatch fallback fence.
+    if (change === 'scope') service.registerFileOpenTarget({ id: 'next', priority: 2, accept: () => true, open: next })
+    const open = vi.fn()
+    const source = { fsTrees: vi.fn(async () => ({ levels: [level('/remote', '.gitignore')] })) }
+    const props: FileExplorerRenderProps = { scope: { sessionId: 's', cwd: '/remote' }, activationScope: { sessionId: 's', cwd: '/mirror/a' }, sourceKey: 'machine', source, expanded: [], onToggle: vi.fn(), onOpenFile: open, onReferenceFile: vi.fn() }
+    try {
+      await act(async () => { root.render(service.renderFileExplorer(props)) })
+      await act(async () => { host.querySelector<HTMLElement>('[role="button"][title="/remote/.gitignore"]')!.click() })
+      if (change === 'unmount') await act(async () => { root.unmount() })
+      else {
+        await act(async () => { root.render(service.renderFileExplorer({ ...props, activationScope: { sessionId: 's', cwd: '/mirror/b' } })) })
+        if (change === 'roundtrip') await act(async () => { root.render(service.renderFileExplorer(props)) })
+        expect(source.fsTrees).toHaveBeenCalledTimes(1)
+      }
+      await act(async () => { finish('declined') })
+      expect(next).not.toHaveBeenCalled()
+      expect(open).not.toHaveBeenCalled()
+      expect(host.textContent).not.toContain('File activation scope changed')
+    } finally { if (change !== 'unmount') await act(async () => { root.unmount() }); host.remove(); service.dispose() }
+  })
+
   it('rejects missing operations and late mutation results, never falls back to local api', async () => {
     const remove = vi.spyOn(api, 'fsRemove')
     const controller = new AbortController()
