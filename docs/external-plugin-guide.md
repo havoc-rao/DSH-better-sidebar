@@ -36,7 +36,7 @@
 | 终端（宿主一条 + 插件底部一条，彼此独立） | 插件**不在原生右侧栏提供终端**：宿主 0.1.6 起自带 `ui-sidebar-terminal`（kind `terminal`），插件侧 PTY 栈与 `terminal_*` 工具整体删除。**但插件自己的底部工作台有一条终端**（`terminal-bottom`，#774）：它不注册原生类型、不占 guide 条目（`bottomOnly`），页面是插件自绘的 xterm，进程由**宿主的会话级终端服务** `ctx.webTerminals` 供给——插件不持有 PTY，也不与右列那条共享进程（两条终端各自独立是有意的，右列仍是宿主的地盘）。宿主没挂终端控制器时该类型 `available` 为 false（菜单置灰），页面显示「宿主未提供终端能力」而不是崩 |
 | `bottomOnly`（#774） | 只投底部、永不注册原生承载面的类型（字段说明见 §4）。它同时意味着：`openTab` 落点强制 `'bottom'`（连 `target: 'side'` 也被改道——原生栏里的 tab 不在底部工作台的分栏树里，两者归属矛盾）、原生 tab 类型与 guide 条目都不注册。`hidden: true` **不是**它的替代品：那会连 `+` 菜单一起摘掉（`buildNewTabOptions` 过滤 `!hidden`），而它要的正是「留在 `+` 菜单、只离开原生栏」 |
 | 底部终端的恢复语义（#774） | 刷新后重新上屏同一页签时，页面用**同一份 `(sessionId, key, contentId)`** 再次调用宿主的 `webTerminals.view()`：宿主持久化在 localStorage 的 `(sessionId, contentId) → 终端 id` 绑定因此把**同一个** PTY 认回来（`contentId` 恒为 `dsh-better-sidebar:terminal-bottom`）。插件**不把 terminalId 写进 `tab.meta`**：`view()` 显式传 terminalId 会关掉宿主的「缺了就建」分支，一个过期的 id 会把页签永久卡在 `missingTerminal` 上。DSH 重启后 PTY 全没了而 localStorage 绑定还在，所以「新建终端」按钮把 `tab.meta.terminalRun` +1 换一代 `contentId`，让宿主另铸一个进程，而不是反复认领死绑定 |
-| 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里 |
+| 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里。**底部开关不随原生右侧栏展开而隐藏**。blank 会话入口独立于工作台挂载，启动时不等待 `settings.get`（工作台自身仍保留配置/互斥判定及 2s 超时兜底）；提前点击写入同一 store，配置就绪后工作台沿用开合状态。互斥配置确认为禁用时撤下备用入口。支持公开 UI 快照的宿主通过 `ctx.uiConversation.header.getSnapshot()/subscribe(listener)` 发布已提交的 `{sessionId, phase, chromeVisible, cornerAvailable}`，插件据此即时交接 blank 会话备用入口与会话头入口，不再请求 `session.phase` 或每 500ms 检查按钮。原生右栏展开态优先订阅 `ctx.sidebarRight.expanded`（同样的快照接口）。订阅均在卸载释放；旧宿主无这些接口时仍兼容相位轮询与 DOM 标记观察。几何避让仍需 DOM 测量，但改由变化/resize 触发，不做定时轮询 |
 | 在侧边打开（`target: 'side'`，v0.22.0+） | 原生栏里的 tab **不在插件底部工作台的分栏树里**，所以「在侧边打开」不能写 `bottomSplits`（那样会落到用户没展开的底部工作台 = 点了没反应）。服务改为把这一步交给宿主：带 path 的 `editor` seed 走 `openResource(address, { preferNewPane: true, revealIfOpened: false })`——宿主先按自己的两格上限与空间规则尝试分栏，分不了才回退到当前格；`revealIfOpened: false` 允许与已打开的同名资源并存，因此对同一个文件再点一次也会新开一格。其余类型若传 `target: 'side'`，同样以 `preferNewPane` 落原生栏（组件型 tab 的 path 仍是组件种子）——**唯一的例外是 `bottomOnly` 类型**（#774）：它没有原生承载面可落，`target: 'side'` 被改道回 `'bottom'`。path-less 的 `editor`（文件页）与 `'bottom'` 行为不变 |
 | 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行，**`bottomOnly: true` 的类型同样不占行**（#774：它只活在插件自己的底部 `+` 菜单里）。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**本插件默认贡献 4 个 guide 条目**（文件 / 文件变动 / 任务管理 / 侧边对话，恰好在上限内），**但宿主的终端条目也占一行**——装了宿主终端即是 5 条，说明整列不渲染；要让说明回来，需在插件设置页关掉足够多的 tab 类型把总数压到 ≤ 4 条 |
 | 新建面板的种子（alpha.2） | 在新会话打开原生新面板时，宿主从已注册的 guide 条目里播种：恰好 1 个条目 → 直接打开那一页；0 或 ≥2 个条目 → 打开指南。`revealIfOpened` 打开的「页面」在**同一 pane 内**强制去重（已在该 pane 就不再新建）；由已有 tab 地址驱动的打开不受该去重影响 |
@@ -1278,7 +1278,8 @@ return <LegacyRemoteFileTab />
 ```tsx
 if (service.features.includes('fileExplorer:v1')) {
   return service.renderFileExplorer({
-    scope: { sessionId, cwd: remoteRoot },
+    scope: { sessionId, cwd: remoteRoot }, // 目录列举/操作的远程 root
+    activationScope: { sessionId, cwd: localMirrorCwd }, // 会话 document provider authority
     sourceKey: `${machineId}:${connectionGeneration}`,
     source: remoteExplorerSource, // useMemo 保持稳定
     expanded, onToggle, onOpenFile,
@@ -1291,12 +1292,16 @@ return <StandaloneRemoteExplorer />
 
 `FileExplorerRenderProps`：必填 `scope`、`sourceKey`、`source`、`expanded: string[]`、`onToggle(path)`、`onOpenFile(path)`、`onReferenceFile(path,isDir)`；可选 `revealed`（默认 []）、`onOpenFileNewTab`、`onOpenFileSide`、`onPathRenamed(old,new)`、`onPathDeleted(path,isDir)`、`visible`、`exclude`。所有路径均为远程绝对路径，@ 引用不由 sidebar 拼接或写入 composer，交给消费者保留远程语法。
 
+可选 `activationScope: SessionScope` 默认为 `scope`，仅用于普通文件行激活的 `dispatchFileActivation` 与 `getFileDocumentState`。当远程目录 root 与会话的本地 mirror cwd 不同时，必须传会话原始 `{sessionId,cwd}`，使 file-open target / document provider 保留远程 authority；不修改 listing、搜索、mutation 的 scope，也不重写 `absolutePath` 或 fallback `onOpenFile(path)`。target 全部 declined 时才执行 fallback；认领报错不回退本地。activationScope 按 sessionId/cwd 值变化即 fence 旧异步激活（包括 A→B→A），不清目录 cache；卸载及 listing/source/service 切换同样禁止旧 fallback、后续 target 与错误条污染新树。已经进入 target.open 的外部副作用无法撤销，target 仍须自行绑定原始 authority。
+
 `FileExplorerSource` 必填 `fsTrees(scope,paths,exclude?,signal?) => Promise<{levels:FsLevel[]}>`，每个 level `{path,entries,truncated,error?}`；entries 使用导出的 `FsEntry`（`name,path,isDir,isSymlink,hidden,broken,compact?`）。可选：
 
 - `fsSearch(scope,query,exclude?,signal?) => Promise<{matches:string[],dirs:string[],truncated:boolean}>`（matches/dirs 可为根相对路径或绝对路径）；缺席时禁用搜索。
 - `fsRename(scope,path,name)`、`fsMove(scope,path,dir)`、`fsCopy(scope,path,dir)`、`fsRemove(scope,path)`、`fsMkdir(scope,dir,name)`、`fsCreateFile(scope,dir,name)`：均返回 `Promise<{path:string}>`，与既有 api 方法参数一致。
 - `download(scope,path): void | Promise<void>`，消费者负责远程字节下载。
 - `upload(scope,dir,items:UploadItem[],onProgress(done,total,current),signal?):Promise<UploadResult[]>`；类型从服务合同 type-only 导入。消费者负责路径准入、上传限额与错误转换。
+
+**目录展开反馈**：首次展开尚未缓存的目录时，共享 `fileTreeUi` v2 与内置回退路径均在该目录下持续显示 loading 状态行（`role="status"`，行容器 `aria-busy="true"`），直到 `fsTrees` 成功返回条目（空目录也会结束 loading）或失败后显示该层错误。等待期间仍可折叠/重新展开该目录，也可操作其他目录；不使用阻塞整棵树的遮罩。已有缓存的刷新继续保留旧条目，避免闪空。
 
 **严格 authority**：source 不与本地 api 合并。缺少操作即隐藏相应右键项/禁用上传，键盘或 undo 等入口同样拒绝，不可能回退本地 fs；远程树关闭本地 directory-watch、git polling 与 host ZIP/archive/download/open-in-app。复制路径与消费者回调仍可用。资源操作继续走现有注册表，注册者须按 scope 准入远程权限。
 
