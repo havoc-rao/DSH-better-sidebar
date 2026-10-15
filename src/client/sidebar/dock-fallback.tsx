@@ -3,21 +3,20 @@
  *
  * blank 会话里宿主不渲染会话头，本插件挂在 `header.utilities` 的入口随之不可达；
  * 这里把同一个开关以 `position: fixed` 放到宿主「Open right sidebar」按钮的**左侧紧邻**
- * （按该按钮的 rect 对齐，随窗口 resize 与 500ms 周期重对齐）。
+ * （按该按钮的 rect 对齐，随宿主状态、DOM 结构与窗口 resize 重对齐）。
  *
- * **相位不足以判定互斥**：相位是每 1s 轮询来的，而会话头的入口由宿主在它认为合适的
- * 时机渲染，两者之间必然有窗口；相位读取失败时还会按「非 blank」降级，一个从未成功
- * 读到的会话可能一直停在 blank。而两套入口在版面上是**同一个位置**——真同时在场就是
- * 精确重叠成一团。所以除了相位，再加一条与相位无关的兜底：**会话头那套入口只要真的
- * 在 DOM 里，备用入口就让位**（`data-dsh-bottom-toggle` 不在 `[data-dsh-dock-fallback]`
- * 内的那个）。
+ * 优先订阅宿主 `uiConversation.header` 的已提交呈现状态，blank 且没有 header chrome
+ * 时渲染备用入口；非 blank、切换会话与宿主卸载均立即退场。此路径不请求 session.phase。
+ * 旧宿主没有公开快照时，才保留每 1s 查询相位与检查会话头按钮的兼容逻辑。
+ * 几何测量仍由 DOM 提供，但由结构/状态变化和 resize 驱动，不再每 500ms 轮询。
  */
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import type { Context } from '../../context-types.ts'
+import { conversationHeaderSource } from './host-ui-state.ts'
 import type { SidebarStore } from '../state.ts'
 import { BottomDockToggle } from '../Sidebar.tsx'
 import { useSessionPhase } from '../session-phase.ts'
-import { useRightPanelOpen } from './right-panel-open.ts'
 import css from '../sidebar.module.css'
 
 /** 按钮尺寸与宿主展开按钮一致（28px），间距 8px。 */
@@ -139,35 +138,58 @@ function measure(): { top: number; left: number } {
   return { top, left }
 }
 
-export function DockFallback({ store }: { store: SidebarStore }): ReactNode {
+const noSubscription = (): (() => void) => () => {}
+const noHeader = (): undefined => undefined
+
+export function DockFallback({ store, ctx }: { store: SidebarStore; ctx?: Context }): ReactNode {
   const snapshot = useSyncExternalStore(
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot(), [store]),
   )
-  const phase = useSessionPhase(snapshot.sessionId)
-  const rightOpen = useRightPanelOpen()
+  const source = conversationHeaderSource(ctx)
+  const header = useSyncExternalStore(
+    useCallback((listener: () => void) => source?.subscribe(listener) ?? noSubscription(), [source]),
+    useCallback(() => source?.getSnapshot(), [source]),
+    noHeader,
+  )
+  const phase = useSessionPhase(snapshot.sessionId, source === undefined)
   const [pos, setPos] = useState(measure)
-  const [headerEntry, setHeaderEntry] = useState(headerEntryPresent)
+  const [headerEntry, setHeaderEntry] = useState(() => source === undefined && headerEntryPresent())
   useEffect(() => {
     const onResize = (): void => {
-      setPos(measure())
-      setHeaderEntry(headerEntryPresent())
+      const next = measure()
+      setPos(previous => previous.top === next.top && previous.left === next.left ? previous : next)
+      if (source === undefined) setHeaderEntry(headerEntryPresent())
     }
+    // New hosts publish committed presentation. Only geometry remains a DOM concern.
+    // Re-measure after layout settles, without a repeating timer.
+    const frame = requestAnimationFrame(onResize)
+    const unsubscribe = source?.subscribe(() => {
+      onResize()
+    })
     window.addEventListener('resize', onResize)
-    const timer = setInterval(onResize, 500)
+    const observer = new MutationObserver(onResize)
+    observer.observe(document.body, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: ['data-sidebar-right-open'],
+    })
     return () => {
+      cancelAnimationFrame(frame)
+      unsubscribe?.()
+      observer.disconnect()
       window.removeEventListener('resize', onResize)
-      clearInterval(timer)
     }
-  }, [])
+  }, [source])
   // 相位判定在组件内部完成：非 blank（或尚未读到）时整个不渲染 ——
   // 会话头里的入口此时是唯一一套。
-  if (phase === undefined || !phase.blank) return null
-  // 兜底：相位说 blank、但会话头的入口确实在 DOM 里 —— 让位，绝不叠出第二套。
-  if (headerEntry) return null
-  // 宿主右侧面板展开时不渲染（里面那个按钮本身也会返回 null，这里连空壳一起省掉）：
-  // 那个状态下右上角是宿主自己的一簇控件，没有本入口的容身之处。
-  if (rightOpen) return null
+  if (source !== undefined) {
+    // Use host presentation facts, not server polling or plugin button presence.
+    if (header?.sessionId !== snapshot.sessionId || header?.phase !== 'blank'
+      || !header.cornerAvailable || header.chromeVisible) return null
+  } else {
+    // Compatibility for hosts predating the public presentation feed.
+    if (phase === undefined || !phase.blank || headerEntry) return null
+  }
   // portal 到 body：面板宿主（z 20-30）的层叠上下文压不过会话头，按钮会被 titleRow
   // 拦截点击。40 高于 AppFrame(20) 与会话头、低于 DSH 浮层(100+)。
   return createPortal(

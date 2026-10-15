@@ -3,20 +3,20 @@
  *
  * The kernel owns the right column; the plugin only OBSERVES it — for the
  * snapshot's flat `panelOpen` flag (service-side probe) and for the
- * sidebar-toggle button's label (this hook). The kernel's controller has no
- * public subscription, but its expanded state IS the presence of the
- * `[data-sidebar-right-open]` marker on the panel root, so a MutationObserver
- * over that attribute (plus subtree childList, in case the panel root itself
- * mounts late — popup / session windows) tracks every change.
+ * sidebar-toggle button's label (this hook). New hosts publish `expanded`
+ * through their public ObservableSnapshot. Older hosts fall back to observing
+ * `[data-sidebar-right-open]` on the panel root, including late root mounts.
  */
 import { useEffect, useState } from 'react'
 import type { Context } from '../../context-types.ts'
+import type { UiSnapshot } from './host-ui-state.ts'
 
 /** The kernel's expanded-state marker on the native right Sidebar's root. */
 const EXPANDED_MARKER = '[data-sidebar-right-open]'
 
 /** The kernel column's public face, as this module reaches it. */
 interface NativeColumnFace {
+  expanded?: UiSnapshot<boolean>
   isExpanded?: () => boolean
   toggleExpanded?: () => void
 }
@@ -37,6 +37,7 @@ export function readNativeSidebarOpen(ctx: Context): boolean | undefined {
     return undefined
   }
   if (column === undefined || column === null) return undefined
+  if (column.expanded !== undefined) return column.expanded.getSnapshot()
   if (column.isExpanded !== undefined) {
     try {
       return column.isExpanded() === true
@@ -67,6 +68,13 @@ export function useNativeSidebarOpen(ctx: Context): boolean | undefined {
     const refresh = (): void => {
       if (disposed) return
       setOpen(readNativeSidebarOpen(ctx))
+    }
+    const column = ctx.get('sidebarRight') as NativeColumnFace | undefined
+    if (column?.expanded !== undefined) {
+      // Subscribe before reading: a commit between render and this effect must not be lost.
+      const unsubscribe = column.expanded.subscribe(refresh)
+      refresh()
+      return () => { disposed = true; unsubscribe() }
     }
     refresh()
     const observer = new MutationObserver(refresh)

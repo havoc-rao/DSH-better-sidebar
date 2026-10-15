@@ -19,10 +19,10 @@ const POLL_MS = 1_000
  * @param sessionId - 当前会话（undefined 时不读取，返回 undefined）。
  * @returns 相位；尚未读到时为 undefined（调用方应视为非 blank，先不渲染备用入口）。
  */
-export function useSessionPhase(sessionId: string | undefined): SessionPhase | undefined {
+export function useSessionPhase(sessionId: string | undefined, enabled = true): SessionPhase | undefined {
   const [phase, setPhase] = useState<SessionPhase | undefined>(undefined)
   useEffect(() => {
-    if (sessionId === undefined) {
+    if (!enabled || sessionId === undefined) {
       setPhase(undefined)
       return
     }
@@ -51,6 +51,6 @@ export function useSessionPhase(sessionId: string | undefined): SessionPhase | u
       alive = false
       stop()
     }
-  }, [sessionId])
+  }, [sessionId, enabled])
   return phase
 }

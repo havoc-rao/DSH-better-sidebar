@@ -19,8 +19,10 @@ import { act } from 'react-dom/test-utils'
 import './browser-globals.ts'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { DockFallback } from '../src/client/sidebar/dock-fallback.tsx'
+import { BottomDockToggle } from '../src/client/Sidebar.tsx'
 import { sessionPhase } from '../src/client/api.ts'
 import { createSidebarStore } from '../src/client/state.ts'
+import type { ConversationHeaderState } from '../src/client/sidebar/host-ui-state.ts'
 
 setupReactAct()
 
@@ -74,6 +76,64 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
+  it('updates the header bottom toggle immediately without waiting for host polling', () => {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const view = renderRoot(createElement(BottomDockToggle, { store }))
+    try {
+      const button = document.querySelector<HTMLButtonElement>('[data-dsh-bottom-toggle]')!
+      expect(button.getAttribute('aria-pressed')).toBe('false')
+      act(() => { button.click() })
+      expect(button.getAttribute('aria-pressed')).toBe('true')
+      act(() => { button.click() })
+      expect(button.getAttribute('aria-pressed')).toBe('false')
+    } finally {
+      view.unmount()
+    }
+  })
+
+  it('subscribes to committed header state without polling and releases subscriptions', () => {
+    let header: ConversationHeaderState | undefined = {
+      sessionId: 's1', phase: 'blank', chromeVisible: false, cornerAvailable: true,
+    }
+    const listeners = new Set<() => void>()
+    const source = {
+      getSnapshot: () => header,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+      },
+    }
+    const ctx = { get: (key: string) => key === 'uiConversation' ? { header: source } : undefined }
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const callsBefore = vi.mocked(sessionPhase).mock.calls.length
+    const view = renderRoot(createElement(DockFallback, { store, ctx: ctx as never }))
+    try {
+      expect(document.querySelector('[data-dsh-bottom-toggle]')).not.toBeNull()
+      expect(vi.mocked(sessionPhase).mock.calls.length).toBe(callsBefore)
+      act(() => {
+        header = { ...header!, phase: 'engaging', chromeVisible: true }
+        for (const listener of listeners) listener()
+      })
+      expect(document.querySelector('[data-dsh-bottom-toggle]')).toBeNull()
+      act(() => {
+        header = { sessionId: 'other', phase: 'blank', chromeVisible: false, cornerAvailable: true }
+        for (const listener of listeners) listener()
+      })
+      expect(document.querySelector('[data-dsh-bottom-toggle]')).toBeNull()
+      act(() => {
+        header = undefined
+        for (const listener of listeners) listener()
+      })
+      expect(document.querySelector('[data-dsh-bottom-toggle]')).toBeNull()
+      expect(vi.mocked(sessionPhase).mock.calls.length).toBe(callsBefore)
+    } finally {
+      view.unmount()
+    }
+    expect(listeners.size).toBe(0)
+  })
+
   it('renders nothing once the session is no longer blank', () => {
     phaseIs(false)
     const { unmount } = renderDockFallback()
@@ -117,9 +177,7 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
-  // 定位逻辑现在只服务**收起态**（右侧栏收起时宿主的角落只有「Open right sidebar」
-  // 一个按钮）。让位仍是逐个槽位试探：万一宿主的收起态角落也并排了别的东西，
-  // 固定偏移会正好落在**下一个**按钮上。
+  // 不论右侧栏是否展开，底部入口都要逐个槽位让位，避免固定偏移落到宿主按钮上。
   it('keeps stepping left until the slot is free of host buttons', async () => {
     phaseIs(true)
     const rect = (left: number, top: number) => () => ({
@@ -187,11 +245,8 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
-  // 用户定的规则：**宿主右侧面板展开时不显示这个按钮**。那个状态下宿主右上角
-  // 本来就是自己的一簇控件（Split / Fullscreen / Collapse right sidebar），入口挤进去
-  // 只会跟它们打架 —— 干脆不出现。这条规则同时把「展开态该把入口摆哪儿」整个问题去掉，
-  // 让位/命中测试那套只需要服务收起态。
-  it('renders no entry while the host right panel is expanded', async () => {
+  // 底部面板与右侧栏是独立入口：右侧栏展开不能让底部面板开关消失。
+  it('keeps the bottom entry usable while the host right panel is expanded', async () => {
     phaseIs(true)
     // 可见的 Collapse 控件（rect 非零）＝ 右侧栏展开；收起态的 Open 控件不可见。
     const hostToggle = document.createElement('button')
@@ -202,11 +257,17 @@ describe('dock fallback（空白会话入口）', () => {
       toJSON: () => ({}),
     }) as DOMRect
     document.body.append(hostToggle)
-    const { unmount } = renderDockFallback()
+    const { unmount, store } = renderDockFallback()
     try {
-      await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
-      expect(document.querySelector('[data-dsh-dock-fallback]'), '右侧栏展开时不该有备用入口').toBeNull()
-      expect(document.querySelector('[data-dsh-bottom-toggle]'), '右侧栏展开时不该有底部入口').toBeNull()
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-dsh-dock-fallback]'), '右侧栏展开时保留备用入口').not.toBeNull()
+      })
+      expect(document.querySelector('[data-dsh-bottom-toggle]'), '右侧栏展开时保留底部入口').not.toBeNull()
+      expect(store.getSnapshot().state?.bottomOpen).toBe(false)
+      clickFallbackToggle()
+      expect(store.getSnapshot().state?.bottomOpen).toBe(true)
+      clickFallbackToggle()
+      expect(store.getSnapshot().state?.bottomOpen).toBe(false)
     } finally {
       unmount()
       hostToggle.remove()

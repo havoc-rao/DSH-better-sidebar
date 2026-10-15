@@ -170,6 +170,29 @@ describe('test harness', () => {
   })
 })
 
+describe('workspace terminal error recovery', () => {
+  it('opens terminal management for the current session without dismissing the error', () => {
+    const { container, store, service, unmount } = mountSidebar()
+    const open = vi.spyOn(service, 'openTab').mockImplementation(() => {})
+    act(() => {
+      store.reduce(state => ({ ...state, bottomOpen: true,
+        workspaceTerminalError: 'workspace or global terminal limit reached' }))
+    })
+    const alert = container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('workspace or global terminal limit reached')
+    const button = [...(alert?.querySelectorAll('button') ?? [])]
+      .find(element => element.textContent === t('workspaceTerminals'))
+    expect(button).toBeDefined()
+    act(() => { button!.click() })
+    expect(open).toHaveBeenCalledWith(
+      { type: 'workspace-terminals', target: 'bottom' },
+      { sessionId: store.getSnapshot().sessionId, cwd: '/tmp' },
+    )
+    expect(store.getSnapshot().state?.workspaceTerminalError).toBe('workspace or global terminal limit reached')
+    unmount()
+  })
+})
+
 describe('layout-push variable cleanup', () => {
   it('clears --dsh-sidebar-height when the sidebar unmounts (and never pushes a width)', () => {
     const { unmount } = mountSidebar()

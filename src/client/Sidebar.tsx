@@ -60,7 +60,6 @@ import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { useNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { usePinnedTabs } from './sidebar/use-pinned-tabs.ts'
 import { mountedSessions } from './native/surface.ts'
-import { useRightPanelOpen } from './sidebar/right-panel-open.ts'
 import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
 import { useSessionRoot } from './use-session-root.ts'
@@ -107,7 +106,7 @@ function injectUserCss(attr: string, id: string, cssText: string): HTMLStyleElem
   return tag
 }
 
-export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
+export function Sidebar(props: { ctx: Context; store: SidebarStore; standaloneEntry?: boolean }) {
   const { ctx, store } = props
 
   // Copy freshness: re-render the whole tree when the DSH locale switches.
@@ -684,7 +683,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // in DSH's session header, which does not exist without a session.
     return <div data-dsh-panel-host {...osFileDragShield} />
   }
-  const blankEntry = <DockFallback store={store} />
+  const blankEntry = props.standaloneEntry ? null : <DockFallback store={store} ctx={ctx} />
 
   const bottomPanelHeight = bottomPushHeight({
     open: true,
@@ -909,6 +908,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         {state.workspaceTerminalError !== undefined && (
           <div role="alert" className={css.explorerActionError}>
             <span className={css.explorerActionErrorText}>{state.workspaceTerminalError}</span>
+            <button
+              type="button"
+              className={css.terminalErrorAction}
+              onClick={() => {
+                ctx.get('betterSidebar')?.openTab(
+                  { type: 'workspace-terminals', target: 'bottom' }, { sessionId, cwd },
+                )
+              }}
+            >{t('workspaceTerminals')}</button>
           </div>
         )}
         <div className={css.panelBody}>
@@ -943,9 +951,6 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot(), [store]),
   )
-  // 宿主右侧面板展开时不出现：那个状态下它右上角是一簇自己的控件
-  // （Split / Fullscreen / Collapse right sidebar），入口挤进去只会跟它们打架。
-  if (useRightPanelOpen()) return null
   const open = snapshot.state?.bottomOpen === true
   const label = open ? t('collapseBottomPanel') : t('expandBottomPanel')
   return (
