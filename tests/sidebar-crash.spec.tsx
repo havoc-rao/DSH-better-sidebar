@@ -40,6 +40,8 @@ import { Sidebar } from '../src/client/Sidebar.tsx'
 import { createSidebarStore, setBottomHeight, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
+import { registerSidebarHotkeys } from '../src/client/hotkey-actions.ts'
+import type { HotkeyActionRegistry } from '../src/client/bottom-panel-action.ts'
 
 /** jsdom has no WebSocket; the agent-terminals push effect constructs one on mount. */
 class FakeWebSocket {
@@ -167,6 +169,33 @@ describe('test harness', () => {
       liveIntervals.size,
       'the hanging route must leave the poller armed',
     ).toBeGreaterThan(0)
+  })
+})
+
+describe('fullscreen owner shortcut integration', () => {
+  it('has no default-key fallback and unregisters the mounted button callback', () => {
+    vi.stubGlobal('fetch', () => new Promise(() => {}))
+    const { store, service, container, unmount } = mountSidebar()
+    const actions = new Map<string, Parameters<HotkeyActionRegistry['registerAction']>[0]>()
+    const dispose = registerSidebarHotkeys({ registerAction(spec) {
+      actions.set(spec.id, spec)
+      return () => { actions.delete(spec.id) }
+    } }, store, service)
+    const full = actions.get('toggle.terminalFullscreen')!
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'J', ctrlKey: true, shiftKey: true }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'J', metaKey: true, shiftKey: true }))
+    })
+    expect(container.querySelector('[data-dsh-bottom-panel]')?.getAttribute('data-dsh-panel-fullscreen')).not.toBe('true')
+    expect(full.available()).toBe(true)
+    act(() => { expect(full.run({ event: new KeyboardEvent('keydown') })).toBe(true) })
+    expect(container.querySelector('[data-dsh-bottom-panel]')?.getAttribute('data-dsh-panel-fullscreen')).toBe('true')
+    // The rendered maximize geometry is owned by Sidebar's existing state/hook;
+    // this verifies the action is bound to a mounted shell, not a DOM selector.
+    unmount()
+    expect(full.available()).toBe(false)
+    expect(full.run({ event: new KeyboardEvent('keydown') })).toBe(false)
+    dispose()
   })
 })
 

@@ -48,7 +48,7 @@ import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
 import { parseDesktopEnv } from './desktop-env.ts'
-import { isFullscreenToggleShortcut } from './fullscreen-shortcut.ts'
+import { attachWorkbenchControls } from './hotkey-actions.ts'
 import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
@@ -64,6 +64,7 @@ import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
 import { useSessionRoot } from './use-session-root.ts'
 import { ensureBottomTerminal } from './workspace-terminals.ts'
+import { toggleBottomPanelAction } from './bottom-panel-action.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -339,26 +340,18 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; standaloneEn
   // (the flag lives outside the store, so no session's layout carries it).
   useEffect(() => { setFullscreen(false) }, [sessionId])
 
-  // The global shortcut for the toggle above: Cmd+Shift+J on macOS,
-  // Ctrl+Shift+J on Windows/Linux (see fullscreen-shortcut.ts for the chord
-  // and its environment fit). Registered at the shell, NOT on the strips: a
-  // split workbench renders one TabBar per pane (up to four), and per-strip
-  // listeners would fire the toggle once per pane — the batched functional
-  // updates cancel out into a visible no-op. The workbench stays mounted
-  // while collapsed (collapse is a CSS hide), so the chord is heard both
-  // ways. A press some inner surface already claimed (a terminal, an
-  // editor — defaultPrevented) is left alone. Lifecycle is the shell's:
-  // the listener dies with the panel host (useEffect cleanup).
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.defaultPrevented) return
-      if (!isFullscreenToggleShortcut(event)) return
-      event.preventDefault()
-      toggleFullscreen()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => { window.removeEventListener('keydown', onKeyDown) }
-  }, [toggleFullscreen])
+  // The optional hotkey dispatcher calls this exact button action. No default
+  // keyboard listener survives here to bypass remaps, disablement or conflicts.
+  useEffect(() => attachWorkbenchControls(store, {
+    toggleFullscreen,
+    focusTerminal: () => {
+      // Owner-local focus only; never search another session/right-sidebar DOM.
+      const inputs = bottomRef.current?.querySelectorAll<HTMLTextAreaElement>('.xterm-helper-textarea')
+      for (const input of inputs ?? []) {
+        if (input.getClientRects().length > 0) { input.focus(); break }
+      }
+    },
+  }), [store, toggleFullscreen])
 
   // The bottom panel's height drag (top edge strip). Drags write the size
   // DIRECTLY to the DOM (panel style + the layout CSS variable) instead of
@@ -954,7 +947,7 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
           data-active={open ? 'true' : undefined}
           aria-label={label}
           aria-pressed={open}
-          onClick={() => { store.reduce(toggleBottomPanel) }}
+          onClick={() => { toggleBottomPanelAction(store) }}
         >
           <IconPanelBottomOutline16 size={15} />
         </button>

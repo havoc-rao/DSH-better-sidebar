@@ -950,6 +950,19 @@ ctx.effect(() =>
 
 **本地终端自动打开语义**：启用 `bottomPanelAutoTerminal` 时，每次展开底部面板只确保有一个终端：已有 terminal tab 时原样复用，不创建或重启进程；没有 tab 时先列出工作区终端（避免仍运行旧版获取策略的后端误创建），仅在没有存活终端时调用后端 `ensure` 原子获取或创建默认终端；选择已有终端时优先重新挂接本会话关联的存活终端，其次重新挂接工作区任一存活终端（包括其他会话关联、已有连接、已保留、运行中或状态未知的终端），只新增视图，不发送输入、不重启或终止进程；只有工作区完全没有存活终端时才创建一个。快速反复展开共用一次异步操作，本地后端还会按工作区串行化多窗口请求。该行为不限制用户通过 `+` 显式新建多个终端；未提供工作区管理能力的旧式第三方终端源仍走自身的打开路径。
 
+**快捷键业务所有权**：better-sidebar 向可选的 `ctx.hotkey.registerAction` 注册以下六个历史 ID，保留用户改键：
+
+| ID | 默认键（字符串在 macOS 自动 Ctrl→Cmd，Alt 保持） | owner 行为 |
+| --- | --- | --- |
+| `toggle.bottomPanel` | `ctrl+j` | 与 `BottomDockToggle` 共用 `toggleBottomPanelAction` reducer，不直接创建终端；展开后的自动终端偏好仍由原 owner effect 决定 |
+| `toggle.terminal` | `{mac:'ctrl+\u0060',default:'ctrl+\u0060'}`（显式保留 Control） | 展开并激活现有底部终端；无视图时按工作区终端策略复用/获取，聚焦仅限本 workbench 的可见终端 |
+| `toggle.terminalFullscreen` | `ctrl+shift+j` | 调用与 strip 最大化按钮完全相同的局部回调，不使用浏览器 Fullscreen API |
+| `open.git` | `ctrl+shift+g` | 走本插件 `openTab({type:'git'})`，包含原生栏/无栏兜底 |
+| `open.sideChat` | `alt+e` | 走本插件 `openTab({type:'sidechat'})` 的线程 factory |
+| `open.subagent` | 未绑定（`null`） | 走本插件 `openTab({type:'subagent'})` |
+
+hotkey 只负责注册、监听、匹配、冲突、禁用及用户改键，不读取底部业务状态、不查找按钮、不调用终端 adapter。通过 `ctx.inject(['hotkey'])` 和注入 scope 的 effect 管理注册/释放；部分注册失败会回滚，disposer 幂等。无运行时跨插件 import 或必需依赖。缺少服务时按钮仍正常工作，但不另设默认全局监听；原全屏默认监听已移除，避免绕过改键/禁用或双触发。`open.files` / `toggle.rightPanel` 不由本次接入认领（宿主 native owner 边界）。没有添加全局 Arrow/Enter 导航；局部组件继续自行处理可访问性，不劫持终端输入。
+
 ### 终端管理与安全回收
 
 工作区终端管理页展示活动状态、连接数、最近输入/输出时间，支持「保留」开关与「清理安全候选」。有连接（包括隐藏 tab）、已保留、运行中或状态未知的终端不自动结束；关闭视图只断连，显式「终止」仍需确认。活动时间不等于空闲证明，清理按钮也不是强制杀进程。
