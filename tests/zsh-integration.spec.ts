@@ -16,6 +16,25 @@ it('consumes only exact per-shell markers across arbitrary chunks and bounds inc
   expect(output.join('').length).toBeGreaterThan(10000)
 })
 
+it('parses split command-end status and preserves malformed or unbounded markers as output', () => {
+  for (const code of [0, 1, 127, 255]) {
+    const wire = `\x1b]633;dsh;abc;end;${code}\x07`
+    for (let split = 0; split <= wire.length; split++) {
+      const parser = new ZshMarkerParser('abc'), output: string[] = [], events: unknown[] = []
+      const feed = (text: string) => parser.feed(text, value => output.push(value), (kind, exitCode) => events.push([kind, exitCode]))
+      feed(wire.slice(0, split)); feed(wire.slice(split))
+      expect(events).toEqual([['end', code]])
+      expect(output.join('')).toBe('')
+    }
+  }
+  for (const code of ['-1', '256', 'NaN', '1.2', '', '1234', '9'.repeat(10000)]) {
+    const parser = new ZshMarkerParser('abc'), output: string[] = [], marker = () => { throw new Error('malformed marker consumed') }
+    const wire = `\x1b]633;dsh;abc;end;${code}\x07`
+    for (const char of wire) parser.feed(char, value => output.push(value), marker)
+    expect(output.join('')).toBe(wire)
+  }
+})
+
 const require = createRequire(import.meta.url)
 let pty: typeof import('node-pty') | undefined
 try { pty = require('node-pty') } catch { /* optional native runtime */ }
@@ -28,6 +47,9 @@ it.skipIf(!existsSync('/bin/zsh') || !['darwin', 'linux'].includes(process.platf
     expect(script).toContain('$CONTEXT == start')
     expect(script).toContain('TRAP*')
     expect(script).toContain('zle -F -L')
+    expect(script).toMatch(/_precmd\(\) \{\n  local _dsh_[a-f0-9]+_exit=\$\?\n/)
+    expect(script).toContain(';end;%s')
+    expect(script).toMatch(/if \(\( _dsh_[a-f0-9]+_running \)\); then/)
   } finally { integration.dispose() }
 })
 const supported = ['darwin', 'linux'].includes(process.platform) && existsSync('/bin/zsh') && !!pty
@@ -39,19 +61,32 @@ it.skipIf(!supported)('real zsh preserves user rc/hooks, emits ZLE prompt proof,
   } catch (error) { context.skip(`native PTY spawn unavailable: ${String(error)}`); return }
   const home = mkdtempSync(join(tmpdir(), 'dsh-zsh-test-'))
   writeFileSync(join(home, '.zshenv'), 'export DSH_RC_ENV=preserved\n')
-  writeFileSync(join(home, '.zshrc'), `PROMPT='fixture> '\nRPROMPT=''\nprecmd() { print -r -- USER_PRECMD }\n`)
+  writeFileSync(join(home, '.zshrc'), `PROMPT='fixture> '\nRPROMPT=''\nprint -r -- USER_RC\n`)
   const integration = prepareZshIntegration('/bin/zsh', [], { ...process.env, HOME: home, ZDOTDIR: home })!
   const parser = new ZshMarkerParser(integration.token)
   let output = '', prompts = 0, starts = 0
+  const ends: number[] = []
   const terminal = pty!.spawn('/bin/zsh', ['-i'], { cwd: home, env: integration.env as Record<string, string>, cols: 80, rows: 24, name: 'xterm-256color' })
-  const disposable = terminal.onData(data => parser.feed(data, value => { output += value }, kind => { if (kind === 'prompt') prompts++; else starts++ }))
+  const disposable = terminal.onData(data => parser.feed(data, value => { output += value }, (kind, code) => { if (kind === 'prompt') prompts++; else if (kind === 'start') starts++; else if (kind === 'end') ends.push(code!) }))
   const until = async (condition: () => boolean) => {
     const end = Date.now() + 5000
     while (!condition()) { if (Date.now() > end) throw new Error(`zsh timeout: ${JSON.stringify(output)}`); await new Promise(resolve => setTimeout(resolve, 20)) }
   }
   try {
     await until(() => prompts >= 1)
-    expect(output).toContain('USER_PRECMD')
+    expect(output).toContain('USER_RC')
+    expect(ends).toEqual([]) // startup prompt is not a command completion
+    const initial = prompts
+    terminal.write('\r')
+    await until(() => prompts > initial)
+    expect(starts).toBe(0); expect(ends).toEqual([])
+    terminal.write('false\r')
+    await until(() => ends.length === 1)
+    expect(ends).toEqual([1])
+    await until(() => prompts > initial + 1)
+    terminal.write('true\r')
+    await until(() => ends.length === 2 && prompts > initial + 2)
+    expect(ends).toEqual([1, 0])
     const before = prompts
     terminal.write("read 'answer?READ_WAIT> '; print -r -- READ_DONE:$answer:$DSH_RC_ENV\r")
     await until(() => output.includes('READ_WAIT> ') && starts > 0)

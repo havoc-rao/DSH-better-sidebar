@@ -65,6 +65,7 @@ import { readJsonBody, requireString, SidebarError, writeError, writeJson, write
 import { readPersistedSession } from './session-store.ts'
 import { buildResourceDataApi } from './resource-data-routes.ts'
 import { buildWorkspaceTerminalApi, resolveTerminalWorkspace, WorkspaceTerminalManager } from './workspace-terminal.ts'
+import { attachWorkspaceTerminalWatch } from './workspace-terminal-watch.ts'
 export type { WorkspaceTerminalInfo } from './workspace-terminal.ts'
 import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
@@ -1839,6 +1840,18 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   }), 'dsh-better-sidebar: terminal WebSocket')
 
+  // Workspace catalog subscriptions are independent of terminal output/views.
+  const workspaceListWss = new WebSocketServer({ noServer: true })
+  ctx.effect(() => ctx.webServer.registerUpgrade({
+    path: '/sidebar/ws/workspace-terminals',
+    handler: (req, socket, head) => {
+      if (!fence(req)) { socket.destroy(); return }
+      workspaceListWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, ws => {
+        void attachWorkspaceTerminalWatch(ctx, workspaceTerminals, ws, req.url ?? '/')
+      })
+    },
+  }), 'dsh-better-sidebar: workspace-terminals push WebSocket')
+
   // ── Agent terminals push WebSocket ──────────────────────────────────────
   // Pushes the live list of agent terminals for one session to the sidebar
   // view: the client mirrors the list into tabs (id `agent:<uuid>`, title
@@ -1871,6 +1884,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     agentOpenRegistry.dispose()
     terminalWss.close()
     agentListWss.close()
+    for (const ws of workspaceListWss.clients) ws.close(1001, 'server-shutdown')
+    workspaceListWss.close()
     agentOpenWss.close()
     fsWatchWss.close()
   }, 'dsh-better-sidebar: teardown')

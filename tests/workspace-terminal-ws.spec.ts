@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({ spawn: vi.fn(), accepted: undefined as unknown
 vi.mock('../src/pty-deps.ts', async original => ({ ...await original<object>(), loadNodePty: () => ({ spawn: state.spawn }) }))
 vi.mock('ws', () => ({
   WebSocket: { OPEN: 1 },
-  WebSocketServer: class { handleUpgrade(_req: unknown, _socket: unknown, _head: unknown, cb: (ws: unknown) => void) { cb(state.accepted) } close() {} },
+  WebSocketServer: class { clients = new Set(); handleUpgrade(_req: unknown, _socket: unknown, _head: unknown, cb: (ws: unknown) => void) { cb(state.accepted) } close() {} },
 }))
 import { apply } from '../src/index.ts'
 class Socket extends EventEmitter {

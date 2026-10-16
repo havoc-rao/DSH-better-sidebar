@@ -54,7 +54,9 @@ export interface TerminalTransport {
 }
 
 export interface TerminalTransportHandle {
-  input(data: string): void
+  /** false means input was NOT sent (e.g. disconnected); never buffer and replay
+   * keystrokes across reconnect. Legacy transports may return void. */
+  input(data: string): void | boolean
   resize(cols: number, rows: number): void
   /** Legacy: user closed the tab → kill. Managed workspace transport: detach only. */
   close(): void

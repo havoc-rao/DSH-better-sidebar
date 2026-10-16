@@ -113,6 +113,7 @@ describe('host plugin smoke', () => {
       // terminal open). The agent-opens/fs-watch routes above survived that
       // round and must stay.
       '/sidebar/ws/terminal',
+      '/sidebar/ws/workspace-terminals',
       '/sidebar/ws/agent-terminals',
     ])
     // Teardown runs without throwing.

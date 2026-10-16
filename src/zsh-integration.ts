@@ -12,7 +12,8 @@ export interface ZshIntegration {
 }
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
-/** Only non-login interactive zsh, without caller-supplied args, is supported. */
+/** Only non-login interactive zsh, without caller-supplied args, is supported.
+ * Other shells remain deliberately unsupported; integration is always opt-in. */
 export function prepareZshIntegration(executable: string, args: string[], env: NodeJS.ProcessEnv = process.env): ZshIntegration | undefined {
   if (!['darwin', 'linux'].includes(process.platform) || basename(executable) !== 'zsh' || args.length) return undefined
   const directory = mkdtempSync(join(tmpdir(), 'dsh-zsh-'))
@@ -24,7 +25,7 @@ export function prepareZshIntegration(executable: string, args: string[], env: N
   try {
     // zsh still sources global rc files normally. User .zshenv may redirect ZDOTDIR.
     writeFileSync(join(directory, '.zshenv'), `ZDOTDIR=${quote(original)}\n[[ -r "$ZDOTDIR/.zshenv" ]] && source "$ZDOTDIR/.zshenv"\ntypeset -g ${name}_rcdir="\${ZDOTDIR:-$HOME}"\nZDOTDIR=${quote(directory)}\n`, { mode: 0o600 })
-    writeFileSync(join(directory, '.zshrc'), `ZDOTDIR="$${name}_rcdir"\n[[ -r "$ZDOTDIR/.zshrc" ]] && source "$ZDOTDIR/.zshrc"\n# Disabled ZLE/RCS, overwritten hooks, unsupported themes: no marker means unknown.\nautoload -Uz add-zsh-hook add-zle-hook-widget\ntypeset -g ${name}_ready=0\nfunction ${name}_precmd() {\n  ${name}_ready=0\n  local -a ${name}_init_hooks ${name}_finish_hooks\n  zstyle -a zle-line-init widgets ${name}_init_hooks\n  zstyle -a zle-line-finish widgets ${name}_finish_hooks\n  if (( \${#${name}_init_hooks} != 1 || \${#${name}_finish_hooks} != 1 )) || [[ \${${name}_init_hooks[1]} != <->:${name}_prompt || \${${name}_finish_hooks[1]} != <->:${name}_start ]]; then\n    builtin printf '\\033]633;dsh;${token};unsupported\\007'\n    return\n  fi\n  if [[ \${widgets[zle-line-init]} != user:azhw:zle-line-init || \${widgets[zle-line-finish]} != user:azhw:zle-line-finish ]] || (( \${#precmd_functions} > 1 || \${#preexec_functions} > 1 )); then\n    builtin printf '\\033]633;dsh;${token};unsupported\\007'\n    return\n  fi\n  if (( \${#\${(M)\${(k)functions}:#TRAP*}} )) || (( TMOUT )) || zmodload -e zsh/sched || [[ -n \"$(zle -F -L 2>/dev/null)\" ]]; then\n    builtin printf '\\033]633;dsh;${token};unsupported\\007'\n    return\n  fi\n  ${name}_ready=1\n}\nfunction ${name}_start() {\n  ${name}_ready=0\n  builtin printf '\\033]633;dsh;${token};start\\007'\n}\nfunction ${name}_prompt() {\n  if (( ${name}_ready )) && [[ $CONTEXT == start ]]; then\n    ${name}_ready=0\n    builtin printf '\\033]633;dsh;${token};prompt\\007'\n  fi\n}\nadd-zsh-hook precmd ${name}_precmd\nadd-zsh-hook preexec ${name}_start\nadd-zle-hook-widget line-init ${name}_prompt\nadd-zle-hook-widget line-finish ${name}_start\n`, { mode: 0o600 })
+    writeFileSync(join(directory, '.zshrc'), `ZDOTDIR="$${name}_rcdir"\n[[ -r "$ZDOTDIR/.zshrc" ]] && source "$ZDOTDIR/.zshrc"\n# Disabled ZLE/RCS, overwritten hooks, unsupported themes: no marker means unknown.\nautoload -Uz add-zsh-hook add-zle-hook-widget\ntypeset -g ${name}_ready=0 ${name}_running=0\nfunction ${name}_precmd() {\n  local ${name}_exit=$?\n  ${name}_ready=0\n  local -a ${name}_init_hooks ${name}_finish_hooks\n  zstyle -a zle-line-init widgets ${name}_init_hooks\n  zstyle -a zle-line-finish widgets ${name}_finish_hooks\n  if (( \${#${name}_init_hooks} != 1 || \${#${name}_finish_hooks} != 1 )) || [[ \${${name}_init_hooks[1]} != <->:${name}_prompt || \${${name}_finish_hooks[1]} != <->:${name}_accept ]]; then\n    builtin printf '\\033]633;dsh;${token};unsupported\\007'\n    return\n  fi\n  if [[ \${widgets[zle-line-init]} != user:azhw:zle-line-init || \${widgets[zle-line-finish]} != user:azhw:zle-line-finish ]] || (( \${#precmd_functions} > 1 || \${#preexec_functions} > 1 || \${+functions[precmd]} || \${+functions[preexec]} )); then\n    builtin printf '\\033]633;dsh;${token};unsupported\\007'\n    return\n  fi\n  if (( \${#\${(M)\${(k)functions}:#TRAP*}} )) || (( TMOUT )) || zmodload -e zsh/sched || [[ -n \"$(zle -F -L 2>/dev/null)\" ]]; then\n    builtin printf '\\033]633;dsh;${token};unsupported\\007'\n    return\n  fi\n  if (( ${name}_running )); then\n    ${name}_running=0\n    builtin printf '\\033]633;dsh;${token};end;%s\\007' "$${name}_exit"\n  fi\n  ${name}_ready=1\n}\nfunction ${name}_accept() {\n  ${name}_ready=0\n  builtin printf '\\033]633;dsh;${token};accept\\007'\n}\nfunction ${name}_start() {\n  ${name}_ready=0\n  ${name}_running=1\n  builtin printf '\\033]633;dsh;${token};start\\007'\n}\nfunction ${name}_prompt() {\n  if (( ${name}_ready )) && [[ $CONTEXT == start ]]; then\n    ${name}_ready=0\n    builtin printf '\\033]633;dsh;${token};prompt\\007'\n  fi\n}\nadd-zsh-hook precmd ${name}_precmd\nadd-zsh-hook preexec ${name}_start\nadd-zle-hook-widget line-init ${name}_prompt\nadd-zle-hook-widget line-finish ${name}_accept\n`, { mode: 0o600 })
   } catch (error) { rmSync(directory, { recursive: true, force: true }); throw error }
   let disposed = false
   return { directory, token, env: { ...env, ZDOTDIR: directory }, dispose() {
@@ -40,7 +41,7 @@ export class ZshMarkerParser {
   private pending = ''
   private readonly prefix: string
   constructor(token: string) { this.prefix = `\x1b]633;dsh;${token};` }
-  feed(data: string, output: (text: string) => void, marker: (kind: 'start' | 'prompt' | 'unsupported') => void): void {
+  feed(data: string, output: (text: string) => void, marker: (kind: 'start' | 'accept' | 'end' | 'prompt' | 'unsupported', exitCode?: number) => void): void {
     let text = this.pending + data
     this.pending = ''
     while (text) {
@@ -55,11 +56,17 @@ export class ZshMarkerParser {
       if (index) output(text.slice(0, index))
       text = text.slice(index)
       const tail = text.slice(this.prefix.length)
-      const kind = tail.startsWith('prompt\x07') ? 'prompt' : tail.startsWith('start\x07') ? 'start' : tail.startsWith('unsupported\x07') ? 'unsupported' : undefined
+      const end = /^end;([0-9]{1,3})\x07/.exec(tail)
+      if (end && Number(end[1]) <= 255) {
+        marker('end', Number(end[1]))
+        text = tail.slice(end[0].length)
+        continue
+      }
+      const kind = tail.startsWith('accept\x07') ? 'accept' : tail.startsWith('prompt\x07') ? 'prompt' : tail.startsWith('start\x07') ? 'start' : tail.startsWith('unsupported\x07') ? 'unsupported' : undefined
       if (kind) {
         marker(kind)
         text = tail.slice(kind.length + 1)
-      } else if (['prompt\x07', 'start\x07', 'unsupported\x07'].some(value => value.startsWith(tail))) {
+      } else if (/^(?:e|en|end|end;[0-9]{0,3})$/.test(tail) || ['accept\x07', 'prompt\x07', 'start\x07', 'unsupported\x07'].some(value => value.startsWith(tail))) {
         this.pending = text
         return
       } else {

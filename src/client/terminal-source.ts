@@ -30,6 +30,9 @@ import type { WorkspaceTerminalInfo } from './api.ts'
 export interface WorkspaceTerminalSource {
   create(title?: string): Promise<WorkspaceTerminalInfo>
   list(signal?: AbortSignal): Promise<{ terminals: WorkspaceTerminalInfo[] }>
+  /** Full initial and changed snapshots. Source owns reconnect/resync/retry;
+   * disposing must suppress all future callbacks. Omit for legacy polling. */
+  subscribe?(onSnapshot: (snapshot: { terminals: WorkspaceTerminalInfo[] }) => void, onError?: (error: unknown) => void): () => void
   terminate(terminalId: string): Promise<unknown>
   /** Atomic backend-owned default terminal acquisition, distinct from explicit create. */
   ensure?(): Promise<WorkspaceTerminalInfo>

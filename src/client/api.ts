@@ -43,7 +43,12 @@ export interface WorkspaceTerminalInfo {
   createdBySessionId: string
   createdAt: number
   exited: boolean
-  exitCode?: number
+  exitCode?: number | null
+  /** Shell command lifecycle, distinct from the PTY's exit code. */
+  commandStartedAt?: number
+  commandFinishedAt?: number
+  commandExitCode?: number
+  commandDurationMs?: number
   activity?: 'idle' | 'busy' | 'unknown' | 'exited'
   activityReason?: string
   /** Unique safe executable basenames observed in the foreground process group. */
@@ -61,6 +66,8 @@ export class SidebarApiError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    readonly status?: number,
+    readonly retryable?: boolean,
   ) {
     super(message)
   }
@@ -259,6 +266,8 @@ async function readEnvelope<T>(response: Response): Promise<T> {
     throw new SidebarApiError(
       parsed?.error?.code ?? 'http',
       parsed?.error?.message ?? `HTTP ${response.status}`,
+      response.status,
+      response.status === 401 || response.status === 403 ? false : undefined,
     )
   }
   return parsed.value as T

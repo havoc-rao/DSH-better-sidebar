@@ -318,12 +318,14 @@ it('opt-in zsh integration requires settled prompt and invalidates proof on inpu
   try {
     expect(options[1]).toEqual(['-i'])
     processes[0]!.events.emit('data', `fixture> \x1b]633;dsh;${token};prompt\x07`)
-    await manager.sweep(); expect(manager.list(workspace)[0]!.activity).toBe('unknown')
+    await manager.sweep(); expect(manager.list(workspace)[0]!.activity).toBe('idle')
+    expect(probe.mock.calls.at(-1)![1]).toBe(false) // presentation is not cleanup proof
     now = 2000
     await manager.sweep(); expect(manager.list(workspace)[0]!.activity).toBe('idle')
     expect(manager.readOutput(workspace, info.terminalId).data).toBe('fixture> ')
     processes[0]!.events.emit('data', '\x1b]633;dsh;')
-    await manager.sweep(); expect(manager.list(workspace)[0]!.activity).toBe('unknown')
+    await manager.sweep(); expect(manager.list(workspace)[0]!.activity).toBe('idle')
+    expect(probe.mock.calls.at(-1)![1]).toBe(false) // partial bytes still invalidate cleanup proof
     processes[0]!.events.emit('data', `${token};prompt\x07`)
     now += 2000
     await manager.sweep(); expect(manager.list(workspace)[0]!.activity).toBe('idle')

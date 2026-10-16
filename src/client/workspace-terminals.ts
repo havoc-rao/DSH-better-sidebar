@@ -3,6 +3,7 @@ import { allLeaves, openTabInBottomPane, patchTab, type SidebarState, type Sideb
 import type { Context } from '../context-types.ts'
 import type { BetterSidebarService } from './service.ts'
 import type { WorkspaceTerminalBinding, WorkspaceTerminalSource } from './terminal-source.ts'
+import { watchWorkspaceTerminals } from './workspace-terminal-watch.ts'
 
 export function workspaceTerminalProviderOf(tab: SidebarTab): string | undefined {
   const id = (tab.meta as { workspaceTerminalProviderId?: unknown } | null)?.workspaceTerminalProviderId
@@ -34,6 +35,7 @@ export function resolveWorkspaceTerminalBinding(
   const source: WorkspaceTerminalSource = {
     create: title => title === undefined ? api.workspaceTerminalCreate(sessionId) : api.workspaceTerminalCreate(sessionId, title),
     list: signal => api.workspaceTerminalList(sessionId, signal),
+    subscribe: (onSnapshot, onError) => watchWorkspaceTerminals(sessionId, onSnapshot, onError),
     terminate: terminalId => api.workspaceTerminalTerminate(sessionId, terminalId),
     ensure: () => api.workspaceTerminalEnsure(sessionId),
     pin: (terminalId, pinned) => api.workspaceTerminalPin(sessionId, terminalId, pinned),

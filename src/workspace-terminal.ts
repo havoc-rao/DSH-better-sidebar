@@ -28,9 +28,16 @@ export interface WorkspaceTerminalInfo {
   lastInputAt?: number
   lastOutputAt?: number
   lastDetachedAt?: number
+  commandStartedAt?: number
+  commandFinishedAt?: number
+  commandExitCode?: number
+  commandDurationMs?: number
   exitedAt?: number
   pinned?: boolean
 }
+export interface WorkspaceTerminalSnapshot { revision: number; terminals: WorkspaceTerminalInfo[] }
+type SnapshotListener = (snapshot: WorkspaceTerminalSnapshot) => void
+interface SubscriptionState { revision: number; listeners: Set<SnapshotListener>; timer?: ReturnType<typeof setTimeout> }
 export interface LocalTerminalWorkspace { key: string; cwd: string }
 interface Handle {
   info: WorkspaceTerminalInfo
@@ -49,6 +56,7 @@ interface Handle {
   parser?: ZshMarkerParser
   promptAt?: number
   integrationReason?: string
+  hookState?: 'busy' | 'awaiting-prompt' | 'idle'
 }
 export interface WorkspaceTerminalLifecycleOptions {
   now?: () => number
@@ -98,6 +106,7 @@ export class WorkspaceTerminalManager {
   private readonly locks = new Map<string, Promise<unknown>>()
   private readonly now: () => number
   private readonly probe: (pid: number, promptProven?: boolean) => Promise<TerminalActivityResult>
+  private readonly subscriptions = new Map<string, SubscriptionState>()
   private disposed = false
   private sweeping?: Promise<number>
 
@@ -118,6 +127,43 @@ export class WorkspaceTerminalManager {
     this.now = options.now ?? Date.now
     this.probe = options.probe ?? probeTerminalActivity
   }
+
+  /** Workspace metadata only, never PTY output. IO is trailing-coalesced at 10Hz. */
+  subscribe(workspace: LocalTerminalWorkspace, listener: SnapshotListener): () => void {
+    if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
+    let state = this.subscriptions.get(workspace.key)
+    if (!state) { state = { revision: 0, listeners: new Set() }; this.subscriptions.set(workspace.key, state) }
+    state.listeners.add(listener)
+    try { listener({ revision: state.revision, terminals: this.list(workspace) }) }
+    catch { state.listeners.delete(listener) }
+    return () => {
+      state.listeners.delete(listener)
+      if (!state.listeners.size && state.timer !== undefined) { clearTimeout(state.timer); state.timer = undefined }
+    }
+  }
+
+  private notify(key: string, coalesce = false): void {
+    if (this.disposed) return
+    let state = this.subscriptions.get(key)
+    if (!state) { state = { revision: 0, listeners: new Set() }; this.subscriptions.set(key, state) }
+    state.revision++
+    const publish = () => {
+      state.timer = undefined
+      for (const listener of [...state.listeners]) {
+        if (!state.listeners.has(listener)) continue
+        // Isolate consumers, including mutation of returned arrays/records.
+        try { listener({ revision: state.revision, terminals: this.list({ key, cwd: '' }) }) } catch { /* disconnected consumer */ }
+      }
+    }
+    if (coalesce) {
+      if (state.listeners.size && state.timer === undefined) { state.timer = setTimeout(publish, 100); state.timer.unref?.() }
+    } else {
+      if (state.timer !== undefined) clearTimeout(state.timer)
+      publish()
+    }
+  }
+
+  private hooksValid(handle: Handle): boolean { return !!handle.integration && !handle.integrationReason && !!handle.hookState }
 
   create(workspace: LocalTerminalWorkspace, sessionId: string, title?: string, shell = this.shell, args: string[] = [], shellIntegration = false): WorkspaceTerminalInfo {
     if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
@@ -162,21 +208,40 @@ export class WorkspaceTerminalManager {
     this.terminals.set(info.terminalId, handle)
     handle.disposers.push(pty.onData(data => {
       if (!handle.parser) { this.append(handle, data); return }
-      // Even an incomplete marker prefix invalidates earlier proof immediately.
+      // All bytes invalidate cleanup proof, even partial markers; presentation is
+      // separately driven by valid hooks, never by echo/background output.
       handle.revision++
       handle.idleSince = undefined
       handle.promptAt = undefined
-      delete info.runningCommands
-      info.activity = 'unknown'
-      info.activityReason = 'output-since-probe'
-      handle.parser.feed(data, text => this.append(handle, text), kind => {
+      info.lastOutputAt = this.now()
+      this.notify(handle.workspaceKey, true)
+      handle.parser.feed(data, text => this.append(handle, text), (kind, exitCode) => {
         handle.revision++
         handle.idleSince = undefined
-        if (kind === 'unsupported') handle.integrationReason = 'shell-integration-unsupported-hooks'
-        handle.promptAt = kind === 'prompt' && !handle.integrationReason ? this.now() : undefined
+        const now = this.now()
+        if (kind === 'unsupported') { handle.integrationReason = 'shell-integration-unsupported-hooks'; handle.hookState = undefined }
+        else if (!handle.integrationReason) {
+          if (kind === 'start') {
+            if (handle.hookState !== 'busy') {
+              info.commandStartedAt = now
+              delete info.commandFinishedAt; delete info.commandExitCode; delete info.commandDurationMs
+            }
+            handle.hookState = 'busy'
+          } else if (kind === 'end') {
+            // Startup precmd/prompt must never invent a command completion.
+            if (handle.hookState === 'busy' && info.commandStartedAt !== undefined) {
+              info.commandFinishedAt = now; info.commandExitCode = exitCode
+              info.commandDurationMs = Math.max(0, now - info.commandStartedAt)
+            }
+            handle.hookState = 'awaiting-prompt'
+          } else if (kind === 'accept') handle.hookState = 'awaiting-prompt'
+          else handle.hookState = 'idle'
+        }
+        handle.promptAt = kind === 'prompt' && !handle.integrationReason ? now : undefined
         delete info.runningCommands
-        info.activity = 'unknown'
-        info.activityReason = handle.integrationReason ?? (kind === 'prompt' ? 'shell-prompt-awaiting-process-check' : 'shell-command-started')
+        info.activity = this.hooksValid(handle) ? handle.hookState === 'busy' ? 'busy' : handle.hookState === 'idle' ? 'idle' : 'unknown' : 'unknown'
+        info.activityReason = handle.integrationReason ?? (kind === 'prompt' ? 'shell-prompt-ready' : kind === 'end' || kind === 'accept' ? 'shell-command-awaiting-prompt' : 'shell-command-started')
+        this.notify(handle.workspaceKey)
       })
     }))
     handle.disposers.push(pty.onExit(({ exitCode }) => {
@@ -191,12 +256,14 @@ export class WorkspaceTerminalManager {
       integration?.dispose()
       this.append(handle, `\r\n[process exited with code ${exitCode}]\r\n`)
       for (const socket of handle.sockets) socket.close(1000, 'terminal-exited')
+      this.notify(handle.workspaceKey)
     }))
+    this.notify(workspace.key)
     return { ...info }
   }
 
   list(workspace: LocalTerminalWorkspace): WorkspaceTerminalInfo[] {
-    return [...this.terminals.values()].filter(h => h.workspaceKey === workspace.key).map(h => ({ ...h.info }))
+    return [...this.terminals.values()].filter(h => h.workspaceKey === workspace.key).map(h => ({ ...h.info, ...(h.info.runningCommands ? { runningCommands: [...h.info.runningCommands] } : {}) }))
   }
 
   /** Default opening attaches an existing live shell, even when busy or shared.
@@ -225,6 +292,7 @@ export class WorkspaceTerminalManager {
     const handle = this.expect(workspace, terminalId)
     handle.info.pinned = pinned
     handle.revision++
+    this.notify(workspace.key)
     return { ...handle.info }
   }
 
@@ -272,10 +340,15 @@ export class WorkspaceTerminalManager {
     }
     if (result.activity === 'busy' && result.runningCommands?.length) handle.info.runningCommands = [...result.runningCommands]
     else delete handle.info.runningCommands
-    handle.info.activity = result.activity
-    handle.info.activityReason = result.reason
+    if (!this.hooksValid(handle)) {
+      handle.info.activity = result.activity
+      handle.info.activityReason = result.reason
+    }
+    // Hook idle is presentation only. Cleanup still requires settled prompt,
+    // successful process proof and a second fresh probe before reclamation.
     if (result.activity === 'idle') handle.idleSince ??= this.now()
     else handle.idleSince = undefined
+    this.notify(handle.workspaceKey, true)
     return true
   }
 
@@ -326,6 +399,7 @@ export class WorkspaceTerminalManager {
     for (const disposable of handle.disposers) disposable.dispose()
     if (!handle.info.exited) { try { handle.pty.kill() } catch { /* already gone */ } }
     handle.integration?.dispose()
+    this.notify(handle.workspaceKey)
   }
 
   /** Non-consuming byte cursor for future Agent readers; bounded replay reports gaps. */
@@ -349,11 +423,13 @@ export class WorkspaceTerminalManager {
     handle.sockets.add(ws)
     handle.revision++
     handle.info.attachedViews = handle.sockets.size
+    this.notify(handle.workspaceKey)
     const detach = (): void => {
       if (!handle.sockets.delete(ws)) return
       handle.revision++
       handle.info.attachedViews = handle.sockets.size
       if (!handle.sockets.size) handle.info.lastDetachedAt = this.now()
+      this.notify(handle.workspaceKey)
     }
     ws.on('close', detach)
     ws.on('error', detach)
@@ -371,9 +447,12 @@ export class WorkspaceTerminalManager {
         handle.idleSince = undefined
         handle.promptAt = undefined
         handle.info.lastInputAt = this.now()
-        delete handle.info.runningCommands
-        handle.info.activity = 'unknown'
-        handle.info.activityReason = 'input-since-probe'
+        if (!this.hooksValid(handle)) {
+          delete handle.info.runningCommands
+          handle.info.activity = 'unknown'
+          handle.info.activityReason = 'input-since-probe'
+        }
+        this.notify(handle.workspaceKey, true)
         handle.pty.write(text)
       }
     })
@@ -384,11 +463,12 @@ export class WorkspaceTerminalManager {
     handle.idleSince = undefined
     handle.promptAt = undefined
     handle.info.lastOutputAt = this.now()
-    if (!handle.info.exited) {
+    if (!handle.info.exited && !this.hooksValid(handle)) {
       delete handle.info.runningCommands
       handle.info.activity = 'unknown'
       handle.info.activityReason = 'output-since-probe'
     }
+    this.notify(handle.workspaceKey, true)
     const bytes = Buffer.from(data)
     handle.cursor += bytes.length
     handle.output = Buffer.concat([handle.output, bytes])
@@ -405,6 +485,11 @@ export class WorkspaceTerminalManager {
 
   disposeAll(): void {
     this.disposed = true
+    for (const state of this.subscriptions.values()) {
+      if (state.timer !== undefined) clearTimeout(state.timer)
+      state.listeners.clear()
+    }
+    this.subscriptions.clear()
     for (const [id, handle] of this.terminals) this.terminate({ key: handle.workspaceKey, cwd: handle.info.cwd }, id)
   }
 }

@@ -36,14 +36,15 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); vi.useRealTimers(); vi.unstubAllGlobals(); document.body.replaceChildren() })
 const replacement: WorkspaceTerminalInfo = { terminalId: 'terminal:new', title: 'new shell', cwd: '/authoritative', createdAt: 2, createdBySessionId: 'B', exited: false }
 const tabs = (store: ReturnType<typeof createSidebarStore>) => allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
-function mount(terminalId?: string, tabId = 'workspace-view:terminal:abc') {
+function mount(terminalId?: string, tabId = 'workspace-view:terminal:abc', visible = false) {
   const store = createSidebarStore(); store.setSession('B')
   store.reduce(state => openTabInBottomPane(state, { id: tabId, type: 'terminal', title: 'shell', meta: terminalId === undefined ? undefined : { workspaceTerminalId: terminalId } }))
+  if (visible) store.reduce(state => ({ ...state, bottomOpen: true }))
   function Harness() {
     useSyncExternalStore(listener => store.subscribe(listener), () => store.getSnapshot())
     const tab = tabs(store).find(tab => tab.id === tabId)
     return tab === undefined ? null : createElement(TerminalView, { ctx: {} as Context,
-      scope: { sessionId: 'B', cwd: '/work' }, tabId, terminalId: workspaceTerminalIdOf(tab), store })
+      scope: { sessionId: 'B', cwd: '/work' }, tabId, terminalId: workspaceTerminalIdOf(tab), store, visible: visible && store.getSnapshot().state!.bottomOpen })
   }
   const rendered = renderRoot(createElement(Harness))
   return { ...rendered, store, tabId, socket: Socket.instances[0]! }
@@ -75,6 +76,48 @@ describe('workspace terminal view lifetime', () => {
     expect(handle.dispose).toHaveBeenCalledOnce()
     expect(handle.close).not.toHaveBeenCalled(); expect(handle.park).not.toHaveBeenCalled()
     expect(source.terminate).not.toHaveBeenCalled()
+  })
+  it('auto-restores a visible remote managed terminal through its own backend only', async () => {
+    const store = createSidebarStore(); store.setSession('B')
+    const tabId = 'remote-view'
+    store.reduce(state => openTabInBottomPane(state, { id: tabId, type: 'terminal', title: 'remote',
+      meta: { workspaceTerminalId: 'remote-old', workspaceTerminalProviderId: 'remote' } }))
+    let session!: import('../src/client/terminal-transport.ts').TerminalTransportSession
+    const transport = { kind: 'remote-managed', open: vi.fn((value: typeof session) => {
+      session = value
+      return { input: vi.fn(), resize: vi.fn(), close: vi.fn(), park: vi.fn(), dispose: vi.fn() }
+    }) }
+    const source = { create: vi.fn(async () => ({ ...replacement, terminalId: 'remote-new' })),
+      list: vi.fn(async () => ({ terminals: [] })), terminate: vi.fn(async () => ({})), createTransport: () => transport }
+    const local = vi.spyOn(api, 'workspaceTerminalCreate')
+    const view = renderRoot(createElement(TerminalView, { ctx: {} as Context, scope: { sessionId: 'B' },
+      store, tabId, terminalId: 'remote-old', visible: true, transport, workspaceBinding: { providerId: 'remote', source } }))
+    await act(async () => { session.onClosed?.('missing') })
+    expect(source.create).toHaveBeenCalledOnce()
+    expect(local).not.toHaveBeenCalled()
+    expect(tabs(store)[0]!.meta).toMatchObject({ workspaceTerminalId: 'remote-new', workspaceTerminalProviderId: 'remote' })
+    view.unmount()
+  })
+  it('does not auto-create a replacement for an uncertain remote transport failure', async () => {
+    const store = createSidebarStore(); store.setSession('B')
+    const tabId = 'uncertain-remote'
+    store.reduce(state => openTabInBottomPane(state, { id: tabId, type: 'terminal', title: 'remote',
+      meta: { workspaceTerminalId: 'remote-old', workspaceTerminalProviderId: 'remote' } }))
+    let session!: import('../src/client/terminal-transport.ts').TerminalTransportSession
+    const transport = { kind: 'remote-managed', open: vi.fn((value: typeof session) => {
+      session = value
+      return { input: vi.fn(() => false), resize: vi.fn(), close: vi.fn(), park: vi.fn(), dispose: vi.fn() }
+    }) }
+    const source = { create: vi.fn(async () => replacement), list: vi.fn(async () => ({ terminals: [] })),
+      terminate: vi.fn(async () => ({})), createTransport: () => transport }
+    const view = renderRoot(createElement(TerminalView, { ctx: {} as Context, scope: { sessionId: 'B' },
+      store, tabId, terminalId: 'remote-old', visible: true, transport, workspaceBinding: { providerId: 'remote', source } }))
+    act(() => { session.onConnected?.(false); session.onFatal?.('TRANSPORT_UNCERTAIN: remote process status unknown') })
+    await act(async () => { vi.advanceTimersByTime(60_000) })
+    expect(source.create).not.toHaveBeenCalled()
+    expect(tabs(store)[0]!.meta).toMatchObject({ workspaceTerminalId: 'remote-old' })
+    expect(view.container.textContent).toContain('TRANSPORT_UNCERTAIN')
+    view.unmount()
   })
   it('attaches with viewer and terminalId, never legacy tab/cwd, and tab close only detaches', () => {
     const view = mount('terminal:abc')
@@ -150,6 +193,43 @@ describe('workspace terminal view lifetime', () => {
     const view = mount('terminal:abc')
     act(() => view.socket.onclose?.({ code: 1008, reason: 'workspace-mismatch' }))
     expect(view.container.textContent).not.toContain(t('workspaceTerminalRestart'))
+    act(() => view.root.unmount())
+  })
+  it.each([[1000, 'terminal-exited'], [1008, 'terminal-not-found']] as const)('automatically restores a visible settled terminal (%s %s) in the same tab once', async (code, reason) => {
+    const create = vi.spyOn(api, 'workspaceTerminalCreate').mockResolvedValue(replacement)
+    const view = mount('terminal:abc', undefined, true)
+    await act(async () => { view.socket.onclose?.({ code, reason }) })
+    expect(create).toHaveBeenCalledExactlyOnceWith('B')
+    expect(tabs(view.store)).toHaveLength(1)
+    expect(tabs(view.store)[0]!.id).toBe(view.tabId)
+    expect(workspaceTerminalIdOf(tabs(view.store)[0]!)).toBe(replacement.terminalId)
+    // An immediately exiting replacement cannot spin up more processes.
+    await act(async () => { Socket.instances[1]!.onclose?.({ code: 1000, reason: 'terminal-exited' }) })
+    expect(create).toHaveBeenCalledTimes(1)
+    act(() => view.root.unmount())
+  })
+  it('restores an already closed hidden view on activation, but only retries failure on a new activation', async () => {
+    const create = vi.spyOn(api, 'workspaceTerminalCreate').mockRejectedValueOnce(new Error('quota')).mockResolvedValueOnce(replacement)
+    const view = mount('terminal:abc', undefined, true)
+    act(() => view.store.reduce(state => ({ ...state, bottomOpen: false })))
+    await act(async () => { view.socket.onclose?.({ code: 1008, reason: 'terminal-not-found' }) })
+    expect(create).not.toHaveBeenCalled()
+    await act(async () => { view.store.reduce(state => ({ ...state, bottomOpen: true })) })
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toContain('quota')
+    await act(async () => { vi.advanceTimersByTime(10000) })
+    expect(create).toHaveBeenCalledTimes(1)
+    act(() => view.store.reduce(state => ({ ...state, bottomOpen: false })))
+    await act(async () => { view.store.reduce(state => ({ ...state, bottomOpen: true })) })
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(workspaceTerminalIdOf(tabs(view.store)[0]!)).toBe(replacement.terminalId)
+    act(() => view.root.unmount())
+  })
+  it.each([[1000, 'terminal-terminated'], [1008, 'workspace-mismatch'], [1006, 'network']] as const)('does not auto-restart visible terminated, refused or disconnected views (%s %s)', async (code, reason) => {
+    const create = vi.spyOn(api, 'workspaceTerminalCreate')
+    const view = mount('terminal:abc', undefined, true)
+    await act(async () => { view.socket.onclose?.({ code, reason }) })
+    expect(create).not.toHaveBeenCalled()
     act(() => view.root.unmount())
   })
   it('preserves legacy and agent close-frame semantics', () => {

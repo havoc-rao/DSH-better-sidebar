@@ -159,6 +159,9 @@ export function TerminalView(props: {
   const [closedReason, setClosedReason] = useState<'exited' | 'terminated' | 'missing' | null>(null)
   const [restarting, setRestarting] = useState(false)
   const restartPending = useRef(false)
+  // One automatic attempt per visible activation, not per replacement identity:
+  // a shell that immediately exits must not create an endless restart loop.
+  const autoRestartAttempted = useRef(false)
   // An async create may outlive this view; only its captured store scope may
   // still be updated, never the state of a new mount/terminal identity.
   const mountGeneration = useRef(0)
@@ -257,6 +260,21 @@ export function TerminalView(props: {
       if (mountGeneration.current === generation) setRestarting(false)
     }
   }
+
+  useEffect(() => {
+    if (!visible) {
+      autoRestartAttempted.current = false
+      return
+    }
+    if (terminalId === undefined || (transport !== undefined && workspaceBinding === undefined)
+      || (closedReason !== 'exited' && closedReason !== 'missing')
+      || autoRestartAttempted.current || restartPending.current) return
+    autoRestartAttempted.current = true
+    void restart()
+    // The attempt is gated by visibility and confirmed process state, never by
+    // changing callback/source identities. A later activation permits retry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, closedReason, terminalId, transport, workspaceBinding])
 
   useEffect(() => {
     const generation = ++mountGeneration.current
@@ -459,12 +477,16 @@ export function TerminalView(props: {
     }
 
     const inputSub = term.onData((data) => {
-      tracker.onData(data, term.buffer.active.length)
       if (transportHandle !== null) {
-        transportHandle.input(data)
+        // Disconnected managed transports explicitly reject input. Do not
+        // invent a local command block for bytes that were never sent.
+        if (transportHandle.input(data) !== false) tracker.onData(data, term.buffer.active.length)
         return
       }
-      if (socket !== null && socket.readyState === WebSocket.OPEN) socket.send(data)
+      if (socket !== null && socket.readyState === WebSocket.OPEN) {
+        socket.send(data)
+        tracker.onData(data, term.buffer.active.length)
+      }
     })
     // Resize streams fire per layout frame during panel open/close
     // animations; fit() measures glyphs, so coalesce to one fit per

@@ -20,7 +20,7 @@
  *   then `exts`; `exts: []` is a catch-all that matches any path.
  */
 import type { ReactNode } from 'react'
-import { isSafeTerminalCommand } from '../terminal-command.ts'
+import { createWorkspaceTerminalSubscriptions, summarizeWorkspaceTerminals } from './workspace-terminal-subscriptions.ts'
 import { renderFileExplorer, type FileExplorerRenderProps } from './file-explorer.tsx'
 export type { FileExplorerRenderProps, FileExplorerSource, FsEntry, FsLevel, UploadItem, UploadResult } from './file-explorer.tsx'
 import { renderFileViewer, type FileViewerRenderProps } from './FileViewer.tsx'
@@ -705,6 +705,10 @@ export interface BetterSidebarService extends SharedRenderingService, InspectorA
    * total counts live processes only; unknown is never counted as busy.
    * This is an async point-in-time read, not a service snapshot subscription. */
   getWorkspaceTerminalSummary(scope: SessionScope): Promise<WorkspaceTerminalSummary>
+  /** Demand-driven shared catalog projection. Subscribe only while visible; the
+   * last unsubscribe releases the backend stream or legacy 10s list timer.
+   * Errors invalidate the last summary (never a fabricated zero snapshot). */
+  subscribeWorkspaceTerminalSummary(scope: SessionScope, onSummary: (summary: WorkspaceTerminalSummary) => void, onError?: (error: unknown) => void): () => void
   /**
    * Register one git data-source provider (v0.23.0+, feature `gitSource`):
    * the git surfaces' data-source injection slot. A provider owns every
@@ -1007,6 +1011,7 @@ export const SIDEBAR_FEATURES = [
   'terminalSource',
   'workspaceTerminalSource',
   'workspaceTerminalSummary',
+  'workspaceTerminalSummarySubscription',
   'gitSource',
   'inspectors',
   'resourceActions:v1',
@@ -1158,15 +1163,23 @@ export function createBetterSidebarService(
 
   const getGitCommitActions = (): readonly GitCommitActionDescriptor[] => Array.from(commitActions.values())
 
+  const terminalSubscriptions = createWorkspaceTerminalSubscriptions({
+    getProviders: () => Array.from(terminalProviders.values()),
+    local: (sessionId, cwd) => resolveWorkspaceTerminalBinding(undefined, sessionId, cwd, undefined, true).source,
+    sessionCwd,
+  })
+
   const registerTerminalProvider = (provider: TerminalProviderDescriptor): (() => void) => {
     if (terminalProviders.has(provider.id)) {
       throw new Error(`[dsh-better-sidebar] terminal provider "${provider.id}" already registered`)
     }
     terminalProviders.set(provider.id, provider)
+    terminalSubscriptions.registryChanged()
     notify()
     return () => {
       if (terminalProviders.get(provider.id) === provider) {
         terminalProviders.delete(provider.id)
+        terminalSubscriptions.registryChanged()
         notify()
       }
     }
@@ -1181,30 +1194,7 @@ export function createBetterSidebarService(
     // this read and provider failures must never expose local host terminals.
     const binding = resolveWorkspaceTerminalBinding({ getTerminalProviders } as BetterSidebarService, scope.sessionId, cwd)
     const { terminals } = await binding.source.list()
-    const summary: WorkspaceTerminalSummary = { total: 0, busy: 0, idle: 0, unknown: 0, exited: 0 }
-    const seen = new Set<string>()
-    const commands = new Map<string, number>()
-    for (const terminal of terminals) {
-      if (seen.has(terminal.terminalId)) continue
-      seen.add(terminal.terminalId)
-      if (terminal.exited || terminal.activity === 'exited') { summary.exited++; continue }
-      summary.total++
-      if (terminal.activity === 'busy') {
-        summary.busy++
-        // Remote providers may be old or return malformed wire data. Never
-        // convert paths/argv/titles into names on the consumer-facing surface.
-        if (Array.isArray(terminal.runningCommands)) {
-          for (const name of new Set(terminal.runningCommands.filter(isSafeTerminalCommand))) {
-            commands.set(name, (commands.get(name) ?? 0) + 1)
-          }
-        }
-      }
-      else if (terminal.activity === 'idle') summary.idle++
-      else summary.unknown++
-    }
-    if (commands.size) summary.runningCommands = [...commands].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-      .map(([name, count]) => ({ name, count }))
-    return summary
+    return summarizeWorkspaceTerminals(terminals)
   }
 
   const registerGitProvider = (provider: GitProviderDescriptor): (() => void) => {
@@ -1752,7 +1742,7 @@ export function createBetterSidebarService(
     ...inspectors,
     ...resources,
     ...data,
-    dispose: () => { resources.dispose(); data.dispose() },
+    dispose: () => { terminalSubscriptions.dispose(); resources.dispose(); data.dispose() },
     registerTab,
     registerFileViewer,
     registerFileIcon,
@@ -1761,6 +1751,7 @@ export function createBetterSidebarService(
     registerTerminalProvider,
     getTerminalProviders,
     getWorkspaceTerminalSummary,
+    subscribeWorkspaceTerminalSummary: terminalSubscriptions.subscribe,
     registerGitProvider,
     getGitProviders,
     getGitCommitTarget,

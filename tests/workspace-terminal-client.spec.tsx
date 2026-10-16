@@ -14,6 +14,16 @@ import { api, type WorkspaceTerminalInfo } from '../src/client/api.ts'
 import { openWorkspaceTerminal, restartWorkspaceTerminal, resolveWorkspaceTerminalBinding, workspaceTerminalIdOf, workspaceTerminalProviderOf } from '../src/client/workspace-terminals.ts'
 import { WorkspaceTerminals } from '../src/client/WorkspaceTerminals.tsx'
 import { renderRoot, setupReactAct } from './test-utils.ts'
+// This historical suite exercises the legacy list-only path, including local
+// API forwarding. Event-capable sources are covered in workspace-terminal-events.
+vi.mock('../src/client/workspace-terminals.ts', async importOriginal => {
+  const original = await importOriginal<typeof import('../src/client/workspace-terminals.ts')>()
+  return { ...original, resolveWorkspaceTerminalBinding: (...args: Parameters<typeof original.resolveWorkspaceTerminalBinding>) => {
+    const binding = original.resolveWorkspaceTerminalBinding(...args)
+    if (binding.providerId === undefined) delete binding.source.subscribe
+    return binding
+  } }
+})
 setupReactAct()
 const info: WorkspaceTerminalInfo = { terminalId: 'terminal:abc', title: 'shared', cwd: '/work', createdBySessionId: 'A', createdAt: 1, exited: false }
 const tabs = (store: ReturnType<typeof createSidebarStore>) => allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
