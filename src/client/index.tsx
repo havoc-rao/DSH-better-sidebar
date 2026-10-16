@@ -49,6 +49,7 @@ import './layout.css'
  * sessions. The registry entry point stays `ctx.betterSidebar`
  * (`registerTerminalProvider` / `registerGitProvider`).
  */
+export type { WorkspaceTerminalSummary } from './service.ts'
 export type { TerminalProviderDescriptor, WorkspaceTerminalSource, WorkspaceTerminalBinding } from './terminal-source.ts'
 export { resolveTerminalSource, useTerminalTransport } from './terminal-source.ts'
 export type { TerminalTransport, TerminalTransportHandle, TerminalTransportSession, TerminalTransportSurface, TerminalViewProps } from './terminal-transport.ts'

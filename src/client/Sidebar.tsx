@@ -63,6 +63,7 @@ import { mountedSessions } from './native/surface.ts'
 import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
 import { useSessionRoot } from './use-session-root.ts'
+import { ensureBottomTerminal } from './workspace-terminals.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -298,34 +299,24 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; standaloneEn
   // consumes (renderTab's onSubagentJump arms it).
   const { subagentJumpRef } = useHostFeeds({ ctx, store, sessionList, sessionId })
 
-  /**
-   * Bottom-panel first-expansion auto terminal: the FIRST time the user
-   * expands the bottom panel in a session, try to open a fresh terminal tab
-   * there. "Try" is literal — the terminal's own quota and enable switch
-   * gate the attempt (a full quota or a disabled terminal type makes it a
-   * no-op). Gated on the bottomPanelAutoTerminal pref (the terminal tab's
-   * nested settings toggle, default on). Only a false→true TRANSITION fires
-   * (a panel persisted open never counts as an expansion), and the session's
-   * bottomOpenedOnce flag is set atomically with the first fire so later
-   * expansions never repeat it (the effect was lost with the 0.1.6 terminal
-   * yield and restored together with the terminal tab in the bottom
-   * workbench — the pref and its settings toggle had stayed on the ledger
-   * as a dead switch in between).
-   */
+  /** Each collapsed→expanded transition ensures a terminal, when enabled.
+   * Existing tabs are untouched; absent views reattach a live workspace shell
+   * before creating one. A persisted-open panel is not an expansion. */
   const bottomWasOpenRef = useRef<boolean | undefined>(undefined)
   useEffect(() => {
     if (state === undefined) return
     const wasOpen = bottomWasOpenRef.current
     bottomWasOpenRef.current = state.bottomOpen
     if (wasOpen === undefined || wasOpen || !state.bottomOpen) return
-    if (state.bottomOpenedOnce) return
     if (store.getPrefs().bottomPanelAutoTerminal === false) return
-    if (ctx.get('betterSidebar')?.isTabEnabled('terminal') === false) return
-    // Land the tab in the bottom panel's first pane; the once-flag is set
-    // atomically so later expansions never repeat the auto-open.
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.bottomSplits).id, bottomOpenedOnce: true }))
-    ctx.get('betterSidebar')?.openTab({ type: 'terminal', target: 'bottom' })
-  }, [state, store, ctx])
+    const service = ctx.get('betterSidebar')
+    if (service === undefined || !service.isTabEnabled('terminal') || sessionId === undefined) return
+    // The historical once flag is retained for persisted-state compatibility,
+    // not as a gate: removing the last tab must allow a later expansion to
+    // reattach its still-live workspace shell (or create one if none exists).
+    store.reduce(s => s.bottomOpenedOnce ? s : { ...s, bottomOpenedOnce: true })
+    void ensureBottomTerminal(store, service, sessionId, cwd)
+  }, [state, store, ctx, sessionId, cwd])
 
   // Center-column tracking (sidebar/use-center-column.ts): the bottom
   // workbench spans ONLY the app shell's center column ("squeezes the agent
@@ -906,7 +897,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; standaloneEn
           </Tooltip>
         </span>
         {state.workspaceTerminalError !== undefined && (
-          <div role="alert" className={css.explorerActionError}>
+          <div role="alert" className={clsx(css.explorerActionError, css.bottomTerminalError)}>
             <span className={css.explorerActionErrorText}>{state.workspaceTerminalError}</span>
             <button
               type="button"

@@ -44,6 +44,16 @@ export interface WorkspaceTerminalInfo {
   createdAt: number
   exited: boolean
   exitCode?: number
+  activity?: 'idle' | 'busy' | 'unknown' | 'exited'
+  activityReason?: string
+  /** Unique safe executable basenames observed in the foreground process group. */
+  runningCommands?: readonly string[]
+  attachedViews?: number
+  lastInputAt?: number
+  lastOutputAt?: number
+  lastDetachedAt?: number
+  exitedAt?: number
+  pinned?: boolean
 }
 
 /** One wire failure. */
@@ -403,6 +413,12 @@ export const api = {
     call<ResourceStrictDiff>('git.diff-strict', scopePayload(scope, { ref, authority: 'host-local' }), options?.signal),
   workspaceTerminalCreate: (sessionId: string, title?: string) =>
     call<WorkspaceTerminalInfo>('workspace-terminal.create', { sessionId, ...(title === undefined ? {} : { title }) }),
+  workspaceTerminalEnsure: (sessionId: string) =>
+    call<WorkspaceTerminalInfo>('workspace-terminal.ensure', { sessionId }),
+  workspaceTerminalPin: (sessionId: string, terminalId: string, pinned: boolean) =>
+    call<{ ok: true }>('workspace-terminal.pin', { sessionId, terminalId, pinned }),
+  workspaceTerminalCleanup: (sessionId: string) =>
+    call<{ removed: number }>('workspace-terminal.cleanup', { sessionId }),
   workspaceTerminalList: (sessionId: string, signal?: AbortSignal) =>
     call<{ terminals: WorkspaceTerminalInfo[] }>('workspace-terminal.list', { sessionId }, signal),
   workspaceTerminalTerminate: (sessionId: string, terminalId: string) =>

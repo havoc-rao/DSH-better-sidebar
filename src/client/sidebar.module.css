@@ -1079,6 +1079,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-bg-layer-1);
 }
 
+/* This notice precedes the tab strip, underneath the panel's absolute
+   corner controls. Reserve the same 68px seat as .tabBar plus the notice's
+   normal 8px inset; wrapping keeps the recovery action usable when narrow. */
+.bottomTerminalError {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  min-height: 34px;
+  padding-right: 76px;
+}
+
 .terminalErrorAction {
   flex: 0 0 auto;
   padding: 2px 6px;

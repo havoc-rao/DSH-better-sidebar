@@ -500,7 +500,7 @@ const SIDEBAR_RECONNECT_GRACE_MS = 30_000
  * that resolution — same contract, later binding: the values here win for
  * terminals opened afterwards.
  */
-function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): { shell?: string; shellArgs?: string[] } {
+function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): { shell?: string; shellArgs?: string[]; shellIntegration?: boolean } {
   const settings = getSettings()
   const value = settings?.get().value
   if (value === null || typeof value !== 'object') return {}
@@ -510,6 +510,7 @@ function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): {
   return {
     shell: shell === '' ? undefined : shell,
     shellArgs: args === '' ? undefined : splitShellArgs(args),
+    shellIntegration: record.terminalShellIntegration === true,
   }
 }
 
@@ -1370,6 +1371,13 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     : null
   // Workspace UI terminals never share the legacy session/tab registry.
   const workspaceTerminals = nodePty !== null ? new WorkspaceTerminalManager(terminalShell, nodePty) : null
+  if (workspaceTerminals) ctx.effect(() => {
+    const timer = setInterval(() => {
+      void workspaceTerminals.sweep().catch(error => ctx.logger?.warn(`[dsh-better-sidebar] terminal sweep failed: ${String(error)}`))
+    }, 60_000)
+    timer.unref?.()
+    return () => { clearInterval(timer); workspaceTerminals.disposeAll() }
+  }, 'dsh-better-sidebar: workspace terminal lifecycle sweep')
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
   // uncapped, and torn down with the plugin. The model creates terminals here

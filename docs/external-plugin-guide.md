@@ -948,6 +948,18 @@ ctx.effect(() =>
 
 ## 8. 声明式设置（v0.4.1+）
 
+**本地终端自动打开语义**：启用 `bottomPanelAutoTerminal` 时，每次展开底部面板只确保有一个终端：已有 terminal tab 时原样复用，不创建或重启进程；没有 tab 时先列出工作区终端（避免仍运行旧版获取策略的后端误创建），仅在没有存活终端时调用后端 `ensure` 原子获取或创建默认终端；选择已有终端时优先重新挂接本会话关联的存活终端，其次重新挂接工作区任一存活终端（包括其他会话关联、已有连接、已保留、运行中或状态未知的终端），只新增视图，不发送输入、不重启或终止进程；只有工作区完全没有存活终端时才创建一个。快速反复展开共用一次异步操作，本地后端还会按工作区串行化多窗口请求。该行为不限制用户通过 `+` 显式新建多个终端；未提供工作区管理能力的旧式第三方终端源仍走自身的打开路径。
+
+### 终端管理与安全回收
+
+工作区终端管理页展示活动状态、连接数、最近输入/输出时间，支持「保留」开关与「清理安全候选」。有连接（包括隐藏 tab）、已保留、运行中或状态未知的终端不自动结束；关闭视图只断连，显式「终止」仍需确认。活动时间不等于空闲证明，清理按钮也不是强制杀进程。
+
+本地后端每分钟检查：已退出且无连接的记录保留至少 10 分钟后删除；无连接且连续确认空闲至少 30 分钟的 shell 才能回收，最后断连后另有至少 2 分钟保护。回收前复查活动与连接/保留状态。Linux 进程检查能发现后代任务、前台任务与同终端其他进程，标记为运行中；但即使 shell 正等待终端输入也可能在执行内置 `read`，不能证明已回到提示符，因此仍按未知处理。默认不开启提示符集成时，未知状态的存活 shell 不会被自动回收。设置「实验性 zsh Shell 集成」（`terminalShellIntegration`，默认关闭）仅作用于之后新建的本地工作区终端：只支持 macOS/Linux、无自定义参数的普通 zsh，启用时使用非登录交互式 `-i` 启动，并通过临时 `ZDOTDIR` 加载原用户 `.zshenv/.zshrc` 后追加 hooks，不写用户配置文件。这会改变启动链，复杂主题、全局配置和原有 hooks 不保证兼容；原先未设置 `ZDOTDIR` 时，包装后可能显式设为用户配置目录，不保证其「未设置」状态保持不变。
+
+实验集成以 ZLE 顶层编辑器开始信号证明提示符已就绪、在命令开始与任何输入/普通输出时撤销证明；只有提示符信号稳定至少 2 秒，且进程复核确认前台 shell 无后代/同终端其他任务时才报告空闲。信号缺失、探测失败或不支持、异步 trap/定时/handler 等不受支持配置均降级未知，不为释放配额强杀。随机标记不是同权限恶意代码的安全边界。Windows、bash 及自定义参数不启用此集成；已有终端不重启，仍按原行为运行。真实宿主若禁止 `ps` 或 PTY 启动会安全降级，需要在该宿主环境确认集成状态，不能以单元测试代替真实提示符验证。
+
+`ensure` 为默认打开提供服务端工作区串行锁与会话关联偏好；关联用于优先恢复本会话终端，不阻止其他会话挂接同一个存活终端。多视图共享同一进程，用户输入也作用于同一 shell。配额错误区分活进程与保留记录、工作区与全局；完全没有存活终端且创建达到上限时保持错误与管理入口，不会为了腾位强杀任务。第三方后端可通过可选接口实现等价策略，缺能力按未知降级，绝不跨后端回退。
+
 每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码）：
 
 - 展示：小卡片网格（图标 + 标题 + 类型 id），**高亮 = 启用**，勾选徽标钉在卡片最右端；viewer 卡片额外显示扩展名。
@@ -1312,7 +1324,20 @@ return <StandaloneRemoteExplorer />
 > 本仓库合入官方 v0.25.0 线后保留的本地扩展面（`SIDEBAR_FEATURES` 含各能力标记；功能开关与内置终端见 AGENTS.md 顶部「合并状态」节）。
 
 - **`gitCommitActions`**：`registerGitCommitAction(descriptor)` / `getGitCommitActions()`——注册进 Git 变更页提交栏 More 菜单的动作槽；`GitCommitTarget`（源会话 / 选中 repo / worktree / 暂存行）与 `GitCommitActionProps`（含 `refresh()`）随动作渲染下发。
-- **`terminalSource` / `workspaceTerminalSource`**：`registerTerminalProvider(descriptor)`——底部终端连接层注入槽（自定义 transport；agent 与全局共享终端除外）。
+- **`terminalSource` / `workspaceTerminalSource`**：`registerTerminalProvider(descriptor)`——底部终端连接层注入槽（自定义 transport；agent 与全局共享终端除外）。`WorkspaceTerminalSource` 保持 `create/list/terminate/createTransport`，增量可选 `ensure(): Promise<WorkspaceTerminalInfo>`（后端原子获取默认终端，不等于显式新建）、`pin(terminalId, pinned)`（禁止自动回收）、`cleanup(): Promise<{removed:number}>`（只清理安全过期候选）。缺少可选方法的远程源不会显示不支持的操作，绝不回退本地管理。`WorkspaceTerminalInfo` 可选附带 `activity: idle|busy|unknown|exited`、`activityReason`、`runningCommands?: readonly string[]`（已观察的前台可执行 basename，去重；可缺席）、`attachedViews`、`lastInputAt/lastOutputAt/lastDetachedAt/exitedAt`（Unix 毫秒）与 `pinned`；缺少活动信息按未知处理，不以静默输出推断空闲。
+- **`workspaceTerminalSummary`**：`getWorkspaceTerminalSummary({sessionId, cwd?}): Promise<{total,busy,idle,unknown,exited,runningCommands?: readonly {name:string;count:number}[]}>` 为工作区列表等消费面提供状态聚合。`sessionId` 必填，由宿主权威目录定位本地工作区；`cwd` 仅供 provider 匹配，不是本地路径越权入口。`total` 仅计活进程，等于 `busy+idle+unknown`；`exited` 为保留的退出记录，明确 `activity:'busy'` 才计忙碌，未知不算忙碌，同一后端 terminalId 去重。`runningCommands` 按名称排序，`count` 为包含该名称的 busy 终端数（同终端同名只计一次；管道可贡献多个名称，不是进程数，也不要求合计等于 busy）。只接受1–64字符的安全 ASCII basename（字母/数字起始，后续字母/数字/`.`/`_`/`+`/`-`），不公开 argv、路径或终端标题。无可靠名称时省略字段，不伪造“CLI”；旧远端 provider 缺字段只降级名称，仍保留状态统计。Linux/macOS 本地复用有界 ps 的 comm 列，只识别受管根进程/后代中同 tty 前台组的非 shell 可执行名，忽略后台、停止与僵尸；shell wrapper 不计名，`node script.js` 仅报告 node，不猜 codex/claude。权限失败/不支持平台/快照不完整时保持 unknown；输入、输出、退出或新采样不再识别名称即清除旧名称。此结果是瞬时观察，不保证进程在响应送达时仍存活。通过当前匹配的工作区终端后端读取，匹配但缺管理能力或读取失败会 reject，绝不返回本地计数或伪造零。此接口是异步即时读取，不由 `subscribe()` 推送活动变化；消费插件应仅在可见时节流刷新（建议10秒）、每工作区选择一个会话锚点、忽略跨工作区晚到结果，并在能力缺席时隐藏入口。仅统计 managed workspace terminal，不包含独立 agent/global/legacy registry。点击图标可 `openTab({type:'workspace-terminals',target:'bottom'}, scope)` 打开管理，不隐式创建进程。
+
+```ts
+// Structural optional capability probe; never value-import another plugin.
+const sidebar = ctx.get('betterSidebar')
+if (typeof sidebar?.getWorkspaceTerminalSummary === 'function') {
+  const summary = await sidebar.getWorkspaceTerminalSummary({ sessionId, cwd })
+  // Show the term icon only when summary.total > 0.
+  // The upper-right badge is summary.busy > 0 ? summary.busy : undefined.
+  // A rejected read means unavailable, not zero busy terminals.
+}
+```
+
 - **`gitSource`**：`registerGitProvider(descriptor)`——git 数据源注入槽（lens / 文件树着色 / diff tab 的读与写都经 provider 路由）。
 - **`inspectors` / `resourceActions:v1` / `fileOpenTargets:v1` / `textDocuments:v1` / `strictGitDiff:v1` / `sharedRendering:v1`**：资源 Inspector、资源操作承载面、文件打开认领（`dispatchFileActivation`）、文档数据 API、严格 Git diff、共享渲染接口。
 - **`panelFlags` / `planDiff`**：`getSnapshot()` 的 `bottomOpen` / `panelOpen` 平面字段（dsh-hotkey 契约）与 `openTab({type:'diff', diff:{kind:'proposed',…}})`。

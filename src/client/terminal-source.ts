@@ -25,11 +25,18 @@ import type { TerminalTransport } from './terminal-transport.ts'
 import type { WorkspaceTerminalInfo } from './api.ts'
 
 /** Managed process lifetime is independent of its views. All transport handle
- * teardown methods detach only; terminate is the sole explicit kill operation. */
+ * teardown methods detach only; terminate is the explicit kill operation.
+ * Optional cleanup may reclaim only backend-proven safe, expired candidates. */
 export interface WorkspaceTerminalSource {
   create(title?: string): Promise<WorkspaceTerminalInfo>
   list(signal?: AbortSignal): Promise<{ terminals: WorkspaceTerminalInfo[] }>
   terminate(terminalId: string): Promise<unknown>
+  /** Atomic backend-owned default terminal acquisition, distinct from explicit create. */
+  ensure?(): Promise<WorkspaceTerminalInfo>
+  /** Protect this process and its retained transcript from automatic cleanup. */
+  pin?(terminalId: string, pinned: boolean): Promise<unknown>
+  /** Remove only backend-confirmed safe, expired candidates. Never force-kills unknown work. */
+  cleanup?(): Promise<{ removed: number }>
   createTransport(terminalId: string): TerminalTransport
 }
 

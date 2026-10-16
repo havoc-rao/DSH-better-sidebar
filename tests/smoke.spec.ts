@@ -11,6 +11,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, FS_TREES_MAX_PATHS, mediaTypeForPath } from '../src/index.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
+import { Config, PrefsSchema } from '../src/config.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
 import { encodeText } from '../src/text-encoding.ts'
 import { downloadUrl, htmlUrl } from '../src/client/api.ts'
@@ -1368,6 +1369,7 @@ const view = read.value as { value: Record<string, unknown>; revision: number }
       terminalFontSize: 13,
       terminalShell: '',
       terminalShellArgs: '',
+      terminalShellIntegration: false,
       editorExplorer: false,
       customCss: '',
       htmlViewerNoSandbox: false,
@@ -1388,6 +1390,18 @@ const view = read.value as { value: Record<string, unknown>; revision: number }
     expect(after.value.agentOpenTools).toBe(true)
     expect(after.value.customCss).toBe('')
     expect(after.revision).toBe(1)
+  })
+
+  it('marks experimental shell integration volatile and round-trips its preference through settings', async () => {
+    expect(PrefsSchema.dict?.terminalShellIntegration?.meta.default).toBe(false)
+    expect(Config.dict?.terminalShellIntegration?.meta.volatile).toBe(true)
+    const route = mountWithSettings(createFakeSettings())
+    for (const [value, revision] of [[true, 1], [false, 2]] as const) {
+      const written = await invoke(route, 'settings.update', { patch: { terminalShellIntegration: value }, expectedRevision: revision - 1 })
+      expect(written).toMatchObject({ ok: true, value: { value: { terminalShellIntegration: value }, revision } })
+      const read = await invoke(route, 'settings.get', {})
+      expect(read).toMatchObject({ ok: true, value: { value: { terminalShellIntegration: value }, revision } })
+    }
   })
 
   it('imports a pre-0.1.7 settings.yaml section once, keeping only declared fields', async () => {

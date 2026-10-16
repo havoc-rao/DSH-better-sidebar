@@ -180,6 +180,7 @@ describe('workspace terminal error recovery', () => {
     })
     const alert = container.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('workspace or global terminal limit reached')
+    expect(alert?.className).toContain('bottomTerminalError')
     const button = [...(alert?.querySelectorAll('button') ?? [])]
       .find(element => element.textContent === t('workspaceTerminals'))
     expect(button).toBeDefined()

@@ -38,6 +38,14 @@ export function WorkspaceTerminals({ sessionId, store, visible = true, ctx }: { 
   const items = visible && catalog?.sessionId === sessionId && catalog.store === store && catalog.backend === backend ? catalog.items : []
   const [loading, setLoading] = useState(false)
   const [revision, setRevision] = useState(0)
+  const [pageHidden, setPageHidden] = useState(() => typeof document !== 'undefined' && document.hidden)
+  const active = visible && !pageHidden
+  const [cleanupResult, setCleanupResult] = useState<number | null>(null)
+  useEffect(() => {
+    const update = () => setPageHidden(document.hidden)
+    document.addEventListener('visibilitychange', update)
+    return () => document.removeEventListener('visibilitychange', update)
+  }, [])
   const [pending, setPending] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const confirmationId = useId()
@@ -64,11 +72,12 @@ export function WorkspaceTerminals({ sessionId, store, visible = true, ctx }: { 
     pendingRef.current = null
     setPending(null)
     setConfirmId(null)
+    setCleanupResult(null)
     return () => { scope.current = current + 1 }
   }, [sessionId, store, visible, backend])
   useEffect(() => {
     const current = ++generation.current
-    if (!visible) { loadingRef.current = false; setLoading(false); return }
+    if (!active) { loadingRef.current = false; setLoading(false); return }
     const controller = new AbortController()
     loadingRef.current = true
     setLoading(true)
@@ -87,7 +96,31 @@ export function WorkspaceTerminals({ sessionId, store, visible = true, ctx }: { 
       if (!controller.signal.aborted && current === generation.current) { loadingRef.current = false; setLoading(false) }
     })
     return () => { controller.abort(); generation.current = current + 1 }
-  }, [sessionId, store, visible, revision, requestError, backend])
+  }, [sessionId, store, active, revision, requestError, backend])
+  useEffect(() => {
+    if (!active) return
+    const timer = setInterval(() => {
+      // A slow request must finish: interval ticks never abort or replace it.
+      if (!loadingRef.current && pendingRef.current === null) setRevision(value => value + 1)
+    }, 10_000)
+    return () => clearInterval(timer)
+  }, [active])
+  const manage = (id: string, operation: () => Promise<unknown>, removed?: boolean) => {
+    if (pendingRef.current !== null || loadingRef.current || backend.binding === undefined) return
+    const current = scope.current
+    const sourceSession = sessionId
+    pendingRef.current = id
+    setPending(id)
+    setConfirmId(null)
+    setCleanupResult(null)
+    void Promise.resolve().then(operation).then(result => {
+      if (current !== scope.current) return
+      if (removed) setCleanupResult((result as { removed: number }).removed)
+      setRevision(value => value + 1)
+    }).catch(error => requestError(error, sourceSession)).finally(() => {
+      if (current === scope.current) { pendingRef.current = null; setPending(null) }
+    })
+  }
   const terminate = (info: WorkspaceTerminalInfo) => {
     if (pendingRef.current !== null || loadingRef.current || backend.binding === undefined) return
     const current = scope.current
@@ -101,7 +134,8 @@ export function WorkspaceTerminals({ sessionId, store, visible = true, ctx }: { 
       if (current === scope.current) { pendingRef.current = null; setPending(null) }
     })
   }
-  const running = items.filter(info => !info.exited).length
+  const activityOf = (info: WorkspaceTerminalInfo) => info.exited ? 'exited' : info.activity ?? 'unknown'
+  const running = items.filter(info => activityOf(info) !== 'exited').length
   const exited = items.length - running
   const busy = loading || pending !== null
   return <section className={css.catalog} aria-label={t('workspaceTerminals')} aria-busy={busy}
@@ -121,25 +155,40 @@ export function WorkspaceTerminals({ sessionId, store, visible = true, ctx }: { 
         {running > 0 && <span><i className={css.statDot} aria-hidden="true" />{running} {t('workspaceTerminalRunning')}</span>}
         {exited > 0 && <span className={css.exitedStat}><i className={css.statDot} aria-hidden="true" />{exited} {t('workspaceTerminalExited')}</span>}
       </div>
+      {backend.binding?.source.cleanup && <button type="button" disabled={busy} title={t('workspaceTerminalCleanupHint')}
+        onClick={() => manage('cleanup', () => backend.binding!.source.cleanup!(), true)}>{t('workspaceTerminalCleanup')}</button>}
       <button className={css.refresh} type="button" aria-label={t('refresh')} title={t('refresh')} data-loading={loading} disabled={busy}
         onClick={() => { if (!loadingRef.current && pendingRef.current === null) { setConfirmId(null); setRevision(value => value + 1) } }}>
         <IconRefreshOutlineRegular size={16} />
       </button>
     </header>
+    <p className={css.guidance}>{t('workspaceTerminalActivityHint')}</p>
+    {cleanupResult !== null && <div role="status" className={css.feedback}>{t('workspaceTerminalCleaned', { count: cleanupResult })}</div>}
     {visible && error !== undefined && <div role="alert" className={css.error}>{error}</div>}
     <div className={css.list} role="list">
       {loading && items.length === 0 ? <div className={css.skeleton} role="status" aria-label={t('loading')}>
         {[0, 1, 2].map(key => <div className={css.skeletonRow} key={key}><span /><span /></div>)}
       </div> : items.length === 0 && error === undefined ? <div className={css.empty}><span className={css.emptyIcon} aria-hidden="true">{terminalTabIcon(18)}</span><strong>{t('workspaceTerminalEmpty')}</strong></div> : items.map(info => {
         const source = summaries?.byId[info.createdBySessionId]?.displayTitle?.trim() || info.createdBySessionId.slice(0, 8)
-        const status = `${info.exited ? t('workspaceTerminalExited') : t('workspaceTerminalRunning')}${info.exited && info.exitCode !== undefined ? ` (${info.exitCode})` : ''}`
-        return <div className={css.row} role="listitem" key={info.terminalId} data-terminal-id={info.terminalId} data-exited={info.exited} data-confirming={confirmId === info.terminalId} aria-busy={pending === info.terminalId}>
+        const activity = activityOf(info)
+        const status = `${t(activity === 'exited' ? 'workspaceTerminalExited' : activity === 'idle' ? 'workspaceTerminalIdle' : activity === 'busy' ? 'workspaceTerminalBusy' : 'workspaceTerminalUnknown')}${activity === 'exited' && info.exitCode !== undefined ? ` (${info.exitCode})` : ''}`
+        const timestamps = [info.lastInputAt, info.lastOutputAt].filter((time): time is number => typeof time === 'number' && Number.isFinite(time) && Number.isFinite(new Date(time).getTime()))
+        const lastActivity = timestamps.length ? new Date(Math.max(...timestamps)) : undefined
+        return <div className={css.row} role="listitem" key={info.terminalId} data-terminal-id={info.terminalId} data-activity={activity} data-exited={activity === 'exited'} data-confirming={confirmId === info.terminalId} aria-busy={pending === info.terminalId}>
           <span className={css.glyph} aria-hidden="true">{terminalTabIcon(16)}<i className={css.dot} /></span>
           <div className={css.details}>
-            <div className={css.titleLine}><strong className={css.title} title={info.title}>{info.title}</strong><span className={css.status} title={status}>{status}</span></div>
+            <div className={css.titleLine}><strong className={css.title} title={info.title}>{info.title}</strong><span className={css.status} title={info.activityReason ? `${status} · ${info.activityReason}` : status}>{status}</span></div>
             <div className={css.metadata}><span className={css.cwd} title={info.cwd}>{info.cwd}</span><span className={css.sep} aria-hidden="true">·</span><span className={css.source} title={`${source} · ${info.createdBySessionId}`}>{source}</span></div>
           </div>
+          <div className={css.activityMetadata}>
+            <span>{t('workspaceTerminalConnections', { count: info.attachedViews ?? '—' })}</span>
+            <span>{t('workspaceTerminalLastActivity')}: {lastActivity ? <time dateTime={lastActivity.toISOString()}>{new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' }).format(lastActivity)}</time> : t('workspaceTerminalUnknownTime')}</span>
+            {info.pinned && !backend.binding?.source.pin && <span title={t('workspaceTerminalPinHint')}>{t('workspaceTerminalPinned')}</span>}
+          </div>
           <div className={css.actions}>
+            {backend.binding?.source.pin && <button type="button" role="switch" aria-checked={info.pinned === true}
+              aria-label={`${t('workspaceTerminalPinned')} · ${info.title}`} title={t('workspaceTerminalPinHint')} disabled={busy}
+              onClick={() => manage(info.terminalId, () => backend.binding!.source.pin!(info.terminalId, !info.pinned))}>{t('workspaceTerminalPinned')}</button>}
             <button className={css.terminate} type="button" disabled={busy} aria-expanded={confirmId === info.terminalId}
               aria-controls={confirmId === info.terminalId ? confirmationId : undefined}
               aria-label={`${t('workspaceTerminalTerminate')} · ${info.title}`}
