@@ -113,7 +113,7 @@ describe('GitLens resilience with a partial provider source', () => {
       expect(container.textContent).toContain('staged.ts')
       expect(container.textContent).toContain('main')
       // ...the history section is EMPTY (no log rows) instead of an error...
-      expect(container.textContent).toContain('History')
+      expect(container.textContent).toContain('Graph')
       expect(container.textContent).not.toContain('not a function')
       // ...and everything came from the provider: the host routes were never
       // touched (the debacle this pins: the sync TypeError used to abort the

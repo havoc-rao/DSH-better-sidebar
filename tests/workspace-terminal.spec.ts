@@ -140,7 +140,8 @@ it('mounted POST API inherits trust fence and validates workspace on create/list
   const cwd = dir(), foreign = dir(), routes: SidebarWebRoute[] = [], cleanup: Array<() => void> = []
   mock.spawn.mockImplementation(() => new MockPty())
   const ctx = {
-    webRuntime: { trustedHosts: [] }, webServer: { register: (r: SidebarWebRoute) => { routes.push(r); return () => {} }, registerUpgrade: () => () => {} },
+    webRuntime: { trustedHosts: [] }, connection: { requestRejection: (req: { headers: { host?: string } }) => req.headers.host?.startsWith('127.0.0.1:') ? undefined : { status: 403 } },
+    webServer: { register: (r: SidebarWebRoute) => { routes.push(r); return () => {} }, registerUpgrade: () => () => {} },
     sessions: { get: (id: string) => id === 'missing' ? undefined : ({ header: { cwd: id === 'foreign' ? foreign : cwd } }) },
     tools: { register: () => () => {} }, get: () => undefined, on: () => () => {}, inject: () => () => {},
     effect: (fn: () => (() => void) | void) => { const f = fn(); if (f) cleanup.push(f) },
@@ -150,7 +151,7 @@ it('mounted POST API inherits trust fence and validates workspace on create/list
   async function invoke(method: string, payload: unknown, host = '127.0.0.1:3080') {
     let status = 0, body = ''
     await route.handler({ method: 'POST', url: `/sidebar/api/${method}`, headers: { host }, async *[Symbol.asyncIterator]() { yield JSON.stringify(payload) } },
-      { statusCode: 0, writeHead: n => { status = n }, end: value => { body = String(value) } })
+      { statusCode: 0, write: () => true, writeHead: n => { status = n }, end: value => { body = String(value) } })
     return { status, body: JSON.parse(body) }
   }
   try {

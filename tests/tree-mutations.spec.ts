@@ -28,9 +28,9 @@ describe('retargetPathTabs', () => {
       { id: 'unrelated', title: 'else.ts', path: '/ws/other/else.ts' },
     ])
     retargetPathTabs(ctx, store, '/ws/dir', '/ws/moved')
-    expect(updateTab).toHaveBeenCalledWith('dir-tab', { path: '/ws/moved', title: 'moved' })
-    expect(updateTab).toHaveBeenCalledWith('deep', { path: '/ws/moved/deep.ts', title: 'deep.ts' })
-    expect(updateTab).toHaveBeenCalledWith('nested', { path: '/ws/moved/nested/x.ts', title: 'x.ts' })
+    expect(updateTab).toHaveBeenCalledWith('dir-tab', { path: '/ws/moved', title: 'moved' }, undefined)
+    expect(updateTab).toHaveBeenCalledWith('deep', { path: '/ws/moved/deep.ts', title: 'deep.ts' }, undefined)
+    expect(updateTab).toHaveBeenCalledWith('nested', { path: '/ws/moved/nested/x.ts', title: 'x.ts' }, undefined)
     // A sibling path sharing the OLD prefix must NOT be rewritten.
     expect(updateTab).toHaveBeenCalledTimes(3)
   })
@@ -43,7 +43,7 @@ describe('retargetPathTabs', () => {
       { id: 'real', title: 'b.ts', path: '/ws/dir/b.ts' },
     ])
     retargetPathTabs(ctx, store, '/ws/dir', '/ws/moved')
-    expect(updateTab).toHaveBeenCalledWith('real', { path: '/ws/moved/b.ts', title: 'b.ts' })
+    expect(updateTab).toHaveBeenCalledWith('real', { path: '/ws/moved/b.ts', title: 'b.ts' }, undefined)
     expect(updateTab).toHaveBeenCalledTimes(1)
   })
 

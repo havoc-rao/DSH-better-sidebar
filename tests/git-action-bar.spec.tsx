@@ -88,7 +88,7 @@ describe('Git action bar common mutations and overflow', () => {
     const push = vi.spyOn(api, 'gitPush').mockResolvedValue({ ok: true })
     const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
     const container = await mount()
-    expect(container.querySelector<HTMLButtonElement>('[data-git-selector="worktree"]')?.value).toBe(LINKED)
+    expect(container.textContent).toContain('topic')
     // The merged bar keeps a DIRECT Push button (the More menu holds
     // commitAndPush / stage-all / registered slots instead).
     await click(button(container, t('push')))
@@ -140,20 +140,19 @@ describe('Git action bar common mutations and overflow', () => {
     expect(localWorktrees).not.toHaveBeenCalled()
   })
 
-  it('keeps the Commit button staged-gated; the Ctrl+Enter shortcut commits regardless (official semantics)', async () => {
+  it('uses the same staged gate for the Commit button and keyboard shortcut', async () => {
     mockApi(false)
     const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
     const container = await mount()
     expect(button(container, t('commit')).disabled).toBe(true)
-    const input = container.querySelector<HTMLTextAreaElement>('[data-git-action-bar] textarea')!
+    const input = container.querySelector<HTMLTextAreaElement>('[data-message-box] textarea')!
     await act(async () => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
       await Promise.resolve()
     })
-    // The primary button stays disabled, but the keyboard path fires (git's
-    // own "nothing to commit" error surfaces through the bar's status line).
-    expect(commit).toHaveBeenCalledTimes(1)
+    // Neither activation path bypasses the staged gate.
+    expect(commit).not.toHaveBeenCalled()
   })
 
   it('Commit and Push waits for commit success and clears the durable draft even if push fails', async () => {
@@ -173,7 +172,7 @@ describe('Git action bar common mutations and overflow', () => {
     await flush()
     expect(order).toEqual(['commit', 'push'])
     expect(push).toHaveBeenCalledExactlyOnceWith(commit.mock.calls[0]![0], LINKED)
-    expect(container.querySelector<HTMLTextAreaElement>('[data-git-action-bar] textarea')!.value).toBe('')
+    expect(container.querySelector<HTMLTextAreaElement>('[data-message-box] textarea')!.value).toBe('')
     expect(committed).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('remote rejected')
     expect(container.querySelector('[data-git-action-bar] [role="status"]')?.textContent ?? '').toBe('')
@@ -189,7 +188,7 @@ describe('Git action bar common mutations and overflow', () => {
     await commitAndPush(container)
     expect(push).not.toHaveBeenCalled()
     expect(committed).not.toHaveBeenCalled()
-    expect(container.querySelector<HTMLTextAreaElement>('[data-git-action-bar] textarea')!.value).toBe('  test commit  ')
+    expect(container.querySelector<HTMLTextAreaElement>('[data-message-box] textarea')!.value).toBe('  test commit  ')
     expect(container.textContent).toContain('commit rejected')
   })
 
@@ -210,7 +209,7 @@ describe('Git action bar common mutations and overflow', () => {
     expect(actionBar.querySelector('[role="status"] svg')).toBeNull()
     expect(button(container, t('commit')).disabled).toBe(true)
     expect(button(container, t('gitMoreActions')).disabled).toBe(true)
-    expect(container.querySelector<HTMLTextAreaElement>('[data-git-action-bar] textarea')!.disabled).toBe(true)
+    expect(container.querySelector<HTMLTextAreaElement>('[data-message-box] textarea')!.disabled).toBe(true)
     await act(async () => { pending.resolve({ ok: true }) })
     await flush()
     expect(button(container, t('gitMoreActions')).disabled).toBe(false)

@@ -48,7 +48,7 @@ describe('strict resource data service', () => {
   })
 
   it('binds tickets to path/scope/service and locks duplicate pending saves', async () => {
-    const pending = deferred<{}>()
+    const pending = deferred<object>()
     const write = vi.fn(() => pending.promise)
     const local = { readText: async () => text, writeText: write }
     const service = createResourceDataService({ local, getGitProviders: () => [] })
@@ -210,7 +210,7 @@ describe('strict resource data service', () => {
   })
 
   it.each(['success', 'failure'] as const)('ownership changes do not abort or unlock pending writes (%s)', async outcome => {
-    const pending = deferred<{}>()
+    const pending = deferred<object>()
     const write = vi.fn(() => pending.promise)
     const service = createResourceDataService({ local: {}, getGitProviders: () => [] })
     const off = service.registerDocumentProvider({ id: 'remote', match: () => true, createSource: () => ({ writeText: write, readText: async () => text }) })

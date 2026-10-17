@@ -36,7 +36,6 @@ export function TabScrollMemory({ scope, tab, visible, surface, children }: {
     const restored = new WeakMap<HTMLElement, string>()
     const observed = new WeakSet<HTMLElement>()
     let restoring = false
-    let sizes: ResizeObserver | undefined
     const ignored = (el: HTMLElement) => el.closest(
       '[data-dsh-file-tree], [data-dsh-scroll-managed], .cm-editor, .xterm',
     ) !== null
@@ -118,7 +117,7 @@ export function TabScrollMemory({ scope, tab, visible, surface, children }: {
     }
     const mutations = new MutationObserver(scheduleRestore)
     mutations.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'data-dsh-scroll-key'] })
-    sizes = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(scheduleRestore)
+    const sizes = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(scheduleRestore)
     sizes?.observe(host)
     restore()
     return () => {

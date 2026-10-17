@@ -1,3 +1,5 @@
+> Historical README retained from the local fork. See [README.md](README.md) for the current English documentation and [the integration guide](docs/external-plugin-guide.md) for local APIs.
+
 # dsh-better-sidebar
 
 > [!IMPORTANT]

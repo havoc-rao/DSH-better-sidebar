@@ -37,6 +37,7 @@ describe('Host trust provider and route lifecycle', () => {
       register: (route: SidebarWebRoute) => register(routes, route),
       registerUpgrade: (route: SidebarWebUpgradeRoute) => register(upgrades, route),
     })
+    ctx.provide('connection', { requestRejection: () => undefined })
     ctx.provide('webStartup', { trustedHosts: [] })
     ctx.provide('sessions', { get: () => undefined })
     ctx.provide('tools', { register: () => () => {} })

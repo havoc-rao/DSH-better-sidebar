@@ -666,7 +666,8 @@ export function TerminalView(props: {
         </div>
       )}
       {closedReason === null && fatal === null && depsFatal === null && !connected && <div className={css.terminalBanner}>{t('disconnected')}</div>}
-      <div ref={hostRef} className={css.terminal}>
+      <div ref={hostRef} className={css.terminal} data-dsh-bottom-terminal
+        data-terminal-state={fatal !== null || depsFatal !== null ? 'failed' : closedReason !== null ? 'closed' : connected ? 'connected' : 'disconnected'}>
         {/* The block layer: hairline dividers at every CLI block boundary;
             hovering a block highlights its span and raises the per-block
             "add to conversation" pill — clicking it inserts the block into

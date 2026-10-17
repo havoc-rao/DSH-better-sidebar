@@ -13,7 +13,7 @@
  */
 import type { ChainStep } from '../../../core/types';
 import { CELL_W, LANE_BRANCH, LANE_MAIN, LANE_PARALLEL } from './constants';
-import type { GitGraphRow, InEdge, Lane, LayoutOptions, LayoutResult, OutEdge } from './types';
+import type { GitGraphRow, InEdge, Lane, LayoutOptions, LayoutResult } from './types';
 import { collectBranchMembers, collectParMembers, funcKeyOf, isDash, subColor } from './utils';
 
 /** 已结束、等待并入下一个节点的 lane */

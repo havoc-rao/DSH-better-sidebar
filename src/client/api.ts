@@ -10,7 +10,14 @@
 import { encodeHtmlUrl } from '../html-route.ts'
 import { hostRouteUrl } from './host-route-url.ts'
 import { resolveSidebarPath } from './paths.ts'
-import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
+import type {
+  SidechatLiveEvent,
+  SidechatLogEvent,
+  SidechatModelCatalog,
+  SidechatModelSelection,
+  SidechatPendingInput,
+  SidechatThreadInfo,
+} from '../sidechat-core.ts'
 import type {
   SidebarCreateTeamTaskRequest,
   SidebarChildLiveView,
@@ -45,6 +52,8 @@ export interface WorkspaceTerminalInfo {
   exited: boolean
   exitCode?: number
 }
+import type { GitGraphOptions, GitGraphResult } from '../git-graph.ts'
+export type { GitGraphOptions, GitGraphResult, GitGraphEntry, GitGraphBranch } from '../git-graph.ts'
 
 /** One wire failure. */
 export class SidebarApiError extends Error {
@@ -89,16 +98,27 @@ export type GitLineCounts = { additions: number; deletions: number } | { binary:
 export interface GitStatusEntry {
   path: string
   xy: string
-  /** Lines gained/lost, index and worktree sides summed. ABSENT when git has
-   *  no numstat row for the path — untracked files never have one — so the row
-   *  must not read that absence as `0`. */
-  counts?: GitLineCounts
+  /** Lines gained/lost on the INDEX side (index vs HEAD). ABSENT when git has
+   *  no numstat row for the path on that side — an untracked file has none — so
+   *  the row must not read that absence as `0`. */
+  staged?: GitLineCounts
+  /** Lines gained/lost on the WORKTREE side (worktree vs index) — a separate
+   *  reading, never one summed number. */
+  unstaged?: GitLineCounts
 }
 
 /** Git status snapshot. */
 export interface GitStatusResult {
   isRepo: boolean
+  /** Absent when HEAD is detached; unborn branches keep their real name. */
   branch?: string
+  /** Native tracking ref (e.g. origin/main); never inferred from a remote. */
+  upstream?: string
+  /** Present only when Git can compare HEAD with the tracking ref. */
+  ahead?: number
+  behind?: number
+  detached?: boolean
+  operation?: 'merge' | 'rebase'
   entries: GitStatusEntry[]
   /** True when the host capped `entries` (huge untracked set); the panel
    *  shows a truncation notice instead of freezing (#369). */
@@ -157,14 +177,14 @@ export interface GitLogEntry {
   hash: string
   /** Full 40-char hash (advanced operations). */
   hashFull: string
+  /** Full parent hashes in Git's order; root commits have none. */
+  parents: string[]
   subject: string
   author: string
   /** ISO 8601 author date (`%ai`). */
   date: string
   /** Ref decorations (--decorate=short), e.g. `HEAD -> main, origin/main`; '' when none. */
   refs: string
-  /** Full parent object ids (`%P`), newest-parent first; [] for root commits. */
-  parents: string[]
 }
 
 /**
@@ -205,10 +225,35 @@ export interface GitBlameLine {
 }
 
 /** Text read result. `mtimeMs` is the save route's conflict baseline. */
-export interface FsTextResult { kind: 'text'; content: string; truncated: boolean; mtimeMs?: number }
+export interface FsTextResult { kind: 'text'; content: string; size: number; mtimeMs?: number }
 /** Binary read result (no content; images load through the media route).
  *  `head` carries the first bytes (base64) for viewer detect sniffing. */
-export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; mtimeMs?: number; head: string }
+export interface FsBinaryResult { kind: 'binary'; size: number; mtimeMs?: number; head: string }
+/**
+ * The file is above the editable threshold: the host sends no document, only
+ * the size and a 4 KiB sniff head. The viewer answers with a read-only paged
+ * preview, and the head still lets a `detect`-based viewer claim the file.
+ */
+export interface FsTooLargeResult { kind: 'too-large'; size: number; mtimeMs?: number; head: string }
+/** One `fs.read` outcome. */
+export type FsReadResult = FsTextResult | FsBinaryResult | FsTooLargeResult
+
+/** One page of a large text file (see `fs.readPage`). */
+export interface FsPageResult {
+  kind: 'text'
+  /** The page's decoded lines (normally whole lines — the host trims at a break). */
+  text: string
+  /** The byte offset this page started at (echoed back). */
+  offset: number
+  /** Where the next page starts; equals `size` once the file is exhausted. */
+  nextOffset: number
+  eof: boolean
+  /** The file's size in bytes. */
+  size: number
+  mtimeMs?: number
+  /** The encoding the first page established (later pages decode identically). */
+  encoding: string
+}
 
 /** The `subagents.live` response: one row per tree child (and the root). */
 export type SubagentLiveResult = { live: Record<string, SidebarChildLiveView> }
@@ -323,8 +368,45 @@ async function fetchUpload<T>(
   return readEnvelope<T>(response)
 }
 
-/** One request's session scope: the conversation id plus its cwd when known. */
-export interface SessionScope {
+/**
+ * Save one document through the sidebar's raw write route: the text IS the
+ * POST body, so the request never grows a JSON escaping layer and nothing caps
+ * the size a save can carry.
+ *
+ * The document is transported with LF line endings (CodeMirror has no other
+ * line model); the host restores the file's own encoding and line ending
+ * before writing, exactly as the old JSON route did.
+ *
+ * @param scope - the session scope.
+ * @param path - the file to write (absolute or session-relative).
+ * @param content - the document, LF line endings.
+ * @param expectedMtimeMs - the draft's baseline; a mismatch refuses with
+ *  `fs-conflict`. Omitted = no gate.
+ * @returns the fresh mtime baseline after the write.
+ */
+async function fetchWrite(
+  scope: SessionScope,
+  path: string,
+  content: string,
+  expectedMtimeMs?: number,
+): Promise<{ ok: true; mtimeMs?: number }> {
+  const params = new URLSearchParams({ sessionId: scope.sessionId, path })
+  if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
+  if (expectedMtimeMs !== undefined) params.set('expectedMtimeMs', String(expectedMtimeMs))
+  let response: Response
+  try {
+    response = await fetch(hostRouteUrl(`sidebar/write?${params.toString()}`).href, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+      body: content,
+    })
+  } catch (error) {
+    throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
+  }
+  return readEnvelope<{ ok: true; mtimeMs?: number }>(response)
+}
+
+/** One request's session scope: the conversation id plus its cwd when known. */export interface SessionScope {
   sessionId: string
   /** The session's working directory from the client list summary (optional). */
   cwd?: string
@@ -433,18 +515,23 @@ export const api = {
   fsSearch: (scope: SessionScope, query: string, exclude?: readonly string[], signal?: AbortSignal) =>
     call<{ matches: string[]; dirs: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query, exclude }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
-    call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
-  /** Save a file. `expectedMtimeMs` is the mtime the draft was based on: a
-   *  file that changed on disk since refuses with code `fs-conflict` (the
-   *  editor then offers a reload) instead of clobbering those bytes. `null`
-   *  (the file did not exist yet) and omitted (older callers) both mean no
-   *  gate. The response carries the fresh baseline. */
+    call<FsReadResult>('fs.read', scopePayload(scope, { path }), signal),
+  /** One page of a large text file, for the read-only paged preview.
+   *  `offset` is the byte position to start at (0 for the first page); the
+   *  response carries where to continue. */
+  fsReadPage: (scope: SessionScope, path: string, offset: number, signal?: AbortSignal) =>
+    call<FsPageResult>('fs.readPage', scopePayload(scope, { path, offset }), signal),
+  /** Save a file through the raw `/sidebar/write` route (the document IS the
+   *  request body — no JSON escaping, so nothing caps the saved size).
+   *  `expectedMtimeMs` is the mtime the draft was based on: a file that
+   *  changed on disk since refuses with code `fs-conflict` (the editor then
+   *  offers a reload) instead of clobbering those bytes — and so does a file
+   *  that is no longer there at all, because a numeric baseline proves it was
+   *  read from an existing file. `null` (the file did not exist yet) and
+   *  omitted (older callers) both mean no gate. The response carries the
+   *  fresh baseline. */
   fsWrite: (scope: SessionScope, path: string, content: string, expectedMtimeMs?: number | null) =>
-    call<{ ok: true; mtimeMs?: number }>('fs.write', scopePayload(scope, {
-      path,
-      content,
-      ...(expectedMtimeMs !== undefined ? { expectedMtimeMs } : {}),
-    })),
+    fetchWrite(scope, path, content, expectedMtimeMs ?? undefined),
   /** Rename one tree row within its directory (single-segment name; the
    *  server refuses existing destinations, the workspace root, and — while
    *  the fence is armed — anything resolving outside the workspace). */
@@ -519,12 +606,10 @@ export const api = {
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
     call<{ ok: true }>('git.checkout', gitPayload(scope, worktree, { branch })),
-  /**
-   * Recent commit history, lazily pageable (skip/count; defaults 0/30).
-   * With `options.roots` / `options.cursor` the host switches to fixed-roots
-   * pagination ({@link GitLogPage}): the revision set is pinned on the first
-   * request of the snapshot and later pages ride opaque cursors.
-   */
+  /** Read-only topological history; stale cursors require a fresh first page. */
+  gitGraph: (scope: SessionScope, options: GitGraphOptions = {}, worktree?: string, signal?: AbortSignal) =>
+    call<GitGraphResult>('git.graph', gitPayload(scope, worktree, { ...options }), signal),
+  /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */
   gitLog: (scope: SessionScope, count?: number, skip?: number, worktree?: string, options?: GitLogOptions, signal?: AbortSignal) =>
     call<GitLogEntry[] | GitLogPage>('git.log', gitPayload(scope, worktree, {
       ...(count !== undefined ? { count } : {}),
@@ -551,13 +636,14 @@ export const api = {
    *  an empty list. Called on hover only — a file is never prefetched. */
   gitBlame: (scope: SessionScope, path: string, startLine: number, endLine: number, worktree?: string, signal?: AbortSignal) =>
     call<{ lines: GitBlameLine[] }>('git.blame', gitPayload(scope, worktree, { path, startLine, endLine }), signal),
-  /** The session's file-tool events for the changes tab's session lens: the
-   *  `tool/call` + `tool/result` rows past `afterSeq` (0 = whole window),
-   *  capped to the recent window host-side. The client runtime exposes no
-   *  event-log face, so the lens polls this delta route. */
-  changesOps: (scope: SessionScope, afterSeq?: number, signal?: AbortSignal) =>
+  /** The session's file-tool events past `afterSeq` (absent = whole window,
+   *  floored at -1 host-side so a log opening on seq 0 is not dropped). With
+   *  `wait` the host parks the request until the next tool event (or 25 s)
+   *  instead of re-reading an unchanged window. */
+  changesOps: (scope: SessionScope, afterSeq?: number, signal?: AbortSignal, wait = false) =>
     call<{ events: SidebarSessionEvent[]; lastSeq: number }>('changes.ops', scopePayload(scope, {
-      ...(afterSeq !== undefined && afterSeq > 0 ? { afterSeq } : {}),
+      ...(afterSeq !== undefined ? { afterSeq } : {}),
+      ...(wait ? { wait: true } : {}),
     }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>
@@ -632,12 +718,39 @@ export const api = {
    *  `afterSeq` narrows the response to the delta beyond it (poll tail).
    *  `live` is the thread's in-flight model deltas (DSH 0.1.5 publishes them
    *  outside the session log) — the CURRENT attempt on every pull, never a
-   *  delta, so the caller replaces its live set instead of appending. */
+   *  delta, so the caller replaces its live set instead of appending.
+   *  `pending` is the thread's live UNCLAIMED inbox in claim order (all
+   *  `next-step` entries, then the queued turns): the view renders those as
+   *  pending bubbles, deduped by id against the durable `user/message` rows
+   *  the claim later writes. */
   sidechatEvents: (childId: string, afterSeq?: number, signal?: AbortSignal) =>
-    call<{ events: SidechatLogEvent[]; live: SidechatLiveEvent[] }>('sidechat.events', {
+    call<{ events: SidechatLogEvent[]; live: SidechatLiveEvent[]; pending: SidechatPendingInput[] }>('sidechat.events', {
       childId,
       ...(afterSeq !== undefined ? { afterSeq } : {}),
     }, signal),
+  /** Drop one pending inbox message (no `messageId` = drop the whole queue).
+   *  `removed` is how many the host actually took out; a cold thread answers
+   *  `0` rather than failing. */
+  sidechatDequeue: (childId: string, messageId?: string) =>
+    call<{ accepted: true; removed: number }>('sidechat.dequeue', {
+      childId,
+      ...(messageId !== undefined ? { messageId } : {}),
+    }),
+  /** The host's own model catalog for the per-thread picker. `available:
+   *  false` means no catalog was readable (headless or older host) — the
+   *  picker then offers only "inherit the parent conversation". */
+  sidechatModels: () =>
+    call<SidechatModelCatalog>('sidechat.models', {}),
+  /** Pin one Side Chat thread's model route (the host disables its own picker
+   *  for subagent-origin sessions, so this is the only switch a side thread
+   *  has). `reasoningEffort` is omitted unless chosen. */
+  sidechatModel: (childId: string, provider: string, model: string, reasoningEffort?: string) =>
+    call<{ accepted: true; selection: SidechatModelSelection }>('sidechat.model', {
+      childId,
+      provider,
+      model,
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+    }),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
     call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),
@@ -665,29 +778,27 @@ export function downloadUrl(scope: SessionScope, path: string): string {
 }
 
 /**
- * Start one archive build. The host fences and walks the selection, then
- * returns an id IMMEDIATELY — the zip itself is produced in the background and
- * polled through {@link api.archiveStatus}. `paths` are absolute paths in the
- * session's namespace (the same values `fsTree` / `downloadUrl` take).
+ * Start one archive build. The host fences the selection and returns an id
+ * IMMEDIATELY — the system's `zip` (or `tar`) packs it into a temp file in the
+ * background, polled through {@link api.archiveStatus}. `paths` are absolute
+ * paths in the session's namespace (the same values `fsTree` / `downloadUrl`
+ * take); `name` is a STEM, because the host appends the extension of the tool
+ * it actually has and returns the final name with the id.
  */
 export function archiveBuild(
   scope: SessionScope,
   paths: readonly string[],
   name: string,
-): Promise<{ id: string; entries: number }> {
-  return call<{ id: string; entries: number }>('archive.build', scopePayload(scope, { paths: [...paths], name }))
+): Promise<{ id: string; name: string; entries: number }> {
+  return call<{ id: string; name: string; entries: number }>('archive.build', scopePayload(scope, { paths: [...paths], name }))
 }
 
-/** One archive build's progress (the shape `archive.status` returns). */
+/** One archive build's state (the shape `archive.status` returns). */
 export interface ArchiveBuildStatus {
   state: 'building' | 'ready' | 'error'
-  /** Entries finished so far. */
-  done: number
-  /** Entries the archive will contain. */
-  total: number
-  /** Uncompressed bytes read so far. */
+  /** Bytes written to the archive so far. */
   bytes: number
-  /** Present only when `state === 'error'`. */
+  /** Present only when `state === 'error'` (the tool's own stderr tail). */
   error?: string
 }
 
