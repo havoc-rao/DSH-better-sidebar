@@ -19,6 +19,7 @@ import type { GitLineCounts, GitLogEntry, GitStatusEntry, GitStatusResult, GitWo
 import { api, SidebarApiError } from '../api.ts'
 import type { BetterSidebarService, GitCommitActionProps, GitCommitTarget } from '../service.ts'
 import { useGitSource } from '../git-source.ts'
+import { updatePluginSettings } from '../plugin-settings.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx' 
 import { builtinFileIcon, builtinFolderIcon } from '../file-icons.tsx'
 import { usePolling } from '../use-polling.ts'
@@ -428,10 +429,38 @@ export function GitLens(props: GitLensProps) {
   // move a just-typed draft to a different key; linked checkouts stay isolated.
   const draftWorktree = selectedWorktree === worktrees.find(entry => entry.current)?.path ? '' : selectedWorktree ?? ''
   const draftKey = `${scope.sessionId}\u0000${scope.cwd ?? ''}\u0000${repoRoot ?? ''}\u0000${draftWorktree}`
-  const commitMsg = props.commitMsg ?? commitDrafts[draftKey] ?? ''
+  // The legacy lifted draft belongs to the first checkout this scope displays.
+  // Later checkout/repository selections own independent, durable drafts.
+  const legacyDraftTargets = useRef(new Map<string, string>())
+  const inventoryDraftScope = useRef<string | undefined>(undefined)
+  const draftScope = `${scope.sessionId}\u0000${scope.cwd ?? ''}`
+  if (inventoryDraftScope.current === draftScope && !legacyDraftTargets.current.has(draftScope)) {
+    legacyDraftTargets.current.set(draftScope, draftKey)
+    if (legacyDraftTargets.current.size > COMMIT_DRAFT_CAP) legacyDraftTargets.current.delete(legacyDraftTargets.current.keys().next().value!)
+  }
+  const legacyTarget = !legacyDraftTargets.current.has(draftScope) || legacyDraftTargets.current.get(draftScope) === draftKey
+  const savedDrafts = props.store?.getPrefs().pluginSettings['git']?.checkoutCommitDrafts as Record<string, string> | undefined
+  const savedDraft = savedDrafts?.[draftKey]
+  const commitMsg = commitDrafts[draftKey] ?? (typeof savedDraft === 'string' ? savedDraft : undefined) ?? (legacyTarget ? props.commitMsg ?? '' : '')
+  const pendingDrafts = useRef<Record<string, string>>({})
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const flushDrafts = useCallback(() => {
+    const edits = pendingDrafts.current
+    pendingDrafts.current = {}
+    if (props.store === undefined || Object.keys(edits).length === 0) return
+    updatePluginSettings(props.store, 'git', blob => {
+      let drafts = (blob.checkoutCommitDrafts ?? {}) as Record<string, string>
+      for (const [key, text] of Object.entries(edits)) drafts = withCommitDraft(drafts, key, text)
+      return { ...blob, checkoutCommitDrafts: drafts }
+    })
+  }, [props.store])
+  useEffect(() => () => { clearTimeout(draftTimer.current); flushDrafts() }, [flushDrafts])
   const writeDraft = (text: string): void => {
-    props.onCommitMsgChange?.(text)
+    if (legacyTarget) props.onCommitMsgChange?.(text)
     setCommitDrafts(prev => withCommitDraft(prev, draftKey, text))
+    pendingDrafts.current[draftKey] = text
+    clearTimeout(draftTimer.current)
+    draftTimer.current = setTimeout(flushDrafts, 400)
   }
   const [actionLabel, setActionLabel] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -604,6 +633,8 @@ export function GitLens(props: GitLensProps) {
     // which is exactly what the "silent" tick below was supposed to avoid.
     // Keeping the previous identity when the listing is equal makes the tick
     // silent; a new linked checkout or a moved change count still lands.
+    const loadedScope = gitScopeNow()
+    inventoryDraftScope.current = `${loadedScope.sessionId}\u0000${loadedScope.cwd ?? ''}`
     setWorktrees(previous => (sameWorktrees(previous, listed) ? previous : listed))
     const current = listed.find(entry => entry.current)
     const stillListed = chosenPathRef.current !== undefined
@@ -671,6 +702,7 @@ export function GitLens(props: GitLensProps) {
     scopeGen.current += 1
     gate.current = { inFlight: false, queued: false, queuedSilent: true }
     autoSelectDone.current = false
+    inventoryDraftScope.current = undefined
     chosenPathRef.current = undefined
     repoRootRef.current = undefined
     setWorktrees([])
@@ -784,7 +816,7 @@ export function GitLens(props: GitLensProps) {
     void runAction(
       () => gitApi.gitCommit(gitScopeNow(), message, selectedWorktree),
       errorMessage,
-      () => { writeDraft(''); props.onCommitMsgCommitted?.() },
+      () => { writeDraft(''); if (legacyTarget) props.onCommitMsgCommitted?.() },
     )
   }
 
@@ -829,7 +861,7 @@ export function GitLens(props: GitLensProps) {
     void runAction(async () => {
       await gitApi.gitCommit(targetScope, message, target)
       writeDraft('')
-      props.onCommitMsgCommitted?.()
+      if (legacyTarget) props.onCommitMsgCommitted?.()
       await pushApi(targetScope, target)
     }, errorMessage, undefined, t('gitCommitAndPush'))
   }
