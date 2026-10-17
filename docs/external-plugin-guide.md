@@ -1300,3 +1300,5 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 - **`inspectors` / `resourceActions:v1` / `fileOpenTargets:v1` / `textDocuments:v1` / `strictGitDiff:v1` / `sharedRendering:v1`**：资源 Inspector、资源操作承载面、文件打开认领（`dispatchFileActivation`）、文档数据 API、严格 Git diff、共享渲染接口。
 - **`panelFlags` / `planDiff`**：`getSnapshot()` 的 `bottomOpen` / `panelOpen` 平面字段（dsh-hotkey 契约）与 `openTab({type:'diff', diff:{kind:'proposed',…}})`。
 - **标题栏让位机制保留**（官方已删）：`titleBarScheme` / `titleBarPresetId` / `titleBarCompat` / `titleBarStripPx` + shell-presets / titlebar-strip；`customCss` 在 `custom` 方案下应用。
+
+本地 Git 提交草稿按 session、cwd、repository 和 checkout 分键；`pluginSettings.git.checkoutCommitDrafts` 有界保存最近 16 个草稿。切换 checkout 不继承另一个 checkout 的提交信息，关闭后重新打开仍恢复对应草稿。

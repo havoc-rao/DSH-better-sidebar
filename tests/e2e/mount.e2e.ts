@@ -729,10 +729,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.screenshot({ path: 'test-results/mount-final.png' })
 })
 
-test('the bottom workbench opens the plugin terminal (#774) without shadowing the host terminal', async ({ page }) => {
-  // The bottom terminal is the ONE plugin page that is not a native tab type
-  // (`bottomOnly`): it draws its own xterm against the host's session-scoped
-  // terminal service. Two things must hold at once in a real browser —
+test('the bottom workbench opens the plugin terminal without shadowing the host terminal', async ({ page }) => {
+  // Exercise the explicit new-tab path without racing local auto-terminal seeding.
+  const autoTerminal = await api.post(sidebarApi('settings.update'), { data: { patch: { bottomPanelAutoTerminal: false } } })
+  expect(autoTerminal.ok()).toBe(true)
+  // The local terminal draws xterm over the plugin's own PTY route.
+  // Two things must hold at once in a real browser —
   //  - the tab opens, mounts a real emulator and the chunk is fetched from
   //    /sidebar/bundle/terminal.js, with no console error or pageerror, and
   //  - DSH's own right-Sidebar `terminal` capsule is STILL exactly one: the
@@ -857,6 +859,7 @@ test('the bottom workbench opens the plugin terminal (#774) without shadowing th
     'plugin-prefixed or unhandled console errors during the terminal open',
   ).toEqual([])
   await page.screenshot({ path: 'test-results/mount-terminal.png' })
+  await api.post(sidebarApi('settings.update'), { data: { patch: { bottomPanelAutoTerminal: true } } })
 })
 
 test('a shell-stamped render URL mounts normally; plugin chrome carries the stable data attributes', async ({ page }) => {
