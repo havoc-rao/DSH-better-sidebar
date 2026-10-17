@@ -141,17 +141,15 @@ describe('ordinary file activation', () => {
   })
   it('does not start open after synchronous unregister in accept, or reach later fallback', async () => {
     const api = createResourceActionRegistry(() => {}); const open = vi.fn(); const fallback = vi.fn()
-    let remove!: () => void
-    remove = api.registerFileOpenTarget(target('remove', { accept: () => { remove(); return true }, open }))
+    const remove = api.registerFileOpenTarget(target('remove', { accept: () => { remove(); return true }, open }))
     api.registerFileOpenTarget(target('fallback', { open: fallback }))
     await expect(api.dispatchFileActivation(activation)).rejects.toMatchObject({ name: 'AbortError' })
     expect(open).not.toHaveBeenCalled(); expect(fallback).not.toHaveBeenCalled()
   })
   it('skips later unregistered targets and refuses asynchronous accepted failures', async () => {
     const api = createResourceActionRegistry(() => {}); const open = vi.fn()
-    let remove!: () => void
     api.registerFileOpenTarget(target('first', { priority: 0, open: () => { remove(); return 'declined' } }))
-    remove = api.registerFileOpenTarget(target('removed', { open }))
+    const remove = api.registerFileOpenTarget(target('removed', { open }))
     expect(await api.dispatchFileActivation(activation)).toBe(false)
     expect(open).not.toHaveBeenCalled()
     const error = new Error('async failure'); const fallback = vi.fn()

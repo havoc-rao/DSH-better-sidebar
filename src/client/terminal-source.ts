@@ -96,7 +96,7 @@ export function resolveTerminalSource(
   tabId: string,
 ): TerminalTransport | undefined {
   for (const provider of providers) {
-    let matched = false
+    let matched: boolean
     try {
       matched = provider.match(sessionId, cwd, tabId) === true
     } catch (error) {

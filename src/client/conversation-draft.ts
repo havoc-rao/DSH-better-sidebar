@@ -33,7 +33,7 @@
  * position (A|B + C + D → ACD|B).
  */
 import type { Context, SidebarConversation, SidebarSessionInput } from '../context-types.ts'
-import { workspaceRelativePath } from './paths.ts'
+import { baseName, workspaceRelativePath } from './paths.ts'
 
 /** Use the host editor binding (Lexical on current DSH), not a DOM focus
  * that loses its retained selection. A focus failure must not turn a successful
@@ -234,9 +234,7 @@ export function mentionFor(
   if (/[\u0000-\u001f\u007f-\u009f"]/u.test(path)) return undefined
   const target = kind === 'folder' ? `${path}/` : path
   const mention = /\s/u.test(target) ? `@"${target}"` : `@${target}`
-  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
-  const label = at === -1 ? path : path.slice(at + 1)
-  return { mention, label }
+  return { mention, label: baseName(path) }
 }
 
 /**

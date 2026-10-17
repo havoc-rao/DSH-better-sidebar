@@ -126,10 +126,16 @@ function fakeCtxWith(read: () => unknown): { ctx: Context; emit(): void } {
 
 function mockApi(pages: Array<GitLogEntry[] | GitLogPage>): ReturnType<typeof vi.spyOn> {
   let call = 0
-  return vi.spyOn(api, 'gitLog').mockImplementation(async () => {
+  return vi.spyOn(api, 'gitGraph').mockImplementation(async () => {
     const page = pages[Math.min(call, pages.length - 1)]!
     call += 1
-    return page
+    const entries = Array.isArray(page) ? page : page.entries
+    return { isRepo: true, root: REPO, branches: [], snapshot: 'test',
+      entries: entries.map(entry => ({ ...entry, message: entry.subject,
+        refs: entry.refs === 'HEAD -> main' ? ['HEAD', 'main'] : [] })),
+      hasMore: !Array.isArray(page) && page.hasMore,
+      nextCursor: Array.isArray(page) ? undefined : page.cursor,
+    }
   })
 }
 
@@ -181,9 +187,9 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
         expect(rows[0]!.getAttribute('data-row-id')).toBe(rowFor(0).hashFull)
         expect(container.textContent).toContain('Graph subject 0')
         expect(container.textContent).toContain('Dev')
-        expect(container.querySelector('[data-kind="head"]')?.textContent).toBe('main')
+        expect(container.querySelector('[data-tone="head"]')?.textContent).toBe('main')
         // The built-in list must NOT be rendered in framework mode.
-        expect(container.querySelector('[class*="logRow"]')).toBeNull()
+        expect(container.querySelector('[data-graph-commit]')).toBeNull()
       } finally {
         act(() => { root.unmount() })
       }
@@ -262,7 +268,7 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
         // First page anchors with roots: [] (server-pinned tips). No linked
         // worktrees are listed, so the checkout target stays undefined (the
         // session cwd is the repo).
-        expect(log).toHaveBeenCalledWith(expect.anything(), 20, 0, undefined, { roots: [] })
+        expect(log).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ count: 50 }), undefined, expect.anything())
         const rows = container.querySelectorAll('[data-row-id]')
         expect(rows).toHaveLength(3)
 
@@ -273,7 +279,7 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
         expect(loadMore).not.toBeUndefined()
         await act(async () => { loadMore!.click() })
         await act(async () => { await Promise.resolve() })
-        expect(log).toHaveBeenLastCalledWith(expect.anything(), 20, 0, undefined, { cursor: 'cur-1' })
+        expect(log).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ cursor: 'cur-1' }), undefined, expect.anything())
         expect(container.querySelectorAll('[data-row-id]')).toHaveLength(5)
         expect(container.textContent).toContain('Graph subject 4')
       } finally {
@@ -318,10 +324,10 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
       const root = await mountGitLens(container, () => {})
       try {
         expect(container.querySelector('[data-testid="graph-tree"]')).toBeNull()
-        expect(container.querySelectorAll('[class*="logRow"]')).toHaveLength(2)
+        expect(container.querySelectorAll('[data-graph-commit]')).toHaveLength(2)
         expect(container.textContent).toContain('Graph subject 0')
         expect(container.textContent).toContain('Graph subject 1')
-        expect(container.querySelector('[data-kind="head"]')?.textContent).toBe('main')
+        expect(container.querySelector('[data-tone="head"]')?.textContent).toBe('main')
       } finally {
         act(() => { root.unmount() })
       }
@@ -344,7 +350,7 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
       const root = await mountGitLens(container, () => {})
       try {
         expect(container.querySelector('[data-testid="graph-tree"]')).toBeNull()
-        expect(container.querySelectorAll('[class*="logRow"]')).toHaveLength(1)
+        expect(container.querySelectorAll('[data-graph-commit]')).toHaveLength(1)
         expect(warn).toHaveBeenCalledTimes(1)
       } finally {
         act(() => { root.unmount() })
@@ -369,7 +375,7 @@ describe('GitLens history through gitGraph v1 (soft join)', () => {
       try {
         // The crash is caught by the graph boundary: the section degrades to
         // the built-in list (never a blank/error-only history).
-        expect(container.querySelectorAll('[class*="logRow"]')).toHaveLength(1)
+        expect(container.querySelectorAll('[data-graph-commit]')).toHaveLength(1)
         expect(error).toHaveBeenCalledWith(expect.stringContaining('gitGraph framework crashed'), expect.any(Error))
       } finally {
         act(() => { root.unmount() })

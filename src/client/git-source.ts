@@ -103,7 +103,7 @@ export function resolveGitSource(
   cwd: string | undefined,
 ): GitDataSource | undefined {
   for (const provider of providers) {
-    let matched = false
+    let matched: boolean
     try {
       matched = provider.match(sessionId, cwd) === true
     } catch (error) {

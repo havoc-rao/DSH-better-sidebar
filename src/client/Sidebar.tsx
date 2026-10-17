@@ -36,29 +36,23 @@ import type { Context } from '../context-types.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
 import { DockFallback } from './sidebar/dock-fallback.tsx'
 import {
-  BOTTOM_MIN, CONVERSATION_MIN, agentUuidOf, allLeaves, firstLeaf, isAgentTabId,
+  BOTTOM_MIN, CONVERSATION_MIN, allLeaves, firstLeaf,
   isUnread,
   leafWithTab, moveTab, moveTabToEdge, openDiffTab, resizeSplitIn,
   setBottomHeight, toggleBottomPanel, toggleExpanded,
   type DropZone, type SidebarStore, type SidebarTab,
 } from './state.ts'
-import { getPinnedHomeScope } from './pinned.ts'
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
-import { parseDesktopEnv } from './desktop-env.ts'
 import { isFullscreenToggleShortcut } from './fullscreen-shortcut.ts'
-import { getWcoSnapshot, subscribeWco } from './wco.ts'
-import { getShellPreset } from './shell-presets.ts'
-import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
 import { confirmDiscardDraft, dirtyCount, editorDirtyRevision, subscribeEditorDirty } from './editor-dirty.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { PANEL_RIGHT_HIT_GAP, useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { useNativeSidebarOpen } from './sidebar/use-native-column.ts'
-import { usePinnedTabs } from './sidebar/use-pinned-tabs.ts'
 import { mountedSessions } from './native/surface.ts'
 import { useRightPanelOpen } from './sidebar/right-panel-open.ts'
 import type { TabDragPayload } from './TabBar.tsx'
@@ -278,7 +272,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   // The live root shared by both client surfaces: the host follows the
   // session's active linked git worktree, the list summary only seeds first paint.
-  const cwd = useSessionRoot(ctx, sessionId)
+  // Visibility is the bottom panel's own open state — collapsed means the
+  // workbench is slid off-screen (`bottomPanelHidden`), which is the same
+  // signal `renderTab` already gates its tab bodies on, so a collapsed shell
+  // holds no session-root timer (the store adds `document.hidden` on top).
+  const cwd = useSessionRoot(ctx, sessionId, { visible: state?.bottomOpen === true })
 
   // The + menu options ride a memo so the workbench does not rebuild the
   // array identity across renders that did not change the store (drag state,
@@ -567,7 +565,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       // The confirmation is the SAME guard the refresh button uses, so every
       // close path (tab X, middle click, tab context menu, the tree's
       // close-on-rename/delete) funnels through here and warns exactly once.
-      if (!confirmDiscardDraft(tabId, t('closeUnsavedConfirm'))) return
+      if (!confirmDiscardDraft(tabId, t('closeUnsavedConfirm'), sessionId)) return
       // Route through the service: the tab-bar close is the canonical close
       // path (finds the pane itself, fires descriptor.onClose); the session
       // scope (with its cwd) rides to the callback.

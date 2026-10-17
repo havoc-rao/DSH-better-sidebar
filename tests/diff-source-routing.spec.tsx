@@ -144,7 +144,7 @@ describe('DiffTab routing through the gitSource seat', () => {
     const service = serviceWith(provider)
     bindGitSourceSeat(fakeCtx(service).ctx)
     const host = hostSpies()
-    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: LINES, truncated: false })
+    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', size: 10, content: LINES })
 
     const container = document.createElement('div')
     document.body.append(container)
@@ -223,7 +223,7 @@ describe('DiffTab routing through the gitSource seat', () => {
     bindGitSourceSeat(fakeCtx(service).ctx)
     const host = hostSpies()
     host.gitDiff.mockResolvedValue({ diff: gapDiff })
-    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: LINES, truncated: false })
+    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', size: 10, content: LINES })
 
     const container = document.createElement('div')
     document.body.append(container)
@@ -249,7 +249,7 @@ describe('DiffTab routing through the gitSource seat', () => {
     const host = hostSpies()
     host.gitDiff.mockResolvedValue({ diff: gapDiff })
     vi.spyOn(api, 'gitShow').mockResolvedValue({ content: LINES })
-    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: LINES, truncated: false })
+    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', size: 10, content: LINES })
 
     const container = document.createElement('div')
     document.body.append(container)
@@ -298,7 +298,7 @@ describe('DiffPane routing through useGitSource (ctx-based)', () => {
       createSource: () => ({ ...makeSource('worktree'), gitDiff, gitShow }) as GitDataSource,
     }
     const service = serviceWith(provider)
-    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: LINES, truncated: false })
+    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', size: 10, content: LINES })
     const host = hostSpies()
 
     const { root, container } = await mountPane(fakeCtx(service).ctx, {
@@ -353,7 +353,7 @@ describe('DiffPane routing through useGitSource (ctx-based)', () => {
     const host = hostSpies()
     host.gitDiff.mockResolvedValue({ diff: gapDiff })
     vi.spyOn(api, 'gitShow').mockResolvedValue({ content: LINES })
-    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: LINES, truncated: false })
+    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', size: 10, content: LINES })
 
     const { root, container } = await mountPane(fakeCtx(createBetterSidebarService(createSidebarStore())).ctx, {
       kind: 'git',

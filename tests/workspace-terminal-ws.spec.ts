@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({ spawn: vi.fn(), accepted: undefined as unknown
 vi.mock('../src/pty-deps.ts', async original => ({ ...await original<object>(), loadNodePty: () => ({ spawn: state.spawn }) }))
 vi.mock('ws', () => ({
   WebSocket: { OPEN: 1 },
-  WebSocketServer: class { handleUpgrade(_req: unknown, _socket: unknown, _head: unknown, cb: (ws: unknown) => void) { cb(state.accepted) } close() {} },
+  WebSocketServer: class { clients = new Set(); handleUpgrade(_req: unknown, _socket: unknown, _head: unknown, cb: (ws: unknown) => void) { cb(state.accepted) } close() {} },
 }))
 import { apply } from '../src/index.ts'
 class Socket extends EventEmitter {
@@ -26,7 +26,8 @@ it('WS route attaches only existing workspace ids and rejects stale/foreign/exit
   }, onExit: (fn: (event: unknown) => void) => { events.on('exit', fn); return { dispose: () => events.off('exit', fn) } } })
   const routes: SidebarWebRoute[] = [], upgrades: SidebarWebUpgradeRoute[] = [], cleanup: Array<() => void> = []
   let creatorRemoved = false
-  apply({ webRuntime: { trustedHosts: [] }, webServer: {
+  apply({ webRuntime: { trustedHosts: [] }, connection: { requestRejection: (req: { headers: { host?: string } }) => req.headers.host?.startsWith('127.0.0.1:') ? undefined : { status: 403 } },
+    webServer: {
     register: (r: SidebarWebRoute) => { routes.push(r); return () => {} },
     registerUpgrade: (r: SidebarWebUpgradeRoute) => { upgrades.push(r); return () => {} },
   }, sessions: { get: (id: string) => creatorRemoved && id === 'one' ? undefined : ({ header: { cwd: id === 'foreign' ? other : cwd } }) },
@@ -37,7 +38,7 @@ it('WS route attaches only existing workspace ids and rejects stale/foreign/exit
   async function call(method: string, payload: unknown) {
     let body = ''
     await api.handler({ url: `/sidebar/api/${method}`, method: 'POST', headers: { host: '127.0.0.1:3080' }, async *[Symbol.asyncIterator]() { yield JSON.stringify(payload) } },
-      { statusCode: 0, writeHead: () => {}, end: value => { body = String(value) } })
+      { statusCode: 0, write: () => true, writeHead: () => {}, end: value => { body = String(value) } })
     return JSON.parse(body).value
   }
   const upgrade = upgrades.find(r => r.path === '/sidebar/ws/terminal')!

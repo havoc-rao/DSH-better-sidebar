@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- heterogeneous RPC fixtures assert each route value below */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import fsPromises from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
@@ -31,12 +32,13 @@ function mount(cwd: string, readLimit = 1024 * 1024, sessionPresent = true) {
   const routes: SidebarWebRoute[] = []
   apply({
     webRuntime: { trustedHosts: [] },
+    connection: { requestRejection: (req: { headers: { host?: string } }) => req.headers.host?.startsWith('127.0.0.1:') ? undefined : { status: 403 } },
     webServer: { register: (route: SidebarWebRoute) => { routes.push(route); return () => {} }, registerUpgrade: () => () => {} },
     sessions: { get: () => sessionPresent ? ({ header: { cwd }, snapshotEvents: () => [] }) : undefined },
     tools: { register: () => () => {} },
     effect: (fn: () => unknown) => { const cleanup = fn(); if (typeof cleanup === 'function') cleanups.push(cleanup as () => void) },
     inject: () => () => {}, on: () => () => {}, get: () => undefined,
-  } as never, { readLimit })
+  } as never, { resourceReadLimit: readLimit })
   const route = routes.find(route => route.path === '/sidebar/api')!
   return async (method: string, payload: unknown, host = '127.0.0.1:3080'): Promise<{ status: number; ok: boolean; value: any; error?: { code: string; message: string } }> => {
     const body = Buffer.from(JSON.stringify({ sessionId: 'resource-session', authority: 'host-local', ...payload as object }))
@@ -105,8 +107,8 @@ describe('real fenced resource data routes', () => {
     }
     writeFileSync(path, 'a'.repeat(17))
     expect((await api('document.write', { path, content: 'x', expectedContent: 'a' })).error?.code).toBe('too-large')
-    // Legacy route still accepts unconditional overwrites, no semantic changes.
-    expect((await api('fs.write', { path, content: 'legacy' })).ok).toBe(true)
+    // Writes now use the upstream streaming transport.
+    expect((await api('fs.write', { path, content: 'legacy' })).error?.code).toBe('not-found')
   })
 
   it('rechecks the baseline after preparing the temp file and refuses external races', async () => {

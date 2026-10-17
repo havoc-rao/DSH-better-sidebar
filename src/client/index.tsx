@@ -23,6 +23,7 @@ import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { readNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { CMD_W_SHORTCUT, claimCloseActiveTab, installDesktopBottomClose, readDesktopShellBridge } from './desktop-shortcuts.ts'
 import { installBottomCloseShortcut } from './bottom-close-shortcut.ts'
+import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDiagnosticsUI } from './context-diagnostics-ui.tsx'
 import { createNativeSurface } from './native/surface.ts'
 import { registerInspectorSurface, type RootInspectorController } from './inspector-surface.tsx'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
@@ -198,6 +199,22 @@ export function apply(ctx: Context): void {
   // then hands it to the mounted panel and closes over it in the slot
   // registrations (the official createXXXStore() factory rule — no
   // module-level singleton).
+  // The optional dsh-context diagnostics: ONE controller per activation. It
+  // re-proves the optional runtime faces itself, so the plugin needs no new
+  // inject entry; it is threaded explicitly into the three consumers (the two
+  // host slots by closure, the plugin's own React tree through the provider,
+  // and the native tab bodies through the native surface's deps). On a
+  // deployment without dsh-context it reports `available: false` and every
+  // entry point stays absent.
+  const diagnostics = createContextDiagnosticsHost(ctx)
+  ctx.effect(
+    () => registerContextDiagnosticsUI(ctx, diagnostics),
+    'dsh-better-sidebar: context diagnostics surfaces',
+  )
+  // The controller holds a child fiber (its runtime-face integration) and a
+  // pending-open timer; releasing both is what keeps a disabled plugin — and a
+  // hot reload that activates a fresh one — from leaving the old one behind.
+  ctx.effect(() => () => { diagnostics.dispose() }, 'dsh-better-sidebar: context diagnostics controller')
   const sidebarStore = createSidebarStore()
   // The sidebar registry service: external plugins register tab types and
   // file previewers through `ctx.betterSidebar.registerTab/registerFileViewer`.
@@ -235,7 +252,7 @@ export function apply(ctx: Context): void {
   service.setSurface(nativeSurface)
   ctx.effect(
     () => registerNativeSurface({
-      ctx, store: sidebarStore, service, records: nativeRecords,
+      ctx, store: sidebarStore, service, records: nativeRecords, diagnostics,
       reportFailure: (phase, error) => { fail(`native ${phase}`, error) },
     }),
     'dsh-better-sidebar: native right-Sidebar registrations',
@@ -451,7 +468,15 @@ export function apply(ctx: Context): void {
           host.setAttribute('data-dsh-better-sidebar', '')
           mountAnchor().appendChild(host)
           root = createRoot(host)
-          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
+          root.render(createElement(
+            RenderBoundary,
+            { className: css.boundaryError },
+            createElement(
+              ContextDiagnosticsHost,
+              { controller: diagnostics },
+              createElement(Sidebar, { ctx, store: sidebarStore }),
+            ),
+          ))
           mounted = true
           guardAnchor()
           scheduleHostCheck()
