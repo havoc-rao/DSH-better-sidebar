@@ -60,7 +60,7 @@ import {
 import { TerminalBlockOverlay } from './TerminalBlockOverlay.tsx'
 import type { Context } from '../context-types.ts'
 import { TerminalWaitBanner } from './TerminalWaitBanner.tsx'
-import type { TerminalTransport, TerminalTransportHandle } from './terminal-transport.ts'
+import type { TerminalConnectionState, TerminalTransport, TerminalTransportHandle } from './terminal-transport.ts'
 import { restartWorkspaceTerminal, updateTerminalSession } from './workspace-terminals.ts'
 import css from './sidebar.module.css'
 
@@ -154,14 +154,14 @@ export function TerminalView(props: {
 }) {
   const { ctx, scope, tabId, terminalId, store, transport, workspaceBinding, visible = false } = props
   const hostRef = useRef<HTMLDivElement>(null)
-  const [connected, setConnected] = useState(false)
+  const [connection, setConnection] = useState<TerminalConnectionState>({ phase: 'connecting', intent: terminalId === undefined ? undefined : 'attach-existing' })
+  const connected = connection.phase === 'connected'
+  const [canRetry, setCanRetry] = useState(transport === undefined)
+  const [accessDenied, setAccessDenied] = useState<string | null>(null)
   const [fatal, setFatal] = useState<string | null>(null)
   const [closedReason, setClosedReason] = useState<'exited' | 'terminated' | 'missing' | null>(null)
   const [restarting, setRestarting] = useState(false)
   const restartPending = useRef(false)
-  // One automatic attempt per visible activation, not per replacement identity:
-  // a shell that immediately exits must not create an endless restart loop.
-  const autoRestartAttempted = useRef(false)
   // An async create may outlive this view; only its captured store scope may
   // still be updated, never the state of a new mount/terminal identity.
   const mountGeneration = useRef(0)
@@ -262,23 +262,10 @@ export function TerminalView(props: {
   }
 
   useEffect(() => {
-    if (!visible) {
-      autoRestartAttempted.current = false
-      return
-    }
-    if (terminalId === undefined || (transport !== undefined && workspaceBinding === undefined)
-      || (closedReason !== 'exited' && closedReason !== 'missing')
-      || autoRestartAttempted.current || restartPending.current) return
-    autoRestartAttempted.current = true
-    void restart()
-    // The attempt is gated by visibility and confirmed process state, never by
-    // changing callback/source identities. A later activation permits retry.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, closedReason, terminalId, transport, workspaceBinding])
-
-  useEffect(() => {
     const generation = ++mountGeneration.current
-    setConnected(false)
+    setConnection({ phase: 'connecting', intent: terminalId === undefined ? undefined : 'attach-existing' })
+    setAccessDenied(null)
+    setCanRetry(transport === undefined)
     setFatal(null)
     setClosedReason(null)
     setDepsFatal(null)
@@ -359,6 +346,11 @@ export function TerminalView(props: {
     let closed = false
     let retry: number | undefined
     let failures = 0
+    let structuredState = false
+    let settled = false
+    const setPhase = (phase: TerminalConnectionState['phase']): void => {
+      setConnection(previous => ({ ...previous, phase }))
+    }
 
     const wsUrl = (): string => {
       // The desktop shell (`dsh-app://app`) has no WebSocket carrier on its
@@ -393,38 +385,46 @@ export function TerminalView(props: {
     }
 
     const connect = (): void => {
-      if (closed) return
+      if (closed || settled) return
+      window.clearTimeout(retry)
+      setPhase('connecting')
       const url = wsUrl()
       setLastUrl(url)
-      socket = new WebSocket(url)
-      socket.onopen = () => {
-        if (closed) return
+      const previous = socket
+      const current = new WebSocket(url)
+      socket = current
+      previous?.close()
+      current.onopen = () => {
+        if (closed || settled || socket !== current) return
         failures = 0
-        setConnected(true)
+        setPhase('connected')
         setFatal(null)
         setClosedReason(null)
         sendResize()
       }
-      socket.onmessage = (event) => {
-        if (typeof event.data === 'string') term.write(event.data)
+      current.onmessage = (event) => {
+        if (!closed && !settled && socket === current && typeof event.data === 'string') term.write(event.data)
       }
-      socket.onclose = (event) => {
-        if (closed) return
-        setConnected(false)
+      current.onclose = (event) => {
+        if (closed || settled || socket !== current) return
+        setPhase('disconnected')
         if (terminalId !== undefined) {
           if (event.code === 1000 && (event.reason === 'terminal-exited' || event.reason === 'terminal-terminated')) {
+            settled = true
             setClosedReason(event.reason === 'terminal-exited' ? 'exited' : 'terminated')
             setFatal(null)
             return
           }
           if (event.code === 1008 && event.reason === 'terminal-not-found') {
+            settled = true
             setClosedReason('missing')
             setFatal(null)
             return
           }
           // Permission/fence refusals are not evidence of a dead terminal.
           if (event.code === 1008 || event.reason === 'workspace-detached' || event.reason === 'terminal-detached') {
-            setFatal(event.reason)
+            settled = true
+            setAccessDenied(event.reason)
             return
           }
         }
@@ -471,8 +471,8 @@ export function TerminalView(props: {
         }
         if (!closed) retry = window.setTimeout(connect, 2000)
       }
-      socket.onerror = () => {
-        socket?.close()
+      current.onerror = () => {
+        if (!closed && !settled && socket === current) current.close()
       }
     }
 
@@ -544,21 +544,49 @@ export function TerminalView(props: {
       // callbacks into the existing banner/state surface. The built-in
       // local pty WebSocket path below stays untouched.
       transportHandle = transport.open({
-        term: { write: (data) => term.write(data), cols: term.cols, rows: term.rows },
+        term: { write: data => { if (!closed) term.write(data) }, cols: term.cols, rows: term.rows },
         scope,
         tabId,
         terminalId,
         cwd: scope.cwd,
-        onOutput: (data) => term.write(data),
-        onConnected: (connected) => {
-          setConnected(connected)
+        onOutput: data => { if (!closed) term.write(data) },
+        onState: state => {
+          if (closed || settled) return
+          structuredState = true
+          setConnection(state)
+          if (state.phase !== 'disconnected') setFatal(null)
+        },
+        onConnected: connected => {
+          if (closed || settled || structuredState) return
+          setPhase(connected ? 'connected' : 'disconnected')
           if (connected) setFatal(null)
         },
-        onFatal: (reason) => setFatal(reason),
-        onClosed: reason => { setConnected(false); setClosedReason(reason); setFatal(null) },
-        onEndpoint: (endpoint) => setLastUrl(endpoint),
+        onAccessDenied: reason => {
+          if (closed || settled) return
+          settled = true
+          setPhase('disconnected')
+          setAccessDenied(reason)
+          setFatal(null)
+        },
+        onFatal: reason => {
+          if (closed || settled) return
+          setFatal(reason)
+          if (reason !== null) setPhase('disconnected')
+        },
+        onClosed: reason => {
+          if (closed || settled) return
+          settled = true
+          setPhase('disconnected')
+          setClosedReason(reason)
+          setFatal(null)
+        },
+        onEndpoint: endpoint => { if (!closed) setLastUrl(endpoint) },
       })
+      setCanRetry(typeof transportHandle.retry === 'function')
       connectRef.current = () => {
+        if (closed || settled) return
+        // Legacy retries cannot prove they started an attempt: remain honestly
+        // disconnected until the provider emits connected / structured status.
         if (transportHandle !== null && typeof transportHandle.retry === 'function') transportHandle.retry()
       }
       cancelOpen = openWhenSized(host, () => {
@@ -666,28 +694,46 @@ export function TerminalView(props: {
       )}
       {closedReason !== null && (
         <div className={css.terminalBanner}>
-          {t(closedReason === 'exited' ? 'workspaceTerminalExited' : closedReason === 'terminated' ? 'workspaceTerminalTerminated' : 'workspaceTerminalUnavailable')}
+          {t(closedReason === 'exited' ? 'terminalViewExited' : closedReason === 'terminated' ? 'terminalViewTerminated' : 'terminalViewMissing')}
           {fatal !== null && <div role="alert">{`${t('terminalError')}: ${fatal}`}</div>}
-          <button type="button" className={css.terminalRetry} disabled={restarting}
+          {(terminalId !== undefined && (transport === undefined || workspaceBinding !== undefined)) && <button type="button" className={css.terminalRetry} disabled={restarting}
             onClick={() => { void restart() }}>
-            {t('workspaceTerminalRestart')}
-          </button>
+            {t('terminalViewStartNew')}
+          </button>}
         </div>
       )}
-      {fatal !== null && closedReason === null && (
+      {accessDenied !== null && (
+        <div className={css.terminalBanner} role="alert">
+          {t('terminalViewForbidden')}
+          <div>{accessDenied}</div>
+        </div>
+      )}
+      {fatal !== null && closedReason === null && accessDenied === null && (
         <div className={css.terminalBanner}>
-          {`${t('terminalError')}: ${fatal}`}
+          {t('terminalViewDisconnected')}
+          <div>{`${t('terminalError')}: ${fatal}`}</div>
           {lastUrl !== null && <div className={css.terminalBannerUrl}>{lastUrl}</div>}
-          <button
+          {canRetry && <button
             type="button"
             className={css.terminalRetry}
             onClick={() => { setFatal(null); connectRef.current?.() }}
           >
-            {t('terminalRetry')}
-          </button>
+            {t('terminalViewReconnect')}
+          </button>}
         </div>
       )}
-      {closedReason === null && fatal === null && depsFatal === null && !connected && <div className={css.terminalBanner}>{t('disconnected')}</div>}
+      {closedReason === null && fatal === null && accessDenied === null && depsFatal === null && !connected && (
+        <div className={css.terminalBanner} role="status">
+          {t(connection.phase === 'disconnected' ? 'terminalViewDisconnected'
+            : connection.intent === 'attach-existing' ? 'terminalViewAttaching'
+              : connection.intent === 'create' ? 'terminalViewCreating' : 'terminalViewConnecting')}
+          {connection.phase === 'disconnected' && canRetry && (
+            <button type="button" className={css.terminalRetry} onClick={() => connectRef.current?.()}>
+              {t('terminalViewReconnect')}
+            </button>
+          )}
+        </div>
+      )}
       <div ref={hostRef} className={css.terminal}>
         {/* The block layer: hairline dividers at every CLI block boundary;
             hovering a block highlights its span and raises the per-block
