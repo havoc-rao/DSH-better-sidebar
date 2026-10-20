@@ -42,7 +42,7 @@
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
@@ -83,7 +83,7 @@ import { useFileTreeUi } from './file-tree-ui.ts'
 import type { FileTreeRowModel, FileTreeNode, GuideColumn } from 'dsh-file-tree-ui/client-contract'
 import { writeFileReferenceDrag } from './file-reference-drag.ts'
 import { useDirectoryWatch } from './use-dir-watch.ts'
-import { strictExplorerApi, type FileExplorerSource } from './file-explorer.tsx'
+import { strictExplorerApi, type FileExplorerPicker, type FileExplorerSource } from './file-explorer.tsx'
 import { usePolling } from './use-polling.ts'
 import { useTreeScroll } from './use-tree-scroll.ts'
 import type { ResourceActionContext } from './resource-actions.ts'
@@ -219,6 +219,7 @@ interface ActivateModifiers {
   ctrlKey: boolean
   metaKey: boolean
   shiftKey: boolean
+  key?: string
 }
 
 /**
@@ -273,6 +274,7 @@ interface FileRowProps {
    */
   gitTone: GitTone | undefined
   gitLetter: string | undefined
+  picker?: boolean
   actions: RowActions
 }
 
@@ -285,7 +287,7 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
     <div
       role="button"
       tabIndex={0}
-      draggable
+      draggable={!props.picker}
       onDragStart={(event) => { actions.dragStart(event, entry.path, entry.isDir) }}
       onDragEnd={() => { actions.dragEnd() }}
       className={clsx(
@@ -302,8 +304,10 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
       title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
       onClick={(event) => { actions.activate(event, entry.path, false) }}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.target !== event.currentTarget || event.repeat || isLikelyImeKey(event.nativeEvent)) return
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
+          event.stopPropagation()
           actions.activate(event, entry.path, false)
         }
       }}
@@ -319,7 +323,7 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
       {gitTone !== undefined && gitLetter !== undefined && (
         <StatusBadge tone={badgeToneOf(gitTone)} title={gitToneLabel(gitTone)}>{gitLetter}</StatusBadge>
       )}
-      {copied
+      {!props.picker && (copied
         ? <span className={css.explorerCopied}>{t('copied')}</span>
         : (
           <button
@@ -334,7 +338,7 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
           >
             {t('referenceFile')}
           </button>
-        )}
+        ))}
     </div>
   )
 })
@@ -360,6 +364,7 @@ interface DirRowProps {
   /** A change exists at or below this directory (tinted, never lettered). */
   gitChanged: boolean
   copied: boolean
+  picker?: boolean
   actions: RowActions
 }
 
@@ -375,7 +380,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
     <div
       role="button"
       tabIndex={0}
-      draggable
+      draggable={!props.picker}
       onDragStart={(event) => { actions.dragStart(event, entry.path, entry.isDir) }}
       onDragEnd={() => { actions.dragEnd() }}
       className={clsx(
@@ -398,8 +403,10 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
       title={target.path}
       onClick={(event) => { actions.activate(event, entry.path, true, chain) }}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.target !== event.currentTarget || event.repeat || isLikelyImeKey(event.nativeEvent)) return
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
+          event.stopPropagation()
           actions.activate(event, entry.path, true, chain)
         }
       }}
@@ -412,7 +419,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
         {chain.length > 1 ? chain.map(link => link.name).join('/') : entry.name}
       </span>
       {entry.isSymlink && <IconLinkOutlineRegular size={12} className={css.explorerSymlink} />}
-      {copied
+      {!props.picker && (copied
         ? <span className={css.explorerCopied}>{t('copied')}</span>
         : (
           <button
@@ -427,7 +434,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
           >
             {t('referenceFile')}
           </button>
-        )}
+        ))}
     </div>
   )
 })
@@ -446,6 +453,7 @@ interface RootRowProps {
   /** A change exists at or below the root (tinted). */
   gitChanged: boolean
   copied: boolean
+  picker?: boolean
   actions: RowActions
 }
 
@@ -466,7 +474,7 @@ const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
     >
       {icon}
       <span className={clsx(css.explorerName, gitChanged && css.explorerDirChanged)}>{baseName(path)}</span>
-      {copied
+      {!props.picker && (copied
         ? <span className={css.explorerCopied}>{t('copied')}</span>
         : (
           <button
@@ -481,7 +489,7 @@ const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
           >
             {t('referenceFile')}
           </button>
-        )}
+        ))}
     </div>
   )
 })
@@ -524,6 +532,7 @@ function sameScope(armed: FsScope | undefined, live: FsScope | undefined): boole
 export function FileTree(props: {
   /** Only file activation/document state; listing and mutations keep sessionId/cwd. */
   activationScope?: SessionScope
+  picker?: FileExplorerPicker
   source?: FileExplorerSource
   /** Legacy caller shape; expansion is now owned by the session store. */
   store?: import('./state.ts').SidebarStore
@@ -619,7 +628,8 @@ export function FileTree(props: {
     openWithShowPluginTargets, exclude,
     onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, hidden, visible, service,
   } = props
-  const source = props.source
+  const picker = props.picker
+  const source = useMemo(() => picker === undefined ? props.source : { fsTrees: props.source?.fsTrees.bind(props.source) ?? (() => Promise.reject(new Error('Picker source unavailable'))) }, [props.source, picker !== undefined])
   const sourceController = useMemo(() => new AbortController(), [source])
   useEffect(() => () => { sourceController.abort() }, [sourceController])
   const fs = useMemo(() => source === undefined ? api : strictExplorerApi(source, sourceController.signal), [source, sourceController])
@@ -639,6 +649,9 @@ export function FileTree(props: {
   }, [activationToken])
   const { onToggle, onReferenceFile } = props
   const fileTreeUi = useFileTreeUi()
+  // Framework hover seats are keyed across the whole page, including CMD
+  // pickers alongside native/parked explorers. Never share a constant key.
+  const treeInstanceId = useId()
   const [data, setData] = useState<Record<string, LevelData>>({})
   /**
    * Registry revision for the file-icon feature: bumps on ANY registry
@@ -1414,6 +1427,19 @@ export function FileTree(props: {
 
   // ── Stable row actions ─────────────────────────────────────────────────
   const handleActivate = useCallback((event: ActivateModifiers, path: string, isDir: boolean, chain?: readonly FsEntry[]): void => {
+    const picker = propsRef.current.picker
+    if (picker !== undefined) {
+      if (!visibleRowsRef.current.some(row => row.path === path)) return
+      if (event.key === 'Enter') {
+        if (acceptPending.current) return
+        acceptPending.current = true
+        queueMicrotask(() => { acceptPending.current = false })
+      }
+      picker.onSelect(path, isDir)
+      if (isDir) propsRef.current.onToggle(path)
+      else if (event.key === 'Enter') picker.onAccept(path, false)
+      return
+    }
     if (event.ctrlKey || event.metaKey) {
       toggleSelect(path, isDir)
       return
@@ -1462,6 +1488,7 @@ if (isDir) {
   const handleContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void }, path: string, isDir: boolean): void => {
     event.preventDefault()
     event.stopPropagation()
+    if (propsRef.current.picker !== undefined) return
     // VSCode semantics: right-clicking outside the selection collapses it
     // onto the row; right-clicking INSIDE it keeps the whole batch.
     if (!selectedRef.current.has(path)) {
@@ -1476,6 +1503,7 @@ if (isDir) {
   }, [setSelection])
 
   const handleReference = useCallback((path: string, isDir: boolean): void => {
+    if (propsRef.current.picker !== undefined) return
     propsRef.current.onReferenceFile(path, isDir)
   }, [])
 
@@ -1483,6 +1511,7 @@ if (isDir) {
   dragHandlers.current = { handleRowDragOver, handleDirDrop, clearDragSource, resetDrop }
   const actions = useMemo<RowActions>(() => ({
     dragStart(event, path, isDir) {
+      if (propsRef.current.picker !== undefined) { event.preventDefault(); return }
       writeFileReferenceDrag(event.dataTransfer, path, isDir)
       dragSource.current = { path, isDir }
       setDraggingPath(path)
@@ -1491,8 +1520,8 @@ if (isDir) {
     activate: handleActivate,
     contextMenu: handleContextMenu,
     reference: handleReference,
-    dragOver: (event, dir) => { dragHandlers.current.handleRowDragOver(event, dir) },
-    drop: (event, path, isDir) => { dragHandlers.current.handleDirDrop(event, isDir ? path : parentOf(path)) },
+    dragOver: (event, dir) => { if (propsRef.current.picker === undefined) dragHandlers.current.handleRowDragOver(event, dir) },
+    drop: (event, path, isDir) => { if (propsRef.current.picker === undefined) dragHandlers.current.handleDirDrop(event, isDir ? path : parentOf(path)) },
   }), [handleActivate, handleContextMenu, handleReference])
 
   // ── New folder ─────────────────────────────────────────────────────────
@@ -2085,22 +2114,24 @@ if (isDir) {
     return (entry: FsEntry): readonly FsEntry[] => {
       const cached = cache.get(entry.path)
       if (cached !== undefined) return cached
-      const chain: readonly FsEntry[] = entry.compact === true ? compactChain(entry, path => data[path]) : [entry]
+      const chain: readonly FsEntry[] = picker === undefined && entry.compact === true ? compactChain(entry, path => data[path]) : [entry]
       cache.set(entry.path, chain)
       return chain
     }
-  }, [data])
+  }, [data, picker !== undefined])
 
   // The Shift range walks the rows the user can actually see: the level's
   // rows in the SAME order `renderLevel` draws them (the sort choice), then
   // depth-first, expanded state decides. Recomputed with the level cache,
   // never rendered.
+  const pickerMatches = (entry: FsEntry): boolean => picker === undefined || entry.isDir
+    || entry.path.toLocaleLowerCase().includes(picker.query.trim().toLocaleLowerCase())
   const visibleRows = useMemo(() => {
     const rows: { path: string; isDir: boolean }[] = []
     const walk = (dir: string): void => {
       const level = data[dir]
       if (level?.entries === undefined) return
-      for (const entry of sortEntries(level.entries, sort)) {
+      for (const entry of sortEntries(level.entries, sort).filter(pickerMatches)) {
         // A folded row IS one row: its identity is the chain head (the level
         // entry the walk is on), and it descends into the chain TAIL — the
         // same shape `renderLevel` draws, so a Shift range covers what the
@@ -2113,8 +2144,66 @@ if (isDir) {
     }
     if (root !== undefined) walk(root)
     return rows
-  }, [chainFor, data, expandedSet, root, sort])
+  }, [chainFor, data, expandedSet, root, sort, picker?.query])
   visibleRowsRef.current = visibleRows
+  const pickerLive = useRef(false)
+  const acceptPending = useRef(false)
+  const pickerAccept = useCallback(() => {
+    if (!pickerLive.current || acceptPending.current) return
+    const live = propsRef.current
+    const selected = visibleRowsRef.current.find(row => row.path === live.picker?.selectedPath)
+    if (live.picker === undefined || selected === undefined) return
+    acceptPending.current = true
+    queueMicrotask(() => { acceptPending.current = false })
+    live.picker.onSelect(selected.path, selected.isDir)
+    if (selected.isDir) live.onToggle(selected.path)
+    else live.picker.onAccept(selected.path, false)
+  }, [])
+  const bindPicker = picker?.bind
+  useEffect(() => {
+    if (picker === undefined) return
+    pickerLive.current = true
+    let active = true
+    const release = bindPicker?.({
+      move(delta) {
+        if (!active || !Number.isFinite(delta) || delta === 0) return
+        const live = propsRef.current.picker
+        const rows = visibleRowsRef.current
+        if (live === undefined || rows.length === 0) return
+        const index = rows.findIndex(row => row.path === live.selectedPath)
+        const next = index < 0 ? (delta > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, index + Math.trunc(delta)))
+        const row = rows[next]!
+        live.onSelect(row.path, row.isDir)
+      },
+      accept() { if (active) pickerAccept() },
+    })
+    return () => { active = false; pickerLive.current = false; release?.() }
+  }, [bindPicker, picker !== undefined, sessionId, cwd, source, pickerAccept])
+  const rowsKey = JSON.stringify(visibleRows)
+  const lastRows = useRef<string>()
+  useEffect(() => {
+    if (picker === undefined) { lastRows.current = undefined; return }
+    if (lastRows.current !== rowsKey) {
+      lastRows.current = rowsKey
+      picker.onVisibleRowsChange?.(visibleRows)
+    }
+    if (picker.selectedPath === undefined || visibleRows.length === 0 || visibleRows.some(row => row.path === picker.selectedPath)) return
+    const fallback = [...visibleRows].reverse().find(row => row.isDir && isWithinWorkspace(row.path, picker.selectedPath!)) ?? visibleRows[0]!
+    picker.onSelect(fallback.path, fallback.isDir)
+  }, [rowsKey, picker?.selectedPath, picker?.onVisibleRowsChange])
+  useEffect(() => {
+    if (picker?.selectedPath === undefined) return
+    const body = bodyRef.current
+    if (body === null) return
+    // The tree owns its DOM; consumers use bind rather than querying rows.
+    const label = [...body.querySelectorAll<HTMLElement>('[title]')].find(el => el.title === picker.selectedPath)
+    const row = label?.closest<HTMLElement>('[role="button"]')
+    if (row === null || row === undefined) return
+    const bounds = row.getBoundingClientRect()
+    const viewport = body.getBoundingClientRect()
+    if (bounds.top < viewport.top) body.scrollTop -= viewport.top - bounds.top
+    else if (bounds.bottom > viewport.bottom) body.scrollTop += bounds.bottom - viewport.bottom
+  }, [picker?.selectedPath, rowsKey])
 
   /**
    * Focus + select an inline editor once, on mount. The callback identity
@@ -2287,7 +2376,7 @@ if (isDir) {
     }
     // The ORDER is the caller's choice (the header's sort control); the level
     // cache keeps the host's own order and is never reordered in place.
-    const entries = sortEntries(level.entries ?? [], sort)
+    const entries = sortEntries(level.entries ?? [], sort).filter(pickerMatches)
     return (
       <>
         {head}
@@ -2317,7 +2406,7 @@ if (isDir) {
                   expanded={isOpen}
                   iconsVersion={iconsVersion}
                   service={service}
-                  selected={selected.has(entry.path)}
+                  selected={(picker !== undefined ? picker.selectedPath === entry.path : selected.has(entry.path))}
 dragging={draggingPath === entry.path}
                   // Reveal-anchor: a reveal names a specific directory, which
                   // may be a MID-chain link — mark the row that renders it.
@@ -2325,6 +2414,7 @@ dragging={draggingPath === entry.path}
                   dropTarget={dropTarget === tail.path}
                   gitChanged={gitStatus.dirHasChanges(entry.path)}
                   copied={copiedPath === entry.path}
+                  picker={picker !== undefined}
                   actions={actions}
                 />
                 {isOpen && renderLevel(tail.path, depth + 1)}
@@ -2339,13 +2429,14 @@ dragging={draggingPath === entry.path}
               depth={depth}
               iconsVersion={iconsVersion}
               service={service}
-              selected={selected.has(entry.path)}
+              selected={(picker !== undefined ? picker.selectedPath === entry.path : selected.has(entry.path))}
                   dragging={draggingPath === entry.path}
               revealed={revealedSet.has(entry.path)}
               dropTarget={dropTarget === parentOf(entry.path)}
               gitTone={git?.tone}
               gitLetter={git?.letter}
               copied={copiedPath === entry.path}
+              picker={picker !== undefined}
               actions={actions}
             />
           )
@@ -2400,7 +2491,7 @@ dragging={draggingPath === entry.path}
   const treeGuideColumns = (ancestors: string[]): GuideColumn[] =>
     ancestors.map((dir, index) => ({
       id: dir,
-      onToggle: index === 0 ? () => {} : () => { onToggle(dir) },
+      onToggle: index === 0 ? () => {} : () => { if (picker !== undefined) picker.onSelect(dir, true); onToggle(dir) },
     }))
 
   /** The @-reference affordance (or the transient copied label) for the
@@ -2449,7 +2540,7 @@ dragging={draggingPath === entry.path}
         </div>
       )]
     }
-    const entries = level.entries ?? []
+    const entries = picker === undefined ? (level.entries ?? []) : sortEntries(level.entries ?? [], sort).filter(pickerMatches)
     const rows: FileTreeNode[] = entries.map(entry => {
       // The row being renamed renders as its editor — a whole-row injected
       // node (an editor is not a click target, and nesting it inside the
@@ -2467,13 +2558,13 @@ dragging={draggingPath === entry.path}
         key: entry.path,
         role: 'button',
         tabIndex: 0,
-        draggable: true,
+        draggable: picker === undefined,
         indentPx: depth * 22 + 6,
         guideColumns: treeGuideColumns(treeAncestors(entry.path, treeRoot)),
         junction: isOpen,
         style: treeRowStyle,
         className: clsx(
-          selected.has(entry.path) && css.explorerRowSelected,
+          (picker !== undefined ? picker.selectedPath === entry.path : selected.has(entry.path)) && css.explorerRowSelected,
           entry.hidden && css.explorerHidden,
           draggingPath === entry.path && css.explorerRowDragging,
           revealedSet.has(entry.path) && css.explorerRowRevealed,
@@ -2495,13 +2586,14 @@ dragging={draggingPath === entry.path}
           {entry.isSymlink && <IconLinkOutlineRegular size={12} className={css.explorerSymlink} />}
           {!isDir && git !== undefined && <StatusBadge tone={badgeToneOf(git.tone)} title={gitToneLabel(git.tone)}>{git.letter}</StatusBadge>}
         </>,
-        actions: treeRowActions(entry.path, entry.isDir),
+        actions: picker === undefined ? treeRowActions(entry.path, entry.isDir) : null,
         // The transient copied label must stay visible without hover (the
         // framework otherwise keeps the actions slot at opacity 0).
         actionsVisible: copiedPath === entry.path,
         ...(dropTarget === dropDir ? { dropState: 'on' as const } : {}),
         onClick: (event) => { handleActivate(event, entry.path, isDir) },
         onKeyDown: (event) => {
+          if (event.target !== event.currentTarget || event.repeat || isLikelyImeKey(event.nativeEvent)) return
           if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
             event.preventDefault()
             // Keyboard-triggered menus anchor at 0,0 (the browser's own
@@ -2515,6 +2607,7 @@ dragging={draggingPath === entry.path}
           }
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
+            event.stopPropagation()
             handleActivate(event, entry.path, isDir)
           }
         },
@@ -2530,8 +2623,9 @@ dragging={draggingPath === entry.path}
           actions.dragStart(event, entry.path, isDir)
         },
         onDragEnd: () => { clearDragSource(); resetDrop() },
-        onDragOver: (event) => { handleRowDragOver(event, dropDir) },
+        onDragOver: (event) => { if (picker === undefined) handleRowDragOver(event, dropDir) },
         onDrop: (event) => {
+          if (picker !== undefined) return
           if (isDir) handleDirDrop(event, entry.path)
           else handleFileDrop(event, entry.path)
         },
@@ -2543,7 +2637,7 @@ dragging={draggingPath === entry.path}
         // renders its loading node inside the fold like the built-in path.
         ...(isDir ? {
           expanded: isOpen,
-          onToggle: () => { onToggle(entry.path) },
+          onToggle: () => { if (picker !== undefined) picker.onSelect(entry.path, true); onToggle(entry.path) },
           children: buildLevelRows(entry.path, depth + 1, treeRoot),
         } : {}),
       }
@@ -2567,11 +2661,11 @@ dragging={draggingPath === entry.path}
     leading: dirRowIcon(treeRoot, true),
     indentPx: 6,
     style: treeRowStyle,
-    actions: treeRowActions(treeRoot, true),
+    actions: picker === undefined ? treeRowActions(treeRoot, true) : null,
     actionsVisible: copiedPath === treeRoot,
     ...(dropTarget === treeRoot ? { dropState: 'on' as const } : {}),
-    onDragOver: (event) => { handleRowDragOver(event, treeRoot) },
-    onDrop: (event) => { handleDirDrop(event, treeRoot) },
+    onDragOver: (event) => { if (picker === undefined) handleRowDragOver(event, treeRoot) },
+    onDrop: (event) => { if (picker === undefined) handleDirDrop(event, treeRoot) },
     onPointerUp: (event) => {
       if (event.button === 2) handleContextMenu(event, treeRoot, true)
     },
@@ -2605,10 +2699,10 @@ dragging={draggingPath === entry.path}
       className={clsx(css.explorerBody, hidden === true && css.explorerHiddenPane)}
       hidden={hidden}
       tabIndex={-1}
-      onDragEnter={handleBodyDragEnter}
-      onDragOver={handleBodyDragOver}
+      onDragEnter={picker === undefined ? handleBodyDragEnter : undefined}
+      onDragOver={picker === undefined ? handleBodyDragOver : undefined}
       onDragLeave={handleBodyDragLeave}
-      onDrop={handleBodyDrop}
+      onDrop={picker === undefined ? handleBodyDrop : undefined}
       onContextMenu={fileTreeUi !== undefined && root !== undefined ? (event) => {
         // Service-path rows open the row menu on right-button pointer-up
         // (the model's DOM passthrough has no onContextMenu); the
@@ -2620,6 +2714,7 @@ dragging={draggingPath === entry.path}
       } : undefined}
       onClick={(event) => { if (event.target === event.currentTarget) clearSelection() }}
       onKeyDown={(event) => {
+        if (picker !== undefined) return
         if (event.key === 'Escape') clearSelection()
         // VS Code explorer keybindings: Cmd/Ctrl+Z undoes the last tree
         // mutation; Cmd/Ctrl+Shift+Z (and plain Ctrl+Y on Windows/Linux)
@@ -2691,7 +2786,7 @@ dragging={draggingPath === entry.path}
              * same page — e.g. a recents list — use their own keys).
              */
             fileTreeUi.renderFileTree({
-              treeKey: 'workspace-explorer',
+              treeKey: `workspace-explorer:${treeInstanceId}`,
               rows: [rootRowModel(root)],
               grid: treeGrid,
               className: css.explorerTree,
@@ -2712,6 +2807,7 @@ dragging={draggingPath === entry.path}
                 dropTarget={dropTarget === root}
                 gitChanged={gitStatus.dirHasChanges(root)}
                 copied={copiedPath === root}
+                picker={picker !== undefined}
                 actions={actions}
               />
               {renderLevel(root, 1)}
@@ -2720,7 +2816,7 @@ dragging={draggingPath === entry.path}
           {/* The selection bar closes the scroll container (sticky bottom): it
               sits BELOW every row, never over them, and its appearance never
               shifts the tree the way a top bar did. */}
-          {selected.size > 0 && (
+          {picker === undefined && selected.size > 0 && (
             <div className={css.explorerSelectionBar} role="toolbar" aria-label={t('filesSelected', { count: selected.size })}>
               <span className={css.explorerSelectionText}>{t('filesSelected', { count: selected.size })}</span>
               <span className={css.explorerSelectionActions}>

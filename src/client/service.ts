@@ -22,7 +22,7 @@
 import type { ReactNode } from 'react'
 import { createWorkspaceTerminalSubscriptions, summarizeWorkspaceTerminals } from './workspace-terminal-subscriptions.ts'
 import { renderFileExplorer, type FileExplorerRenderProps } from './file-explorer.tsx'
-export type { FileExplorerRenderProps, FileExplorerSource, FsEntry, FsLevel, UploadItem, UploadResult } from './file-explorer.tsx'
+export type { FileExplorerPicker, FileExplorerPickerRow, FileExplorerPickerInteraction, FileExplorerRenderProps, FileExplorerSource, FsEntry, FsLevel, UploadItem, UploadResult } from './file-explorer.tsx'
 import { renderFileViewer, type FileViewerRenderProps } from './FileViewer.tsx'
 export type { FileViewerRenderProps } from './FileViewer.tsx'
 import { sharedRendering, type SharedRenderingService } from './rendering.tsx'
@@ -1021,6 +1021,7 @@ export const SIDEBAR_FEATURES = [
   'sharedRendering:v1',
   'fileViewerChrome:v1',
   'fileExplorer:v1',
+  'fileExplorerPicker:v1',
   'rightActions',
   'settingPatterns',
   'hostRouteUrl',

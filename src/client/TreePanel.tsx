@@ -23,7 +23,7 @@ import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, type SessionScope } from './api.ts'
-import { strictExplorerApi, type FileExplorerSource } from './file-explorer.tsx'
+import { strictExplorerApi, type FileExplorerPicker, type FileExplorerSource } from './file-explorer.tsx'
 import { useMemo } from 'react'
 import type { BetterSidebarService } from './service.ts'
 import { ancestorDirs } from './state.ts'
@@ -53,6 +53,7 @@ interface UploadSession {
 }
 
 export function TreePanel(props: {
+  picker?: FileExplorerPicker
   source?: FileExplorerSource
   activationScope?: SessionScope
   sessionId: string
@@ -105,7 +106,7 @@ export function TreePanel(props: {
     openWithShowPluginTargets, exclude,
     onReferenceFile, onPathRenamed, onPathDeleted, visible, full, service,
   } = props
-  const source = props.source
+  const source = useMemo(() => props.picker === undefined ? props.source : { fsTrees: props.source?.fsTrees.bind(props.source) ?? (() => Promise.reject(new Error('Picker source unavailable'))) }, [props.source, props.picker !== undefined])
   const fs = useMemo(() => source === undefined ? api : strictExplorerApi(source), [source])
   const activeRef = useRef(true)
   useEffect(() => { activeRef.current = true; return () => { activeRef.current = false } }, [])
@@ -261,7 +262,7 @@ export function TreePanel(props: {
 
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
-      <div className={css.editorTreeSearch}>
+      {props.picker === undefined && <div className={css.editorTreeSearch}>
         <input
           className={css.editorSearchInput}
           value={query}
@@ -343,7 +344,7 @@ export function TreePanel(props: {
             event.target.value = ''
           }}
         />
-      </div>
+      </div>}
       {uploadStatus !== '' && (
         <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
       )}
@@ -389,6 +390,7 @@ export function TreePanel(props: {
       {/* The tree stays MOUNTED while searching: its level cache and the
           directory watcher survive a query, so clearing the box is free. */}
       <FileTree
+        picker={props.picker}
         source={source}
         activationScope={props.activationScope}
         sessionId={sessionId}

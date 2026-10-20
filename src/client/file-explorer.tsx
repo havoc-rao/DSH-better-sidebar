@@ -12,7 +12,22 @@ export type FileExplorerSource = Pick<typeof api, 'fsTrees'> & Partial<Pick<type
   download?(scope: SessionScope, path: string): void | Promise<void>
   upload?(scope: SessionScope, dir: string, items: UploadItem[], onProgress: (done: number, total: number, current: string) => void, signal?: AbortSignal): Promise<UploadResult[]>
 }
+export interface FileExplorerPickerRow { path: string; isDir: boolean }
+export interface FileExplorerPickerInteraction {
+  move(delta: number): void
+  accept(): void
+}
+/** Controlled reference selection: never activates documents or navigates editors. */
+export interface FileExplorerPicker {
+  query: string
+  selectedPath?: string
+  onSelect(path: string, isDir: boolean): void
+  onAccept(path: string, isDir: boolean): void
+  onVisibleRowsChange?(rows: readonly FileExplorerPickerRow[]): void
+  bind?(interaction: FileExplorerPickerInteraction): void | (() => void)
+}
 export interface FileExplorerRenderProps {
+  picker?: FileExplorerPicker
   scope: SessionScope
   /** File activation/document authority (e.g. the session's local remote mirror).
    * Defaults to scope; never changes listing scope or absolute row paths. */
@@ -49,7 +64,7 @@ export function strictExplorerApi(source: FileExplorerSource, signal?: AbortSign
 }
 export function renderFileExplorer(service: BetterSidebarService, props: FileExplorerRenderProps): ReactNode {
   return createElement(TreePanel, {
-    key: JSON.stringify([props.scope.sessionId, props.scope.cwd, props.sourceKey]),
+    key: JSON.stringify([props.scope.sessionId, props.scope.cwd, props.sourceKey, props.picker !== undefined]),
     ...props, sessionId: props.scope.sessionId, cwd: props.scope.cwd,
     revealed: props.revealed ?? [], full: true, service, source: props.source,
   })

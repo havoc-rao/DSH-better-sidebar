@@ -364,7 +364,7 @@ describe('FileTree via fileTreeUi v2 (service path)', () => {
     seat.set(makeFileTreeUiService(record))
     const tree = await mountTree()
     const props = record[record.length - 1]!
-    expect(props.treeKey).toBe('workspace-explorer')
+    expect(props.treeKey).toMatch(/^workspace-explorer:.+/)
     expect(props.role).toBe('tree')
     expect(props.grid).toEqual({ basePx: 6, stepPx: 22 })
     // Root row: the workspace root, always-open children, no collapse
