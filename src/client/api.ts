@@ -50,7 +50,22 @@ export interface WorkspaceTerminalInfo {
   createdBySessionId: string
   createdAt: number
   exited: boolean
-  exitCode?: number
+  exitCode?: number | null
+  /** Shell command lifecycle, distinct from the PTY's exit code. */
+  commandStartedAt?: number
+  commandFinishedAt?: number
+  commandExitCode?: number
+  commandDurationMs?: number
+  activity?: 'idle' | 'busy' | 'unknown' | 'exited'
+  activityReason?: string
+  /** Unique safe executable basenames observed in the foreground process group. */
+  runningCommands?: readonly string[]
+  attachedViews?: number
+  lastInputAt?: number
+  lastOutputAt?: number
+  lastDetachedAt?: number
+  exitedAt?: number
+  pinned?: boolean
 }
 import type { GitGraphOptions, GitGraphResult } from '../git-graph.ts'
 export type { GitGraphOptions, GitGraphResult, GitGraphEntry, GitGraphBranch } from '../git-graph.ts'
@@ -60,6 +75,8 @@ export class SidebarApiError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    readonly status?: number,
+    readonly retryable?: boolean,
   ) {
     super(message)
   }
@@ -294,6 +311,8 @@ async function readEnvelope<T>(response: Response): Promise<T> {
     throw new SidebarApiError(
       parsed?.error?.code ?? 'http',
       parsed?.error?.message ?? `HTTP ${response.status}`,
+      response.status,
+      response.status === 401 || response.status === 403 ? false : undefined,
     )
   }
   return parsed.value as T
@@ -485,6 +504,12 @@ export const api = {
     call<ResourceStrictDiff>('git.diff-strict', scopePayload(scope, { ref, authority: 'host-local' }), options?.signal),
   workspaceTerminalCreate: (sessionId: string, title?: string) =>
     call<WorkspaceTerminalInfo>('workspace-terminal.create', { sessionId, ...(title === undefined ? {} : { title }) }),
+  workspaceTerminalEnsure: (sessionId: string) =>
+    call<WorkspaceTerminalInfo>('workspace-terminal.ensure', { sessionId }),
+  workspaceTerminalPin: (sessionId: string, terminalId: string, pinned: boolean) =>
+    call<{ ok: true }>('workspace-terminal.pin', { sessionId, terminalId, pinned }),
+  workspaceTerminalCleanup: (sessionId: string) =>
+    call<{ removed: number }>('workspace-terminal.cleanup', { sessionId }),
   workspaceTerminalList: (sessionId: string, signal?: AbortSignal) =>
     call<{ terminals: WorkspaceTerminalInfo[] }>('workspace-terminal.list', { sessionId }, signal),
   workspaceTerminalTerminate: (sessionId: string, terminalId: string) =>

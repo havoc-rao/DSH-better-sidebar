@@ -20,6 +20,10 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
+import { installSidebarHotkeys } from './hotkey-actions.ts'
+import { installDeleteDialogHotkeys } from './ui/delete-dialog-hotkeys.tsx'
+import { installFileTreeHotkeys } from './file-tree-hotkeys.ts'
+import { BottomDockEntry } from './sidebar/BottomDockEntry.tsx'
 import { readNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { CMD_W_SHORTCUT, claimCloseActiveTab, installDesktopBottomClose, readDesktopShellBridge } from './desktop-shortcuts.ts'
 import { installBottomCloseShortcut } from './bottom-close-shortcut.ts'
@@ -49,9 +53,10 @@ import './layout.css'
  * sessions. The registry entry point stays `ctx.betterSidebar`
  * (`registerTerminalProvider` / `registerGitProvider`).
  */
+export type { WorkspaceTerminalSummary } from './service.ts'
 export type { TerminalProviderDescriptor, WorkspaceTerminalSource, WorkspaceTerminalBinding } from './terminal-source.ts'
 export { resolveTerminalSource, useTerminalTransport } from './terminal-source.ts'
-export type { TerminalTransport, TerminalTransportHandle, TerminalTransportSession, TerminalTransportSurface, TerminalViewProps } from './terminal-transport.ts'
+export type { TerminalConnectionState, TerminalTransport, TerminalTransportHandle, TerminalTransportSession, TerminalTransportSurface, TerminalViewProps } from './terminal-transport.ts'
 export type { GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
 export { resolveGitSource, useGitSource } from './git-source.ts'
 export type { ResourceActionContext, ResourceActionDescriptor, FileActivationContext, FileOpenTargetDescriptor, FileDocumentState } from './resource-actions.ts'
@@ -263,6 +268,11 @@ export function apply(ctx: Context): void {
     () => registerBottomToggle(ctx, sidebarStore),
     'dsh-better-sidebar: bottom-workbench toggle',
   )
+  // The business plugin owns both the binding and its effect. dsh-hotkey
+  // only dispatches registered actions; it never opens terminals for us.
+  installSidebarHotkeys(ctx, sidebarStore, service)
+  installDeleteDialogHotkeys(ctx)
+  installFileTreeHotkeys(ctx)
   // The desktop-shell shortcut bridge (the deepseek-harness Electron app):
   // Cmd+W is intercepted by the shell and routed to the page; the plugin
   // claims every press (semantics "A"): close the active tab of the native
@@ -461,6 +471,18 @@ export function apply(ctx: Context): void {
           hostCheckFrame = requestAnimationFrame(sync)
         })
       }
+      // Entry chrome is independent of the async workbench settings gate.
+      // Keep it mounted across normal workbench mount/unmount; suspension
+      // explicitly hides it once the authoritative decision is available.
+      const entryHost = document.createElement('div')
+      entryHost.setAttribute('data-dsh-bottom-entry-host', '')
+      mountAnchor().appendChild(entryHost)
+      const entryRoot = createRoot(entryHost)
+      const renderEntry = (suspended: boolean): void => {
+        entryRoot.render(suspended ? null : createElement(RenderBoundary, { className: css.boundaryError },
+          createElement(BottomDockEntry, { ctx, store: sidebarStore })))
+      }
+      renderEntry(false)
       const mount = (): void => {
         if (mounted || disposed) return
         try {
@@ -474,7 +496,7 @@ export function apply(ctx: Context): void {
             createElement(
               ContextDiagnosticsHost,
               { controller: diagnostics },
-              createElement(Sidebar, { ctx, store: sidebarStore }),
+              createElement(Sidebar, { ctx, store: sidebarStore, standaloneEntry: true }),
             ),
           ))
           mounted = true
@@ -493,10 +515,11 @@ export function apply(ctx: Context): void {
         // defaults; the sidebar still mounts (a stalled wire gives up after
         // the timeout and mounts on the defaults — the external-disable check
         // rides the same fetch, so one round trip covers both decisions).
+        let timeout: number | undefined
         const decision = await Promise.race([
           loadBootDecision(api),
-          new Promise<null>(resolve => { window.setTimeout(() => resolve(null), 2000) }),
-        ])
+          new Promise<null>(resolve => { timeout = window.setTimeout(() => resolve(null), 2000) }),
+        ]).finally(() => { if (timeout !== undefined) window.clearTimeout(timeout) })
         if (disposed) return
         if (decision !== null) {
           sidebarStore.setPrefs(decision.prefs)
@@ -505,6 +528,7 @@ export function apply(ctx: Context): void {
           // all. Re-evaluated on every settings-document update (live switch).
           sidebarStore.setSuspended(decision.suspended)
         }
+        renderEntry(decision?.suspended === true)
         if (decision?.suspended) unmount()
         else mount()
       }
@@ -520,6 +544,8 @@ export function apply(ctx: Context): void {
       return () => {
         disposed = true
         offRemote?.()
+        entryRoot.unmount()
+        entryHost.remove()
         unmount()
       }
     }, 'dsh-better-sidebar: sidebar mount')

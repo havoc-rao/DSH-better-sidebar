@@ -75,6 +75,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     terminalShellArgs: typeof record.terminalShellArgs === 'string'
       ? record.terminalShellArgs
       : SIDEBAR_PREFS_DEFAULTS.terminalShellArgs,
+    terminalShellIntegration: typeof record.terminalShellIntegration === 'boolean'
+      ? record.terminalShellIntegration
+      : SIDEBAR_PREFS_DEFAULTS.terminalShellIntegration,
     titleBarScheme: record.titleBarScheme === 'auto' || record.titleBarScheme === 'web'
       || record.titleBarScheme === 'preset' || record.titleBarScheme === 'custom'
       ? record.titleBarScheme

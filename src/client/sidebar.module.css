@@ -887,11 +887,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* A deep tree's long labels are never squeezed into an ellipsis: the
-     content column grows to its widest row (see .explorerTree) and this body
-     scrolls horizontally to reach it — the same axis VSCode's explorer
-     scrolls. */
-  overflow-x: auto;
+  /* Keep rows within the sidebar; long names truncate instead of growing
+     the content column or introducing horizontal scrolling. */
+  overflow-x: hidden;
   padding: 4px 8px 8px;
 }
 
@@ -1017,6 +1015,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .explorerName {
+  display: block;
+  flex: 1;
   /* Pin every name (file, folder and workspace root) to the same type token.
      Framework rows inherit the host font, unlike our fallback rows. */
   font: var(--dsw-font-xxs-12);
@@ -1079,6 +1079,27 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-bg-layer-1);
 }
 
+/* This notice precedes the tab strip, underneath the panel's absolute
+   corner controls. Reserve the same 68px seat as .tabBar plus the notice's
+   normal 8px inset; wrapping keeps the recovery action usable when narrow. */
+.bottomTerminalError {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  min-height: 34px;
+  padding-right: 76px;
+}
+
+.terminalErrorAction {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+
 .explorerActionErrorText {
   flex: 1 1 auto;
   min-width: 0;
@@ -1093,9 +1114,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    it in flow: scrolled to the bottom it sits below the last row and covers
    nothing, while mid-scroll it stays reachable. `left: 0` is the horizontal
    half of that same contract — the bar spans the scrollport, so the tree's
-   own horizontal scrolling must not carry it off the edge. It WRAPS instead
-   of overflowing, so a narrow panel gets a second line of chips rather than
-   a clipped control or a horizontal scrollbar. 28px rhythm, token-only (§1). */
+   own horizontal scrolling must not carry it off the edge. Three compact
+   icon buttons stay on one line; only the selection count may ellipsize.
+   28px rhythm, token-only (§1). */
 .explorerSelectionBar {
   position: sticky;
   bottom: 0;
@@ -1126,10 +1147,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .explorerSelectionActions {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  max-width: 72%;
 }
 
 /* The leading glyph of one "open in app" menu entry (the host's icon route
@@ -1147,24 +1168,19 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: none;
 }
 
-/* The hover-revealed @-reference button at the row's trailing edge (and the
-   transient "copied" label that replaces it after a copy). The only auto
-   margin in the row absorbs the filename's spare width, so a short name
-   cannot leave either affordance stranded in the middle; `sticky right`
-   keeps it at the scrollport's right edge once a long name widens the whole
-   tree past the viewport (the built-in rows' counterpart of the framework's
-   sticky actions slot). */
+/* Overlay the filename rather than reserving any of its width. The row is
+   the positioning anchor; hover/focus changes visibility, never geometry. */
 .explorerRef,
-.explorerCopied {
-  margin-left: auto;
-  position: sticky;
-  right: 0;
+.explorerRow > .explorerCopied {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
 }
 
-/* Laid out but invisible at rest (NOT display:none): the pill's width stays
-   part of the row's intrinsic width, so revealing it on hover can never
-   re-squeeze a long filename back into an ellipsis. Hovering or focusing the
-   row reveals it. */
+/* Invisible controls remain keyboard reachable; focusing the row reveals
+   the overlay without shrinking the filename. */
 .explorerRef {
   flex: none;
   display: inline-flex;
@@ -1205,28 +1221,24 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    guaranteed), and background-color (never the shorthand) leaves the
    rows' inline guide-line gradients intact. */
 
-/* The tree's content column — the framework root's container class (passed to
-   renderFileTree) AND the wrapper the built-in fallback renders its rows in,
-   so both paths scroll as one block of uniform rows.
-
-   The two custom properties are the provider's documented horizontal-scroll
-   opt-in (dsh-file-tree-ui owns the row chrome): the column grows to its
-   widest row instead of being pinned to the scrollport, and the rows' actions
-   slot sticks to the scrollport's right edge instead of riding the wide row's
-   (off-screen) end. A provider too old to read them simply keeps the previous
-   scrollport-wide layout. */
+/* Both render paths stay bounded by the sidebar, not by the longest name.
+   Explicitly reset the provider's optional wide-column / sticky-action mode;
+   labels shrink and ellipsize while actions stay inside each row. */
 .explorerTree {
   display: flex;
   flex-direction: column;
-  --dsh-ftr-root-width: max-content;
-  --dsh-ftr-actions-position: sticky;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  --dsh-ftr-root-width: 100%;
+  --dsh-ftr-actions-position: absolute;
 }
 
-/* Without a provider there is no .listRoot to consume the variable above, so
-   the built-in row wrapper declares the same wide column directly. */
+/* The fallback has the same bounded column without a provider root list. */
 .explorerTreeBuiltin {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .explorerTree .explorerRowRevealed {
@@ -1244,6 +1256,19 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .explorerTree .explorerRowRevealed:has(+ .explorerRowRevealed) {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
+}
+
+/* Keep the provider's entire action slot out of the filename's flex layout.
+   Scope by our own content instead of depending on provider CSS hashes. */
+.explorerTree [role="button"] > span:has(> .explorerTreeRef),
+.explorerTree [role="button"] > span:has(> .explorerCopied),
+.explorerTree > div > span:has(> .explorerTreeRef),
+.explorerTree > div > span:has(> .explorerCopied) {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
 }
 
 /* The @-reference pill rendered in the framework's actions slot: same pill
@@ -1571,6 +1596,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.fileViewerPath {
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
 }
 
 /* Merged mode (the editorExplorer pref): the header's path input replaces

@@ -167,6 +167,8 @@ describe('Git action slot DOM bridge', () => {
     }
     const dispose = mount()
     expect(core.spec('betterSidebar.git.actions')).toEqual({ kind: 'list', scope: 'root' })
+    expect(core.spec('betterSidebar.delete.confirm.hotkeyHint')).toEqual({ kind: 'single', scope: 'root' })
+    expect(core.spec('betterSidebar.delete.cancel.hotkeyHint')).toEqual({ kind: 'single', scope: 'root' })
     const actionDispose = core.register({ name: 'betterSidebar.git.actions', id: 'consumer' }, () => null)
     act(() => workbench.instance.render(<><GitActionSlotHost owner={owner('one')} /><GitActionSlotHost owner={owner('two')} /></>))
     expect(core.entries('conversation.session.header.utilities')).toHaveLength(1)

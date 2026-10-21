@@ -7,9 +7,9 @@
  * 什么都不给看时，它手里还握着多少会自己跑起来的东西**。
  *
  * 三条断言来自用户确认的门禁口径（定时器 / 强制布局 / 请求计数）：
- *   1. **定时器**：非 blank 会话里挂载壳，只允许存在**一条** 500ms 表（共享的宿主
- *      右侧面板轮询器），且**不得**存在 5s 表（会话根的每 tab 轮询已被收敛成
- *      「按会话 + 可见性」）；页面隐藏时那条 500ms 表也必须消失。
+ *   1. **定时器**：非 blank 会话里挂载壳，**不得**存在 500ms 表（宿主右侧面板
+ *      改为公开快照 / DOM marker 事件驱动），也不得存在 5s 会话根轮询表。
+ *      页面隐藏与恢复都不得重建这些表；恢复后 DOM marker 更新仍须立即反映到按钮。
  *   2. **强制布局**：blank 会话的兜底入口在非 blank 会话里渲染 `null`，它的
  *      500ms 重对齐表因此不得存在——判据是「没人读布局」：宿主角落控件在场
  *      （`measure()` 能走到让位走查）时，命中测试次数必须为 0。
@@ -161,14 +161,14 @@ async function flush(): Promise<void> {
 }
 
 describe('steady state: the shell holds no work for things nobody can see', () => {
-  it('keeps one 500ms table, no session-root poller, and reads no layout', async () => {
+  it('keeps no sidebar or session-root pollers, and reads no layout', async () => {
     installLedgers()
     appendHostCorner()
     const { unmount } = mountShell()
     await flush()
 
     const live = liveByDelay()
-    expect(live[500] ?? 0, 'exactly the shared right-panel poller may tick at 500ms').toBe(1)
+    expect(live[500] ?? 0, 'event-driven sidebar state must not hold a 500ms poller').toBe(0)
     expect(live[5000] ?? 0, 'the collapsed workbench must not hold a session-root poller').toBe(0)
     expect(
       requests.filter(url => url.includes('session.cwd')),
@@ -191,27 +191,41 @@ describe('steady state: the shell holds no work for things nobody can see', () =
     appendHostCorner()
     const { unmount } = mountShell()
     await flush()
-    expect(liveByDelay()[500] ?? 0).toBe(1)
+    expect(liveByDelay()[500] ?? 0).toBe(0)
 
     act(() => { setPageHidden(true) })
-    expect(liveByDelay()[500] ?? 0, 'a hidden page must not keep the shared poller armed').toBe(0)
+    expect(liveByDelay()[500] ?? 0, 'a hidden page must not hold a sidebar poller').toBe(0)
 
     act(() => { setPageHidden(false) })
-    expect(liveByDelay()[500] ?? 0, 'becoming visible again re-arms it').toBe(1)
+    expect(liveByDelay()[500] ?? 0, 'becoming visible must not reintroduce polling').toBe(0)
     unmount()
   })
 
-  it('re-arms the shared table and nothing else when the page becomes visible again', async () => {
+  it('observes sidebar marker changes after visibility restoration without restarting polling', async () => {
     installLedgers()
     appendHostCorner()
     const { unmount } = mountShell()
     await flush()
+    const toggle = document.querySelector<HTMLButtonElement>('[data-dsh-sidebar-toggle]')!
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
     act(() => { setPageHidden(true) })
     expect(liveByDelay()[500] ?? 0).toBe(0)
     act(() => { setPageHidden(false) })
-    expect(liveByDelay()[500] ?? 0, 'becoming visible again re-arms exactly the shared table').toBe(1)
-    expect(liveByDelay()[5000] ?? 0, 'and nothing else').toBe(0)
+    expect(liveByDelay()[500] ?? 0, 'restoring visibility must keep sidebar state event-driven').toBe(0)
+    expect(liveByDelay()[5000] ?? 0, 'the collapsed workbench must still hold no root poller').toBe(0)
+
+    // A late-mounted panel root and its attribute updates must be observed
+    // without advancing any timer: zero polling must not mean stale UI.
+    const panel = document.createElement('div')
+    panel.setAttribute('data-sidebar-right-open', '')
+    await act(async () => { document.body.append(panel); await Promise.resolve() })
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    await act(async () => { panel.removeAttribute('data-sidebar-right-open'); await Promise.resolve() })
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(liveByDelay()[500] ?? 0).toBe(0)
+    panel.remove()
     unmount()
+    expect(intervals.size, 'unmount must release every remaining shell timer').toBe(0)
   })
 })
 
@@ -245,6 +259,11 @@ const TIMER_LEDGER: Array<{ file: string; gate: string; why: string }> = [
     file: 'ui/git-status.ts',
     gate: 'visible',
     why: 'git 状态：30s 基线 + 退档，仅有可见的 poll:true 消费者时持有表',
+  },
+  {
+    file: 'WorkspaceTerminals.tsx',
+    gate: 'if (!active || subscribed) return',
+    why: '10s catalog fallback only for visible, foreground, non-subscribed sources; cleanup clears it on hide or subscription',
   },
   {
     file: 'JobsDrawer.tsx',

@@ -14,10 +14,20 @@ import { api, type WorkspaceTerminalInfo } from '../src/client/api.ts'
 import { openWorkspaceTerminal, restartWorkspaceTerminal, resolveWorkspaceTerminalBinding, workspaceTerminalIdOf, workspaceTerminalProviderOf } from '../src/client/workspace-terminals.ts'
 import { WorkspaceTerminals } from '../src/client/WorkspaceTerminals.tsx'
 import { renderRoot, setupReactAct } from './test-utils.ts'
+// This historical suite exercises the legacy list-only path, including local
+// API forwarding. Event-capable sources are covered in workspace-terminal-events.
+vi.mock('../src/client/workspace-terminals.ts', async importOriginal => {
+  const original = await importOriginal<typeof import('../src/client/workspace-terminals.ts')>()
+  return { ...original, resolveWorkspaceTerminalBinding: (...args: Parameters<typeof original.resolveWorkspaceTerminalBinding>) => {
+    const binding = original.resolveWorkspaceTerminalBinding(...args)
+    if (binding.providerId === undefined) delete binding.source.subscribe
+    return binding
+  } }
+})
 setupReactAct()
 const info: WorkspaceTerminalInfo = { terminalId: 'terminal:abc', title: 'shared', cwd: '/work', createdBySessionId: 'A', createdAt: 1, exited: false }
 const tabs = (store: ReturnType<typeof createSidebarStore>) => allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
-afterEach(() => { vi.restoreAllMocks(); localStorage.clear() })
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); localStorage.clear() })
 function fixture() {
   const store = createSidebarStore(); store.setSession('A')
   const service = createBetterSidebarService(store, undefined, () => '/work')
@@ -39,6 +49,104 @@ describe('workspace terminal client', () => {
       createTransport: () => undefined, createWorkspaceSource: () => source })
     return { ...fixtureResult, source, remoteInfo, off }
   }
+  it('shows confirmed activity, unknown fallback, connections and last input/output time', async () => {
+    const { store, service, source, remoteInfo } = remoteFixture()
+    const lastOutputAt = Date.parse('2026-10-15T09:00:00Z')
+    source.list.mockResolvedValue({ terminals: [
+      { ...remoteInfo, activity: 'idle', activityReason: 'shell-prompt', attachedViews: 2, lastInputAt: lastOutputAt - 1000, lastOutputAt },
+      { ...remoteInfo, terminalId: 'busy', activity: 'busy' },
+      { ...remoteInfo, terminalId: 'unknown' },
+      { ...remoteInfo, terminalId: 'exited', exited: true, activity: 'busy' },
+    ] } as { terminals: WorkspaceTerminalInfo[] })
+    const root = renderRoot(createElement(WorkspaceTerminals, { sessionId: 'A', store, ctx: { betterSidebar: service } as Context }))
+    await act(async () => {})
+    const rows = [...root.container.querySelectorAll('[role="listitem"]')]
+    expect(rows.map(row => row.getAttribute('data-activity'))).toEqual(['idle', 'busy', 'unknown', 'exited'])
+    expect(rows[0]!.textContent).toContain(t('workspaceTerminalIdle'))
+    expect(rows[0]!.textContent).toContain(t('workspaceTerminalConnections', { count: 2 }))
+    expect(rows[0]!.querySelector('time')?.dateTime).toBe(new Date(lastOutputAt).toISOString())
+    expect(rows[0]!.querySelector('[title*="shell-prompt"]')).not.toBeNull()
+    expect(rows[2]!.textContent).toContain(t('workspaceTerminalUnknown'))
+    expect(rows[2]!.textContent).toContain(t('workspaceTerminalConnections', { count: '—' }))
+    expect(root.container.textContent).toContain(t('workspaceTerminalActivityHint'))
+    expect(root.container.querySelector('[role="switch"]')).toBeNull()
+    expect(root.container.textContent).not.toContain(t('workspaceTerminalCleanup'))
+    root.unmount()
+  })
+  it('offers backend pin and safe cleanup, refreshes authoritative results and reports removed count', async () => {
+    const { store, service, source, remoteInfo } = remoteFixture()
+    const pin = vi.fn(async (_id: string, _pinned: boolean) => {
+      source.list.mockResolvedValue({ terminals: [{ ...remoteInfo, pinned: true }] } as { terminals: WorkspaceTerminalInfo[] })
+    })
+    const cleanup = vi.fn(async () => ({ removed: 3 }))
+    Object.assign(source, { pin, cleanup })
+    const root = renderRoot(createElement(WorkspaceTerminals, { sessionId: 'A', store, ctx: { betterSidebar: service } as Context }))
+    await act(async () => {})
+    const toggle = () => root.container.querySelector<HTMLButtonElement>('[role="switch"]')!
+    expect(toggle().getAttribute('aria-checked')).toBe('false')
+    await act(async () => { toggle().click() })
+    expect(pin).toHaveBeenCalledExactlyOnceWith(remoteInfo.terminalId, true)
+    expect(toggle().getAttribute('aria-checked')).toBe('true')
+    expect(toggle().title).toBe(t('workspaceTerminalPinHint'))
+    await act(async () => { [...root.container.querySelectorAll('header button')].find(button => button.textContent === t('workspaceTerminalCleanup'))!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(source.terminate).not.toHaveBeenCalled()
+    expect(root.container.querySelector('[role="status"]')?.textContent).toBe(t('workspaceTerminalCleaned', { count: 3 }))
+    expect(source.list).toHaveBeenCalledTimes(3)
+    root.unmount()
+  })
+  it('keeps delayed management results and errors bound to their original session', async () => {
+    const { store, service, source } = remoteFixture()
+    let reject!: (reason: Error) => void
+    const cleanup = vi.fn(() => new Promise<{ removed: number }>((_done, fail) => { reject = fail }))
+    Object.assign(source, { cleanup })
+    const ctx = { betterSidebar: service } as Context
+    const root = renderRoot(createElement(WorkspaceTerminals, { sessionId: 'A', store, ctx }))
+    await act(async () => {})
+    await act(async () => { [...root.container.querySelectorAll<HTMLButtonElement>('header button')].find(button => button.textContent === t('workspaceTerminalCleanup'))!.click() })
+    expect(cleanup).toHaveBeenCalledOnce()
+    act(() => { store.setSession('B') })
+    root.rerender(createElement(WorkspaceTerminals, { sessionId: 'B', store, ctx }))
+    await act(async () => {})
+    const listCalls = source.list.mock.calls.length
+    await act(async () => { reject(new Error('A cleanup failed')) })
+    expect(source.list).toHaveBeenCalledTimes(listCalls)
+    expect(root.container.querySelector('[role="alert"]')).toBeNull()
+    expect(root.container.querySelector('[role="status"]')).toBeNull()
+    expect(store.getSessionStates().get('A')?.workspaceTerminalError).toBe('A cleanup failed')
+    expect(store.getSnapshot().state?.workspaceTerminalError).toBeUndefined()
+    root.unmount()
+  })
+  it('polls visible catalogs every ten seconds without cancelling slow requests and stops while hidden', async () => {
+    vi.useFakeTimers()
+    const { store, service, source } = remoteFixture()
+    let resolve!: (value: { terminals: WorkspaceTerminalInfo[] }) => void
+    source.list.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const props = { sessionId: 'A', store, ctx: { betterSidebar: service } as Context }
+    const root = renderRoot(createElement(WorkspaceTerminals, props))
+    const signal = source.list.mock.calls[0]![0]!
+    await act(async () => { vi.advanceTimersByTime(30_000) })
+    expect(source.list).toHaveBeenCalledTimes(1)
+    expect(signal.aborted).toBe(false)
+    await act(async () => { resolve({ terminals: [] }); vi.advanceTimersByTime(10_000) })
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(source.list.mock.calls.length).toBeGreaterThan(1)
+    root.rerender(createElement(WorkspaceTerminals, { ...props, visible: false }))
+    const calls = source.list.mock.calls.length
+    await act(async () => { vi.advanceTimersByTime(60_000) })
+    expect(source.list).toHaveBeenCalledTimes(calls)
+    root.rerender(createElement(WorkspaceTerminals, props))
+    await act(async () => {})
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    const pageHiddenCalls = source.list.mock.calls.length
+    await act(async () => { vi.advanceTimersByTime(60_000) })
+    expect(source.list).toHaveBeenCalledTimes(pageHiddenCalls)
+    hidden.mockReturnValue(false)
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(source.list).toHaveBeenCalledTimes(pageHiddenCalls + 1)
+    root.unmount()
+  })
   it('creates provider-managed resources with stable backend identity and opaque ids', async () => {
     const { store, service, source, remoteInfo } = remoteFixture()
     const local = vi.spyOn(api, 'workspaceTerminalCreate')

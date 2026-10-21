@@ -87,7 +87,8 @@ describe('native Connection admission', () => {
         '/sidebar/archive', '/sidebar/file', '/sidebar/html',
       ])
       expect(mounted.upgrades.map(route => route.path)).toEqual([
-        '/sidebar/ws/agent-opens', '/sidebar/ws/fs-watch', '/sidebar/ws/sidechat', '/sidebar/ws/terminal', '/sidebar/ws/agent-terminals',
+        '/sidebar/ws/agent-opens', '/sidebar/ws/fs-watch', '/sidebar/ws/sidechat', '/sidebar/ws/terminal',
+        '/sidebar/ws/workspace-terminals', '/sidebar/ws/agent-terminals',
       ])
       for (const route of mounted.routes) {
         const input = request(route.path)
@@ -105,7 +106,7 @@ describe('native Connection admission', () => {
         expect(input.reads(), route.path).toBe(0)
         expect(mounted.connection.requestRejection).toHaveBeenLastCalledWith(input.req)
       }
-      expect(mounted.connection.requestRejection).toHaveBeenCalledTimes(12)
+      expect(mounted.connection.requestRejection).toHaveBeenCalledTimes(mounted.routes.length + mounted.upgrades.length)
     } finally {
       mounted.cleanup()
     }

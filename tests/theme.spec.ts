@@ -276,6 +276,19 @@ describe('skin contract: the plugin owns no color of its own', () => {
     expect(block).not.toContain('--ds-font-family-code')
   })
 
+  it('the bottom terminal error reserves the corner controls and wraps rather than overlapping', () => {
+    const styles = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
+    const block = /\.bottomTerminalError \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    expect(block).toContain('padding-right: 76px')
+    expect(block).toContain('min-height: 34px')
+    expect(block).toContain('flex: 0 0 auto')
+    expect(block).toContain('flex-wrap: wrap')
+    // Do not change the shared file-tree error strip to accommodate controls
+    // that only exist in the bottom workbench.
+    const shared = /\.explorerActionError \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    expect(shared).toContain('padding: 6px 8px')
+  })
+
   it('the empty-pane welcome capsule follows the host guide recipe', () => {
     // The card is the same surface as DSH's own guide capsule ("pick what
     // opens here"), so this pins the shared geometry and the token-only

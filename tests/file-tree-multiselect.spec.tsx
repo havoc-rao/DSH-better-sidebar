@@ -17,6 +17,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { FILE_TREE_DELETE, registerFileTreeHotkeys } from '../src/client/file-tree-hotkeys.ts'
 
 import { setupReactAct } from './test-utils.ts'
 setupReactAct()
@@ -125,7 +126,7 @@ function selectedNames(container: HTMLElement): string[] {
 /** One batch-bar action by its label. */
 function barAction(container: HTMLElement, label: string): HTMLElement {
   const button = [...(selectionBar(container)?.querySelectorAll<HTMLElement>('button') ?? [])]
-    .find(el => el.textContent === label)
+    .find(el => el.getAttribute('aria-label') === label)
   if (button === undefined) throw new Error(`bar action not found: ${label}`)
   return button
 }
@@ -140,6 +141,41 @@ afterEach(() => {
 })
 
 describe('FileTree multi-selection', () => {
+  it('registers focused selection deletion with hotkey, never treats an opened file as selected', async () => {
+    type Action = Parameters<Parameters<typeof registerFileTreeHotkeys>[0]['registerAction']>[0]
+    const actions = new Map<string, Action>()
+    const release = registerFileTreeHotkeys({ version: 1, registerAction: action => {
+      expect(actions.has(action.id)).toBe(false)
+      actions.set(action.id, action)
+      return () => { actions.delete(action.id) }
+    } })
+    try {
+      harness = await mountTree()
+      const row = rowByName(harness.container, 'a.ts')
+      act(() => { row.focus() })
+      const action = actions.get(FILE_TREE_DELETE)!
+      expect(action.scope).toBe('focus')
+      expect(action.defaultBinding).toEqual({ mac: 'meta+backspace', default: 'delete' })
+      click(row)
+      expect(action.available()).toBe(false)
+      expect(action.run()).toBe(false)
+      act(() => { row.blur() })
+      click(row, { metaKey: true })
+      expect(document.activeElement).toBe(harness.container.querySelector('[data-dsh-file-tree]'))
+      expect(actions.get(FILE_TREE_DELETE)!.available()).toBe(true)
+      const input = document.createElement('input')
+      harness.container.querySelector('[data-dsh-file-tree]')!.append(input)
+      act(() => { input.focus() })
+      expect(action.run()).toBe(false)
+      expect(actions.size).toBe(0)
+      act(() => { row.focus() })
+      await act(async () => { expect(actions.get(FILE_TREE_DELETE)!.run()).toBe(true) })
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+      expect(fsRemove).not.toHaveBeenCalled()
+      expect(action.run()).toBe(false)
+    } finally { release() }
+  })
+
   it('keeps the unmodified click semantics and drops the selection', async () => {
     harness = await mountTree()
     click(rowByName(harness.container, 'a.ts'), { ctrlKey: true })
@@ -251,9 +287,9 @@ describe('FileTree multi-selection', () => {
     expect(rule).toContain('bottom: 0')
     expect(rule).not.toContain('position: absolute')
     expect(rule).not.toContain('position: fixed')
-    // Narrow panels WRAP the chips instead of clipping them or scrolling.
+    // Compact icon actions stay on one line even in narrow panels.
     const actions = sheet.match(/\.explorerSelectionActions \{([\s\S]*?)\n\}/)?.[1]
-    expect(actions).toContain('flex-wrap: wrap')
+    expect(actions).toContain('flex-wrap: nowrap')
   })
 
   it('stops the batch at the first failure and reports it in the strip', async () => {

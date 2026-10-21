@@ -9,6 +9,8 @@ import type { NodePtyModule } from './pty-deps.ts'
 import { resolveShellExecutable, shellDisplayName, shellSpawnArgs } from './pty-manager.ts'
 import { armPtyResizeGate, tryResizePty } from './agent-pty.ts'
 import { requireString, SidebarError } from './wire.ts'
+import { probeTerminalActivity, type TerminalActivityResult } from './terminal-activity.ts'
+import { prepareZshIntegration, ZshMarkerParser, type ZshIntegration } from './zsh-integration.ts'
 
 export interface WorkspaceTerminalInfo {
   terminalId: string
@@ -18,7 +20,24 @@ export interface WorkspaceTerminalInfo {
   createdAt: number
   exited: boolean
   exitCode?: number | null
+  activity?: 'idle' | 'busy' | 'unknown' | 'exited'
+  activityReason?: string
+  /** Unique safe executable basenames observed in the foreground process group. */
+  runningCommands?: readonly string[]
+  attachedViews?: number
+  lastInputAt?: number
+  lastOutputAt?: number
+  lastDetachedAt?: number
+  commandStartedAt?: number
+  commandFinishedAt?: number
+  commandExitCode?: number
+  commandDurationMs?: number
+  exitedAt?: number
+  pinned?: boolean
 }
+export interface WorkspaceTerminalSnapshot { revision: number; terminals: WorkspaceTerminalInfo[] }
+type SnapshotListener = (snapshot: WorkspaceTerminalSnapshot) => void
+interface SubscriptionState { revision: number; listeners: Set<SnapshotListener>; timer?: ReturnType<typeof setTimeout> }
 export interface LocalTerminalWorkspace { key: string; cwd: string }
 interface Handle {
   info: WorkspaceTerminalInfo
@@ -28,7 +47,24 @@ interface Handle {
   cursor: number
   sockets: Set<WebSocket>
   disposers: Array<{ dispose(): void }>
+  revision: number
+  probeGeneration?: number
+  idleSince?: number
+  reservedBy?: string
+  acquiredAt?: number
+  integration?: ZshIntegration
+  parser?: ZshMarkerParser
+  promptAt?: number
+  integrationReason?: string
+  hookState?: 'busy' | 'awaiting-prompt' | 'idle'
 }
+export interface WorkspaceTerminalLifecycleOptions {
+  now?: () => number
+  probe?: (pid: number, promptProven?: boolean) => Promise<TerminalActivityResult>
+}
+const EXIT_RETENTION = 10 * 60_000
+const IDLE_RETENTION = 30 * 60_000
+const DETACH_GRACE = 2 * 60_000
 const SERVER_NAMESPACE = `server-local:${randomUUID()}`
 const OUTPUT_LIMIT = 1 << 20
 
@@ -67,45 +103,285 @@ export async function resolveTerminalWorkspace(ctx: Context, sessionId: string):
 
 export class WorkspaceTerminalManager {
   private readonly terminals = new Map<string, Handle>()
+  private readonly locks = new Map<string, Promise<unknown>>()
+  private readonly now: () => number
+  private readonly probe: (pid: number, promptProven?: boolean) => Promise<TerminalActivityResult>
+  private readonly subscriptions = new Map<string, SubscriptionState>()
+  private disposed = false
+  private sweeping?: Promise<number>
+
+  private async serial<T>(key: string, run: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(key) ?? Promise.resolve()
+    const next = previous.catch(() => {}).then(run)
+    this.locks.set(key, next)
+    try { return await next } finally { if (this.locks.get(key) === next) this.locks.delete(key) }
+  }
   constructor(
     private readonly shell: string,
     private readonly nodePty: NodePtyModule,
     private readonly maxPerWorkspace = 3,
     private readonly maxGlobal = 64,
     private readonly outputLimit = OUTPUT_LIMIT,
-  ) {}
+    options: WorkspaceTerminalLifecycleOptions = {},
+  ) {
+    this.now = options.now ?? Date.now
+    this.probe = options.probe ?? probeTerminalActivity
+  }
 
-  create(workspace: LocalTerminalWorkspace, sessionId: string, title?: string, shell = this.shell, args: string[] = []): WorkspaceTerminalInfo {
+  /** Workspace metadata only, never PTY output. IO is trailing-coalesced at 10Hz. */
+  subscribe(workspace: LocalTerminalWorkspace, listener: SnapshotListener): () => void {
+    if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
+    let state = this.subscriptions.get(workspace.key)
+    if (!state) { state = { revision: 0, listeners: new Set() }; this.subscriptions.set(workspace.key, state) }
+    state.listeners.add(listener)
+    try { listener({ revision: state.revision, terminals: this.list(workspace) }) }
+    catch { state.listeners.delete(listener) }
+    return () => {
+      state.listeners.delete(listener)
+      if (!state.listeners.size && state.timer !== undefined) { clearTimeout(state.timer); state.timer = undefined }
+    }
+  }
+
+  private notify(key: string, coalesce = false): void {
+    if (this.disposed) return
+    let state = this.subscriptions.get(key)
+    if (!state) { state = { revision: 0, listeners: new Set() }; this.subscriptions.set(key, state) }
+    state.revision++
+    const publish = () => {
+      state.timer = undefined
+      for (const listener of [...state.listeners]) {
+        if (!state.listeners.has(listener)) continue
+        // Isolate consumers, including mutation of returned arrays/records.
+        try { listener({ revision: state.revision, terminals: this.list({ key, cwd: '' }) }) } catch { /* disconnected consumer */ }
+      }
+    }
+    if (coalesce) {
+      if (state.listeners.size && state.timer === undefined) { state.timer = setTimeout(publish, 100); state.timer.unref?.() }
+    } else {
+      if (state.timer !== undefined) clearTimeout(state.timer)
+      publish()
+    }
+  }
+
+  private hooksValid(handle: Handle): boolean { return !!handle.integration && !handle.integrationReason && !!handle.hookState }
+
+  create(workspace: LocalTerminalWorkspace, sessionId: string, title?: string, shell = this.shell, args: string[] = [], shellIntegration = false): WorkspaceTerminalInfo {
+    if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
+    // Synchronous create remains compatible; expired exited records need no process probe.
+    this.pruneExited()
     const live = [...this.terminals.values()].filter(handle => !handle.info.exited)
-    // Also cap retained records: exited transcripts must not become an unbounded memory registry.
-    if (live.filter(handle => handle.workspaceKey === workspace.key).length >= this.maxPerWorkspace
-      || live.length >= this.maxGlobal || this.terminals.size >= this.maxGlobal * 4
-      || [...this.terminals.values()].filter(h => h.workspaceKey === workspace.key).length >= this.maxPerWorkspace * 4) {
-      throw new SidebarError('pty-error', 'workspace or global terminal limit reached', 400)
+    if (live.filter(handle => handle.workspaceKey === workspace.key).length >= this.maxPerWorkspace) {
+      throw new SidebarError('pty-error', 'terminal-workspace-live-limit: workspace live process limit reached; manage workspace terminals', 400)
+    }
+    if (live.length >= this.maxGlobal) {
+      throw new SidebarError('pty-error', 'terminal-global-live-limit: global live process limit reached; manage workspace terminals', 400)
+    }
+    if ([...this.terminals.values()].filter(h => h.workspaceKey === workspace.key).length >= this.maxPerWorkspace * 4) {
+      throw new SidebarError('pty-error', 'terminal-workspace-history-limit: workspace retained record limit reached; manage workspace terminals', 400)
+    }
+    if (this.terminals.size >= this.maxGlobal * 4) {
+      throw new SidebarError('pty-error', 'terminal-global-history-limit: global retained record limit reached; manage workspace terminals', 400)
     }
     const executable = resolveShellExecutable(shell)
-    const pty = this.nodePty.spawn(executable, shellSpawnArgs(args), {
-      name: 'xterm-256color', cols: 80, rows: 24, cwd: workspace.cwd, env: { ...process.env },
-    })
+    let integration: ZshIntegration | undefined
+    let integrationReason: string | undefined
+    if (shellIntegration) {
+      try {
+        integration = prepareZshIntegration(executable, args)
+        if (!integration) integrationReason = 'shell-integration-unsupported'
+      } catch { integrationReason = 'shell-integration-setup-failed' }
+    }
+    let pty: IPty
+    try {
+      pty = this.nodePty.spawn(executable, integration ? ['-i'] : shellSpawnArgs(args), {
+        name: 'xterm-256color', cols: 80, rows: 24, cwd: workspace.cwd, env: integration?.env ?? { ...process.env },
+      })
+    } catch (error) { integration?.dispose(); throw error }
     armPtyResizeGate(pty)
     const info: WorkspaceTerminalInfo = {
       terminalId: `terminal:${randomUUID()}`, title: title ?? shellDisplayName(shell), cwd: workspace.cwd,
-      createdBySessionId: sessionId, createdAt: Date.now(), exited: false,
+      createdBySessionId: sessionId, createdAt: this.now(), exited: false,
+      activity: 'unknown', activityReason: integrationReason ?? (integration ? 'shell-integration-awaiting-prompt' : 'not-yet-probed'), attachedViews: 0, pinned: false,
     }
-    const handle: Handle = { info, workspaceKey: workspace.key, pty, output: Buffer.alloc(0), cursor: 0, sockets: new Set(), disposers: [] }
+    const handle: Handle = { info, workspaceKey: workspace.key, pty, output: Buffer.alloc(0), cursor: 0, sockets: new Set(), disposers: [], revision: 0,
+      integration, integrationReason, parser: integration ? new ZshMarkerParser(integration.token) : undefined }
     this.terminals.set(info.terminalId, handle)
-    handle.disposers.push(pty.onData(data => { this.append(handle, data) }))
+    handle.disposers.push(pty.onData(data => {
+      if (!handle.parser) { this.append(handle, data); return }
+      // All bytes invalidate cleanup proof, even partial markers; presentation is
+      // separately driven by valid hooks, never by echo/background output.
+      handle.revision++
+      handle.idleSince = undefined
+      handle.promptAt = undefined
+      info.lastOutputAt = this.now()
+      this.notify(handle.workspaceKey, true)
+      handle.parser.feed(data, text => this.append(handle, text), (kind, exitCode) => {
+        handle.revision++
+        handle.idleSince = undefined
+        const now = this.now()
+        if (kind === 'unsupported') { handle.integrationReason = 'shell-integration-unsupported-hooks'; handle.hookState = undefined }
+        else if (!handle.integrationReason) {
+          if (kind === 'start') {
+            if (handle.hookState !== 'busy') {
+              info.commandStartedAt = now
+              delete info.commandFinishedAt; delete info.commandExitCode; delete info.commandDurationMs
+            }
+            handle.hookState = 'busy'
+          } else if (kind === 'end') {
+            // Startup precmd/prompt must never invent a command completion.
+            if (handle.hookState === 'busy' && info.commandStartedAt !== undefined) {
+              info.commandFinishedAt = now; info.commandExitCode = exitCode
+              info.commandDurationMs = Math.max(0, now - info.commandStartedAt)
+            }
+            handle.hookState = 'awaiting-prompt'
+          } else if (kind === 'accept') handle.hookState = 'awaiting-prompt'
+          else handle.hookState = 'idle'
+        }
+        handle.promptAt = kind === 'prompt' && !handle.integrationReason ? now : undefined
+        delete info.runningCommands
+        info.activity = this.hooksValid(handle) ? handle.hookState === 'busy' ? 'busy' : handle.hookState === 'idle' ? 'idle' : 'unknown' : 'unknown'
+        info.activityReason = handle.integrationReason ?? (kind === 'prompt' ? 'shell-prompt-ready' : kind === 'end' || kind === 'accept' ? 'shell-command-awaiting-prompt' : 'shell-command-started')
+        this.notify(handle.workspaceKey)
+      })
+    }))
     handle.disposers.push(pty.onExit(({ exitCode }) => {
+      handle.revision++
+      handle.idleSince = undefined
       info.exited = true
+      info.exitedAt = this.now()
+      delete info.runningCommands
+      info.activity = 'exited'
+      info.activityReason = 'process-exited'
       info.exitCode = exitCode
+      integration?.dispose()
       this.append(handle, `\r\n[process exited with code ${exitCode}]\r\n`)
       for (const socket of handle.sockets) socket.close(1000, 'terminal-exited')
+      this.notify(handle.workspaceKey)
     }))
+    this.notify(workspace.key)
     return { ...info }
   }
 
   list(workspace: LocalTerminalWorkspace): WorkspaceTerminalInfo[] {
-    return [...this.terminals.values()].filter(h => h.workspaceKey === workspace.key).map(h => ({ ...h.info }))
+    return [...this.terminals.values()].filter(h => h.workspaceKey === workspace.key).map(h => ({ ...h.info, ...(h.info.runningCommands ? { runningCommands: [...h.info.runningCommands] } : {}) }))
+  }
+
+  /** Default opening attaches an existing live shell, even when busy or shared.
+   * This never sends input or restarts it; only an empty workspace creates one. */
+  async ensure(workspace: LocalTerminalWorkspace, sessionId: string, shell = this.shell, args: string[] = [], shellIntegration = false): Promise<WorkspaceTerminalInfo> {
+    return this.serial(workspace.key, async () => {
+      if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
+      const handles = () => [...this.terminals.values()].filter(h => h.workspaceKey === workspace.key && !h.info.exited)
+      const live = handles()
+      const existing = live.find(h => h.reservedBy === sessionId)
+        ?? live.find(h => h.info.createdBySessionId === sessionId)
+        ?? live[0]
+      if (existing) {
+        existing.reservedBy ??= sessionId
+        existing.revision++; existing.idleSince = undefined; existing.acquiredAt = this.now()
+        return { ...existing.info }
+      }
+      await this.sweep(workspace)
+      const info = this.create(workspace, sessionId, undefined, shell, args, shellIntegration)
+      this.terminals.get(info.terminalId)!.reservedBy = sessionId
+      return info
+    })
+  }
+
+  pin(workspace: LocalTerminalWorkspace, terminalId: string, pinned: boolean): WorkspaceTerminalInfo {
+    const handle = this.expect(workspace, terminalId)
+    handle.info.pinned = pinned
+    handle.revision++
+    this.notify(workspace.key)
+    return { ...handle.info }
+  }
+
+  private protected(handle: Handle): boolean {
+    return !!handle.info.pinned || handle.sockets.size > 0
+      || handle.acquiredAt !== undefined && this.now() - handle.acquiredAt < DETACH_GRACE
+      || this.now() - (handle.info.lastDetachedAt ?? handle.info.createdAt) < DETACH_GRACE
+  }
+
+  private pruneExited(workspace?: LocalTerminalWorkspace): number {
+    let removed = 0
+    for (const handle of this.terminals.values()) {
+      if (workspace && workspace.key !== handle.workspaceKey) continue
+      if (handle.info.exited && !this.protected(handle)
+        && this.now() - (handle.info.exitedAt ?? this.now()) >= EXIT_RETENTION) {
+        this.terminate({ key: handle.workspaceKey, cwd: handle.info.cwd }, handle.info.terminalId); removed++
+      }
+    }
+    return removed
+  }
+
+  private async refresh(handle: Handle): Promise<boolean> {
+    if (this.disposed || handle.info.exited) return false
+    const revision = handle.revision
+    const generation = (handle.probeGeneration ?? 0) + 1
+    handle.probeGeneration = generation
+    const promptProven = !!handle.integration && handle.promptAt !== undefined && this.now() - handle.promptAt >= 2000
+    let result: TerminalActivityResult
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      result = await Promise.race([this.probe(handle.pty.pid, promptProven), new Promise<TerminalActivityResult>(resolve => {
+        timer = setTimeout(() => resolve({ activity: 'unknown', reason: 'process-probe-timeout' }), 2000)
+      })])
+    } catch { result = { activity: 'unknown', reason: 'process-probe-failed' } }
+    finally { if (timer !== undefined) clearTimeout(timer) }
+    if (this.disposed || this.terminals.get(handle.info.terminalId) !== handle || handle.revision !== revision
+      || handle.probeGeneration !== generation || handle.info.exited) return false
+    if (result.activity === 'idle' && handle.integration && !promptProven) {
+      result = { activity: 'unknown', reason: 'shell-prompt-not-proven' }
+    }
+    if (result.activity === 'unknown' && handle.integrationReason) result.reason = handle.integrationReason
+    else if (result.activity === 'unknown' && handle.integration && !promptProven
+      && result.reason !== 'process-probe-failed' && result.reason !== 'process-probe-timeout') {
+      result.reason = handle.promptAt === undefined ? 'shell-integration-prompt-missing' : 'shell-prompt-settling'
+    }
+    if (result.activity === 'busy' && result.runningCommands?.length) handle.info.runningCommands = [...result.runningCommands]
+    else delete handle.info.runningCommands
+    if (!this.hooksValid(handle)) {
+      handle.info.activity = result.activity
+      handle.info.activityReason = result.reason
+    }
+    // Hook idle is presentation only. Cleanup still requires settled prompt,
+    // successful process proof and a second fresh probe before reclamation.
+    if (result.activity === 'idle') handle.idleSince ??= this.now()
+    else handle.idleSince = undefined
+    this.notify(handle.workspaceKey, true)
+    return true
+  }
+
+  /** Explicit cleanup uses the same conservative retention policy as periodic sweep. */
+  async cleanup(workspace: LocalTerminalWorkspace): Promise<{ removed: number }> {
+    return { removed: await this.sweep(workspace) }
+  }
+
+  async sweep(workspace?: LocalTerminalWorkspace): Promise<number> {
+    while (this.sweeping) { await this.sweeping; if (!workspace) return 0 }
+    if (this.disposed) return 0
+    const run = this.sweepNow(workspace)
+    this.sweeping = run
+    try { return await run } finally { if (this.sweeping === run) this.sweeping = undefined }
+  }
+
+  private async sweepNow(workspace?: LocalTerminalWorkspace): Promise<number> {
+    let removed = this.pruneExited(workspace)
+    for (const handle of [...this.terminals.values()]) {
+      if (this.disposed) break
+      if (workspace && handle.workspaceKey !== workspace.key || handle.info.exited) continue
+      // Probe even protected handles to expose activity, but never reclaim them.
+      if (!await this.refresh(handle)) continue
+      if (this.protected(handle) || handle.idleSince === undefined
+        || this.now() - handle.idleSince < IDLE_RETENTION || handle.info.activity !== 'idle') continue
+      const revision = handle.revision
+      const refreshed = await this.refresh(handle) // fresh proof immediately before removal
+      if (!refreshed || this.disposed || this.terminals.get(handle.info.terminalId) !== handle || handle.revision !== revision
+        || this.protected(handle) || handle.info.exited || handle.info.activity !== 'idle'
+        || handle.idleSince === undefined || this.now() - handle.idleSince < IDLE_RETENTION) continue
+      this.terminate({ key: handle.workspaceKey, cwd: handle.info.cwd }, handle.info.terminalId); removed++
+    }
+    return removed
   }
 
   private expect(workspace: LocalTerminalWorkspace, terminalId: string): Handle {
@@ -122,6 +398,8 @@ export class WorkspaceTerminalManager {
     handle.sockets.clear()
     for (const disposable of handle.disposers) disposable.dispose()
     if (!handle.info.exited) { try { handle.pty.kill() } catch { /* already gone */ } }
+    handle.integration?.dispose()
+    this.notify(handle.workspaceKey)
   }
 
   /** Non-consuming byte cursor for future Agent readers; bounded replay reports gaps. */
@@ -143,7 +421,16 @@ export class WorkspaceTerminalManager {
     if (handle.output.length) ws.send(handle.output.toString('utf8'))
     if (handle.info.exited) { ws.close(1000, 'terminal-exited'); return }
     handle.sockets.add(ws)
-    const detach = (): void => { handle.sockets.delete(ws) }
+    handle.revision++
+    handle.info.attachedViews = handle.sockets.size
+    this.notify(handle.workspaceKey)
+    const detach = (): void => {
+      if (!handle.sockets.delete(ws)) return
+      handle.revision++
+      handle.info.attachedViews = handle.sockets.size
+      if (!handle.sockets.size) handle.info.lastDetachedAt = this.now()
+      this.notify(handle.workspaceKey)
+    }
     ws.on('close', detach)
     ws.on('error', detach)
     ws.on('message', data => {
@@ -155,11 +442,33 @@ export class WorkspaceTerminalManager {
       if (frame?.type === 'close' || frame?.type === 'park') { detach(); ws.close(1000, 'terminal-detached'); return }
       if (frame?.type === 'resize' && typeof frame.cols === 'number' && typeof frame.rows === 'number') {
         tryResizePty(handle.pty, frame.cols, frame.rows)
-      } else { handle.pty.write(text) }
+      } else {
+        handle.revision++
+        handle.idleSince = undefined
+        handle.promptAt = undefined
+        handle.info.lastInputAt = this.now()
+        if (!this.hooksValid(handle)) {
+          delete handle.info.runningCommands
+          handle.info.activity = 'unknown'
+          handle.info.activityReason = 'input-since-probe'
+        }
+        this.notify(handle.workspaceKey, true)
+        handle.pty.write(text)
+      }
     })
   }
 
   private append(handle: Handle, data: string): void {
+    handle.revision++
+    handle.idleSince = undefined
+    handle.promptAt = undefined
+    handle.info.lastOutputAt = this.now()
+    if (!handle.info.exited && !this.hooksValid(handle)) {
+      delete handle.info.runningCommands
+      handle.info.activity = 'unknown'
+      handle.info.activityReason = 'output-since-probe'
+    }
+    this.notify(handle.workspaceKey, true)
     const bytes = Buffer.from(data)
     handle.cursor += bytes.length
     handle.output = Buffer.concat([handle.output, bytes])
@@ -175,12 +484,18 @@ export class WorkspaceTerminalManager {
   }
 
   disposeAll(): void {
+    this.disposed = true
+    for (const state of this.subscriptions.values()) {
+      if (state.timer !== undefined) clearTimeout(state.timer)
+      state.listeners.clear()
+    }
+    this.subscriptions.clear()
     for (const [id, handle] of this.terminals) this.terminate({ key: handle.workspaceKey, cwd: handle.info.cwd }, id)
   }
 }
 
 export function buildWorkspaceTerminalApi(ctx: Context, manager: WorkspaceTerminalManager | null,
-  overrides: () => { shell?: string; shellArgs?: string[] } = () => ({})) {
+  overrides: () => { shell?: string; shellArgs?: string[]; shellIntegration?: boolean } = () => ({})) {
   const workspaceOf = async (payload: unknown) => {
     const sessionId = requireString(payload, 'sessionId')
     return { sessionId, workspace: await resolveTerminalWorkspace(ctx, sessionId) }
@@ -194,10 +509,32 @@ export function buildWorkspaceTerminalApi(ctx: Context, manager: WorkspaceTermin
         throw new SidebarError('bad-request', 'title must be a string of at most 256 characters', 400)
       }
       const config = overrides()
-      return manager.create(workspace, sessionId, raw as string | undefined, config.shell, config.shellArgs)
+      await manager.sweep(workspace)
+      return manager.create(workspace, sessionId, raw as string | undefined, config.shell, config.shellArgs, config.shellIntegration)
+    },
+    'workspace-terminal.ensure': async (payload: unknown) => {
+      const { sessionId, workspace } = await workspaceOf(payload)
+      if (!manager) throw new SidebarError('pty-error', 'pty-deps-missing', 503)
+      const config = overrides()
+      return manager.ensure(workspace, sessionId, config.shell, config.shellArgs, config.shellIntegration)
+    },
+    'workspace-terminal.pin': async (payload: unknown) => {
+      const { workspace } = await workspaceOf(payload)
+      const id = requireString(payload, 'terminalId')
+      const pinned = (payload as { pinned?: unknown }).pinned
+      if (typeof pinned !== 'boolean') throw new SidebarError('bad-request', 'pinned must be a boolean', 400)
+      if (!manager) throw new SidebarError('not-found', 'terminal-not-found', 404)
+      manager.pin(workspace, id, pinned)
+      return { ok: true as const }
+    },
+    'workspace-terminal.cleanup': async (payload: unknown) => {
+      const { workspace } = await workspaceOf(payload)
+      return manager ? manager.cleanup(workspace) : { removed: 0 }
     },
     'workspace-terminal.list': async (payload: unknown) => {
       const { workspace } = await workspaceOf(payload)
+      // Sweeping refreshes activity without changing the synchronous manager.list contract.
+      await manager?.sweep(workspace)
       return { terminals: manager?.list(workspace) ?? [] }
     },
     'workspace-terminal.terminate': async (payload: unknown) => {

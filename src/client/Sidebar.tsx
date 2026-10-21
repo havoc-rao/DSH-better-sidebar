@@ -36,7 +36,7 @@ import type { Context } from '../context-types.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
 import { DockFallback } from './sidebar/dock-fallback.tsx'
 import {
-  BOTTOM_MIN, CONVERSATION_MIN, allLeaves, firstLeaf,
+  BOTTOM_MIN, CONVERSATION_MIN, allLeaves,
   isUnread,
   leafWithTab, moveTab, moveTabToEdge, openDiffTab, resizeSplitIn,
   setBottomHeight, toggleBottomPanel, toggleExpanded,
@@ -46,7 +46,7 @@ import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
-import { isFullscreenToggleShortcut } from './fullscreen-shortcut.ts'
+import { attachWorkbenchControls } from './hotkey-actions.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
 import { confirmDiscardDraft, dirtyCount, editorDirtyRevision, subscribeEditorDirty } from './editor-dirty.ts'
 import { createOpenInApp } from './open-in-app.ts'
@@ -54,10 +54,11 @@ import { PANEL_RIGHT_HIT_GAP, useCenterColumn } from './sidebar/use-center-colum
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { useNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { mountedSessions } from './native/surface.ts'
-import { useRightPanelOpen } from './sidebar/right-panel-open.ts'
 import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
 import { useSessionRoot } from './use-session-root.ts'
+import { ensureBottomTerminal } from './workspace-terminals.ts'
+import { toggleBottomPanelAction } from './bottom-panel-action.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -101,7 +102,7 @@ function injectUserCss(attr: string, id: string, cssText: string): HTMLStyleElem
   return tag
 }
 
-export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
+export function Sidebar(props: { ctx: Context; store: SidebarStore; standaloneEntry?: boolean }) {
   const { ctx, store } = props
 
   // Copy freshness: re-render the whole tree when the DSH locale switches.
@@ -297,34 +298,24 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // consumes (renderTab's onSubagentJump arms it).
   const { subagentJumpRef } = useHostFeeds({ ctx, store, sessionList, sessionId })
 
-  /**
-   * Bottom-panel first-expansion auto terminal: the FIRST time the user
-   * expands the bottom panel in a session, try to open a fresh terminal tab
-   * there. "Try" is literal — the terminal's own quota and enable switch
-   * gate the attempt (a full quota or a disabled terminal type makes it a
-   * no-op). Gated on the bottomPanelAutoTerminal pref (the terminal tab's
-   * nested settings toggle, default on). Only a false→true TRANSITION fires
-   * (a panel persisted open never counts as an expansion), and the session's
-   * bottomOpenedOnce flag is set atomically with the first fire so later
-   * expansions never repeat it (the effect was lost with the 0.1.6 terminal
-   * yield and restored together with the terminal tab in the bottom
-   * workbench — the pref and its settings toggle had stayed on the ledger
-   * as a dead switch in between).
-   */
+  /** Each collapsed→expanded transition ensures a terminal, when enabled.
+   * Existing tabs are untouched; absent views reattach a live workspace shell
+   * before creating one. A persisted-open panel is not an expansion. */
   const bottomWasOpenRef = useRef<boolean | undefined>(undefined)
   useEffect(() => {
     if (state === undefined) return
     const wasOpen = bottomWasOpenRef.current
     bottomWasOpenRef.current = state.bottomOpen
     if (wasOpen === undefined || wasOpen || !state.bottomOpen) return
-    if (state.bottomOpenedOnce) return
     if (store.getPrefs().bottomPanelAutoTerminal === false) return
-    if (ctx.get('betterSidebar')?.isTabEnabled('terminal') === false) return
-    // Land the tab in the bottom panel's first pane; the once-flag is set
-    // atomically so later expansions never repeat the auto-open.
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.bottomSplits).id, bottomOpenedOnce: true }))
-    ctx.get('betterSidebar')?.openTab({ type: 'terminal', target: 'bottom' })
-  }, [state, store, ctx])
+    const service = ctx.get('betterSidebar')
+    if (service === undefined || !service.isTabEnabled('terminal') || sessionId === undefined) return
+    // The historical once flag is retained for persisted-state compatibility,
+    // not as a gate: removing the last tab must allow a later expansion to
+    // reattach its still-live workspace shell (or create one if none exists).
+    store.reduce(s => s.bottomOpenedOnce ? s : { ...s, bottomOpenedOnce: true })
+    void ensureBottomTerminal(store, service, sessionId, cwd)
+  }, [state, store, ctx, sessionId, cwd])
 
   // Center-column tracking (sidebar/use-center-column.ts): the bottom
   // workbench spans ONLY the app shell's center column ("squeezes the agent
@@ -347,26 +338,18 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // (the flag lives outside the store, so no session's layout carries it).
   useEffect(() => { setFullscreen(false) }, [sessionId])
 
-  // The global shortcut for the toggle above: Cmd+Shift+J on macOS,
-  // Ctrl+Shift+J on Windows/Linux (see fullscreen-shortcut.ts for the chord
-  // and its environment fit). Registered at the shell, NOT on the strips: a
-  // split workbench renders one TabBar per pane (up to four), and per-strip
-  // listeners would fire the toggle once per pane — the batched functional
-  // updates cancel out into a visible no-op. The workbench stays mounted
-  // while collapsed (collapse is a CSS hide), so the chord is heard both
-  // ways. A press some inner surface already claimed (a terminal, an
-  // editor — defaultPrevented) is left alone. Lifecycle is the shell's:
-  // the listener dies with the panel host (useEffect cleanup).
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.defaultPrevented) return
-      if (!isFullscreenToggleShortcut(event)) return
-      event.preventDefault()
-      toggleFullscreen()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => { window.removeEventListener('keydown', onKeyDown) }
-  }, [toggleFullscreen])
+  // The optional hotkey dispatcher calls this exact button action. No default
+  // keyboard listener survives here to bypass remaps, disablement or conflicts.
+  useEffect(() => attachWorkbenchControls(store, {
+    toggleFullscreen,
+    focusTerminal: () => {
+      // Owner-local focus only; never search another session/right-sidebar DOM.
+      const inputs = bottomRef.current?.querySelectorAll<HTMLTextAreaElement>('.xterm-helper-textarea')
+      for (const input of inputs ?? []) {
+        if (input.getClientRects().length > 0) { input.focus(); break }
+      }
+    },
+  }), [store, toggleFullscreen])
 
   // The bottom panel's height drag (top edge strip). Drags write the size
   // DIRECTLY to the DOM (panel style + the layout CSS variable) instead of
@@ -682,7 +665,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // in DSH's session header, which does not exist without a session.
     return <div data-dsh-panel-host {...osFileDragShield} />
   }
-  const blankEntry = <DockFallback store={store} />
+  const blankEntry = props.standaloneEntry ? null : <DockFallback store={store} ctx={ctx} />
 
   const bottomPanelHeight = bottomPushHeight({
     open: true,
@@ -709,10 +692,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * descriptor icon.
    */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
-    if (tab.type === 'editor' && tab.path !== undefined && (tab.meta as { dir?: boolean } | undefined)?.dir !== true) {
+    const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
+    if ((tab.type === 'editor' || descriptor?.fileTab === true) && tab.path !== undefined && tab.path !== '' && (tab.meta as { dir?: boolean } | undefined)?.dir !== true) {
       return ctx.get('betterSidebar')?.fileIcon(tab.path, 14) ?? null
     }
-    const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
     if (descriptor === undefined) return null
     return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon
   }
@@ -905,8 +888,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           </Tooltip>
         </span>
         {state.workspaceTerminalError !== undefined && (
-          <div role="alert" className={css.explorerActionError}>
+          <div role="alert" className={clsx(css.explorerActionError, css.bottomTerminalError)}>
             <span className={css.explorerActionErrorText}>{state.workspaceTerminalError}</span>
+            <button
+              type="button"
+              className={css.terminalErrorAction}
+              onClick={() => {
+                ctx.get('betterSidebar')?.openTab(
+                  { type: 'workspace-terminals', target: 'bottom' }, { sessionId, cwd },
+                )
+              }}
+            >{t('workspaceTerminals')}</button>
           </div>
         )}
         <div className={css.panelBody}>
@@ -941,9 +933,6 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot(), [store]),
   )
-  // 宿主右侧面板展开时不出现：那个状态下它右上角是一簇自己的控件
-  // （Split / Fullscreen / Collapse right sidebar），入口挤进去只会跟它们打架。
-  if (useRightPanelOpen()) return null
   const open = snapshot.state?.bottomOpen === true
   const label = open ? t('collapseBottomPanel') : t('expandBottomPanel')
   return (
@@ -956,7 +945,7 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
           data-active={open ? 'true' : undefined}
           aria-label={label}
           aria-pressed={open}
-          onClick={() => { store.reduce(toggleBottomPanel) }}
+          onClick={() => { toggleBottomPanelAction(store) }}
         >
           <IconPanelBottomOutline16 size={15} />
         </button>

@@ -128,8 +128,8 @@ export interface SidebarState {
   bottomOpen: boolean
   /**
    * Whether the bottom panel has been expanded at least once in this
-   * session — the FIRST expansion tries to auto-open a terminal tab (gated
-   * on the bottomPanelAutoTerminal pref); later expansions never do.
+   * session. Retained for persistence compatibility; auto-terminal now
+   * ensures a reusable shell on each expansion rather than gating on this flag.
    */
   bottomOpenedOnce: boolean
   /** The bottom panel's height (clamped to the contract range). */

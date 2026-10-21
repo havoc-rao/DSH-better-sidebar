@@ -516,29 +516,30 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const fileRow = pane.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
   await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the plugin's explorer`).toHaveCount(1, { timeout: 30_000 })
 
-  // The horizontal axis (the tree panel here is narrow; the long seed alone
-  // is wider): the body must own a horizontal scroll range instead of
-  // squeezing every label into an ellipsis, and the row's @-reference pill
-  // must stay pinned at the scrollport's right edge rather than sitting at
-  // the wide row's off-screen end. Both facts are observable only in a real
-  // browser — hence this lane.
+  // Long names truncate within the narrow panel instead of widening the
+  // tree. Reference actions overlay the row without squeezing its label.
+  // Verify actual geometry here; jsdom cannot exercise layout.
   const treeBody = pane.locator('[data-dsh-file-tree]:visible').first()
   await expect(treeBody, 'the explorer body must be on screen').toHaveCount(1, { timeout: 30_000 })
   const overflowX = await treeBody.evaluate(el => getComputedStyle(el).overflowX)
-  expect(overflowX, 'the tree body must scroll horizontally (not clip)').toBe('auto')
+  expect(overflowX, 'the tree must suppress horizontal scrolling').toBe('hidden')
   const longRow = pane.locator(`[role="button"][title$="${SEEDED_LONG_NAME_FILE}"]:visible`)
   await expect(longRow, 'the long-named seed must render one row').toHaveCount(1, { timeout: 30_000 })
   const widths = await treeBody.evaluate(el => ({ scroll: el.scrollWidth, client: el.clientWidth }))
-  // The label's own box is wider than the panel (so the only alternatives are
-  // "squeeze it" or "scroll") — and the body chose the scroll range.
-  const labelWidth = (await longRow.locator('[class*="explorerName"]').boundingBox())!.width
-  expect(labelWidth, `the long label (${labelWidth}px) must not fit the panel (${widths.client}px)`)
-    .toBeGreaterThan(widths.client)
-  expect(widths.scroll, `the long seeded name must widen the tree (scroll ${widths.scroll} vs client ${widths.client})`)
-    .toBeGreaterThan(widths.client)
-  // Hover reveals the pill; with the row wider than the panel the pill may
-  // only stay inside the body if it is sticky.
+  const label = longRow.locator('[class*="explorerName"]')
+  const labelBefore = (await label.boundingBox())!
+  const labelStyle = await label.evaluate(el => ({
+    overflow: getComputedStyle(el).overflow,
+    ellipsis: getComputedStyle(el).textOverflow,
+    scroll: el.scrollWidth, client: el.clientWidth,
+  }))
+  expect(labelBefore.width).toBeLessThanOrEqual(widths.client)
+  expect(labelStyle.overflow).toBe('hidden')
+  expect(labelStyle.ellipsis).toBe('ellipsis')
+  expect(labelStyle.scroll, 'the long filename must actually truncate').toBeGreaterThan(labelStyle.client)
+  expect(widths.scroll, 'the content must remain within the tree viewport').toBeLessThanOrEqual(widths.client + 1)
   await longRow.hover()
+  expect((await label.boundingBox())!.width, 'revealing row actions must not shrink the filename').toBe(labelBefore.width)
   const pillBox = await longRow.locator('[class*="explorerRef"]').boundingBox()
   const bodyBox = await treeBody.boundingBox()
   expect(pillBox, 'the @-reference pill must be laid out').not.toBeNull()
@@ -547,14 +548,9 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     pillBox!.x + pillBox!.width,
     `the pill must stay at the scrollport edge (pill right ${pillBox!.x + pillBox!.width}, body right ${bodyBox!.x + bodyBox!.width})`,
   ).toBeLessThanOrEqual(bodyBox!.x + bodyBox!.width + 1)
-  // Scrolled fully right the label itself is readable end to end.
-  await treeBody.evaluate(el => { el.scrollLeft = el.scrollWidth })
-  const nameBox = await longRow.locator('[class*="explorerName"]').boundingBox()
-  expect(
-    nameBox!.x + nameBox!.width,
-    'the full label must fit inside the scrolled body',
-  ).toBeLessThanOrEqual(bodyBox!.x + bodyBox!.width + 1)
-  await treeBody.evaluate(el => { el.scrollLeft = 0 })
+  // The complete name remains available through the row tooltip.
+  expect(await longRow.getAttribute('title')).toContain(SEEDED_LONG_NAME_FILE)
+  expect(labelBefore.x + labelBefore.width).toBeLessThanOrEqual(bodyBox!.x + bodyBox!.width + 1)
 
   // Click near the row's LEFT edge: hovering reveals an @-reference button at
   // the row's right end, and a center click on a narrow dock lands on it

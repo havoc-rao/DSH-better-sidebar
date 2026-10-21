@@ -369,8 +369,8 @@ id: 'terminal',
       order: 40,
       available: (_ctx, _scope, state) => uiTerminalCount(state) < TERMINAL_LIMIT,
       // Declarative settings: the model-facing terminal tools switch, the
-      // bottom-panel first-expansion auto-terminal switch, and the custom
-      // font family/size rows render under this card in the Side card
+      // bottom-panel shell reuse switch, experimental shell integration,
+      // and custom font family/size rows render under this card in the Side card
       // settings page (the host gates the toolset on the tools one
       // independently; the font rows apply live to every terminal).
       settings: {
@@ -394,6 +394,10 @@ id: 'terminal',
           title: () => t('settingsShellArgsTitle'),
           desc: () => t('settingsShellArgsDesc'),
           placeholder: t('settingsShellArgsPlaceholder'),
+        }, {
+          key: 'terminalShellIntegration',
+          title: () => t('settingsShellIntegrationTitle'),
+          desc: () => t('settingsShellIntegrationDesc'),
         }, {
           key: 'terminalFontFamily',
           type: 'text',

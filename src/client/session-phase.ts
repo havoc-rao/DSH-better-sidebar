@@ -25,14 +25,14 @@ const POLL_MS = 1_000
  * @param sessionId - 当前会话（undefined 时不读取，返回 undefined）。
  * @returns 相位；尚未读到时为 undefined（调用方应视为非 blank，先不渲染备用入口）。
  */
-export function useSessionPhase(sessionId: string | undefined): SessionPhase | undefined {
+export function useSessionPhase(sessionId: string | undefined, enabled = true): SessionPhase | undefined {
   const [phase, setPhase] = useState<SessionPhase | undefined>(undefined)
   // 最近一次提交过的相位：轮询读回来的都是**新解析的 JSON 对象**，靠 state 自己没法
   // 「同值不写」（`setPhase(updater)` 返回同一个对象时 React 仍可能重跑一次组件体）。
   const pushedRef = useRef<SessionPhase | undefined>(undefined)
   useEffect(() => {
-    if (sessionId === undefined) {
-      pushedRef.current = undefined
+    pushedRef.current = undefined
+    if (!enabled || sessionId === undefined) {
       setPhase(undefined)
       return
     }
@@ -76,6 +76,6 @@ export function useSessionPhase(sessionId: string | undefined): SessionPhase | u
       stop()
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [sessionId])
+  }, [sessionId, enabled])
   return phase
 }

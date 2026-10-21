@@ -62,6 +62,7 @@ import { streamFileToResponse } from './file-stream.ts'
 import { readPersistedSession } from './session-store.ts'
 import { buildResourceDataApi } from './resource-data-routes.ts'
 import { buildWorkspaceTerminalApi, resolveTerminalWorkspace, WorkspaceTerminalManager } from './workspace-terminal.ts'
+import { attachWorkspaceTerminalWatch } from './workspace-terminal-watch.ts'
 export type { WorkspaceTerminalInfo } from './workspace-terminal.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
 import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -659,7 +660,7 @@ const SIDEBAR_RECONNECT_GRACE_MS = 30_000
  * that resolution — same contract, later binding: the values here win for
  * terminals opened afterwards.
  */
-function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): { shell?: string; shellArgs?: string[] } {
+function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): { shell?: string; shellArgs?: string[]; shellIntegration?: boolean } {
   const settings = getSettings()
   const value = settings?.get().value
   if (value === null || typeof value !== 'object') return {}
@@ -669,6 +670,7 @@ function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): {
   return {
     shell: shell === '' ? undefined : shell,
     shellArgs: args === '' ? undefined : splitShellArgs(args),
+    shellIntegration: record.terminalShellIntegration === true,
   }
 }
 
@@ -1488,6 +1490,13 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     : null
   // Workspace UI terminals never share the legacy session/tab registry.
   const workspaceTerminals = nodePty !== null ? new WorkspaceTerminalManager(terminalShell, nodePty) : null
+  if (workspaceTerminals) ctx.effect(() => {
+    const timer = setInterval(() => {
+      void workspaceTerminals.sweep().catch(error => ctx.logger?.warn(`[dsh-better-sidebar] terminal sweep failed: ${String(error)}`))
+    }, 60_000)
+    timer.unref?.()
+    return () => { clearInterval(timer); workspaceTerminals.disposeAll() }
+  }, 'dsh-better-sidebar: workspace terminal lifecycle sweep')
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
   // uncapped, and torn down with the plugin. The model creates terminals here
@@ -2021,6 +2030,18 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   }), 'dsh-better-sidebar: terminal WebSocket')
 
+  // Workspace catalog subscriptions are independent of terminal output/views.
+  const workspaceListWss = new WebSocketServer({ noServer: true })
+  ctx.effect(() => ctx.webServer.registerUpgrade({
+    path: '/sidebar/ws/workspace-terminals',
+    handler: (req, socket, head) => {
+      if (!fence(req)) { socket.destroy(); return }
+      workspaceListWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, ws => {
+        void attachWorkspaceTerminalWatch(ctx, workspaceTerminals, ws, req.url ?? '/')
+      })
+    },
+  }), 'dsh-better-sidebar: workspace-terminals push WebSocket')
+
   // ── Agent terminals push WebSocket ──────────────────────────────────────
   // Pushes the live list of agent terminals for one session to the sidebar
   // view: the client mirrors the list into tabs (id `agent:<uuid>`, title
@@ -2059,8 +2080,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     // The sockets' own `close` handlers stay the ones releasing those
     // resources (they are idempotent, and a socket already closing ignores a
     // second close).
-    for (const wss of [terminalWss, agentListWss, agentOpenWss, fsWatchWss, sidechatWss]) {
-      for (const client of wss.clients) client.close()
+    for (const wss of [terminalWss, agentListWss, agentOpenWss, fsWatchWss, sidechatWss, workspaceListWss]) {
+      for (const client of wss.clients) {
+        if (wss === workspaceListWss) client.close(1001, 'server-shutdown')
+        else client.close()
+      }
       wss.close()
     }
   }, 'dsh-better-sidebar: teardown')

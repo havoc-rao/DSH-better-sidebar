@@ -100,7 +100,7 @@ function selectionBar(): HTMLElement | null {
 
 function barAction(label: string): HTMLElement {
   const button = [...(selectionBar()?.querySelectorAll<HTMLElement>('button') ?? [])]
-    .find(el => el.textContent === label)
+    .find(el => el.getAttribute('aria-label') === label)
   if (button === undefined) throw new Error(`bar action not found: ${label}`)
   return button
 }

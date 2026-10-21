@@ -35,6 +35,8 @@
 | 跨会话打开 | 目标会话的右侧栏 store 未挂载时，打开会排队到该会话上屏后重放 |
 | 内置类型接管 | 插件的 `editor` 类型以 `extension` 优先级认领 `dsh-resource://file/**`（压过内置 `ui-sidebar-documentpreview` 的 `text` 预览——即 `fallback` 带），并接管内置 `files` 页面 kind（`openTab('files')` 打开插件的文件树）；插件卸载/禁用时内置实现自动复位。**但认领是有选择的**：宿主自己的文档预览已经覆盖的格式（表格 / PDF / 图片 / Office，清单见 §5.4）由 `editor.canOpen` 主动**拒绝**，地址交回内置 `text` 档 |
 | 文件树 `@` 引用后的焦点 | 文件与文件夹引用成功插入后，统一调用目标会话的宿主输入服务 `focus()`，把键盘焦点交还 DSH 本体输入框并保留宿主编辑器的选择；文件 chip、目录文本与旧宿主纯文本回退路径行为一致。无法插入时不抢焦点；宿主不支持 `focus()` 或聚焦失败时保留已插入内容，不重复插入。当前 Lexical 输入框不通过 DOM `focus()` 或旧 textarea 选择器聚焦 |
+| 文件树发起删除快捷键 | 文件树 owner 向可选 `dsh-hotkey` v1 注册 `betterSidebar.files.delete`，默认 macOS `Cmd+Backspace`（键帽 Delete）、其他平台 `Delete`。单一动作随焦点绑定到当前树根（`focus` scope），读取组件自身的选中集合，不从编辑器或 reveal 高亮推断路径。普通单击仍只打开/展开并清除选择；Cmd/Ctrl+单击、Shift+单击或右键才形成选择。无选择、隐藏树、picker、只读 source、重命名/新建输入、菜单、删除弹窗或忙碌时不接管；焦点移到编辑器/终端也不接管。触发只打开既有删除确认框，实际删除沿用原流程与会话/cwd 归属检查。无 hotkey 服务时不安装备用监听。 |
+| 文件树删除确认快捷键 | 单文件/目录与批量删除确认框可选接入 `dsh-hotkey` v1；动作 ID 为 `betterSidebar.delete.confirm`（默认 macOS `Cmd+Enter`，其他平台 `Ctrl+Enter`）与 `betterSidebar.delete.cancel`（`Cmd+Esc` / `Ctrl+Esc`）。作用域是实际弹窗 DOM 的 `focus`，不注册全局按键监听；普通 `Esc` 仍由宿主 Modal 处理，初始焦点放在取消按钮。busy 时按钮、快捷键与弹窗关闭均锁定。两个 owner-unique root/single child slot `betterSidebar.delete.confirm.hotkeyHint` / `betterSidebar.delete.cancel.hotkeyHint` 在按钮内展示当前绑定，owner props 为 `{ hotkeyHint: { version: 1, commandId, disabled } }`；改键/禁用由 hotkey 负责，缺少服务时提示为空，鼠标与原生 Esc 照常可用。注册与订阅随注入 fiber、弹窗关闭和插件卸载释放；其他业务的 ConfirmDialog 不自动接管这些动作。 |
 | 文件树实时刷新（v0.21.1+） | 插件接管了内置 `files` 页，所以宿主自己的按目录 watch 覆盖不到这棵树——插件自带一条 `/sidebar/ws/fs-watch` socket：客户端上报**已展开**的目录集，宿主侧按目录 `fs.watch`（150ms 去抖、每连接上限 64 个句柄），变动后只让那一层缓存失效并重列；目录折叠即退订。路径仍走 `fs.tree` 同一套词法解析 |
 | 编辑器预览自动刷新（#855） | 模型在会话里改完文件后，**正在看的那个预览**自己刷新，不必再手点刷新或重开文件。信号是插件自有的会话事件增量流 `changes.ops`（宿主 `src/index.ts` 路由），**每会话一个共享轮询器**（N 个编辑器 tab 每 tick 仍只有 1 个请求，全部隐藏即停；**叠加口径**：Git 页的会话透镜有它自己的轮询器（primed 之后改用 `wait` 长轮询等宿主事件，不再是固定间隔重放整窗），两者同开时该会话每 tick 至多 **2 个** `changes.ops` 请求，「1 个」只算编辑器这一份），**不新增 fs.watch / fsRead 指纹轮询**。只有 `write` / `edit` **结算成功**且路径命中本页文件的那些调用会触发重载（走既有的 `fsRead`/`load` 路径），未命中的文件零重读；**dirty 草稿与编辑态一律跳过**（脏态优先）。第三方 viewer 要保住自己的草稿就必须如实上报 `onToolbarState.dirty` / `mode`，见 §5.2 |
 | 地址里的行号（#826） | 宿主的 markdown 链接语法只认 GitHub 的 `#L131` 片段，`path:131` 形式（编译器诊断 / `grep` 的写法，模型输出很常见）会被当成**文件名的一部分**送进地址。插件的 `editor` 类型在把地址转成合成记录时把尾部行号规格（`:行` / `:起-止` / `:行:列`）切掉，tab 标题同样按切完的文件名给——否则点开就是一个报「文件不存在」的 `x.c:131`。切分只在这一步发生（`src/client/path-line.ts`），文件树 / 搜索 / 插件自有流程的路径不经过它；代价是**从聊天链接**打开一个真名以 `:数字` 结尾的文件会丢掉后缀（Windows 上 `:` 本就不是合法文件名字符）。行号随后顺着记录一路走到 viewer：两种写法落到**同一行**（`#L131` 由宿主解析成 `navigation.params.line`，`path:131` 由插件切出来，两者合流到 `SidebarTab.line`），文本编辑器在**到达时定位一次**并高亮该行，越界行号钳到最后一行。区间只取起始行、列号丢弃——编辑器只有一处光标。`line` 是**瞬态**：`sanitizePersistedTab` 的白名单不含它，刷新后不会把读者拽回几天前的那一行。markdown / html 收到行号时会**强制切到编辑态**再定位（预览里没有源码行号可放，而它自己的挂载滚动恢复也会和跳转打架）——引用要的是源码。这条强制是**一次性导航、不是文件的模式**：viewer 定位完成后回调 `onLineConsumed?.()`，宿主（`EditorHost`，它比 viewer 活得久——一次 reload 会把 viewer 整个重建）就停止再下发同一个 `line`；不这样做的话，读者点「预览」触发的 reload 会让重建出来的 viewer 重新强制切回编辑态，永远回不去。不消费 `line` 的 viewer（如按扩展名认领、只渲染图片的）与本行为无关。**两条入口现在一致**：聊天正文由宿主解析出 `navigation.params.line`；插件自绘的 markdown 预览（编辑器预览 / 侧边对话转录 / 变更阅读窗 / 任务窗口）在 `MarkdownDelegate.openFile(path, { line })` 里收到同一个数字，转成 seed 的 `line` 再走同一条链路——所以预览里点 `#L42` 与聊天里点 `#L42` 行为相同（跳到第 42 行 + 切到编辑态）|
@@ -44,7 +46,7 @@
 | 终端（宿主一条 + 插件底部一条，彼此独立） | 插件**不在原生右侧栏提供终端**：宿主 0.1.6 起自带 `ui-sidebar-terminal`（kind `terminal`），插件侧 PTY 栈与 `terminal_*` 工具整体删除。**但插件自己的底部工作台有一条终端**（`terminal-bottom`，#774）：它不注册原生类型、不占 guide 条目（`bottomOnly`），页面是插件自绘的 xterm，进程由**宿主的会话级终端服务** `ctx.webTerminals` 供给——插件不持有 PTY，也不与右列那条共享进程（两条终端各自独立是有意的，右列仍是宿主的地盘）。宿主没挂终端控制器时该类型 `available` 为 false（菜单置灰），页面显示「宿主未提供终端能力」而不是崩 |
 | `bottomOnly`（#774） | 只投底部、永不注册原生承载面的类型（字段说明见 §4）。它同时意味着：`openTab` 落点强制 `'bottom'`（连 `target: 'side'` 也被改道——原生栏里的 tab 不在底部工作台的分栏树里，两者归属矛盾）、原生 tab 类型与 guide 条目都不注册。`hidden: true` **不是**它的替代品：那会连 `+` 菜单一起摘掉（`buildNewTabOptions` 过滤 `!hidden`），而它要的正是「留在 `+` 菜单、只离开原生栏」 |
 | 底部终端的恢复语义（#774） | 刷新后重新上屏同一页签时，页面用**同一份 `(sessionId, key, contentId)`** 再次调用宿主的 `webTerminals.view()`：宿主持久化在 localStorage 的 `(sessionId, contentId) → 终端 id` 绑定因此把**同一个** PTY 认回来（`contentId` 是 `dsh-better-sidebar:terminal-bottom:<instance>`——**每个页签一个实例，不再是恒定值**，#926）。插件**不把 terminalId 写进 `tab.meta`**：`view()` 显式传 terminalId 会关掉宿主的「缺了就建」分支，一个过期的 id 会把页签永久卡在 `missingTerminal` 上。DSH 重启后 PTY 全没了而 localStorage 绑定还在，所以「新建终端」按钮把 `tab.meta.terminalRun` +1 换一代 `contentId`，让宿主另铸一个进程，而不是反复认领死绑定 |
-| 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里 |
+| 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里。**底部开关不随原生右侧栏展开而隐藏**。blank 会话入口独立于工作台挂载，启动时不等待 `settings.get`（工作台自身仍保留配置/互斥判定及 2s 超时兜底）；提前点击写入同一 store，配置就绪后工作台沿用开合状态。互斥配置确认为禁用时撤下备用入口。支持公开 UI 快照的宿主通过 `ctx.uiConversation.header.getSnapshot()/subscribe(listener)` 发布已提交的 `{sessionId, phase, chromeVisible, cornerAvailable}`，插件据此即时交接 blank 会话备用入口与会话头入口，不再请求 `session.phase` 或每 500ms 检查按钮。原生右栏展开态优先订阅 `ctx.sidebarRight.expanded`（同样的快照接口）。订阅均在卸载释放；旧宿主无这些接口时仍兼容相位轮询与 DOM 标记观察。几何避让仍需 DOM 测量，但改由变化/resize 触发，不做定时轮询 |
 | 在侧边打开（`target: 'side'`，v0.22.0+） | 原生栏里的 tab **不在插件底部工作台的分栏树里**，所以「在侧边打开」不能写 `bottomSplits`（那样会落到用户没展开的底部工作台 = 点了没反应）。服务改为把这一步交给宿主：带 path 的 `editor` seed 走 `openResource(address, { preferNewPane: true, revealIfOpened: false })`——宿主先按自己的两格上限与空间规则尝试分栏，分不了才回退到当前格；`revealIfOpened: false` 允许与已打开的同名资源并存，因此对同一个文件再点一次也会新开一格。其余类型若传 `target: 'side'`，同样以 `preferNewPane` 落原生栏（组件型 tab 的 path 仍是组件种子）——**唯一的例外是 `bottomOnly` 类型**（#774）：它没有原生承载面可落，`target: 'side'` 被改道回 `'bottom'`。path-less 的 `editor`（文件页）与 `'bottom'` 行为不变 |
 | 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行，**`bottomOnly: true` 的类型同样不占行**（#774：它只活在插件自己的底部 `+` 菜单里）。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**本插件默认贡献 4 个 guide 条目**（文件 / Git / 任务管理 / 侧边对话，恰好在上限内），**但宿主的终端条目也占一行**——装了宿主终端即是 5 条，说明整列不渲染；要让说明回来，需在插件设置页关掉足够多的 tab 类型把总数压到 ≤ 4 条 |
 | 新建面板的种子（alpha.2） | 在新会话打开原生新面板时，宿主从已注册的 guide 条目里播种：恰好 1 个条目 → 直接打开那一页；0 或 ≥2 个条目 → 打开指南。`revealIfOpened` 打开的「页面」在**同一 pane 内**强制去重（已在该 pane 就不再新建）；由已有 tab 地址驱动的打开不受该去重影响 |
@@ -991,6 +993,31 @@ ctx.effect(() =>
 
 ## 8. 声明式设置（v0.4.1+）
 
+**本地终端自动打开语义**：启用 `bottomPanelAutoTerminal` 时，每次展开底部面板只确保有一个终端：已有 terminal tab 时复用原视图，存活进程不重启；已有受管终端无论是否可见，都不会因断线、重新激活或收到已退出/丢失通知自动创建替代进程；只有后端明确报告 exited/missing/terminated 后，才显示「启动新终端」供用户显式创建（新进程不恢复旧任务）；权限拒绝不提供新建或重连按钮；没有 tab 时先列出工作区终端（避免仍运行旧版获取策略的后端误创建），仅在没有存活终端时调用后端 `ensure` 原子获取或创建默认终端；选择已有终端时优先重新挂接本会话关联的存活终端，其次重新挂接工作区任一存活终端（包括其他会话关联、已有连接、已保留、运行中或状态未知的终端），只新增视图，不发送输入、不重启或终止进程；只有工作区完全没有存活终端时才创建一个。快速反复展开共用一次异步操作，本地后端还会按工作区串行化多窗口请求。该行为不限制用户通过 `+` 显式新建多个终端；未提供工作区管理能力的旧式第三方终端源仍走自身的打开路径。
+
+**快捷键业务所有权**：better-sidebar 向可选的 `ctx.hotkey.registerAction` 注册以下六个历史 ID，保留用户改键：
+
+| ID | 默认键（字符串在 macOS 自动 Ctrl→Cmd，Alt 保持） | owner 行为 |
+| --- | --- | --- |
+| `toggle.bottomPanel` | `ctrl+j` | 与 `BottomDockToggle` 共用 `toggleBottomPanelAction` reducer，不直接创建终端；展开后的自动终端偏好仍由原 owner effect 决定 |
+| `toggle.terminal` | `{mac:'ctrl+\u0060',default:'ctrl+\u0060'}`（显式保留 Control） | 展开并激活现有底部终端；无视图时按工作区终端策略复用/获取，聚焦仅限本 workbench 的可见终端 |
+| `toggle.terminalFullscreen` | `ctrl+shift+j` | 调用与 strip 最大化按钮完全相同的局部回调，不使用浏览器 Fullscreen API |
+| `open.git` | `ctrl+shift+g` | 走本插件 `openTab({type:'git'})`，包含原生栏/无栏兜底 |
+| `open.sideChat` | `alt+e` | 走本插件 `openTab({type:'sidechat'})` 的线程 factory |
+| `open.subagent` | 未绑定（`null`） | 走本插件 `openTab({type:'subagent'})` |
+
+hotkey 只负责注册、监听、匹配、冲突、禁用及用户改键，不读取底部业务状态、不查找按钮、不调用终端 adapter。通过 `ctx.inject(['hotkey'])` 和注入 scope 的 effect 管理注册/释放；部分注册失败会回滚，disposer 幂等。无运行时跨插件 import 或必需依赖。缺少服务时按钮仍正常工作，但不另设默认全局监听；原全屏默认监听已移除，避免绕过改键/禁用或双触发。`open.files` / `toggle.rightPanel` 不由本次接入认领（宿主 native owner 边界）。没有添加全局 Arrow/Enter 导航；局部组件继续自行处理可访问性，不劫持终端输入。
+
+### 终端管理与安全回收
+
+工作区终端管理页展示活动状态、连接数、最近输入/输出时间，支持「保留」开关与「清理安全候选」。本地列表通过工作区级 `/sidebar/ws/workspace-terminals?sessionId=…` 订阅完整元数据快照（`{revision, terminals}`）：连接即同步，创建、命令生命周期、退出、连接数与保留状态变化即时推送，连续输入/输出元数据合并推送；不附着 PTY 输出视图、不增加 `attachedViews`。断线退避重连并重新同步；tab 或浏览器页面隐藏时释放订阅，恢复可见重新获取快照。不支持订阅的第三方源保留 10 秒列表轮询；手动刷新与管理操作仍可显式列举。有连接（包括隐藏 tab）、已保留、运行中或状态未知的终端不自动结束；关闭视图只断连，显式「终止」仍需确认。活动时间不等于空闲证明，清理按钮也不是强制杀进程。
+
+本地后端每分钟检查：已退出且无连接的记录保留至少 10 分钟后删除；无连接且连续确认空闲至少 30 分钟的 shell 才能回收，最后断连后另有至少 2 分钟保护。回收前复查活动与连接/保留状态。Linux 进程检查能发现后代任务、前台任务与同终端其他进程，标记为运行中；但即使 shell 正等待终端输入也可能在执行内置 `read`，不能证明已回到提示符，因此仍按未知处理。默认不开启提示符集成时，未知状态的存活 shell 不会被自动回收。设置「实验性 zsh Shell 集成」（`terminalShellIntegration`，默认关闭）仅作用于之后新建的本地工作区终端：只支持 macOS/Linux、无自定义参数的普通 zsh，启用时使用非登录交互式 `-i` 启动，并通过临时 `ZDOTDIR` 加载原用户 `.zshenv/.zshrc` 后追加 hooks，不写用户配置文件。这会改变启动链，复杂主题、全局配置和原有 hooks 不保证兼容；原先未设置 `ZDOTDIR` 时，包装后可能显式设为用户配置目录，不保证其「未设置」状态保持不变。
+
+实验集成通过 Shell/PTY hook（不是 xterm 文本猜测）发出命令开始、命令结束（退出码）与 ZLE 顶层提示符就绪事件，服务端解析后推送。展示层在命令开始时立即标记 busy，返回提示符时标记 idle；命令结束与 PTY 退出分开，`commandStartedAt/commandFinishedAt` 为 Unix 毫秒，`commandExitCode` 是前台命令退出码，`commandDurationMs` 是耗时。启动后的首次提示符不伪造命令完成；后台作业、嵌套 SSH/tmux 和 CLI 内部“等待授权”等不属于通用 Shell hook 的证明范围。**展示空闲不等于可自动回收**：输入/普通输出仍撤销回收证明；只有提示符信号稳定至少 2 秒，且进程复核确认前台 shell 无后代/同终端其他任务时才建立可回收的空闲证明。信号缺失、探测失败或不支持、异步 trap/定时/handler 等不受支持配置均降级未知，不为释放配额强杀。随机标记不是同权限恶意代码的安全边界。Windows、bash 及自定义参数不启用此集成；已有终端不重启，仍按原行为运行。真实宿主若禁止 `ps` 或 PTY 启动会安全降级，需要在该宿主环境确认集成状态，不能以单元测试代替真实提示符验证。
+
+`ensure` 为默认打开提供服务端工作区串行锁与会话关联偏好；关联用于优先恢复本会话终端，不阻止其他会话挂接同一个存活终端。多视图共享同一进程，用户输入也作用于同一 shell。配额错误区分活进程与保留记录、工作区与全局；完全没有存活终端且创建达到上限时保持错误与管理入口，不会为了腾位强杀任务。第三方后端可通过可选接口实现等价策略，缺能力按未知降级，绝不跨后端回退。
+
 每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码）：
 
 - 展示：小卡片网格（图标 + 标题 + 类型 id），**高亮 = 启用**，勾选徽标钉在卡片最右端；viewer 卡片额外显示扩展名。
@@ -1290,12 +1317,136 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 
 ---
 
+## 16. 受控文件内容 slot（`fileViewerChrome:v1`）
+
+自定义文件 tab（例如 `dsh-remote:file`）可复用 sidebar 的文件图标、header/chrome 与资源操作承载面，而不把远程传输与保存语义交给本地 `EditorHost`。运行时只调用服务方法；类型可从 `dsh-better-sidebar/client/service` 导入 `FileViewerRenderProps`。
+
+```tsx
+if (service.features.includes('fileViewerChrome:v1')) {
+  return service.renderFileViewer({
+    scope, path, title,
+    content: service.renderCodeEditor({
+      documentKey, path, content: draft, readOnly,
+      onChange: setDraft, onSave: save,
+    }),
+    actions: <RemoteFileActions onSave={save} onDownload={download} />,
+    status: readOnly ? 'Remote · read-only' : 'Remote',
+    documentState: { dirty, readOnly },
+  })
+}
+return <LegacyRemoteFileTab />
+```
+
+完整参数：`{ scope: SessionScope; path: string; title?: string; content: ReactNode; actions?: ReactNode; status?: ReactNode; documentState?: FileDocumentState; showResourceActions?: boolean }`，返回 `ReactNode`。`path` 为绝对资源路径；标题缺省为 basename，完整路径显示在 header（溢出省略，tooltip 保留完整路径）。`content` 可承载编辑器、markdown、加载、错误、二进制或下载面板；`actions` 和 `status` 是消费者拥有的 slot（含翻译与按钮行为）。
+
+- **纯受控渲染，无 IO**：不会匹配/加载 FileViewerDescriptor，不会 fs.read/write、构造本地下载链接或导航。消费者负责 authority/provider、取消、冲突、刷新、预览模式、下载与错误处理。不要将远程路径交给本地 `EditorHost` 作为 fallback。
+- **状态所有权不变**：不会自动 `reportFileDocument`；消费者继续登记并释放文档状态及 dirty/close guards。资源按钮执行时读取最新 `documentState`；缺省保守为 `{ dirty: 'unknown', readOnly: true }`，不假定可写。`showResourceActions` 缺省 true，若外部已渲染操作承载面可设 false 避免重复。
+- **不强制 remount 内容**：更新状态/注册文件图标不会重新创建内容组件身份或抛弃草稿；编辑器 `key`/documentKey、缓存与关闭释放由消费者管理。
+- **自定义文件 tab 图标**：注册 `TabDescriptor` 时设 `fileTab: true`，native 芯片与底部工作台均从非空 `tab.path` 经 `service.fileIcon(path, 14)` 取图标；无路径时仍用 descriptor.icon。此字段不改变文件认领、dispatchFileActivation、tab type、持久化或打开策略，普通 URL/path tab 不受影响。与旧 `RemoteFileTab` fallback 兼容：仅在 capability 存在时使用新方法。
+- **复用统一 chrome**：公共 renderer 与内置 EditorHost 共用 FileViewerHeader 与 editor 样式令牌；不需跨插件 runtime import 组件或复制 CSS。
+
+## 17. 公共远程文件树（`fileExplorer:v1`）
+
+`service.renderFileExplorer(props)` **直接挂载现有 TreePanel + FileTree**：包含搜索/刷新/排序工具栏、真实目录行/折叠、多选、右键、创建/重命名/删除/拖拽与上传 overlay，而非复制近似 UI。`FileTree` 继续使用可选 `fileTreeUi` v2 framework；该服务缺席时仍用 sidebar 原有树实现。本仓库没有 `fileTreeSectionSource` 注册机制；此接口是组件级严格数据源 seat，与 document provider / file activation 分工独立。
+
+```tsx
+if (service.features.includes('fileExplorer:v1')) {
+  return service.renderFileExplorer({
+    scope: { sessionId, cwd: remoteRoot }, // 目录列举/操作的远程 root
+    activationScope: { sessionId, cwd: localMirrorCwd }, // 会话 document provider authority
+    sourceKey: `${machineId}:${connectionGeneration}`,
+    source: remoteExplorerSource, // useMemo 保持稳定
+    expanded, onToggle, onOpenFile,
+    onReferenceFile: (absolutePath, isDir) => insertRemoteReference(absolutePath, isDir),
+    onOpenFileNewTab, onOpenFileSide,
+  })
+}
+return <StandaloneRemoteExplorer />
+```
+
+`FileExplorerRenderProps`：必填 `scope`、`sourceKey`、`source`、`expanded: string[]`、`onToggle(path)`、`onOpenFile(path)`、`onReferenceFile(path,isDir)`；可选 `revealed`（默认 []）、`onOpenFileNewTab`、`onOpenFileSide`、`onPathRenamed(old,new)`、`onPathDeleted(path,isDir)`、`visible`、`exclude`。所有路径均为远程绝对路径，@ 引用不由 sidebar 拼接或写入 composer，交给消费者保留远程语法。
+
+可选 `activationScope: SessionScope` 默认为 `scope`，仅用于普通文件行激活的 `dispatchFileActivation` 与 `getFileDocumentState`。当远程目录 root 与会话的本地 mirror cwd 不同时，必须传会话原始 `{sessionId,cwd}`，使 file-open target / document provider 保留远程 authority；不修改 listing、搜索、mutation 的 scope，也不重写 `absolutePath` 或 fallback `onOpenFile(path)`。target 全部 declined 时才执行 fallback；认领报错不回退本地。activationScope 按 sessionId/cwd 值变化即 fence 旧异步激活（包括 A→B→A），不清目录 cache；卸载及 listing/source/service 切换同样禁止旧 fallback、后续 target 与错误条污染新树。已经进入 target.open 的外部副作用无法撤销，target 仍须自行绑定原始 authority。
+
+`FileExplorerSource` 必填 `fsTrees(scope,paths,exclude?,signal?) => Promise<{levels:FsLevel[]}>`，每个 level `{path,entries,truncated,error?}`；entries 使用导出的 `FsEntry`（`name,path,isDir,isSymlink,hidden,broken,compact?`）。可选：
+
+- `fsSearch(scope,query,exclude?,signal?) => Promise<{matches:string[],dirs:string[],truncated:boolean}>`（matches/dirs 可为根相对路径或绝对路径）；缺席时禁用搜索。
+- `fsRename(scope,path,name)`、`fsMove(scope,path,dir)`、`fsCopy(scope,path,dir)`、`fsRemove(scope,path)`、`fsMkdir(scope,dir,name)`、`fsCreateFile(scope,dir,name)`：均返回 `Promise<{path:string}>`，与既有 api 方法参数一致。
+- `download(scope,path): void | Promise<void>`，消费者负责远程字节下载。
+- `upload(scope,dir,items:UploadItem[],onProgress(done,total,current),signal?):Promise<UploadResult[]>`；类型从服务合同 type-only 导入。消费者负责路径准入、上传限额与错误转换。
+
+**目录展开反馈**：首次展开尚未缓存的目录时，共享 `fileTreeUi` v2 与内置回退路径均在该目录下持续显示 loading 状态行（`role="status"`，行容器 `aria-busy="true"`），直到 `fsTrees` 成功返回条目（空目录也会结束 loading）或失败后显示该层错误。等待期间仍可折叠/重新展开该目录，也可操作其他目录；不使用阻塞整棵树的遮罩。已有缓存的刷新继续保留旧条目，避免闪空。
+
+**严格 authority**：source 不与本地 api 合并。缺少操作即隐藏相应右键项/禁用上传，键盘或 undo 等入口同样拒绝，不可能回退本地 fs；远程树关闭本地 directory-watch、git polling 与 host ZIP/archive/download/open-in-app。复制路径与消费者回调仍可用。资源操作继续走现有注册表，注册者须按 scope 准入远程权限。
+
+**生命周期与 fencing**：source 对象应按连接稳定 memoize；machine/连接/provider generation 改变必须更新 `sourceKey`。`sessionId/cwd/sourceKey` 构成组件 key，切换会清空旧 cache/选择/确认框/undo 与搜索/上传状态；旧读取 signal abort，忽略不遵守取消的晚到结果。旧 mutation 完成后拒绝旧 UI 成功回调，不会把旧操作登记到新源；已发出的远程写入不能撤销，source 必须自行确保机器/权限绑定，不能从可变全局“当前连接”选择目标。上传在卸载时取消；`visible:false` 不允许任何本地 polling，远程 live watch 可由消费者订阅后触发 `dsh-sidebar:refresh-files` 或自己的 source generation 刷新。
+
+### 17.1 CMD reference-picker（受控选择，不打开编辑器）
+
+先检测 `service.features.includes('fileExplorerPicker:v1')`：旧版的 `fileExplorer:v1` 只保证普通 explorer，不能证明支持 picker（否则旧版可能打开编辑器）。新能力同时保留 `fileExplorer:v1`，不改变既有接口。`FileExplorerRenderProps.picker?: FileExplorerPicker` 复用**同一棵 FileTree**（内置 fallback 与 `fileTreeUi` v2 两路径），不是第二套搜索树。公共类型从 `dsh-better-sidebar/client/service` **type-only** 导入：
+
+```ts
+interface FileExplorerPickerRow { path: string; isDir: boolean }
+interface FileExplorerPickerInteraction { move(delta: number): void; accept(): void }
+interface FileExplorerPicker {
+  query: string
+  selectedPath?: string
+  onSelect(path: string, isDir: boolean): void
+  onAccept(path: string, isDir: boolean): void
+  onVisibleRowsChange?(rows: readonly FileExplorerPickerRow[]): void
+  bind?(interaction: FileExplorerPickerInteraction): void | (() => void)
+}
+```
+
+- CMD 保持 `query` / `selectedPath` / `expanded` 的权威，`onSelect` 更新选择或预览，`onToggle` 更新展开集。单击文件只选择；文件 Enter / `accept()` 调用 `onAccept(path,false)`，消费者负责插入引用并关闭 CMD。目录单击 / Enter / `accept()` 只 `onSelect` + 展开/收起，**不调用 onAccept**。
+- 内部搜索/刷新/排序/上传工具栏隐藏；query 不调用 `fsSearch`，只按**已加载且可见层**的绝对路径（包含文件名，不区分大小写、去首尾空格）过滤文件。目录始终保留以便下钻；不递归扫描、不自动展开、不做全工作区全文搜索。picker 禁用 compact folding，保证两路径的行身份与深度优先可见顺序一致。
+- `onVisibleRowsChange` 首次及行内容/顺序变化时通知（不含 root/loading/error）。隐藏的选中子项回退至最近可见祖先目录，否则首行；空列表不发伪造选择。消费者应接受 `onSelect` 回写。高亮与树内滚动由树维护，不能查询消费者 DOM。
+- `bind` 建议 `useCallback` 保持稳定，在绑定变更、scope/source 变更或卸载时调用返回的 disposer；旧 interaction 自动失效。`move` 在可见行内按增量移动（边界钳制；未选中时正向首行、负向末行）；`accept` 无可见选中项时无操作，同一 JS turn 重复调用合并一次。CMD 搜索框先过滤 IME（`nativeEvent.isComposing` / `keyCode===229`）和 `event.repeat`，再处理 Up/Down/Enter、`preventDefault` / `stopPropagation` 后调用 interaction。树行自身也防 IME/repeat 与嵌套按钮冒泡；接口不接收 DOM 事件，搜索框的 IME 防护仍由 CMD 负责。
+- picker 的 `source` **只需要 `fsTrees`**；实现会剥离其他能力，即使误传 mutation/search/upload/download 也不启用。禁止本地 authority 回退；关闭行上下文菜单、拖放/多选变更与引用按钮。文件从不调用 `dispatchFileActivation`、`getFileDocumentState`、`onOpenFile` 或编辑器导航；无需注册 document provider 或 file-open target。普通 explorer 不传 picker，保留原有 activation 行为。
+- 每个实例使用独立且挂载期间稳定的 framework `treeKey`，避免 CMD 与原生/隐藏 explorer 的 guide-hover seat 互相污染。空列表由消费者在 `onVisibleRowsChange([])` 清空自己的 selection；即使没有及时清空，树的 `accept()` 仍按当前可见行 fail-closed。跨 key 共享 interaction ref 的消费者 disposer 应按句柄身份释放：`return () => { if (ref.current === interaction) ref.current = undefined }`，避免旧组件的清理误删新绑定。
+- 原有必填 `onOpenFile` / `onReferenceFile` 为兼容公共 props 保留，picker 调用可传空函数；`sourceKey` 和 scope fencing 规则仍适用。图标仍经 `service.fileIcon/folderIcon` 并订阅注册热更新，消费者不得复制图标/目录树。
+
 ## 附录 A：本 fork 保留的扩展 API（官方 baseline 之外）
 
 > 本仓库合入官方 v0.25.0 线后保留的本地扩展面（`SIDEBAR_FEATURES` 含各能力标记；功能开关与内置终端见 AGENTS.md 顶部「合并状态」节）。
 
 - **`gitCommitActions`**：`registerGitCommitAction(descriptor)` / `getGitCommitActions()`——注册进 Git 变更页提交栏 More 菜单的动作槽；`GitCommitTarget`（源会话 / 选中 repo / worktree / 暂存行）与 `GitCommitActionProps`（含 `refresh()`）随动作渲染下发。
-- **`terminalSource` / `workspaceTerminalSource`**：`registerTerminalProvider(descriptor)`——底部终端连接层注入槽（自定义 transport；agent 与全局共享终端除外）。
+- **`terminalSource` / `workspaceTerminalSource`**：`registerTerminalProvider(descriptor)`——底部终端连接层注入槽（自定义 transport；agent 与全局共享终端除外）。`WorkspaceTerminalSource` 保持 `create/list/terminate/createTransport`，增量可选 `ensure(): Promise<WorkspaceTerminalInfo>`（后端原子获取默认终端，不等于显式新建）、`pin(terminalId, pinned)`（禁止自动回收）、`cleanup(): Promise<{removed:number}>`（只清理安全过期候选）、`subscribe(onSnapshot, onError?): () => void`（可选完整目录快照订阅，`onSnapshot({terminals})`；源负责首次快照、重连后全量同步及错误通知，返回幂等释放函数，释放后不得回调）。跨插件错误采用结构化 `Error & {code?: string; status?: number; retryable?: boolean}`；401/403、权限拒绝及 `retryable:false` 必须暂停自动请求，不能根据错误消息文本猜权限、不能回退另一机器或本地。暂时断线可恢复，重连后仍以原 terminalId 恢复，不能自动重建进程或重放离线输入。有订阅时管理页不做周期 `list()`，没有时保留可见期间 10 秒轮询；订阅仅观察元数据，不能创建/附着/保留终端。`WorkspaceTerminalInfo` 另可附带 `commandStartedAt/commandFinishedAt/commandExitCode/commandDurationMs`（前台命令生命周期，与终端退出独立）。缺少可选方法的远程源不会显示不支持的操作，绝不回退本地管理。`WorkspaceTerminalInfo` 可选附带 `activity: idle|busy|unknown|exited`、`activityReason`、`runningCommands?: readonly string[]`（已观察的前台可执行 basename，去重；可缺席）、`attachedViews`、`lastInputAt/lastOutputAt/lastDetachedAt/exitedAt`（Unix 毫秒）与 `pinned`；缺少活动信息按未知处理，不以静默输出推断空闲。
+### 终端视图状态契约（增量、向后兼容）
+
+`TerminalTransportSession` 新增可选回调，消费者请结构化探测，不要按 `transport.kind` 猜业务语义：
+
+```ts
+session.onState?.({ phase: 'connecting', intent: 'attach-existing' })
+// 原 terminalId 收到后端 init / attach ack 后（不是 WS open）：
+session.onState?.({ phase: 'connected', intent: 'attach-existing' })
+// socket close/error 或暂时不可用：后端进程状态未知
+session.onState?.({ phase: 'disconnected', intent: 'attach-existing' })
+// 只有权威后端明确确认时才调用：
+session.onClosed?.('missing') // 或 exited / terminated
+session.onAccessDenied?.('authoritative permission refusal')
+```
+
+- `phase` = `connecting | connected | disconnected`；`intent?` = `attach-existing | create`，省略表示无法保证创建/附着语义。`create` 只能表示真实、显式的新建操作；管理源通常在 `create()` 完成后才打开视图，所以视图的 intent 仍是 `attach-existing`。
+- connecting 显示连接中；attach-existing 明确告知不新建 shell。connected 收起 banner，不据此声称任务仍运行。disconnected 明示后端未知，有 `handle.retry` 才提供「重新连接视图」。没有 retry 的源不显示无效按钮。
+- `retry()` 仅重新附着**同一 terminalId/后端**；不得调用 create/ensure、回退本地、重放离线输入。每次真实尝试开始报告 connecting；暂时失败报告 disconnected。收到 closed 或明确拒绝后停止重试。
+- 旧 `onConnected(boolean)` 继续有效：true 表示连接确认，false 只表示断开（不假装正在重试）。一旦本次 mount 使用过 `onState`，旧布尔回调不再覆盖结构化状态。旧源没有状态回调时初始显示中性连接提示；有 terminalId 则视为附着已有实例。
+- 旧 `onFatal(string|null)` 保留错误详情与可用的 retry；字符串**不作为权限分类依据**。真授权失败应调用可选 `onAccessDenied(reason)`；旧版宿主无该回调时源须自行停止请求，不能把临时 SSH/SFTP/网络错误标为授权失败。拒绝态没有新建/重连动作。
+- missing/exited/terminated 是后端事实，与 WS 状态独立且优先级更高；只有具备相应工作区管理绑定时才显示「启动新终端」，点击才走当前源的 `create()`。可见激活不自动替代 shell。卸载仅释放视图；释放后的回调无效，源也应 fencing 旧 socket/尝试，不能把旧连接的 close 应用到新连接。
+
+- **`workspaceTerminalSummary`**：`getWorkspaceTerminalSummary({sessionId, cwd?}): Promise<{total,busy,idle,unknown,exited,runningCommands?: readonly {name:string;count:number}[]}>` 为工作区列表等消费面提供状态聚合。`sessionId` 必填，由宿主权威目录定位本地工作区；`cwd` 仅供 provider 匹配，不是本地路径越权入口。`total` 仅计活进程，等于 `busy+idle+unknown`；`exited` 为保留的退出记录，明确 `activity:'busy'` 才计忙碌，未知不算忙碌，同一后端 terminalId 去重。`runningCommands` 按名称排序，`count` 为包含该名称的 busy 终端数（同终端同名只计一次；管道可贡献多个名称，不是进程数，也不要求合计等于 busy）。只接受1–64字符的安全 ASCII basename（字母/数字起始，后续字母/数字/`.`/`_`/`+`/`-`），不公开 argv、路径或终端标题。无可靠名称时省略字段，不伪造“CLI”；旧远端 provider 缺字段只降级名称，仍保留状态统计。Linux/macOS 本地复用有界 ps 的 comm 列，只识别受管根进程/后代中同 tty 前台组的非 shell 可执行名，忽略后台、停止与僵尸；shell wrapper 不计名，`node script.js` 仅报告 node，不猜 codex/claude。权限失败/不支持平台/快照不完整时保持 unknown；输入、输出、退出或新采样不再识别名称即清除旧名称。此结果是瞬时观察，不保证进程在响应送达时仍存活。通过当前匹配的工作区终端后端读取，匹配但缺管理能力或读取失败会 reject，绝不返回本地计数或伪造零。此方法仍是异步即时读取；新增能力 `workspaceTerminalSummarySubscription` 提供 `subscribeWorkspaceTerminalSummary(scope, onSummary, onError?): () => void`。可见消费面优先订阅，隐藏/卸载释放，恢复时重新订阅；服务端/源推送全目录后由同一安全投影产生摘要。相同 sessionId/cwd 的多个摘要读者共享一个源订阅，最后一个读者离开才释放；不跨 session 合并授权。源无 subscribe 时共享层兼容10秒非重叠轮询，明确权限/不可重试错误后暂停，等待 provider 注册变更或彻底释放后显式重新订阅。`onError` 意味旧摘要失效，不能保留旧 busy 或伪造零。注册表 `service.subscribe()` 本身仍只表示注册/视图通知，不可当终端活动推送。旧宿主缺新能力时消费插件可见期间节流读取，但必须停止重复权限请求。每工作区选择一个会话锚点、忽略跨工作区晚到结果，并在摘要能力缺席时隐藏入口。仅统计 managed workspace terminal，不包含独立 agent/global/legacy registry。点击图标可 `openTab({type:'workspace-terminals',target:'bottom'}, scope)` 打开管理，不隐式创建进程。
+
+```ts
+// Structural optional capability probe; never value-import another plugin.
+const sidebar = ctx.get('betterSidebar')
+if (typeof sidebar?.getWorkspaceTerminalSummary === 'function') {
+  const summary = await sidebar.getWorkspaceTerminalSummary({ sessionId, cwd })
+  // Show the term icon only when summary.total > 0.
+  // The upper-right badge is summary.busy > 0 ? summary.busy : undefined.
+  // A rejected read means unavailable, not zero busy terminals.
+}
+```
+
 - **`gitSource`**：`registerGitProvider(descriptor)`——git 数据源注入槽（lens / 文件树着色 / diff tab 的读与写都经 provider 路由）。
 - **`inspectors` / `resourceActions:v1` / `fileOpenTargets:v1` / `textDocuments:v1` / `strictGitDiff:v1` / `sharedRendering:v1`**：资源 Inspector、资源操作承载面、文件打开认领（`dispatchFileActivation`）、文档数据 API、严格 Git diff、共享渲染接口。
 - **`panelFlags` / `planDiff`**：`getSnapshot()` 的 `bottomOpen` / `panelOpen` 平面字段（dsh-hotkey 契约）与 `openTab({type:'diff', diff:{kind:'proposed',…}})`。

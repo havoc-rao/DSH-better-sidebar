@@ -19,6 +19,7 @@ import { type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './kit.module.css'
+import { DeleteDialogActions } from './delete-dialog-hotkeys.tsx'
 
 /**
  * A 28px (`md`) or 24px (`sm`) square glyph button — the ONE icon button of
@@ -143,6 +144,8 @@ export function ConfirmDialog(props: {
   confirmLabel: string
   cancelLabel: string
   danger?: boolean
+  /** File-tree deletion only: optional hotkey v1 actions and hint slots. */
+  deleteHotkeys?: boolean
   busy?: boolean
   onConfirm(): void
   onClose(): void
@@ -150,10 +153,10 @@ export function ConfirmDialog(props: {
   return (
     <Modal
       open={props.open}
-      onClose={props.onClose}
+      onClose={props.deleteHotkeys && props.busy ? () => {} : props.onClose}
       title={props.title}
       closeLabel={props.cancelLabel}
-      footer={(
+      footer={props.deleteHotkeys ? <DeleteDialogActions {...props} /> : (
         <>
           <Button variant="outline" disabled={props.busy} onClick={props.onClose}>{props.cancelLabel}</Button>
           <Button variant="primary" disabled={props.busy} onClick={props.onConfirm}>{props.confirmLabel}</Button>

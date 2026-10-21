@@ -20,6 +20,11 @@
  *   then `exts`; `exts: []` is a catch-all that matches any path.
  */
 import type { ReactNode } from 'react'
+import { createWorkspaceTerminalSubscriptions, summarizeWorkspaceTerminals } from './workspace-terminal-subscriptions.ts'
+import { renderFileExplorer, type FileExplorerRenderProps } from './file-explorer.tsx'
+export type { FileExplorerPicker, FileExplorerPickerRow, FileExplorerPickerInteraction, FileExplorerRenderProps, FileExplorerSource, FsEntry, FsLevel, UploadItem, UploadResult } from './file-explorer.tsx'
+import { renderFileViewer, type FileViewerRenderProps } from './FileViewer.tsx'
+export type { FileViewerRenderProps } from './FileViewer.tsx'
 import { sharedRendering, type SharedRenderingService } from './rendering.tsx'
 export type { MarkdownRenderProps, MarkdownCopyLabels, CodeEditorRenderProps, CodeRendering, SharedRenderingService } from './rendering.tsx'
 import type { Context } from '../context-types.ts'
@@ -200,6 +205,9 @@ export interface TabDescriptor {
   order?: number
   /** Hide from the + menu (the editor tab is opened by file-open, not by the menu). */
   hidden?: boolean
+  /** File-backed custom tab: use tab.path's file icon in native/bottom chips.
+   * Does not claim resources or change navigation/activation semantics. */
+  fileTab?: boolean
   /**
    * Bottom-workbench-only type (v0.26.0+): offered in the plugin's OWN bottom
    * + menu and nowhere else. Without this flag every registered type also
@@ -720,6 +728,11 @@ export interface GitCommitActionDescriptor {
  * The registry service published as `ctx.betterSidebar`.
  */
 export interface BetterSidebarService extends SharedRenderingService, InspectorApi, ResourceActionRegistry, Omit<ResourceDataService, 'dispose'> {
+  /** Controlled file chrome/content slot (feature fileViewerChrome:v1).
+   * No IO, viewer selection, document registration or navigation is performed. */
+  renderFileViewer(props: FileViewerRenderProps): ReactNode
+  /** Actual explorer UI with strict consumer data/operations; feature fileExplorer:v1. */
+  renderFileExplorer(props: FileExplorerRenderProps): ReactNode
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
@@ -747,6 +760,14 @@ export interface BetterSidebarService extends SharedRenderingService, InspectorA
   registerTerminalProvider(provider: TerminalProviderDescriptor): () => void
   /** Snapshot of the registered terminal-source providers in REGISTRATION order. */
   getTerminalProviders(): readonly TerminalProviderDescriptor[]
+  /** Workspace-owned managed terminals, resolved through the selected backend.
+   * total counts live processes only; unknown is never counted as busy.
+   * This is an async point-in-time read, not a service snapshot subscription. */
+  getWorkspaceTerminalSummary(scope: SessionScope): Promise<WorkspaceTerminalSummary>
+  /** Demand-driven shared catalog projection. Subscribe only while visible; the
+   * last unsubscribe releases the backend stream or legacy 10s list timer.
+   * Errors invalidate the last summary (never a fabricated zero snapshot). */
+  subscribeWorkspaceTerminalSummary(scope: SessionScope, onSummary: (summary: WorkspaceTerminalSummary) => void, onError?: (error: unknown) => void): () => void
   /**
    * Register one git data-source provider (v0.23.0+, feature `gitSource`):
    * the git surfaces' data-source injection slot. A provider owns every
@@ -1029,6 +1050,19 @@ export const SIDEBAR_SERVICE_VERSION = '0.28.0'
  * owns the right column, so the plugin keeps only its bottom workbench).
  * Consumers must not gate on it any more.
  */
+export interface WorkspaceTerminalSummary {
+  /** Live managed workspace processes (busy + idle + unknown). */
+  total: number
+  busy: number
+  idle: number
+  unknown: number
+  /** Retained exited records; excluded from total and busy. */
+  exited: number
+  /** Safe foreground executable names, counted once per busy terminal, sorted by name.
+   * Optional for compatibility; absence means no names could be established. */
+  runningCommands?: readonly { name: string; count: number }[]
+}
+
 export const SIDEBAR_FEATURES = [
   'badge',
   'tabLifecycle',
@@ -1046,6 +1080,8 @@ export const SIDEBAR_FEATURES = [
   'planDiff',
   'terminalSource',
   'workspaceTerminalSource',
+  'workspaceTerminalSummary',
+  'workspaceTerminalSummarySubscription',
   'gitSource',
   'inspectors',
   'resourceActions:v1',
@@ -1053,6 +1089,9 @@ export const SIDEBAR_FEATURES = [
   'textDocuments:v1',
   'strictGitDiff:v1',
   'sharedRendering:v1',
+  'fileViewerChrome:v1',
+  'fileExplorer:v1',
+  'fileExplorerPicker:v1',
   'rightActions',
   'settingPatterns',
   'hostRouteUrl',
@@ -1195,21 +1234,39 @@ export function createBetterSidebarService(
 
   const getGitCommitActions = (): readonly GitCommitActionDescriptor[] => Array.from(commitActions.values())
 
+  const terminalSubscriptions = createWorkspaceTerminalSubscriptions({
+    getProviders: () => Array.from(terminalProviders.values()),
+    local: (sessionId, cwd) => resolveWorkspaceTerminalBinding(undefined, sessionId, cwd, undefined, true).source,
+    sessionCwd,
+  })
+
   const registerTerminalProvider = (provider: TerminalProviderDescriptor): (() => void) => {
     if (terminalProviders.has(provider.id)) {
       throw new Error(`[dsh-better-sidebar] terminal provider "${provider.id}" already registered`)
     }
     terminalProviders.set(provider.id, provider)
+    terminalSubscriptions.registryChanged()
     notify()
     return () => {
       if (terminalProviders.get(provider.id) === provider) {
         terminalProviders.delete(provider.id)
+        terminalSubscriptions.registryChanged()
         notify()
       }
     }
   }
 
   const getTerminalProviders = (): readonly TerminalProviderDescriptor[] => Array.from(terminalProviders.values())
+
+  const getWorkspaceTerminalSummary = async (scope: SessionScope): Promise<WorkspaceTerminalSummary> => {
+    if (!scope.sessionId) throw new Error('workspace terminal summary requires a session id')
+    const cwd = scope.cwd ?? sessionCwd?.(scope.sessionId)
+    // Resolve synchronously before awaiting: backend identity is captured for
+    // this read and provider failures must never expose local host terminals.
+    const binding = resolveWorkspaceTerminalBinding({ getTerminalProviders } as BetterSidebarService, scope.sessionId, cwd)
+    const { terminals } = await binding.source.list()
+    return summarizeWorkspaceTerminals(terminals)
+  }
 
   const registerGitProvider = (provider: GitProviderDescriptor): (() => void) => {
     if (gitProviders.has(provider.id)) {
@@ -1756,12 +1813,14 @@ export function createBetterSidebarService(
     openTab({ type: 'editor', title: title ?? baseNameOf(path), path, id: `editor:${path}` }, scope)
   }
 
-  return {
+  const service: BetterSidebarService = {
+    renderFileViewer: (props) => renderFileViewer(service, props),
+    renderFileExplorer: (props) => renderFileExplorer(service, props),
     ...sharedRendering,
     ...inspectors,
     ...resources,
     ...data,
-    dispose: () => { resources.dispose(); data.dispose() },
+    dispose: () => { terminalSubscriptions.dispose(); resources.dispose(); data.dispose() },
     registerTab,
     registerFileViewer,
     registerFileIcon,
@@ -1769,6 +1828,8 @@ export function createBetterSidebarService(
     getGitCommitActions,
     registerTerminalProvider,
     getTerminalProviders,
+    getWorkspaceTerminalSummary,
+    subscribeWorkspaceTerminalSummary: terminalSubscriptions.subscribe,
     registerGitProvider,
     getGitProviders,
     getGitCommitTarget,
@@ -1799,6 +1860,7 @@ export function createBetterSidebarService(
     nativePathTabs: () => surface?.pathTabs?.() ?? [],
     clearUnread: clearUnreadFor,
   }
+  return service
 }
 
 /**

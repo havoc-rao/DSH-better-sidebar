@@ -21,6 +21,13 @@ export interface TerminalTransportSurface {
   readonly rows: number
 }
 
+/** View connection only, never evidence that a backend task is running. */
+export interface TerminalConnectionState {
+  phase: 'connecting' | 'connected' | 'disconnected'
+  /** Omit when a legacy source cannot promise attach-only semantics. */
+  intent?: 'attach-existing' | 'create'
+}
+
 export interface TerminalTransportSession {
   term: TerminalTransportSurface
   scope: SessionScope
@@ -34,7 +41,15 @@ export interface TerminalTransportSession {
   onOutput(data: string): void
   /** A channel-reported title → the tab retitles. */
   onTitle?(title: string, info?: { cwd?: string; command?: string }): void
-  /** Connection-state flips (the view's disconnected banner rides this). */
+  /** Optional structured view status. Report connected only after backend init /
+   * attach acknowledgement, not merely WebSocket open. Once used, takes
+   * precedence over legacy onConnected for this mount. Never infer onClosed
+   * from a socket error; disconnected means backend state is unknown. */
+  onState?(state: TerminalConnectionState): void
+  /** Confirmed authorization refusal only (not transient transport failures).
+   * Stops retry UI; must not create a replacement terminal. */
+  onAccessDenied?(reason: string): void
+  /** Legacy view status; false means disconnected, not reconnecting or missing. */
   onConnected?(connected: boolean): void
   /** An unrecoverable failure → the view's fatal banner + retry button.
    *  A plain `null` reason clears the banner (a transport's retry uses it). */
@@ -54,7 +69,9 @@ export interface TerminalTransport {
 }
 
 export interface TerminalTransportHandle {
-  input(data: string): void
+  /** false means input was NOT sent (e.g. disconnected); never buffer and replay
+   * keystrokes across reconnect. Legacy transports may return void. */
+  input(data: string): void | boolean
   resize(cols: number, rows: number): void
   /** Legacy: user closed the tab → kill. Managed workspace transport: detach only. */
   close(): void
@@ -63,7 +80,9 @@ export interface TerminalTransportHandle {
   park(): void
   /** The view unmounted — tear the channel down. */
   dispose(): void
-  /** The user hit the banner's retry — re-establish the connection. */
+  /** Reconnect the view to the SAME terminal identity. Never create a shell,
+   * replay input, or silently fall back to another backend. Report onState
+   * connecting when an actual attempt starts. Omit when retry is unsupported. */
   retry?(): void
 }
 

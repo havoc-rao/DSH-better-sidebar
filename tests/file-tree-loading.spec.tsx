@@ -18,6 +18,11 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { installFileTreeUiSeat } from '../src/client/file-tree-ui.ts'
+import type { Context } from '../src/context-types.ts'
+import type { FileExplorerSource } from '../src/client/file-explorer.tsx'
+import type { FileTreeUiServiceV2 } from 'dsh-file-tree-ui/client-contract'
+import { FileTree as ProviderFileTree } from 'dsh-file-tree-ui/src/client/FileTree.tsx'
 import { t } from '../src/client/locales.ts'
 
 import { setupReactAct } from './test-utils.ts'
@@ -44,10 +49,6 @@ const gates = vi.hoisted(() => {
 
 vi.mock('../src/client/api.ts', () => ({
   api: {
-    // The batched route: each requested level settles when its gate does.
-    fsTrees: (_scope: unknown, paths: readonly string[]) =>
-      Promise.all(paths.map(path => gates.gate(path).then(listing => ({ path, entries: listing.entries, truncated: false }))))
-        .then(levels => ({ levels })),
     // The tree reads the shared git-status store; a non-repo answer keeps
     // every row plain.
     gitStatus: async () => ({ isRepo: false, entries: [] }),
@@ -86,17 +87,32 @@ interface Harness {
   unmount: () => void
 }
 
+/** The remote-facing source adapter: its list call remains deferred until
+ * the test releases that directory. No local filesystem fallback is allowed. */
+const source = {
+  fsTrees: vi.fn<FileExplorerSource['fsTrees']>((_scope, paths) =>
+    Promise.all(paths.map(path => gates.gate(path).then(listing => ({
+      path,
+      entries: listing.entries.map(entry => ({ ...entry, hidden: false, isSymlink: false, broken: false })),
+      truncated: false,
+    })))).then(levels => ({ levels }))),
+} satisfies FileExplorerSource
+
 function mountTree(expanded: string[]): Harness {
   const container = document.createElement('div')
   document.body.append(container)
   const root: Root = createRoot(container)
+  let liveExpanded = expanded
   const render = (dirs: string[]): void => {
+    liveExpanded = dirs
     root.render(createElement(FileTree, {
+      source,
       sessionId: 's1',
       cwd: '/tmp',
       expanded: dirs,
       revealed: [],
-      onToggle: () => {},
+      onToggle: path => render(liveExpanded.includes(path)
+        ? liveExpanded.filter(dir => dir !== path) : [...liveExpanded, path]),
       onOpenFile: () => {},
       onReferenceFile: () => {},
       refreshTick: 0,
@@ -114,7 +130,7 @@ function mountTree(expanded: string[]): Harness {
 
 /** Every rendered row (entry rows and the plain loading/error rows). */
 function rows(container: HTMLElement): HTMLElement[] {
-  return [...container.querySelectorAll<HTMLElement>('[class*="explorerRow"]')]
+  return [...container.querySelectorAll<HTMLElement>('div[class*="explorerRow"], div[role="button"]')]
 }
 
 /** The row whose name span matches (entry rows carry `.explorerName`). */
@@ -154,17 +170,30 @@ async function fail(dir: string, message: string): Promise<void> {
 let harness: Harness
 beforeEach(() => {
   FakeSocket.instances = []
+  source.fsTrees.mockClear()
   vi.stubGlobal('WebSocket', FakeSocket)
 })
 
 afterEach(() => {
-  harness.unmount()
+  harness?.unmount()
+  installFileTreeUiSeat(null)
   gates.pending.clear()
   document.body.innerHTML = ''
   vi.unstubAllGlobals()
 })
 
-describe('FileTree in-flight level rendering', () => {
+describe.each(['fallback', 'shared v2'] as const)('FileTree in-flight level rendering (%s)', renderer => {
+  beforeEach(() => {
+    const service: FileTreeUiServiceV2 = {
+      protocolVersion: 2,
+      renderFileTree: props => <ProviderFileTree {...props} />,
+      renderRowMenu: () => <span />,
+    }
+    installFileTreeUiSeat(renderer === 'shared v2' ? {
+      get: (key: string) => key === 'fileTreeUi' ? service : undefined,
+      on: () => () => {},
+    } as unknown as Context : null)
+  })
   it('keeps the loading row under a freshly expanded folder until its listing lands', async () => {
     harness = mountTree([])
     // Mount batch (root only) in flight: exactly one loading row under the
@@ -180,12 +209,41 @@ describe('FileTree in-flight level rendering', () => {
     harness.rerender(['/tmp/src'])
     const loading = loadingRows(harness.container)
     expect(loading).toHaveLength(1)
-    expect(loading[0]!.parentElement).toBe(rowByName(harness.container, 'src').parentElement)
+    expect(loading[0]!.getAttribute('aria-busy')).toBe('true')
+    expect(loading[0]!.querySelector('[role="status"][data-kind="loading"]')).not.toBeNull()
+    // Unrelated renders must not erase the pending marker or duplicate a call.
+    harness.rerender(['/tmp/src'])
+    expect(loadingRows(harness.container)).toHaveLength(1)
+    expect(source.fsTrees).toHaveBeenCalledTimes(2)
 
     // The listing lands: rows swap in, no loading row remains.
     await release('/tmp/src', { entries: [{ name: 'inner.ts', path: '/tmp/src/inner.ts', isDir: false }] })
     expect(loadingRows(harness.container)).toHaveLength(0)
     expect(() => rowByName(harness.container, 'inner.ts')).not.toThrow()
+  })
+
+  it('allows collapse, reopening and other directory clicks while a listing is pending', async () => {
+    harness = mountTree([])
+    await release('/tmp', { entries: [DIR_ENTRY('slow'), DIR_ENTRY('other')] })
+    const click = (name: string): void => {
+      act(() => { rowByName(harness.container, name).click() })
+    }
+    click('slow')
+    expect(loadingRows(harness.container)).toHaveLength(1)
+    click('slow')
+    // The real v2 provider retains children during its fold-out animation.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
+    expect(loadingRows(harness.container)).toHaveLength(0)
+    click('slow')
+    expect(loadingRows(harness.container)).toHaveLength(1)
+    click('other')
+    expect(loadingRows(harness.container)).toHaveLength(2)
+    await release('/tmp/other', { entries: [{ name: 'ready.ts', path: '/tmp/other/ready.ts', isDir: false }] })
+    expect(loadingRows(harness.container)).toHaveLength(1)
+    expect(() => rowByName(harness.container, 'ready.ts')).not.toThrow()
+    await release('/tmp/slow', { entries: [] })
+    expect(loadingRows(harness.container)).toHaveLength(0)
+    expect(harness.container.querySelector('[aria-busy="true"]')).toBeNull()
   })
 
   it('renders a truly empty directory as zero rows, not a stuck loading row', async () => {
@@ -206,8 +264,10 @@ describe('FileTree in-flight level rendering', () => {
     harness = mountTree([])
     await release('/tmp', { entries: [DIR_ENTRY('boom')] })
     harness.rerender(['/tmp/boom'])
+    expect(loadingRows(harness.container)).toHaveLength(1)
     await fail('/tmp/boom', 'boom')
     expect(loadingRows(harness.container)).toHaveLength(0)
+    expect(harness.container.querySelector('[aria-busy="true"]')).toBeNull()
     const errorRow = rows(harness.container)
       .filter(row => row.querySelector('[class*="explorerName"]') === null)
       .find(row => row.textContent === 'boom')

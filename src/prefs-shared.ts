@@ -72,8 +72,8 @@ export interface SidebarPrefs {
    */
   terminalFontSize: number
   /**
-   * Whether expanding the bottom panel for the FIRST time in a session tries
-   * to open a fresh terminal tab there (the terminal quota/type still gates
+   * Whether expanding the bottom panel reuses this session's existing shell,
+   * or creates one when none is available (terminal quota/type still gates
    * the attempt). On by default; the switch lives under the terminal tab's
    * row in the Side card settings.
    */
@@ -102,6 +102,9 @@ export interface SidebarPrefs {
    * contract as the yaml `shellArgs`).
    */
   terminalShellArgs: string
+  /** Experimental zsh integration changes the startup chain for NEW workspace
+   * terminals only. Explicit opt-in; existing terminals remain untouched. */
+  terminalShellIntegration: boolean
   /**
    * Title-bar / shell compatibility scheme (the "位置兼容模式" setting):
    * - `auto` (default): CONSERVATIVE — only the standard Window Controls
@@ -243,6 +246,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   editorExplorer: false,
 terminalShell: '',
   terminalShellArgs: '',
+  terminalShellIntegration: false,
   titleBarScheme: 'auto',
   titleBarPresetId: '',
   editorGitGutter: true,

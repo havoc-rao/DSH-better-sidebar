@@ -45,6 +45,7 @@ describe('side card preferences', () => {
         editorExplorer: false,
 terminalShell: '',
         terminalShellArgs: '',
+        terminalShellIntegration: false,
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         titleBarCompat: false,
@@ -76,6 +77,7 @@ terminalShell: '',
         editorExplorer: false,
 terminalShell: '',
         terminalShellArgs: '',
+        terminalShellIntegration: false,
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         titleBarCompat: false,
@@ -107,6 +109,7 @@ terminalShell: '',
         editorExplorer: false,
 terminalShell: '',
         terminalShellArgs: '',
+        terminalShellIntegration: false,
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         titleBarCompat: false,
@@ -134,6 +137,15 @@ terminalShell: '',
       .toBe(true)
     expect((await loadPrefs(wire({ autoOpenJobs: false }))).autoOpenJobs)
       .toBe(false)
+  })
+
+  it('requires explicit boolean opt-in for experimental shell integration', async () => {
+    expect(SIDEBAR_PREFS_DEFAULTS.terminalShellIntegration).toBe(false)
+    for (const value of [undefined, null, 'true', 1, {}, []]) {
+      expect((await loadPrefs(wire({ terminalShellIntegration: value }))).terminalShellIntegration).toBe(false)
+    }
+    expect((await loadPrefs(wire({ terminalShellIntegration: true }))).terminalShellIntegration).toBe(true)
+    expect((await loadPrefs(wire({ terminalShellIntegration: false }))).terminalShellIntegration).toBe(false)
   })
 
   it('defaults both mobile adaptations to on; only an explicit false disarms one', async () => {

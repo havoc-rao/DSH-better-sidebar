@@ -59,6 +59,12 @@ function mountSidebar(): MountedSidebar {
     terminalId: `terminal:${crypto.randomUUID()}`, title: 'Terminal', cwd: '/tmp',
     createdBySessionId: source, createdAt: Date.now(), exited: false,
   }))
+  vi.spyOn(api, 'workspaceTerminalList').mockResolvedValue({ terminals: [] })
+  // The server owns atomic acquisition; this test harness models its result.
+  vi.spyOn(api, 'workspaceTerminalEnsure').mockImplementation(async sessionId => {
+    const { terminals } = await api.workspaceTerminalList(sessionId)
+    return terminals.find(terminal => !terminal.exited) ?? api.workspaceTerminalCreate(sessionId)
+  })
   vi.stubGlobal('WebSocket', FakeWebSocket)
   // The jobs baseline poll (use-host-feeds) must never hit a real network.
   vi.stubGlobal('fetch', async () => { throw new Error('network stub') })
@@ -172,19 +178,54 @@ describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', ()
     )
   })
 
-  it('never repeats the auto-open on later expansions (once per session)', async () => {
+  it('does not create another terminal when a closed panel already has one in another pane', async () => {
+    const { store, service } = mountSidebar()
+    registerStubTerminal(service, { count: 0 })
+    act(() => { store.reduce(state => ({ ...state, bottomSplits: {
+      kind: 'split', id: 'existing-split', dir: 'row', sizes: [0.5, 0.5],
+      children: [state.bottomSplits, {
+        kind: 'leaf', id: 'existing-terminal-pane', active: 'agent:existing',
+        tabs: [{ id: 'agent:existing', type: 'terminal', title: 'Existing terminal' }],
+      }],
+    } })) })
+
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    expect(bottomTabs(store).map(tab => tab.id)).toEqual(['agent:existing'])
+    expect(api.workspaceTerminalCreate).not.toHaveBeenCalled()
+    expect(store.getSnapshot().state!.bottomOpenedOnce).toBe(true)
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    expect(api.workspaceTerminalCreate).not.toHaveBeenCalled()
+  })
+
+  it('does not auto-create a second terminal when an explicit async terminal open expands the panel', async () => {
+    const { store, service } = mountSidebar()
+    registerStubTerminal(service, { count: 0 })
+
+    await act(async () => { service.openTab({ type: 'terminal', target: 'bottom' }) })
+
+    expect(api.workspaceTerminalCreate).toHaveBeenCalledTimes(1)
+    expect(bottomTabs(store)).toHaveLength(1)
+    expect(store.getSnapshot().state!.bottomOpen).toBe(true)
+    expect(store.getSnapshot().state!.bottomOpenedOnce).toBe(true)
+  })
+
+  it('reuses the same terminal on later expansions without creating or restarting a shell', async () => {
     const { store, service } = mountSidebar()
     registerStubTerminal(service, { count: 0 })
 
     await act(async () => { store.reduce(toggleBottomPanel) })
     expect(bottomTabs(store)).toHaveLength(1)
 
-    // Collapse → expand again: the once-flag suppresses any second terminal.
+    const terminalId = bottomTabs(store)[0]!.id
+    // Collapse → expand again: the existing view and shell are reused.
     act(() => { store.reduce(toggleBottomPanel) })
     expect(store.getSnapshot().state!.bottomOpen).toBe(false)
     act(() => { store.reduce(toggleBottomPanel) })
     expect(store.getSnapshot().state!.bottomOpenedOnce).toBe(true)
-    expect(bottomTabs(store)).toHaveLength(1)
+    expect(bottomTabs(store).map(tab => tab.id)).toEqual([terminalId])
+    expect(api.workspaceTerminalCreate).toHaveBeenCalledTimes(1)
+    expect(api.workspaceTerminalList).toHaveBeenCalledTimes(2)
   })
 
   it('does not auto-open when the bottomPanelAutoTerminal pref is off', () => {
@@ -213,7 +254,40 @@ describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', ()
     expect(bottomTabs(store)).toHaveLength(0)
   })
 
-  it('a full workspace terminal quota still marks the once-flag (the attempt is one-shot)', async () => {
+  it('reattaches a live workspace terminal with no tab instead of starting another shell', async () => {
+    const { store, service } = mountSidebar()
+    registerStubTerminal(service, { count: 0 })
+    vi.mocked(api.workspaceTerminalList).mockResolvedValue({ terminals: [{
+      terminalId: 'existing-shell', title: 'Keep my shell', cwd: '/tmp',
+      createdBySessionId: 'another-session', createdAt: 1, exited: false,
+    }] })
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    expect(bottomTabs(store).map(tab => tab.id)).toEqual(['workspace-view:existing-shell'])
+    expect(api.workspaceTerminalCreate).not.toHaveBeenCalled()
+    // Closing a view must not forget the workspace-owned process.
+    act(() => { store.reduce(state => ({ ...state, bottomOpen: false,
+      bottomSplits: { kind: 'leaf', id: 'empty', active: null, tabs: [] },
+    })) })
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    expect(bottomTabs(store).map(tab => tab.id)).toEqual(['workspace-view:existing-shell'])
+    expect(api.workspaceTerminalCreate).not.toHaveBeenCalled()
+  })
+
+  it('shares pending lookup across rapid collapse and expand, creating exactly one shell', async () => {
+    const { store, service } = mountSidebar()
+    registerStubTerminal(service, { count: 0 })
+    let resolve!: (value: { terminals: [] }) => void
+    vi.mocked(api.workspaceTerminalList).mockReturnValue(new Promise(done => { resolve = done }))
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    await act(async () => { store.reduce(toggleBottomPanel) })
+    expect(api.workspaceTerminalList).toHaveBeenCalledTimes(1)
+    await act(async () => { resolve({ terminals: [] }) })
+    expect(api.workspaceTerminalCreate).toHaveBeenCalledTimes(1)
+    expect(bottomTabs(store)).toHaveLength(1)
+  })
+
+  it('a full workspace terminal quota surfaces the error and allows retry on a later expansion', async () => {
     const { store, service } = mountSidebar()
     registerStubTerminal(service, { count: 0 })
     const create = vi.mocked(api.workspaceTerminalCreate).mockRejectedValue(new Error('terminal limit reached'))
@@ -221,10 +295,10 @@ describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', ()
     expect(bottomTabs(store)).toHaveLength(0)
     expect(store.getSnapshot().state!.workspaceTerminalError).toBe('terminal limit reached')
     expect(store.getSnapshot().state!.bottomOpenedOnce).toBe(true)
-    // Quota lives on the host now. Even a failed async attempt is one-shot.
+    // With no shell available, a later expansion retries instead of staying empty forever.
     await act(async () => { store.reduce(toggleBottomPanel) })
     await act(async () => { store.reduce(toggleBottomPanel) })
-    expect(create).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenCalledTimes(2)
     expect(bottomTabs(store)).toHaveLength(0)
   })
 })

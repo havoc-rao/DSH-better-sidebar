@@ -3,6 +3,7 @@ import { allLeaves, openTabInBottomPane, patchTab, type SidebarState, type Sideb
 import type { Context } from '../context-types.ts'
 import type { BetterSidebarService } from './service.ts'
 import type { WorkspaceTerminalBinding, WorkspaceTerminalSource } from './terminal-source.ts'
+import { watchWorkspaceTerminals } from './workspace-terminal-watch.ts'
 
 export function workspaceTerminalProviderOf(tab: SidebarTab): string | undefined {
   const id = (tab.meta as { workspaceTerminalProviderId?: unknown } | null)?.workspaceTerminalProviderId
@@ -34,7 +35,11 @@ export function resolveWorkspaceTerminalBinding(
   const source: WorkspaceTerminalSource = {
     create: title => title === undefined ? api.workspaceTerminalCreate(sessionId) : api.workspaceTerminalCreate(sessionId, title),
     list: signal => api.workspaceTerminalList(sessionId, signal),
+    subscribe: (onSnapshot, onError) => watchWorkspaceTerminals(sessionId, onSnapshot, onError),
     terminate: terminalId => api.workspaceTerminalTerminate(sessionId, terminalId),
+    ensure: () => api.workspaceTerminalEnsure(sessionId),
+    pin: (terminalId, pinned) => api.workspaceTerminalPin(sessionId, terminalId, pinned),
+    cleanup: () => api.workspaceTerminalCleanup(sessionId),
     // Local managed views use the native workspace WebSocket, not this method.
     createTransport: () => { throw new Error('Local workspace transport is built in') },
   }
@@ -66,6 +71,49 @@ export function openWorkspaceTerminal(store: SidebarStore, sessionId: string, in
     }
     return { ...openTabInBottomPane(state, tab), bottomOpen: true }
   })
+}
+
+const pendingAutoTerminals = new WeakMap<SidebarStore, Map<string, Promise<void>>>()
+
+/** Panel expansion reuses a view or a live workspace shell before creating one.
+ * Repeated expansions while listing/creating share the same operation. */
+export function ensureBottomTerminal(
+  store: SidebarStore, service: BetterSidebarService, sessionId: string, cwd?: string,
+): Promise<void> {
+  const hasTerminal = (): boolean => {
+    const state = store.getSessionStates().get(sessionId)
+    return state !== undefined && allLeaves(state.bottomSplits).some(leaf => leaf.tabs.some(tab => tab.type === 'terminal'))
+  }
+  if (hasTerminal()) return Promise.resolve()
+  let pending = pendingAutoTerminals.get(store)
+  if (pending === undefined) { pending = new Map(); pendingAutoTerminals.set(store, pending) }
+  const existing = pending.get(sessionId)
+  if (existing !== undefined) return existing
+  const task = Promise.resolve().then(async () => {
+    if (hasTerminal()) return
+    const provider = service.getTerminalProviders().find(provider => provider.match(sessionId, cwd, 'terminal:workspace-management'))
+    if (provider !== undefined && provider.createWorkspaceSource === undefined) {
+      service.openTab({ type: 'terminal', target: 'bottom' }, { sessionId, cwd })
+      return
+    }
+    const binding = resolveWorkspaceTerminalBinding(service, sessionId, cwd, provider?.id, provider === undefined)
+    // Inspect before ensure: a running backend/provider may still implement the
+    // older idle-only acquisition policy. Existing shells never need creation.
+    const { terminals } = await binding.source.list()
+    if (hasTerminal()) return
+    const info = terminals.find(terminal => !terminal.exited && terminal.createdBySessionId === sessionId)
+      ?? terminals.find(terminal => !terminal.exited)
+      ?? await (binding.source.ensure?.() ?? binding.source.create())
+    if (hasTerminal()) return
+    openWorkspaceTerminal(store, sessionId, info, binding.providerId)
+    updateTerminalSession(store, sessionId, state => ({ ...state, workspaceTerminalError: undefined }))
+  }).catch(error => {
+    updateTerminalSession(store, sessionId, state => ({ ...state,
+      workspaceTerminalError: error instanceof Error ? error.message : String(error),
+    }))
+  }).finally(() => { pending.delete(sessionId) })
+  pending.set(sessionId, task)
+  return task
 }
 
 /** Replace exactly this view's binding, never reopen a closed tab or migrate peers.

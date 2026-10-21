@@ -41,6 +41,21 @@ it('registers the 7 built-in tabs (including the workspace terminal manager)', (
     )
   })
 
+  it('exposes experimental zsh integration as an opt-in terminal setting with explicit startup scope warnings', () => {
+    const { service, store, dispose } = setup()
+    const toggle = service.getTab('terminal')?.settings?.toggles?.find(toggle => toggle.key === 'terminalShellIntegration')
+    expect(store.getPrefs().terminalShellIntegration).toBe(false)
+    expect(toggle).toBeDefined()
+    expect(toggle?.type).toBeUndefined()
+    const title = typeof toggle?.title === 'function' ? toggle.title() : toggle?.title
+    const desc = typeof toggle?.desc === 'function' ? toggle.desc() : toggle?.desc
+    expect(title).toContain('zsh')
+    expect(desc).toContain('zsh')
+    expect(title).toBeTruthy()
+    expect(desc).toBeTruthy()
+    dispose()
+  })
+
   it('the terminal tabs never claim a native right-sidebar type', () => {
     // This fork keeps its own bottom-workbench terminal stack (AGENTS §0
     // merge banner): the host's right Sidebar already offers exactly one

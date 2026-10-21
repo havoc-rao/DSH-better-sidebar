@@ -1,17 +1,13 @@
 /**
- * The file tree's horizontal axis. Before this contract every row was pinned
- * to the scrollport (`width: 100%` + `text-overflow: ellipsis`), so a deep
- * tree squeezed its labels into ellipses with no way to read them; now the
- * content column grows to its widest row and the tree body scrolls
- * left/right — the same model VSCode's explorer uses.
+ * The file tree's bounded horizontal axis: both render paths stay within
+ * the sidebar width. Long names ellipsize rather than widening the column;
+ * full paths remain available through row tooltips.
  *
  * Three pieces have to line up, and each is pinned here:
  *
- *  - the tree body itself scrolls horizontally (.explorerBody);
- *  - the content column is as wide as its widest row, on BOTH render paths:
- *    the provider framework's root list (opt-in through the two
- *    `--dsh-ftr-*` properties the consumer sets on .explorerTree) and the
- *    built-in fallback wrapper (.explorerTreeBuiltin);
+ *  - the tree body clips horizontal overflow (.explorerBody);
+ *  - the content column is bounded by the viewport on BOTH render paths:
+ *    the provider framework's root list and the built-in fallback wrapper;
  *  - everything that belongs to the VIEWPORT instead of the scrolled content
  *    stays put: the transient strips (sticky left), the batch bar (sticky
  *    bottom + left) and the row's @-reference pill (sticky right), so a wide
@@ -122,6 +118,30 @@ describe('FileTree horizontal scrolling: rendered DOM', () => {
     tree.unmount()
   })
 
+  it('uses compact accessible icon actions and clears the selection', async () => {
+    const tree = await mountTree()
+    const name = [...tree.container.querySelectorAll<HTMLElement>('[class*="explorerName"]')]
+      .find(el => el.textContent === LONG_NAME)!
+    await act(async () => {
+      name.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    })
+    const toolbar = tree.container.querySelector('[role="toolbar"]')!
+    expect(toolbar).not.toBeNull()
+    const buttons = [...toolbar.querySelectorAll('button')]
+    expect(buttons).toHaveLength(3)
+    for (const button of buttons) {
+      expect(button.getAttribute('aria-label')).toBeTruthy()
+      expect(button.title).toBe(button.getAttribute('aria-label'))
+      expect(button.querySelector('svg')).not.toBeNull()
+      expect(button.className).toContain('iconButtonSm')
+      expect(button.hasAttribute('aria-pressed')).toBe(false)
+    }
+    expect(buttons[1]!.className).toContain('iconButtonDanger')
+    await act(async () => { buttons[2]!.click() })
+    expect(tree.container.querySelector('[role="toolbar"]')).toBeNull()
+    tree.unmount()
+  })
+
   it('marks the transient strips as viewport-pinned', async () => {
     const tree = await mountTree()
     // Only a FORCED re-list that fails while a listing is on screen surfaces
@@ -148,22 +168,29 @@ function rule(selectorPattern: string): string {
 }
 
 describe('FileTree horizontal scrolling: stylesheet', () => {
-  it('scrolls the tree body horizontally', () => {
+  it('keeps long names within the sidebar without horizontal scrolling', () => {
     const body = rule('\\.explorerBody')
-    expect(body).toMatch(/overflow-x:\s*auto/)
-    expect(body).not.toMatch(/overflow-x:\s*hidden/)
+    expect(body).toMatch(/overflow-x:\s*hidden/)
+    const name = rule('(?:^|\\n)\\.explorerName')
+    expect(name).toMatch(/display:\s*block/)
+    expect(name).toMatch(/min-width:\s*0/)
+    expect(name).toMatch(/text-overflow:\s*ellipsis/)
   })
 
-  it('opts the framework root into the wide column and the pinned actions slot', () => {
+  it('bounds the framework root to the sidebar width', () => {
     const tree = rule('\\.explorerTree')
-    expect(tree).toMatch(/--dsh-ftr-root-width:\s*max-content/)
-    expect(tree).toMatch(/--dsh-ftr-actions-position:\s*sticky/)
+    expect(tree).toMatch(/--dsh-ftr-root-width:\s*100%/)
+    expect(tree).toMatch(/--dsh-ftr-actions-position:\s*absolute/)
+    expect(tree).toMatch(/max-width:\s*100%/)
+    expect(tree).not.toContain('max-content')
   })
 
-  it('gives the built-in fallback the same wide column', () => {
+  it('gives the built-in fallback the same bounded column', () => {
     const builtin = rule('\\.explorerTreeBuiltin')
-    expect(builtin).toMatch(/width:\s*max-content/)
-    expect(builtin).toMatch(/min-width:\s*100%/)
+    expect(builtin).toMatch(/width:\s*100%/)
+    expect(builtin).toMatch(/min-width:\s*0/)
+    expect(builtin).toMatch(/max-width:\s*100%/)
+    expect(builtin).not.toContain('max-content')
   })
 
   it('pins the transient strips to the viewport (left, never the content)', () => {
@@ -174,6 +201,16 @@ describe('FileTree horizontal scrolling: stylesheet', () => {
     }
   })
 
+  it('keeps batch actions on one line while the count can shrink', () => {
+    const actions = rule('\\.explorerSelectionActions')
+    expect(actions).toMatch(/flex:\s*none/)
+    expect(actions).toMatch(/flex-wrap:\s*nowrap/)
+    expect(actions).not.toContain('max-width:')
+    const text = rule('\\.explorerSelectionText')
+    expect(text).toMatch(/min-width:\s*0/)
+    expect(text).toMatch(/text-overflow:\s*ellipsis/)
+  })
+
   it('keeps the batch bar docked while the tree scrolls under it', () => {
     const bar = rule('\\.explorerSelectionBar')
     expect(bar).toMatch(/position:\s*sticky/)
@@ -181,14 +218,19 @@ describe('FileTree horizontal scrolling: stylesheet', () => {
     expect(bar).toMatch(/left:\s*0/)
   })
 
-  it('keeps the @-reference pill at the scrollport edge', () => {
-    const tail = rule('\\.explorerRef,\\s*\\.explorerCopied')
-    expect(tail).toMatch(/margin-left:\s*auto/)
-    expect(tail).toMatch(/position:\s*sticky/)
-    expect(tail).toMatch(/right:\s*0/)
+  it('overlays the @-reference pill without reserving filename width', () => {
+    const tail = rule('\\.explorerRef,\\s*\\.explorerRow > \\.explorerCopied')
+    expect(tail).toMatch(/position:\s*absolute/)
+    expect(tail).toMatch(/right:\s*8px/)
+    expect(tail).toMatch(/top:\s*50%/)
+    expect(tail).toMatch(/z-index:\s*1/)
+    expect(tail).not.toMatch(/margin-left:/)
+    const provider = rule('\\.explorerTree > div > span:has\\(> \\.explorerCopied\\)')
+    expect(provider).toMatch(/position:\s*absolute/)
+    expect(provider).toMatch(/right:\s*8px/)
   })
 
-  it('reserves the pill slot instead of collapsing it (a reveal must not re-squeeze the name)', () => {
+  it('reveals the overlay on hover or focus without changing layout', () => {
     const pill = rule('\\.explorerRef')
     expect(pill).toMatch(/display:\s*inline-flex/)
     expect(pill).not.toMatch(/display:\s*none/)

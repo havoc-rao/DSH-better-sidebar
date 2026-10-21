@@ -107,6 +107,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   editorExplorer: z.boolean().default(false),
 terminalShell: z.string().default(''),
   terminalShellArgs: z.string().default(''),
+  terminalShellIntegration: z.boolean().default(false),
   titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]).default('auto'),
   titleBarPresetId: z.string().default(''),
   titleBarCompat: z.boolean().default(false),

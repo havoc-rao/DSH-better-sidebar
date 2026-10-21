@@ -39,6 +39,7 @@ import { fileOpKey, useFileOpStream } from './ops-stream.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
+import { FileViewerHeader } from './FileViewer.tsx'
 import { ResourceActions, isResourceAbort } from './ResourceActions.tsx'
 import type { FileDocumentState } from './resource-actions.ts'
 import { t } from './locales.ts'
@@ -603,7 +604,7 @@ export function EditorHost(props: {
 
   return (
     <div className={css.editor}>
-      <div className={css.editorHeader}>
+      <FileViewerHeader>
         <EditorPathInput key={path} path={path} cwd={scope.cwd} onOpen={openFile} />
         {!showEmpty && !isDir && <ResourceActions service={service} readContext={() => ({
           kind: 'file', surface: 'file-viewer-toolbar', scope: { ...scope },
@@ -673,7 +674,7 @@ export function EditorHost(props: {
         >
           <IconFolderOpenRegular size={14} />
         </button>
-      </div>
+      </FileViewerHeader>
       <div className={css.editorBody}>
         <div className={css.editorMain}>
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}

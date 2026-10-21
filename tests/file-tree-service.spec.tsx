@@ -333,6 +333,27 @@ function recordedRow(record: FileTreeProps[], key: string): FileTreeRowModel | u
 }
 
 describe('FileTree via fileTreeUi v2 (service path)', () => {
+  it('aligns sibling file and folder artwork, leaving the disclosure gutter before the icon', async () => {
+    const record: FileTreeProps[] = []
+    seat.set(makeFileTreeUiService(record))
+    const tree = await mountTree()
+    for (const [filePath, dirPath] of [
+      ['/tmp/a.ts', '/tmp/sub'],
+      ['/tmp/sub/deep.ts', '/tmp/sub/nested'],
+    ]) {
+      const file = recordedRow(record, filePath!)!
+      const dir = recordedRow(record, dirPath!)!
+      // Provider folders insert a 12px control and 6px gap; files have no
+      // fake interactive chevron, only equivalent left padding.
+      expect(file.indentPx).toBe(dir.indentPx! + 12 + 6)
+      expect(file.leadingSlotWidth).toBe(14)
+      expect(dir.leadingSlotWidth).toBe(14)
+      expect(file.expanded).toBeUndefined()
+      expect(file.guideColumns).toEqual(dir.guideColumns?.map(column => expect.objectContaining({ id: column.id })))
+    }
+    tree.unmount()
+  })
+
   it('renders the whole tree through the provider framework (container role/aria, chevrons on dirs only, actions slot)', async () => {
     seat.set(makeFileTreeUiService())
     const tree = await mountTree()
@@ -364,7 +385,7 @@ describe('FileTree via fileTreeUi v2 (service path)', () => {
     seat.set(makeFileTreeUiService(record))
     const tree = await mountTree()
     const props = record[record.length - 1]!
-    expect(props.treeKey).toBe('workspace-explorer')
+    expect(props.treeKey).toMatch(/^workspace-explorer:.+/)
     expect(props.role).toBe('tree')
     expect(props.grid).toEqual({ basePx: 6, stepPx: 22 })
     // Root row: the workspace root, always-open children, no collapse
@@ -384,13 +405,13 @@ describe('FileTree via fileTreeUi v2 (service path)', () => {
     expect(sub!.guideColumns?.map(col => col.id)).toEqual(['/tmp'])
     expect(sub!.children?.length).toBeGreaterThan(0)
     const file = recordedRow(record, '/tmp/a.ts')
-    expect(file!.indentPx).toBe(28)
+    expect(file!.indentPx).toBe(46) // 28px level indent + 18px disclosure gutter
     expect(file!.guideColumns?.map(col => col.id)).toEqual(['/tmp'])
     expect(file!.expanded).toBeUndefined()
     // Depth-2 rows: 50px indent, both ancestors as guide columns (full
     // paths are the branch-unique ids).
     const deep = recordedRow(record, '/tmp/sub/deep.ts')
-    expect(deep!.indentPx).toBe(50)
+    expect(deep!.indentPx).toBe(68) // 50px level indent + 18px disclosure gutter
     expect(deep!.guideColumns?.map(col => col.id)).toEqual(['/tmp', '/tmp/sub'])
     // A collapsed dir keeps its children present (the framework gates the
     // subtree on expanded; children stay so the fold animations can play)
