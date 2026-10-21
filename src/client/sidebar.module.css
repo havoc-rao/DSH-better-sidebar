@@ -887,11 +887,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* A deep tree's long labels are never squeezed into an ellipsis: the
-     content column grows to its widest row (see .explorerTree) and this body
-     scrolls horizontally to reach it — the same axis VSCode's explorer
-     scrolls. */
-  overflow-x: auto;
+  /* Keep rows within the sidebar; long names truncate instead of growing
+     the content column or introducing horizontal scrolling. */
+  overflow-x: hidden;
   padding: 4px 8px 8px;
 }
 
@@ -1017,6 +1015,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .explorerName {
+  display: block;
+  flex: 1;
   /* Pin every name (file, folder and workspace root) to the same type token.
      Framework rows inherit the host font, unlike our fallback rows. */
   font: var(--dsw-font-xxs-12);
@@ -1226,28 +1226,24 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    guaranteed), and background-color (never the shorthand) leaves the
    rows' inline guide-line gradients intact. */
 
-/* The tree's content column — the framework root's container class (passed to
-   renderFileTree) AND the wrapper the built-in fallback renders its rows in,
-   so both paths scroll as one block of uniform rows.
-
-   The two custom properties are the provider's documented horizontal-scroll
-   opt-in (dsh-file-tree-ui owns the row chrome): the column grows to its
-   widest row instead of being pinned to the scrollport, and the rows' actions
-   slot sticks to the scrollport's right edge instead of riding the wide row's
-   (off-screen) end. A provider too old to read them simply keeps the previous
-   scrollport-wide layout. */
+/* Both render paths stay bounded by the sidebar, not by the longest name.
+   Explicitly reset the provider's optional wide-column / sticky-action mode;
+   labels shrink and ellipsize while actions stay inside each row. */
 .explorerTree {
   display: flex;
   flex-direction: column;
-  --dsh-ftr-root-width: max-content;
-  --dsh-ftr-actions-position: sticky;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  --dsh-ftr-root-width: 100%;
+  --dsh-ftr-actions-position: static;
 }
 
-/* Without a provider there is no .listRoot to consume the variable above, so
-   the built-in row wrapper declares the same wide column directly. */
+/* The fallback has the same bounded column without a provider root list. */
 .explorerTreeBuiltin {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .explorerTree .explorerRowRevealed {

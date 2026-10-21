@@ -2270,7 +2270,7 @@ if (isDir) {
     <div
       key={entry.path}
       className={clsx(css.explorerRow, css.explorerRenaming)}
-      style={{ paddingLeft: depth * 22 + 6 }}
+      style={{ paddingLeft: depth * 22 + 6 + (fileTreeUi !== undefined ? 18 : 0) }}
     >
       {entry.isDir
         ? dirRowIcon(entry.path, expandedSet.has(entry.path))
@@ -2303,7 +2303,7 @@ if (isDir) {
    *  interaction contract as the rename editor (Enter commits, Escape
    *  cancels, blur commits, conservatively IME-guarded). */
   const renderNewFolderRow = (dir: string, depth: number): ReactNode => (
-    <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 }}>
+    <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 + (fileTreeUi !== undefined ? 18 : 0) }}>
       {dirRowIcon(dir, true)}
       <input
         ref={renameInputRef}
@@ -2341,7 +2341,7 @@ if (isDir) {
     const typed = newFile?.value.trim() ?? ''
     const probe = joinChild(dir, typed === '' ? 'untitled' : typed)
     return (
-      <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 }}>
+      <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 + (fileTreeUi !== undefined ? 18 : 0) }}>
         {service !== undefined ? service.fileIcon(probe, 14) : builtinFileIcon(probe, 14)}
         <input
           ref={renameInputRef}
@@ -2597,7 +2597,11 @@ dragging={draggingPath === entry.path}
         role: 'button',
         tabIndex: 0,
         draggable: picker === undefined,
-        indentPx: depth * 22 + 6,
+        // The framework inserts a 12px chevron + 6px gap only for folders.
+        // Reserve that same gutter for leaves so sibling artwork and labels
+        // share columns, with the disclosure control just before the icon.
+        indentPx: depth * 22 + 6 + (isDir ? 0 : 18),
+        leadingSlotWidth: 14,
         guideColumns: treeGuideColumns(treeAncestors(entry.path, treeRoot)),
         junction: isOpen,
         style: treeRowStyle,
