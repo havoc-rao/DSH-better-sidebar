@@ -1114,9 +1114,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    it in flow: scrolled to the bottom it sits below the last row and covers
    nothing, while mid-scroll it stays reachable. `left: 0` is the horizontal
    half of that same contract — the bar spans the scrollport, so the tree's
-   own horizontal scrolling must not carry it off the edge. It WRAPS instead
-   of overflowing, so a narrow panel gets a second line of chips rather than
-   a clipped control or a horizontal scrollbar. 28px rhythm, token-only (§1). */
+   own horizontal scrolling must not carry it off the edge. Three compact
+   icon buttons stay on one line; only the selection count may ellipsize.
+   28px rhythm, token-only (§1). */
 .explorerSelectionBar {
   position: sticky;
   bottom: 0;
@@ -1147,10 +1147,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .explorerSelectionActions {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  max-width: 72%;
 }
 
 /* The leading glyph of one "open in app" menu entry (the host's icon route

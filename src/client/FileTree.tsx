@@ -67,7 +67,7 @@ import { isWithinWorkspace, relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import type { BetterSidebarService } from './service.ts'
 import {
-  Chip, ConfirmDialog, IconButton, Notice, StatusBadge, useGitStatus,
+  ConfirmDialog, IconButton, Notice, StatusBadge, useGitStatus,
   type GitTone, type StatusTone,
 } from './ui/index.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
@@ -2862,9 +2862,9 @@ dragging={draggingPath === entry.path}
             <div className={css.explorerSelectionBar} role="toolbar" aria-label={t('filesSelected', { count: selected.size })}>
               <span className={css.explorerSelectionText}>{t('filesSelected', { count: selected.size })}</span>
               <span className={css.explorerSelectionActions}>
-                <Chip onClick={copySelectedPaths}>{t('copyPaths')}</Chip>
-                <Chip onClick={() => { requestSelectedDelete() }}>{t('deleteSelected')}</Chip>
-                <Chip onClick={clearSelection}>{t('clearSelection')}</Chip>
+                <IconButton size="sm" icon={<IconCopyOutlineRegular size={14} />} label={t('copyPaths')} onClick={copySelectedPaths} />
+                <IconButton size="sm" danger icon={<IconTrashOutlineRegular size={14} />} label={t('deleteSelected')} onClick={() => { requestSelectedDelete() }} />
+                <IconButton size="sm" icon={<IconCloseFillRegular size={14} />} label={t('clearSelection')} onClick={clearSelection} />
               </span>
             </div>
           )}

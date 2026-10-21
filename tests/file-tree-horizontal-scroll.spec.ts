@@ -118,6 +118,30 @@ describe('FileTree horizontal scrolling: rendered DOM', () => {
     tree.unmount()
   })
 
+  it('uses compact accessible icon actions and clears the selection', async () => {
+    const tree = await mountTree()
+    const name = [...tree.container.querySelectorAll<HTMLElement>('[class*="explorerName"]')]
+      .find(el => el.textContent === LONG_NAME)!
+    await act(async () => {
+      name.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    })
+    const toolbar = tree.container.querySelector('[role="toolbar"]')!
+    expect(toolbar).not.toBeNull()
+    const buttons = [...toolbar.querySelectorAll('button')]
+    expect(buttons).toHaveLength(3)
+    for (const button of buttons) {
+      expect(button.getAttribute('aria-label')).toBeTruthy()
+      expect(button.title).toBe(button.getAttribute('aria-label'))
+      expect(button.querySelector('svg')).not.toBeNull()
+      expect(button.className).toContain('iconButtonSm')
+      expect(button.hasAttribute('aria-pressed')).toBe(false)
+    }
+    expect(buttons[1]!.className).toContain('iconButtonDanger')
+    await act(async () => { buttons[2]!.click() })
+    expect(tree.container.querySelector('[role="toolbar"]')).toBeNull()
+    tree.unmount()
+  })
+
   it('marks the transient strips as viewport-pinned', async () => {
     const tree = await mountTree()
     // Only a FORCED re-list that fails while a listing is on screen surfaces
@@ -175,6 +199,16 @@ describe('FileTree horizontal scrolling: stylesheet', () => {
       expect(strip, `${selector} must be viewport-pinned`).toMatch(/position:\s*sticky/)
       expect(strip, `${selector} must be viewport-pinned`).toMatch(/left:\s*0/)
     }
+  })
+
+  it('keeps batch actions on one line while the count can shrink', () => {
+    const actions = rule('\\.explorerSelectionActions')
+    expect(actions).toMatch(/flex:\s*none/)
+    expect(actions).toMatch(/flex-wrap:\s*nowrap/)
+    expect(actions).not.toContain('max-width:')
+    const text = rule('\\.explorerSelectionText')
+    expect(text).toMatch(/min-width:\s*0/)
+    expect(text).toMatch(/text-overflow:\s*ellipsis/)
   })
 
   it('keeps the batch bar docked while the tree scrolls under it', () => {
