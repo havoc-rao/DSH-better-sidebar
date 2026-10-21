@@ -1168,24 +1168,19 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: none;
 }
 
-/* The hover-revealed @-reference button at the row's trailing edge (and the
-   transient "copied" label that replaces it after a copy). The only auto
-   margin in the row absorbs the filename's spare width, so a short name
-   cannot leave either affordance stranded in the middle; `sticky right`
-   keeps it at the scrollport's right edge once a long name widens the whole
-   tree past the viewport (the built-in rows' counterpart of the framework's
-   sticky actions slot). */
+/* Overlay the filename rather than reserving any of its width. The row is
+   the positioning anchor; hover/focus changes visibility, never geometry. */
 .explorerRef,
-.explorerCopied {
-  margin-left: auto;
-  position: sticky;
-  right: 0;
+.explorerRow > .explorerCopied {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
 }
 
-/* Laid out but invisible at rest (NOT display:none): the pill's width stays
-   part of the row's intrinsic width, so revealing it on hover can never
-   re-squeeze a long filename back into an ellipsis. Hovering or focusing the
-   row reveals it. */
+/* Invisible controls remain keyboard reachable; focusing the row reveals
+   the overlay without shrinking the filename. */
 .explorerRef {
   flex: none;
   display: inline-flex;
@@ -1236,7 +1231,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   min-width: 0;
   max-width: 100%;
   --dsh-ftr-root-width: 100%;
-  --dsh-ftr-actions-position: static;
+  --dsh-ftr-actions-position: absolute;
 }
 
 /* The fallback has the same bounded column without a provider root list. */
@@ -1261,6 +1256,19 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .explorerTree .explorerRowRevealed:has(+ .explorerRowRevealed) {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
+}
+
+/* Keep the provider's entire action slot out of the filename's flex layout.
+   Scope by our own content instead of depending on provider CSS hashes. */
+.explorerTree [role="button"] > span:has(> .explorerTreeRef),
+.explorerTree [role="button"] > span:has(> .explorerCopied),
+.explorerTree > div > span:has(> .explorerTreeRef),
+.explorerTree > div > span:has(> .explorerCopied) {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
 }
 
 /* The @-reference pill rendered in the framework's actions slot: same pill

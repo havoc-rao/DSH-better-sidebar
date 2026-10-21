@@ -156,7 +156,7 @@ describe('FileTree horizontal scrolling: stylesheet', () => {
   it('bounds the framework root to the sidebar width', () => {
     const tree = rule('\\.explorerTree')
     expect(tree).toMatch(/--dsh-ftr-root-width:\s*100%/)
-    expect(tree).toMatch(/--dsh-ftr-actions-position:\s*static/)
+    expect(tree).toMatch(/--dsh-ftr-actions-position:\s*absolute/)
     expect(tree).toMatch(/max-width:\s*100%/)
     expect(tree).not.toContain('max-content')
   })
@@ -184,14 +184,19 @@ describe('FileTree horizontal scrolling: stylesheet', () => {
     expect(bar).toMatch(/left:\s*0/)
   })
 
-  it('keeps the @-reference pill at the scrollport edge', () => {
-    const tail = rule('\\.explorerRef,\\s*\\.explorerCopied')
-    expect(tail).toMatch(/margin-left:\s*auto/)
-    expect(tail).toMatch(/position:\s*sticky/)
-    expect(tail).toMatch(/right:\s*0/)
+  it('overlays the @-reference pill without reserving filename width', () => {
+    const tail = rule('\\.explorerRef,\\s*\\.explorerRow > \\.explorerCopied')
+    expect(tail).toMatch(/position:\s*absolute/)
+    expect(tail).toMatch(/right:\s*8px/)
+    expect(tail).toMatch(/top:\s*50%/)
+    expect(tail).toMatch(/z-index:\s*1/)
+    expect(tail).not.toMatch(/margin-left:/)
+    const provider = rule('\\.explorerTree > div > span:has\\(> \\.explorerCopied\\)')
+    expect(provider).toMatch(/position:\s*absolute/)
+    expect(provider).toMatch(/right:\s*8px/)
   })
 
-  it('reserves the pill slot instead of collapsing it (a reveal must not re-squeeze the name)', () => {
+  it('reveals the overlay on hover or focus without changing layout', () => {
     const pill = rule('\\.explorerRef')
     expect(pill).toMatch(/display:\s*inline-flex/)
     expect(pill).not.toMatch(/display:\s*none/)
