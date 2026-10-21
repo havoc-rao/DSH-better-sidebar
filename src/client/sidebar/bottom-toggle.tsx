@@ -19,6 +19,7 @@ import type { SidebarStore } from '../state.ts'
 import { BottomDockToggle } from '../Sidebar.tsx'
 import { GitActionSlotBridge } from '../changes/git-action-slot.tsx'
 import type { GitActionSlotRenderProps } from '../changes/git-action-slot.tsx'
+import { DeleteDialogHintBridge, type DeleteHintRenderProps } from '../ui/delete-dialog-hotkeys.tsx'
 
 /** Register the header toggle; returns the disposer. */
 export function registerBottomToggle(ctx: Context, store: SidebarStore): () => void {
@@ -28,9 +29,14 @@ export function registerBottomToggle(ctx: Context, store: SidebarStore): () => v
     order: 10,
     registrant: 'dsh-better-sidebar',
     // One declaration per plugin registration, never one per mounted lens.
-    children: { 'betterSidebar.git.actions': { kind: 'list', scope: 'root' } },
-  }, ({ renderSlot }: GitActionSlotRenderProps) => <>
+    children: {
+      'betterSidebar.git.actions': { kind: 'list', scope: 'root' },
+      'betterSidebar.delete.confirm.hotkeyHint': { kind: 'single', scope: 'root' },
+      'betterSidebar.delete.cancel.hotkeyHint': { kind: 'single', scope: 'root' },
+    },
+  }, ({ renderSlot }: GitActionSlotRenderProps & DeleteHintRenderProps) => <>
     <BottomDockToggle store={store} />
     <GitActionSlotBridge renderSlot={renderSlot} />
+    <DeleteDialogHintBridge renderSlot={renderSlot} />
   </>))
 }

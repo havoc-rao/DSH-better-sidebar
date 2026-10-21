@@ -21,6 +21,8 @@ import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { installSidebarHotkeys } from './hotkey-actions.ts'
+import { installDeleteDialogHotkeys } from './ui/delete-dialog-hotkeys.tsx'
+import { installFileTreeHotkeys } from './file-tree-hotkeys.ts'
 import { BottomDockEntry } from './sidebar/BottomDockEntry.tsx'
 import { readNativeSidebarOpen } from './sidebar/use-native-column.ts'
 import { CMD_W_SHORTCUT, claimCloseActiveTab, installDesktopBottomClose, readDesktopShellBridge } from './desktop-shortcuts.ts'
@@ -252,6 +254,8 @@ export function apply(ctx: Context): void {
   // The business plugin owns both the binding and its effect. dsh-hotkey
   // only dispatches registered actions; it never opens terminals for us.
   installSidebarHotkeys(ctx, sidebarStore, service)
+  installDeleteDialogHotkeys(ctx)
+  installFileTreeHotkeys(ctx)
   // The desktop-shell shortcut bridge (the deepseek-harness Electron app):
   // Cmd+W is intercepted by the shell and routed to the page; the plugin
   // claims every press (semantics "A"): close the active tab of the native

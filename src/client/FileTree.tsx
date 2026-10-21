@@ -73,6 +73,7 @@ import {
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
 import { pushTreeOp, redoTreeOp, returnTreeOp, undoTreeOp, type TreeMutationOp } from './undo.ts'
 import { useFileTreeUi } from './file-tree-ui.ts'
+import { attachFileTreeHotkeys } from './file-tree-hotkeys.ts'
 // Type-only (erased — never reaches the client-bundle purity gate): the
 // fileTreeUi v2 client-service contract provided by the dsh-file-tree-ui
 // plugin. v2 = tree-FRAMEWORK ownership: the provider renders the whole
@@ -1290,7 +1291,9 @@ export function FileTree(props: {
   /** The expanded set for the stable callbacks. */
   const expandedSetRef = useRef<Set<string>>(new Set())
 
+  const selectionScopeRef = useRef(scopeOf(propsRef.current))
   const setSelection = useCallback((next: Set<string>): void => {
+    selectionScopeRef.current = scopeOf(propsRef.current)
     selectedRef.current = next
     setSelected(next)
   }, [])
@@ -1390,6 +1393,37 @@ export function FileTree(props: {
     resetDrop()
   }, [sessionId, cwd, resetDrop, clearSelection])
 
+  const deleteHotkeyRef = useRef<() => boolean>(() => false)
+  deleteHotkeyRef.current = () => {
+    const live = propsRef.current
+    const armed = scopeOf(live)
+    if (live.picker !== undefined || live.hidden === true || live.visible === false || live.busy
+      || renaming !== null || newFolder !== null || newFile !== null || rowMenu !== null
+      || confirmDelete !== null || confirmDeleteSelected !== null || deletingSelected
+      || (source !== undefined && source.fsRemove === undefined)
+      || selectedRef.current.size === 0 || !sameScope(selectionScopeRef.current, armed)) return false
+    return true
+  }
+  const requestSelectedDelete = (): boolean => {
+    if (!deleteHotkeyRef.current()) return false
+    const armed = scopeOf(propsRef.current)
+    if (armed === undefined) return false
+    // Claim synchronously; React may not commit the modal before another dispatch.
+    deleteHotkeyRef.current = () => false
+    setConfirmDeleteSelected(armed)
+    return true
+  }
+  const requestSelectedDeleteRef = useRef(requestSelectedDelete)
+  requestSelectedDeleteRef.current = requestSelectedDelete
+  useEffect(() => {
+    const element = bodyRef.current
+    if (element === null) return
+    return attachFileTreeHotkeys(element, {
+      available: () => deleteHotkeyRef.current(),
+      run: () => requestSelectedDeleteRef.current(),
+    })
+  }, [])
+
   const copySelectedPaths = useCallback((): void => {
     void writeClipboard([...selectedRef.current].join('\n'))
   }, [])
@@ -1441,10 +1475,14 @@ export function FileTree(props: {
       return
     }
     if (event.ctrlKey || event.metaKey) {
+      // Modifier-click does not reliably focus non-native rows (notably on macOS).
+      // The tree that owns the selection must also own the following shortcut.
+      bodyRef.current?.focus({ preventScroll: true })
       toggleSelect(path, isDir)
       return
     }
     if (event.shiftKey) {
+      bodyRef.current?.focus({ preventScroll: true })
       selectRange(path, isDir)
       return
     }
@@ -2821,10 +2859,7 @@ dragging={draggingPath === entry.path}
               <span className={css.explorerSelectionText}>{t('filesSelected', { count: selected.size })}</span>
               <span className={css.explorerSelectionActions}>
                 <Chip onClick={copySelectedPaths}>{t('copyPaths')}</Chip>
-                <Chip onClick={() => {
-                  const armed = scopeOf(propsRef.current)
-                  if (armed !== undefined) setConfirmDeleteSelected(armed)
-                }}>{t('deleteSelected')}</Chip>
+                <Chip onClick={() => { requestSelectedDelete() }}>{t('deleteSelected')}</Chip>
                 <Chip onClick={clearSelection}>{t('clearSelection')}</Chip>
               </span>
             </div>
@@ -3038,6 +3073,7 @@ dragging={draggingPath === entry.path}
         description={confirmDelete === null ? '' : t(confirmDelete.isDir ? 'deleteDescDir' : 'deleteDescFile')}
         confirmLabel={t('delete')}
         cancelLabel={t('cancel')}
+        deleteHotkeys
         danger
         onConfirm={() => {
           const pending = confirmDelete
@@ -3056,6 +3092,7 @@ dragging={draggingPath === entry.path}
         description={t('deleteSelectedDesc')}
         confirmLabel={t('deleteSelected')}
         cancelLabel={t('cancel')}
+        deleteHotkeys
         danger
         busy={deletingSelected}
         onConfirm={() => {

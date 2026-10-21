@@ -196,6 +196,24 @@
   color: var(--dsw-alias-label-primary);
 }
 
+.confirmActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.confirmHotkey {
+  display: inline-flex;
+  align-items: center;
+  pointer-events: none;
+  font: var(--dsw-font-xxxs-strong-11);
+  opacity: 0.65;
+}
+
+.confirmHotkey:not(:empty) {
+  margin-inline-start: 8px;
+}
+
 /* ── StatusBadge ────────────────────────────────────────────────────────── */
 
 .statusBadge {
