@@ -568,11 +568,14 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* The native tab chip's glyph (drawn by the plugin inside the host's
    `sidebar.right.pane.tab.title` slot, which is the chip's content): sized to
-   the text, aligned on its baseline box, and separated from the title the way
+   the text, vertically centred beside it, and separated from the title the way
    the workbench strip separates its own glyph from its label. */
 .chipIcon {
   display: inline-flex;
   align-items: center;
+  /* This wrapper is inline content in the host label, not a flex-row item.
+     Centre its box against the text instead of using the default baseline. */
+  vertical-align: middle;
   margin-right: 6px;
   flex: none;
 }
@@ -727,6 +730,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
   /* Native selected fill (Rows .sessionRow.selected) — no underline, no shadow. */
   background: var(--dsw-alias-interactive-bg-active);
+}
+
+/* Descriptor icons may wrap an inline SVG in a span. Remove that line
+   box's descender space before centring the glyph beside the tab title. */
+.tabIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  line-height: 0;
 }
 
 .tabTitle {

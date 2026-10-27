@@ -234,85 +234,90 @@ export function TabBar(props: {
       }}
     >
       <div ref={listRef} className={css.tabList}>
-        {tabs.map(tab => (
-          <div
-            key={tab.id}
-            className={clsx(css.tab, active === tab.id && css.tabActive)}
-            title={tab.title}
-            role="tab"
-            aria-selected={active === tab.id}
-            tabIndex={active === tab.id ? 0 : -1}
-            draggable
-            onDragStart={(event) => {
-              setTabDragging(true)
-              event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
-              event.dataTransfer.effectAllowed = 'move'
-            }}
-            onDragEnd={() => { setTabDragging(false); setDragOver(false) }}
-            onDragOver={(event) => { event.preventDefault(); event.stopPropagation() }}
-            onDrop={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              setTabDragging(false)
-              const raw = event.dataTransfer.getData(TAB_DRAG_TYPE)
-              const payload = parseDrag(raw)
-              if (payload !== null) onDropTab(payload, tab.id)
-            }}
-            onClick={(event) => {
-              event.currentTarget.focus({ preventScroll: true })
-              onActivate(tab.id)
-            }}
-            onKeyDown={(event) => {
-              if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
-              event.preventDefault()
-              onActivate(tab.id)
-            }}
-            onMouseDown={(event) => {
-              // Middle-click close: record the press target and disarm
-              // Chrome's middle-click autoscroll (its indicator is inert
-              // here — the strip scrolls via the wheel handler only). The
-              // close itself settles on the first middle mouseup over this
-              // same tab (window-level), keeping release semantics.
-              if (event.button === 1) {
+        {tabs.map(tab => {
+          const icon = getTabIcon?.(tab)
+          return (
+            <div
+              key={tab.id}
+              className={clsx(css.tab, active === tab.id && css.tabActive)}
+              title={tab.title}
+              role="tab"
+              aria-selected={active === tab.id}
+              tabIndex={active === tab.id ? 0 : -1}
+              draggable
+              onDragStart={(event) => {
+                setTabDragging(true)
+                event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
+                event.dataTransfer.effectAllowed = 'move'
+              }}
+              onDragEnd={() => { setTabDragging(false); setDragOver(false) }}
+              onDragOver={(event) => { event.preventDefault(); event.stopPropagation() }}
+              onDrop={(event) => {
                 event.preventDefault()
-                middlePressed.current = { id: tab.id, node: event.currentTarget }
-              }
-            }}
-            onContextMenu={(event) => {
-              // Take over the browser menu: the tab context menu offers the
-              // close operations for this pane. Opening it also dismisses
-              // the + menu (only one menu at a time).
-              event.preventDefault()
-              setMenuOpen(false)
-              setTabMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
-            }}
-          >
-            {getTabIcon?.(tab) ?? null}
-            {getTabBadge?.(tab) ?? null}
-            <span className={css.tabTitle}>{tab.title}</span>
-            {isTabUnread?.(tab) === true
-              ? (
-                <span
-                  className={css.tabUnreadDot}
-                  role="img"
-                  aria-label={t('tabUnread')}
-                  title={t('tabUnread')}
-                />
-              )
-              : null}
-            <button
-              type="button"
-              className={css.tabClose}
-              aria-label={t('close')}
-              onClick={(event) => {
                 event.stopPropagation()
-                onClose(tab.id)
+                setTabDragging(false)
+                const raw = event.dataTransfer.getData(TAB_DRAG_TYPE)
+                const payload = parseDrag(raw)
+                if (payload !== null) onDropTab(payload, tab.id)
+              }}
+              onClick={(event) => {
+                event.currentTarget.focus({ preventScroll: true })
+                onActivate(tab.id)
+              }}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+                event.preventDefault()
+                onActivate(tab.id)
+              }}
+              onMouseDown={(event) => {
+                // Middle-click close: record the press target and disarm
+                // Chrome's middle-click autoscroll (its indicator is inert
+                // here — the strip scrolls via the wheel handler only). The
+                // close itself settles on the first middle mouseup over this
+                // same tab (window-level), keeping release semantics.
+                if (event.button === 1) {
+                  event.preventDefault()
+                  middlePressed.current = { id: tab.id, node: event.currentTarget }
+                }
+              }}
+              onContextMenu={(event) => {
+                // Take over the browser menu: the tab context menu offers the
+                // close operations for this pane. Opening it also dismisses
+                // the + menu (only one menu at a time).
+                event.preventDefault()
+                setMenuOpen(false)
+                setTabMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
               }}
             >
-              <IconCloseFillRegular size={14} />
-            </button>
-          </div>
-        ))}
+              {icon !== undefined && icon !== null && icon !== false
+                ? <span className={css.tabIcon} aria-hidden="true">{icon}</span>
+                : null}
+              {getTabBadge?.(tab) ?? null}
+              <span className={css.tabTitle}>{tab.title}</span>
+              {isTabUnread?.(tab) === true
+                ? (
+                  <span
+                    className={css.tabUnreadDot}
+                    role="img"
+                    aria-label={t('tabUnread')}
+                    title={t('tabUnread')}
+                  />
+                )
+                : null}
+              <button
+                type="button"
+                className={css.tabClose}
+                aria-label={t('close')}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onClose(tab.id)
+                }}
+              >
+                <IconCloseFillRegular size={14} />
+              </button>
+            </div>
+          )
+        })}
         {/*
           The + sits immediately after the rightmost tab (sticky at the
           right edge of the scrollport when the tabs overflow, so it stays

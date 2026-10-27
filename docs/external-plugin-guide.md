@@ -1177,6 +1177,8 @@ interface SettingsDescriptor {
 
 ## 12. 皮肤兼容（令牌驱动）
 
+页签图标由承载面统一垂直居中：底部工作台为 descriptor 图标增加无行高的 inline-flex 包装，原生页签图标包装使用 `vertical-align: middle`。消费插件无需通过额外偏移补偿 SVG 的基线留白；没有图标时不保留空槽。
+
 > better-sidebar 所有视觉值消费 DSH 的 `--dsw-alias-*` / `--dsw-font-*` / `--ds-*` 令牌（无硬编码颜色），**不做每皮肤适配**。已与 dsh-web-ui 皮肤中心兼容（10 款皮肤全覆盖 `--dsw-alias-*` 层；`tests/theme.spec.ts` 守护）。你的 tab/viewer 组件遵循同样的令牌规则即可自动兼容全部皮肤。
 >
 > **没有任何豁免面**：文件与文件夹图标是 **DSH 官方的 `FileTypeIcon` 图形**（宿主自己
