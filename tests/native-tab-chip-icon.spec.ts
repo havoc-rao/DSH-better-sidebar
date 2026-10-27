@@ -11,6 +11,8 @@
  * the folder artwork while the inactive ones (rendered later, with the record
  * in place) showed the right file icon.
  */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -96,6 +98,28 @@ function renderTitle(props: {
 }
 
 describe('NativeTabTitle file glyph', () => {
+  it('centres the inline glyph beside the host label rather than on its baseline', () => {
+    const service = createService()
+    const { host, unmount } = renderTitle({
+      records: createNativeTabRecords(), service, descriptorId: 'editor',
+      info: nativeInfo('tab1', 'files', 'Files', 'sidebar://files'),
+    })
+    try {
+      const icon = host.querySelector('[data-type-icon]')?.parentElement
+      expect(icon?.className).toContain('chipIcon')
+      expect(icon?.getAttribute('aria-hidden')).toBe('true')
+      // jsdom does not lay out inline boxes. Pin the actual CSS rule as well
+      // as its rendered carrier: align-items alone only centres its contents,
+      // and leaves the wrapper itself sitting on the host text baseline.
+      const stylesheet = readFileSync(resolve('src/client/sidebar.module.css'), 'utf8')
+      const rule = stylesheet.match(/\.chipIcon\s*\{([^}]+)\}/)?.[1] ?? ''
+      expect(rule).toMatch(/display:\s*inline-flex\s*;/)
+      expect(rule).toMatch(/vertical-align:\s*middle\s*;/)
+    } finally {
+      unmount()
+    }
+  })
+
   it('supports opted-in custom file tabs without changing ordinary path-bearing tabs', () => {
     const service = createService()
     service.registerTab({ id: 'dsh-remote:file', title: 'Remote', fileTab: true,
