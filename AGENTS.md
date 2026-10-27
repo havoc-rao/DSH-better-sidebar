@@ -1,6 +1,6 @@
 # dsh-better-sidebar 仓库规则（AGENTS）
 
-> ⚠️ **合并状态（2026-10-17）**：本仓库已合入官方 `main` `83faf709`，v0.28.0 线（DSH 0.2.1-rc.1）。与官方存在**有意保留的分叉差异**，下文按官方口径为主，差异如下：
+> ⚠️ **合并状态（2026-10-27）**：本仓库已合入官方 `main` `971a3dc0`，v0.28.1 线（DSH 0.2.1-rc.1）。与官方存在**有意保留的分叉差异**，下文按官方口径为主，差异如下：
 > - **内置清单 = 7 tab + 3 viewer**（`editor` / `git` / `subagent` / `sidechat` / `terminal` / `workspace-terminals` / `diff`）：终端保留本地实现（插件自有 pty 路由 + agent 终端 + workspace 终端 + terminal-source 传输层），**官方 #774 的 `terminal-bottom`（宿主 `ctx.webTerminals` 服务）未并入**——两个底部终端并存是坏 UX，本地实现是功能超集。
 > - **titleBar 机制保留**（`titleBarScheme` / `titleBarPresetId` / `titleBarCompat` / `titleBarStripPx` + shell-presets / titlebar-strip）：官方已删，本仓库未跟随。
 > - **本地扩展 API 全部保留**：`gitCommitActions`（Git 提交行 More 菜单 + `registerGitCommitAction`）、`terminalSource` / `workspaceTerminalSource` / `gitSource` / `inspectors` / `resourceActions:v1` / `fileOpenTargets:v1` / `textDocuments:v1` / `strictGitDiff:v1` / `sharedRendering:v1` / `panelFlags` / `planDiff`。
@@ -8,25 +8,22 @@
 > - 原文中所有「terminal-bottom / bottomOnly / #774 / titleBar 已移除」的提法在本仓库均**不成立**，引用时以本节为准。
 
 
-> 本文只含**每次都要遵守的规则**。深度参考不放在这里：接入 API → [docs/external-plugin-guide.md](docs/external-plugin-guide.md)；宿主契约（原 §3.4 第 1–12 条）与历史线沿用至今的约束 → [docs/host-contracts.md](docs/host-contracts.md)；逐特性设计史与历次 DSH 适配记录 → [docs/plans/](docs/plans/)；用户可见变更 → [CHANGELOG.md](CHANGELOG.md)。
+> 本文只含**每次都要遵守的规则**。深度参考不放在这里：接入 API → [docs/external-plugin-guide.md](docs/external-plugin-guide.md)；宿主契约（原 §3.4 第 1–13 条）与历史线沿用至今的约束 → [docs/host-contracts.md](docs/host-contracts.md)；逐特性设计史与历次 DSH 适配记录 → [docs/plans/](docs/plans/)；用户可见变更 → [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
-## 0. 分支模型：`dev` 集成 / `main` 只收发版
+## 0. 分支模型：`main` 唯一集成分支
 
-- 功能与修复先进 `dev`：主题分支（`feat|fix|chore|docs|test/*`）从 `dev` 切出、合回 `dev`；`main` 只在发版时从 `dev` 合入。回填贡献者 PR 沿用对方分支名。
-- **不要用 `dev/` 前缀命名分支**：本地已有 `refs/heads/dev`，`dev/x` 会撞 ref 冲突（`cannot lock ref`）。
-- 发版：`dev` → `main` 后从 `main` 打 tag `vX.Y.Z`，[release.yml](.github/workflows/release.yml) 自动发 npm（版本号含 `-` → `alpha` dist-tag，否则 `latest`）。
-- **仅纯文档改动**（README / AGENTS.md / docs/）允许不切分支直接提交（`main` 或 `dev` 均可）。
-- CI 的 push 触发覆盖 `main` 与 `dev`；`pull_request` 与 base 无关，合进 `dev` 的每一批都有门禁。
-- 并行开发用 `.worktrees/`（每槽独立 `node_modules`），**集成只在单一 worktree 串行做**。
+- 功能与修复在 `feat/*` / `fix/*` / `chore/*` 等主题分支开发，合回 `main`。本地 `dev` 已退役，不要重建；远端 `offical/dev` 独立演进。
+- 发版直接从 `main` 打 tag；仅纯文档改动允许直接提交 `main`。
+- 每批合并必须跑门禁；集成在单一 worktree 串行进行。
 
 ---
 
 ## 1. 仓库硬约束
 
 - **禁止修改 DSH 源码**（官方 checkout `~/.dsh/source/current` 零写入）。
-- **非文档改动必须走分支并合入 `dev`**：外部贡献者走 `gh pr create` + review；维护者本地的批量整合可以直接 `git merge --no-ff` 进 `dev`，但每批都要跑门禁。
+- **非文档改动必须走分支并合入 `main`**：外部贡献者走 `gh pr create` + review；维护者本地的批量整合可以直接 `git merge --no-ff` 进 `main`，但每批都要跑门禁。
 - **挂载只走 `cordis.patch.yml` + profile 机制**，插件作为独立包被 profile 引用，不反向侵入 DSH。
 - **市场受管安装约束**：`dependencies` / `peerDependencies` / `optionalDependencies` 一律不得出现 `cordis`；`scripts` 不得含 `preinstall` / `install` / `postinstall` / `prepare`（`tests/market-manifest.spec.ts` 守护）。
 - **缺能力时**用 DSH 现成只读/公开 API 或插件自有路由（后台任务已有宿主客户端 `ctx.jobs`，别再自建回放路由）；做不到先向用户说明取舍，不改 DSH。
@@ -50,13 +47,13 @@
 
 - **当前基线 DSH 0.2.1-rc.1（v0.28.0 正式版起）**。13 条 `@deepseek-ai/dsh-*` peer 下限均为 `^0.2.1-rc.1` 浮动 caret 范围、**绝不钉精确版本**（只有 devDependencies 精确钉）；本包不声明 `package.json#engines.dsh`，因此走 peer 兼容性检查；宿主对声明了该字段的包优先且仅按它判定，不读 peer。`dsh.plugin.json#engines.dsh` 不参与这一规则。`tests/market-manifest.spec.ts` 钉住这条形状。
 - **0.x caret 不跨 minor，但可跨 patch**：`^0.1.7-rc.1` 对 `0.2.0-rc.1` 判定为 false → 整行 `disabled`、插件静默不加载。**抬基线必须同批抬 peer 下限。**
-- 支持线（用户侧）：DSH **0.2.1-rc.1+** 使用插件 **v0.28.0**；0.2.1-alpha.5 用户固定 **v0.28.0-alpha.0**；0.2.0-rc.2 用户固定 **v0.26.1**（v0.27.0 尚未发布）；0.2.0-rc.1 用户固定 v0.24.1；0.1.7 线的最后支持版是 **v0.22.1**（v0.23.0 从未发布到 npm）。按本仓库先例**不写运行时兼容层**。
+- 支持线（用户侧）：DSH **0.2.1-rc.1+** 使用插件 **v0.28.1**；0.2.1-alpha.5 用户固定 **v0.28.0-alpha.0**；0.2.0-rc.2 用户固定 **v0.26.1**（v0.27.0 尚未发布）；0.2.0-rc.1 用户固定 v0.24.1；0.1.7 线的最后支持版是 **v0.22.1**（v0.23.0 从未发布到 npm）。按本仓库先例**不写运行时兼容层**。
 - **抬基线动作清单**：① `pnpm peers check`，把失配的传递 peer 提升进 devDependencies；② 扫宿主包产物的**裸 import 差集**（`pnpm peers check` 看不到这类失败，0.1.7 线是 `zustand` / `immer`）；③ 对消费的宿主包做类型面 diff（重点 `ui-primitives` / `dsh-session` / `sidebar-right`），确认导出只增不减；④ 复查会话格式版本、`SUBAGENT_DESCRIPTOR_VERSION`、web profile 的 inject 列表；⑤ 同批同步 CI 钉版、`scripts/e2e-common.sh`、**`scripts/install.sh` / `scripts/install.ps1`（随包发布、会直接给用户 npx 命令）** 与 README / 指南的版本行。
 - **用户 profile 自己的 `overrides: '@deepseek-ai/dsh-*'` 要同批抬**，否则旧包遮蔽 bundle → 预检禁用 `config-editor` → `settings` 行永久 `pending`；先看宿主日志的 `disabling profile plugin row` 与 `pending (waiting for service: …)`。
 - **沿用 alpha.5 的删除契约**：不再依赖 `@deepseek-ai/dsh-invariants`、`ctx.invariants` 或上游 `/invariant` 子路径，也不发布本插件的 invariant companion；HTTP/WS 准入统一调用 `ctx.connection.requestRejection(req)`，仅 `undefined` 放行，不恢复 `webRuntime` / 自建信任例外。
 - **v0.28.0 正式版接管 npm `latest`**：宿主 npm `latest` 此时仍指向 `0.2.0-rc.2`，不满足本插件 RC 基线；用户已明确接受这一分离，所有安装文档必须显著提醒旧宿主固定 `v0.26.1`，不要用浮动 `latest`。发布 workflow 沿用现有版本号规则，无需改动。
 - **本次 RC 适配不改功能实现**：alpha.5 → rc.1 上游完整树差异共 355 项，全部为 `package.json`，源码零变化；同步版本、peer、伴随依赖与文档，重新获取 RC 验证证据，不沿用 alpha 测试数字。
-- 动设置面 / sidechat / 原生 tab 之前，先读 [docs/host-contracts.md](docs/host-contracts.md)（原 §3.4 的 1–12 条按原编号都在那里）。
+- 动设置面 / sidechat / 原生 tab 之前，先读 [docs/host-contracts.md](docs/host-contracts.md)（原 §3.4 的 1–13 条按原编号都在那里）。
 
 ---
 
@@ -86,7 +83,7 @@ v0.28.0 正式版沿用现有发布规则进入 npm `latest`，无需修改 work
 ## 6. 去哪找什么
 
 - **接入 API 全参考**：[docs/external-plugin-guide.md](docs/external-plugin-guide.md)（§0 承载面 / §4 Tab / §5 FileViewer / §7 服务 / §10 平台陷阱 / §12 皮肤契约 / §15 案例）。
-- **宿主契约与沿用至今的适配约束**：[docs/host-contracts.md](docs/host-contracts.md)（编号与旧 §3.4 第 1–12 条一致）。
+- **宿主契约与沿用至今的适配约束**：[docs/host-contracts.md](docs/host-contracts.md)（编号与旧 §3.4 第 1–13 条一致）。
 - **设计史 / 历次版本适配**：[docs/plans/](docs/plans/)；**用户可见变更**：[CHANGELOG.md](CHANGELOG.md)。
 - **Issue / PR 分诊**：[.agents/skills/issue-triage/SKILL.md](.agents/skills/issue-triage/SKILL.md)（脚本在同目录 `scripts/`）。
 - **测试**：契约写在每个 spec 的**头注释**里——改哪个子系统就跑对应 spec（注册表 `service` / `builtins` / `market-manifest`；原生承载面 `native-surface` / `native-registration`；文件树 `fs-tree-*` / `file-tree-*` / `fs-watch`；编辑器与文件路由 `file-stream-route` / `fs-read-page` / `text-encoding` / `fs-write-route`；Git `git-status-poll` / `git-scm` / `git-graph*`）。

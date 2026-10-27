@@ -14,7 +14,7 @@ function storeWith(tabs: Array<{ id: string; title: string; path: string }>): Si
   for (const tab of tabs) {
     state = openTabInBottomPane(state, { id: tab.id, type: 'editor', title: tab.title, path: tab.path })
   }
-  return { getSnapshot: () => ({ state }) } as unknown as SidebarStore
+  return { getSnapshot: () => ({ state, sessionId: "s1" }), getSessionStates: () => new Map([["s1", state]]) } as unknown as SidebarStore
 }
 
 describe('retargetPathTabs', () => {
@@ -28,9 +28,9 @@ describe('retargetPathTabs', () => {
       { id: 'unrelated', title: 'else.ts', path: '/ws/other/else.ts' },
     ])
     retargetPathTabs(ctx, store, '/ws/dir', '/ws/moved')
-    expect(updateTab).toHaveBeenCalledWith('dir-tab', { path: '/ws/moved', title: 'moved' }, undefined)
-    expect(updateTab).toHaveBeenCalledWith('deep', { path: '/ws/moved/deep.ts', title: 'deep.ts' }, undefined)
-    expect(updateTab).toHaveBeenCalledWith('nested', { path: '/ws/moved/nested/x.ts', title: 'x.ts' }, undefined)
+    expect(updateTab).toHaveBeenCalledWith('dir-tab', { path: '/ws/moved', title: 'moved' }, "s1")
+    expect(updateTab).toHaveBeenCalledWith('deep', { path: '/ws/moved/deep.ts', title: 'deep.ts' }, "s1")
+    expect(updateTab).toHaveBeenCalledWith('nested', { path: '/ws/moved/nested/x.ts', title: 'x.ts' }, "s1")
     // A sibling path sharing the OLD prefix must NOT be rewritten.
     expect(updateTab).toHaveBeenCalledTimes(3)
   })
@@ -43,7 +43,7 @@ describe('retargetPathTabs', () => {
       { id: 'real', title: 'b.ts', path: '/ws/dir/b.ts' },
     ])
     retargetPathTabs(ctx, store, '/ws/dir', '/ws/moved')
-    expect(updateTab).toHaveBeenCalledWith('real', { path: '/ws/moved/b.ts', title: 'b.ts' }, undefined)
+    expect(updateTab).toHaveBeenCalledWith('real', { path: '/ws/moved/b.ts', title: 'b.ts' }, "s1")
     expect(updateTab).toHaveBeenCalledTimes(1)
   })
 

@@ -10,7 +10,6 @@
  * untracked fallbacks and the per-file fold cache cannot drift apart);
  * rendering goes through the shared {@link DiffFiles} renderer.
  */
-import { useMemo } from 'react'
 import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from './api.ts'
 import type { SidebarDiffRef } from './state.ts'
@@ -23,9 +22,8 @@ import css from './sidebar.module.css'
 function diffRefTitle(diff: SidebarDiffRef): string {
   return diff.kind === 'proposed' ? diff.title : diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`
 }
-export function DiffTab(props: { sessionId: string; cwd: string | undefined; diff: SidebarDiffRef; onOpenFile?: (path: string) => void; onOpenRow?: (path: string, newLine: number | null) => void }) {
-  const { sessionId, cwd, diff } = props
-  const scope = useMemo<SessionScope>(() => ({ sessionId, cwd }), [sessionId, cwd])
+export function DiffTab(props: { scope: SessionScope; diff: SidebarDiffRef; onOpenFile?: (path: string) => void; onOpenRow?: (path: string, newLine: number | null) => void }) {
+  const { scope, diff } = props
   const { loading, error, diffText, untracked, refresh, resolveFold } = useGitDiffTarget(diff, scope)
 
   const isProposed = diff.kind === 'proposed'

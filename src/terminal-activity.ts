@@ -27,7 +27,7 @@ export function activityFromPs(text: string, pid: number, promptProven = false):
   if (!shell) return { activity: 'unknown', reason: 'shell-process-not-observed' }
   // Any descendant (including stopped/background jobs) precludes idle.
   const descendants = new Set([pid])
-  let count = 0
+  let count: number
   do {
     count = descendants.size
     for (const row of processes) if (descendants.has(row.ppid)) descendants.add(row.pid)

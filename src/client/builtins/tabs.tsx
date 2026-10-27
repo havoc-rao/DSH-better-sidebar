@@ -19,7 +19,8 @@ import {
 } from './tab-icons.tsx'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
-import { openSidebarFile, openSidebarFileAt } from '../intercept.tsx'
+import { openSidebarFile as openProposedFile, openSidebarFileAt } from '../intercept.tsx'
+import { openSidebarFile } from '../sidebar-file.ts'
 import { EditorHost } from '../EditorHost.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
 import { LocalePreferenceRow } from '../SideCardSection.tsx'
@@ -147,9 +148,40 @@ function uiTerminalCount(state: SidebarState): number {
     .filter(tab => tab.type === 'terminal' && !isAgentTabId(tab.id)).length
 }
 
+/** Host session surface (`ctx.get('uiWorkspace')`). Archive is optional. */
+interface ArchiveSessionFace {
+  archiveSession?: (sessionId: string, options: { stopActivity: boolean }) => Promise<void>
+}
+
+/**
+ * Hide a closed Side Chat thread, then release its live agent.
+ *
+ * `stopActivity` settles a running turn before the session leaves the list.
+ * The workspace service is optional: a missing service or a rejected archive
+ * still disposes, and the close path itself never rejects. An unbound tab
+ * never reaches here.
+ */
+function releaseSidechat(ctx: Context, threadId: string): void {
+  const dispose = (): void => {
+    void api.sidechatDispose(threadId).catch(() => {})
+  }
+  void (async () => {
+    try {
+      const service = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
+      // Method call: an unbound `archiveSession` would lose the service as `this`.
+      if (service?.archiveSession !== undefined) {
+        await service.archiveSession(threadId, { stopActivity: true })
+      }
+    } catch {
+      // Archive is best-effort. Dispose still runs in finally.
+    } finally {
+      dispose()
+    }
+  })()
+}
+
 /** The 7 built-in tab descriptors. */
 export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): readonly TabDescriptor[] {
-
   return [
     {
       id: 'editor',
@@ -263,7 +295,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           scope={scope}
           tab={tab}
           visible={visible}
-          onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
+          onOpenFile={(path) => { openSidebarFile(ctx, scope.sessionId, path, { cwd: scope.cwd }) }}
           onOpenDiff={onOpenDiff}
         />
       ),
@@ -275,8 +307,8 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       icon: tasksTabIcon,
       order: 30,
       single: true,
-      // Declarative settings: the auto-open switches render under this row in
-      // the Side card settings page (the Tasks page's related settings).
+      // Declarative settings: auto-open, default view, task folding, and the
+      // jobs drawer switches share the existing Tasks card's settings gear.
       settings: {
         toggles: [{
           key: 'autoOpenSubagent',
@@ -303,6 +335,22 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
               desc: () => t('settingsViewModeTreeDesc'),
             },
           ],
+        }, {
+          key: 'tasksAutoFoldSettled',
+          title: () => t('settingsTasksAutoFoldSettledTitle'),
+          desc: () => t('settingsTasksAutoFoldSettledDesc'),
+        }, {
+          key: 'tasksAutoFoldBranches',
+          title: () => t('settingsTasksAutoFoldBranchesTitle'),
+          desc: () => t('settingsTasksAutoFoldBranchesDesc'),
+        }, {
+          key: 'tasksAutoFoldIdle',
+          title: () => t('settingsTasksAutoFoldIdleTitle'),
+          desc: () => t('settingsTasksAutoFoldIdleDesc'),
+        }, {
+          key: 'jobsAutoCollapse',
+          title: () => t('settingsJobsAutoCollapseTitle'),
+          desc: () => t('settingsJobsAutoCollapseDesc'),
         }],
       },
       component: ({ ctx, store, scope, visible, onSubagentJump }) => (
@@ -349,13 +397,13 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       // One tab per thread: an already-open thread focuses instead of
       // duplicating; unbound fresh tabs never dedupe (each mints its own).
       dedupeKey: (tab) => sidechatThreadIdOf(tab),
-      // Closing the tab releases the thread's live agent; the session and
-      // its history stay persisted (reopen from any thread's header menu).
+      // A bound thread is archived on close, then its live agent is released.
+      // Saving a copy first is the header's existing "save as new session";
+      // that action (and the explicit archive control) is unchanged. An
+      // unbound fresh tab has no session, so close cleans nothing up.
       onClose: (tab) => {
         const threadId = sidechatThreadIdOf(tab)
-        if (threadId !== undefined) {
-          void api.sidechatDispose(threadId).catch(() => {})
-        }
+        if (threadId !== undefined) releaseSidechat(ctx, threadId)
       },
       component: ({ ctx, scope, tab, visible }) => (
         <SideChatView ctx={ctx} scope={scope} tab={tab} visible={visible} />
@@ -450,9 +498,9 @@ id: 'terminal',
       dedupeKey: (tab) => tab.id,
       component: ({ ctx, store, scope, tab }) => (
         tab.diff === undefined ? null
-          : <DiffTab sessionId={scope.sessionId} cwd={scope.cwd} diff={tab.diff}
+          : <DiffTab scope={scope} diff={tab.diff}
               onOpenFile={tab.diff.kind === 'proposed'
-                ? (path: string) => openSidebarFile(ctx, store, scope.sessionId, path)
+                ? (path: string) => openProposedFile(ctx, store, scope.sessionId, path)
                 : undefined}
               onOpenRow={tab.diff.kind === 'proposed'
                 ? (path: string, line: number | null) => openSidebarFileAt(ctx, store, scope.sessionId, path, line)

@@ -13,6 +13,12 @@ import { ControlledCodeEditor } from '../src/client/ControlledCodeEditor.tsx'
 import { registerChunkForTests, resetChunks } from '../src/client/chunk-loader.ts'
 import { setupReactAct } from './test-utils.ts'
 setupReactAct()
+// jsdom has no layout; CodeMirror's asynchronous measurement still calls
+// Range geometry while testing cached editor state and scroll restoration.
+Object.defineProperties(Range.prototype, {
+  getClientRects: { configurable: true, value: () => [] },
+  getBoundingClientRect: { configurable: true, value: () => new DOMRect() },
+})
 afterEach(() => { resetChunks(); document.body.innerHTML = '' })
 const labels = { copyLabel: 'Copy', copiedLabel: 'Copied', codeLabel: 'Code', wrapLabel: 'Wrap', unwrapLabel: 'Unwrap' }
 

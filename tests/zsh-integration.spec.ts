@@ -47,7 +47,7 @@ it.skipIf(!existsSync('/bin/zsh') || !['darwin', 'linux'].includes(process.platf
     expect(script).toContain('$CONTEXT == start')
     expect(script).toContain('TRAP*')
     expect(script).toContain('zle -F -L')
-    expect(script).toMatch(/_precmd\(\) \{\n  local _dsh_[a-f0-9]+_exit=\$\?\n/)
+    expect(script).toMatch(/_precmd\(\) \{\n {2}local _dsh_[a-f0-9]+_exit=\$\?\n/)
     expect(script).toContain(';end;%s')
     expect(script).toMatch(/if \(\( _dsh_[a-f0-9]+_running \)\); then/)
   } finally { integration.dispose() }
@@ -97,7 +97,14 @@ it.skipIf(!supported)('real zsh preserves user rc/hooks, emits ZLE prompt proof,
     expect(output).not.toContain(integration.token)
     expect(readFileSync(join(home, '.zshrc'), 'utf8')).toContain("PROMPT='fixture> '")
   } finally {
-    disposable.dispose(); terminal.kill(); integration.dispose()
+    disposable.dispose()
+    // zsh may flush .zsh_history into ZDOTDIR while exiting. Match the PTY
+    // lifecycle: dispose integration files after exit, not concurrently with it.
+    await new Promise<void>(resolve => {
+      const exit = terminal.onExit(() => { exit.dispose(); resolve() })
+      terminal.kill()
+    })
+    integration.dispose()
     expect(existsSync(integration.directory)).toBe(false)
     rmSync(home, { recursive: true, force: true })
   }

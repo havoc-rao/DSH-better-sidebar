@@ -183,9 +183,8 @@ describe('shared workspace terminal summary subscriptions', () => {
   })
   it('handles registry mutation from synchronous initial delivery without leaking a stream', () => {
     const service = fixture(), event = events()
-    let unregister!: () => void
     event.source.subscribe = vi.fn(onSnapshot => { onSnapshot({ terminals: [info] }); return event.off })
-    unregister = service.registerTerminalProvider(event.provider)
+    const unregister = service.registerTerminalProvider(event.provider)
     service.subscribeWorkspaceTerminalSummary({ sessionId: 'A' }, () => unregister(), vi.fn())
     expect(event.source.subscribe).toHaveBeenCalledTimes(1)
     expect(event.off).toHaveBeenCalledTimes(1)
