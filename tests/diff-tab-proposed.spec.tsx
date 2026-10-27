@@ -49,7 +49,7 @@ describe('DiffTab proposed patch (feature planDiff)', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: 'C:/repo', diff: ref }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: 'C:/repo' }, diff: ref }))
       })
       await flushEffects()
 
@@ -75,7 +75,7 @@ describe('DiffTab proposed patch (feature planDiff)', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: 'C:/repo', diff: ref }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: 'C:/repo' }, diff: ref }))
       })
       await flushEffects()
       expect(container.textContent).toContain('Empty plan')
@@ -92,7 +92,7 @@ describe('DiffTab proposed patch (feature planDiff)', () => {
       document.body.append(container)
       const root: Root = createRoot(container)
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: 'C:/repo', diff }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: 'C:/repo' }, diff }))
       })
       await flushEffects()
       return {
@@ -145,7 +145,7 @@ describe('DiffTab proposed patch (feature planDiff)', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: 'C:/repo', diff: ref, onOpenFile }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: 'C:/repo' }, diff: ref, onOpenFile }))
       })
       await flushEffects()
       const openButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open file"]')
@@ -173,7 +173,7 @@ describe('DiffTab proposed patch (feature planDiff)', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: 'C:/repo', diff: ref }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: 'C:/repo' }, diff: ref }))
       })
       await flushEffects()
       // DiffFiles renders nothing for a zero-file parse — the explicit
@@ -198,7 +198,7 @@ describe('DiffTab proposed patch (feature planDiff)', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: 'C:/repo', diff: ref, onOpenFile, onOpenRow }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: 'C:/repo' }, diff: ref, onOpenFile, onOpenRow }))
       })
       await flushEffects()
 
@@ -251,7 +251,7 @@ describe('DiffTab proposed patch (feature planDiff)', () => {
     const root2: Root = createRoot(container2)
     try {
       await act(async () => {
-        root2.render(createElement(DiffTab, { sessionId: 'session', cwd: 'C:/repo', diff: delRef, onOpenRow }))
+        root2.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: 'C:/repo' }, diff: delRef, onOpenRow }))
       })
       await flushEffects()
       const delRow = container2.querySelector<HTMLElement>('[data-kind="del"]')
@@ -272,7 +272,7 @@ describe('DiffTab proposed patch (feature planDiff)', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: 'C:/repo', diff: ref }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: 'C:/repo' }, diff: ref }))
       })
       await flushEffects()
       const addRow = container.querySelector<HTMLElement>('[data-kind="add"]')

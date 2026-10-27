@@ -80,7 +80,7 @@ export function DeleteDialogActions(props: Owner): ReactNode {
 }
 
 export function registerDeleteDialogHotkeys(registry: Registry): () => void {
-  let releases: Array<() => void> = []
+  const releases: Array<() => void> = []
   let current: Seat | undefined
   const clear = () => { for (const release of releases.splice(0).reverse()) release() }
   const sync = () => {

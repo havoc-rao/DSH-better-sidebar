@@ -50,7 +50,7 @@ function Probe(options: DirectoryWatchOptions): null {
   return null
 }
 
-const baseOptions = (onStale: (dir: string) => void) => ({
+const baseOptions = (onStale: (dirs: readonly string[]) => void) => ({
   sessionId: 'S',
   root: '/work',
   dirs: ['/work/a'],
@@ -102,7 +102,7 @@ describe('useDirectoryWatch socket lifetime', () => {
     // whose listing is dropped, exactly once per notice.
     act(() => { socket.onmessage?.({ data: JSON.stringify({ dir: '/work/a', ok: true }) }) })
     act(() => { socket.onmessage?.({ data: JSON.stringify({ dir: '/work/a' }) }) })
-    expect(onStale).toHaveBeenCalledWith('/work/a')
+    expect(onStale).toHaveBeenCalledWith(['/work/a'])
     expect(onStale).toHaveBeenCalledTimes(1)
 
     // Collapsing a folder un-watches it on the next expanded-set change;

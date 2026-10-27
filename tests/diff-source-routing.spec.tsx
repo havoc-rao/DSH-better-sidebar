@@ -151,7 +151,7 @@ describe('DiffTab routing through the gitSource seat', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: REPO, diff: worktreeRef }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: REPO }, diff: worktreeRef }))
       })
       await flushEffects()
       // The patch is rendered...
@@ -189,7 +189,7 @@ describe('DiffTab routing through the gitSource seat', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: REPO, diff: commitRef }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: REPO }, diff: commitRef }))
       })
       await flushEffects()
       expect(container.textContent).toContain('src/a.ts')
@@ -230,7 +230,7 @@ describe('DiffTab routing through the gitSource seat', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: REPO, diff: worktreeRef }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: REPO }, diff: worktreeRef }))
       })
       await flushEffects()
       expect(container.textContent).toContain('src/a.ts')
@@ -256,7 +256,7 @@ describe('DiffTab routing through the gitSource seat', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(DiffTab, { sessionId: 'session', cwd: REPO, diff: worktreeRef }))
+        root.render(createElement(DiffTab, { scope: { sessionId: 'session', cwd: REPO }, diff: worktreeRef }))
       })
       await flushEffects()
       expect(host.gitDiff).toHaveBeenCalledTimes(1)

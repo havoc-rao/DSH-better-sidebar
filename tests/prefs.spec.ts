@@ -36,6 +36,10 @@ describe('side card preferences', () => {
         autoOpenJobs: true,
         agentTerminalTools: false,
         tasksViewMode: 'graph',
+        tasksAutoFoldSettled: true,
+        tasksAutoFoldBranches: true,
+        tasksAutoFoldIdle: true,
+        jobsAutoCollapse: true,
         mobileNoAutoOpen: true,
         mobileDefaultTree: true,
         agentOpenTools: true,
@@ -68,6 +72,10 @@ terminalShell: '',
         autoOpenJobs: true,
         agentTerminalTools: false,
         tasksViewMode: 'graph',
+        tasksAutoFoldSettled: true,
+        tasksAutoFoldBranches: true,
+        tasksAutoFoldIdle: true,
+        jobsAutoCollapse: true,
         mobileNoAutoOpen: true,
         mobileDefaultTree: true,
         agentOpenTools: false,
@@ -100,6 +108,10 @@ terminalShell: '',
         autoOpenJobs: true,
         agentTerminalTools: false,
         tasksViewMode: 'graph',
+        tasksAutoFoldSettled: true,
+        tasksAutoFoldBranches: true,
+        tasksAutoFoldIdle: true,
+        jobsAutoCollapse: true,
         mobileNoAutoOpen: true,
         mobileDefaultTree: true,
         agentOpenTools: false,
@@ -146,6 +158,17 @@ terminalShell: '',
     }
     expect((await loadPrefs(wire({ terminalShellIntegration: true }))).terminalShellIntegration).toBe(true)
     expect((await loadPrefs(wire({ terminalShellIntegration: false }))).terminalShellIntegration).toBe(false)
+  })
+
+  it('defaults automatic task folding and jobs collapse to on and preserves explicit booleans', async () => {
+    for (const key of ['tasksAutoFoldSettled', 'tasksAutoFoldBranches', 'tasksAutoFoldIdle', 'jobsAutoCollapse'] as const) {
+      expect(SIDEBAR_PREFS_DEFAULTS[key], key).toBe(true)
+      for (const malformed of [undefined, null, 'false', 0, [], {}]) {
+        expect((await loadPrefs(wire({ [key]: malformed })))[key], key).toBe(true)
+      }
+      expect((await loadPrefs(wire({ [key]: false })))[key], key).toBe(false)
+      expect((await loadPrefs(wire({ [key]: true })))[key], key).toBe(true)
+    }
   })
 
   it('defaults both mobile adaptations to on; only an explicit false disarms one', async () => {
