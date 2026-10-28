@@ -28,6 +28,10 @@
 
 **Also**: 📂 the `sidebar_open` tool lets the model open the sidebar itself · ⚡ ~325KB core at startup, heavy chunks load on demand · 🌏 i18n follows DSH · 📱 narrow screens switch to a full-width drawer
 
+### 🗂️ Workspace tool tabs (development)
+
+The native **Files / Git** tabs share open/closed membership within a workspace: another session or same-origin browser window inherits them automatically. Other workspaces stay isolated; editors, diffs, terminals and side chats remain session-owned. Synchronization restores the current content selection and collapsed sidebar state. Git drafts remain session/checkout-scoped; active operations and confirmations defer a remote close. Drag order, split layout and tree expansion/scroll are not shared, nor is this state synchronized across browsers or devices.
+
 ### 🌿 Git Graph (read-only commit graph)
 
 Switch to **Git Graph** at the top of the Git panel for commit nodes, forks and merge edges across local branches, remote-tracking branches and HEAD. The branch selector only filters history — it **never checks out or fetches**; each commit is one line (lane edges + ref pills + subject), hover shows the author and short hash, and selecting one opens its full message and diff in the bottom pane. History loads in pages; reference changes during pagination prompt a refresh; reads are bounded (200 commits per page, offset 10,000, 1,000 branches) and report an explicit error past a limit. Lightweight and annotated tags appear on commits in the graph, rows and details use neutral tag pills, and tag changes invalidate pagination. Tag decorations keep the first 5,000 tags by ref name, further bounded by an 8 MiB complete-line output prefix; excess tags are omitted without failing the graph.

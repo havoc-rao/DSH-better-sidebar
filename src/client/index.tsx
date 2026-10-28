@@ -29,6 +29,7 @@ import { CMD_W_SHORTCUT, claimCloseActiveTab, installDesktopBottomClose, readDes
 import { installBottomCloseShortcut } from './bottom-close-shortcut.ts'
 import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDiagnosticsUI } from './context-diagnostics-ui.tsx'
 import { createNativeSurface } from './native/surface.ts'
+import { installWorkspaceToolTabs } from './workspace-tool-tabs.ts'
 import { registerInspectorSurface, type RootInspectorController } from './inspector-surface.tsx'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
@@ -255,6 +256,7 @@ export function apply(ctx: Context): void {
   const nativeRecords = createNativeTabRecords()
   const nativeSurface = createNativeSurface(ctx, nativeRecords)
   service.setSurface(nativeSurface)
+  installWorkspaceToolTabs(ctx, service)
   ctx.effect(
     () => registerNativeSurface({
       ctx, store: sidebarStore, service, records: nativeRecords, diagnostics,

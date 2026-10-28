@@ -117,7 +117,10 @@ async function openFiles(page: Page): Promise<void> {
   const expand = page.locator('[data-sidebar-right-expand]:visible')
   if (await expand.count() > 0) await expand.first().click()
   await expect(pane).toBeVisible({ timeout: 30_000 })
-  if (await page.locator(GUIDE).count() > 0) await page.locator(GUIDE_FILES).click()
+  // Workspace tools may already be inherited, with Git selected independently.
+  const filesTab = pane.getByRole('tab', { name: /Files|文件/ }).first()
+  if (await filesTab.count() > 0) await filesTab.click()
+  else if (await page.locator(GUIDE).count() > 0) await page.locator(GUIDE_FILES).click()
   await expect(
     page.locator(`${TREE_BODY} [role="button"][title$="seed-000.txt"]:visible`),
     'the plugin explorer must render the seeded rows',

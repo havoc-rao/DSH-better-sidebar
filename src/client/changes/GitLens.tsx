@@ -20,6 +20,7 @@ import { api, SidebarApiError } from '../api.ts'
 import type { BetterSidebarService, GitCommitActionProps, GitCommitTarget } from '../service.ts'
 import { useGitSource } from '../git-source.ts'
 import { updatePluginSettings } from '../plugin-settings.ts'
+import { retainGitToolCloseGuard } from '../workspace-tool-tabs.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx' 
 import { builtinFileIcon, builtinFolderIcon } from '../file-icons.tsx'
 import { usePolling } from '../use-polling.ts'
@@ -498,6 +499,10 @@ export function GitLens(props: GitLensProps) {
   const [historyMenu, setHistoryMenu] = useState<{ entry: CommitRow; x: number; y: number } | null>(null)
   /** The pending destructive action awaiting confirmation. */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
+  // A workspace close waits for local operations/confirmations. Drafts already
+  // flush on unmount and remain session/checkout-local, never shared.
+  useEffect(() => retainGitToolCloseGuard(scope.sessionId, busy || suggesting || confirm !== null),
+    [scope.sessionId, busy, suggesting, confirm])
   /** Collapsed directory rows, keyed per GROUP + path: a directory that has
    *  changes on both sides folds independently in each section (and the two
    *  groups never fight over one key). Default: everything expanded. */
