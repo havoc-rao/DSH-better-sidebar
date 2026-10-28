@@ -121,7 +121,9 @@ test('tools inherit within a workspace and across pages, closes propagate, other
   // Fresh same-workspace seat: no guide clicks or tab reconstruction by the test.
   const sessionB = await createConversation(page, workspaceA)
   expect(sessionB).not.toBe(sessionA)
-  await expandSidebar(page)
+  // Do NOT click expand here: inherited open tools must already be visible.
+  // The former helper masked the bug by expanding the default-collapsed seat.
+  await expect(page.locator('[data-sidebar-right-panel][data-sidebar-right-open]:visible')).toBeVisible({ timeout: 30_000 })
   await expect(toolTab(page, 'files')).toHaveCount(1, { timeout: 30_000 })
   await expect(toolTab(page, 'git')).toHaveCount(1, { timeout: 30_000 })
 
