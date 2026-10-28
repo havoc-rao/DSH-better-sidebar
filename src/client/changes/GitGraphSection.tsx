@@ -133,7 +133,7 @@ export function refPills(refs: readonly string[], remotes: ReadonlySet<string>):
  *  the same everywhere. */
 export function RefPill({ pill, slot }: { pill: RefPillModel; slot?: number }) {
   const tag = pill.tone === 'tag'
-  return <span className={css.ref} data-tone={pill.tone} data-color={tag ? undefined : slot} data-current={pill.current || undefined}>
+  return <span className={css.ref} title={pill.current && pill.name !== 'HEAD' ? `HEAD → ${pill.name}` : pill.name} data-tone={pill.tone} data-color={tag ? undefined : slot} data-current={pill.current || undefined}>
     {pill.current && <IconCheckOutlineRegular size={11} />}
     {!tag && (pill.tone === 'remote' ? <IconGlobeOutlineRegular size={11} /> : <IconBranchOutlineRegular size={11} />)}
     <span className={css.refName}>{pill.name}</span>
@@ -435,7 +435,7 @@ export function GitGraphSection({ source, scope, worktree, visible, refreshTick 
               d={edgePath(edge, laneX, ROW_HEIGHT)} />)}
             <circle cx={laneX(row.lane)} cy={ROW_HEIGHT / 2} r={3} data-color={slot} />
           </svg>}
-          {entry.refs.length > 0 && <span className={css.refs}>
+          {entry.refs.length > 0 && <span className={css.refs} title={entry.refs.join(', ')}>
             {refPills(entry.refs, remotes).map(pill => <RefPill key={pill.name} pill={pill} slot={slot} />)}
           </span>}
           <span className={css.subject}>{entry.subject}</span>
