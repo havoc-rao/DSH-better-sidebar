@@ -29,15 +29,17 @@
 .graph { flex-shrink: 0; max-width: 45%; overflow: visible; }
 .graph path { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .graph circle { fill: currentColor; }
-/* The pills sit between the rail and the subject, capped so a decorated merge
-   cannot starve the message; each pill ellipsizes itself. */
-.refs { display: flex; flex: none; align-items: center; gap: 4px; min-width: 0; max-width: 55%; padding-left: 6px; overflow: hidden; }
-.ref { display: inline-flex; flex: none; align-items: center; gap: 3px; min-width: 0; max-width: 140px; height: 16px; padding: 0 5px; border: 1px solid currentColor; border-radius: 3px; font: var(--dsw-font-xxxs-strong-11); color: var(--dsw-alias-label-primary); white-space: nowrap; }
+/* Soft, single-line badges stay inside the fixed 28px row. Both the group and
+   its badges can shrink: long refs ellipsize rather than pushing the subject
+   out of a narrow pane. The group tooltip also exposes refs clipped as a whole. */
+.refs { display: flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: 50%; padding-left: 6px; overflow: hidden; }
+.ref { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 3px; box-sizing: border-box; min-width: 0; max-width: min(180px, 100%); height: 20px; padding: 0 6px; border: 0; border-radius: 6px; background: color-mix(in srgb, currentColor 10%, var(--dsw-alias-bg-base)); font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-primary); white-space: nowrap; overflow: hidden; }
 .ref svg { flex: none; }
-.refName { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* The current branch's pill is filled so it still reads first among several
-   same-coloured pills on one commit; border and text come from the lane. */
-.ref[data-tone="head"] { background: var(--dsw-alias-interactive-bg-active); }
+.refName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The current branch has the strongest fill and a check; remote badges keep
+   their globe and a quieter fill. Lane text still matches the rail and node. */
+.ref[data-tone="head"] { background: color-mix(in srgb, currentColor 20%, var(--dsw-alias-bg-base)); font: var(--dsw-font-xxs-strong-12); }
+.ref[data-tone="remote"] { background: color-mix(in srgb, currentColor 5%, var(--dsw-alias-bg-base)); }
 .subject { flex: 1; min-width: 0; padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-primary); }
 .notice { padding: 8px 12px; }
 
@@ -79,11 +81,9 @@
 .graph [data-color="3"], .ref[data-color="3"] { color: var(--dsw-alias-state-error-primary, var(--dsw-alias-label-primary)); }
 .graph [data-color="4"], .ref[data-color="4"] { color: var(--dsw-alias-label-secondary); }
 
-/* A tag is a decoration, not a lane: it never takes a palette slot (the
-   component omits `data-color` for it) and paints the neutral label rung with
-   a dashed outline, so it stays distinct on both theme families. The server's
-   `tag: ` name prefix is the kind marker; no glyph is added. */
-.ref[data-tone="tag"] { color: var(--dsw-alias-label-secondary); border-style: dashed; }
+/* Tags are neutral decorations, not lanes. The literal `tag: ` prefix and
+   neutral surface distinguish them without the old high-contrast outline. */
+.ref[data-tone="tag"] { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-hover); }
 
 /* ── Commit details ──────────────────────────────────────────────────────
    Rendered as the changes tab's bottom-pane `details` tab (CommitDetails),

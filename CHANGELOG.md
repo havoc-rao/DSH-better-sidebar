@@ -2,6 +2,11 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### Unreleased
+
+- **Git 页顶部切换栏修复**：Git / 本轮文件不再依赖宿主私有 CSS 哈希类，使用独立主题化下划线 tabs，修复默认按钮外观与布局混乱，保留键盘导航和焦点提示。
+- **提交图分支标签优化**：移除刺眼描边，改为柔和圆角底色；当前分支、普通分支、远端与 tag 保留区别，长名称省略并支持完整悬停提示，提交行高度不变。
+
 ### v0.28.1
 
 - 🛡 **并发同键冷读合并（OOM 修复）**：全量重启后会话全部转为 detached，12 条 `/sidebar/*` 路由共享的 cwd 解析会对同一会话各做一次宿主冷观察（整份日志读 + 解码；39MB 级会话 × 44 个并发请求 ≈ 1.7GB → OOM）。现在 `cwdOf()` 把**同一会话 + 同一客户端 cwd 提示**的并发请求合并为一次真实读，其余 await 同一结果；不引入 TTL（宿主本身按持久化 revision 缓存已完成冷读），客户端提示参与 key 以免跨提示串味。`tests/smoke.spec.ts` 新增「12 并发 → 1 次冷读」与「不同提示不合并」两例。

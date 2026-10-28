@@ -98,6 +98,21 @@ describe('effectiveTokenValue', () => {
 // jsdom has no file:// import.meta.url; vitest runs from the repo root.
 const ROOT = process.cwd()
 
+describe('Git lens switcher chrome', () => {
+  it('owns button resets, bounded layout and accessible active/focus states', () => {
+    const source = readFileSync(resolve(ROOT, 'src/client/changes/changes.module.css'), 'utf8')
+    const tab = source.match(/^\.lensTab\s*\{([^}]+)\}/m)?.[1]
+    expect(tab).toContain('appearance: none')
+    expect(tab).toContain('border: none')
+    expect(tab).toContain('background: transparent')
+    expect(tab).toContain('font: var(--dsw-font-xxs-12)')
+    expect(source).toMatch(/\.lensTabs\s*\{[^}]*min-width: 0;[^}]*overflow-x: auto/)
+    expect(source).toContain(".lensTab[aria-selected='true']::after")
+    expect(source).toContain('.lensTab:focus-visible')
+    expect(source).not.toContain(':global(.wSkVaW_')
+  })
+})
+
 describe('file-tree name typography', () => {
   it('pins file, folder and root names to one regular token on both render paths', () => {
     const css = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
@@ -200,13 +215,14 @@ describe('skin contract: the plugin owns no color of its own', () => {
     // The graph's ref pills are painted by lane slot (`data-color` → the five
     // `--dsw-alias-state-*` colours); a tag is a decoration, not a lane, so its
     // rule must resolve to a NEUTRAL label token and keep the text marker
-    // legible with a dashed outline.
+    // legible on a soft neutral fill rather than a harsh dashed outline.
     const styles = readFileSync(resolve(ROOT, 'src/client/changes/graph.module.css'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
     const block = /\.ref\[data-tone="tag"\] \{([^}]*)\}/.exec(styles)?.[1]
     if (block === undefined) throw new Error('the tag ref pill rule must exist in graph.module.css')
     expect(block).toContain('color: var(--dsw-alias-label-secondary)')
-    expect(block).toContain('border-style: dashed')
+    expect(block).toContain('background: var(--dsw-alias-interactive-bg-hover)')
+    expect(styles).not.toContain('border-style: dashed')
   })
 
   it('the graph viewport fills its container without a viewport-relative height cap', () => {

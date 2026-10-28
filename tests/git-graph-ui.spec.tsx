@@ -315,6 +315,33 @@ describe('graph toolbar', () => {
 })
 
 describe('graph commit rows and details', () => {
+  it('keeps full long ref names in badge and group tooltips without changing the one-line row', async () => {
+    const local = 'feature/very-long-local-branch-name-that-must-ellipsize'
+    const remote = `origin/${local}`
+    const tag = 'tag: release-with-a-long-name-for-a-narrow-sidebar'
+    const refs = ['HEAD', local, remote, tag]
+    vi.spyOn(api, 'gitGraph').mockResolvedValue(graphPage([commit(HASH_A, refs)], [
+      { ref: `refs/heads/${local}`, name: local, hashFull: HASH_A },
+      { ref: `refs/remotes/${remote}`, name: remote, hashFull: HASH_A },
+    ]))
+    const mounted = renderRoot(createElement(GitGraphSection, defaults))
+    try {
+      await flush()
+      const row = mounted.container.querySelector<HTMLElement>(`[data-graph-commit="${HASH_A}"]`)!
+      const pills = [...row.querySelectorAll<HTMLElement>('[data-tone]')]
+      expect(pills.map(pill => pill.textContent)).toEqual([local, remote, tag])
+      expect(pills.map(pill => pill.title)).toEqual([`HEAD → ${local}`, remote, tag])
+      expect(pills.map(pill => pill.querySelector('span')?.className)).toEqual([
+        expect.stringContaining('refName'), expect.stringContaining('refName'), expect.stringContaining('refName'),
+      ])
+      // The group title retains even refs hidden by its narrow-width clip.
+      expect((row.children[1] as HTMLElement).title).toBe(refs.join(', '))
+      expect(row.children).toHaveLength(3)
+      expect(row.children[0]!.getAttribute('height')).toBe('28')
+      expect(row.getAttribute('title')).toBeNull()
+    } finally { mounted.unmount() }
+  })
+
   it('lays a commit row out as ONE line: rail, ref pills, then the subject', async () => {
     // The GitLens-style picture: no hash chip and no author·time on the row —
     // those live in the details card and the hover card (tested below), which

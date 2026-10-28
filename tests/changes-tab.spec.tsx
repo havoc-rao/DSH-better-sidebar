@@ -195,7 +195,7 @@ afterEach(() => {
 })
 
 describe('ChangesTab', () => {
-  it('uses the official underline Tabs with keyboard navigation, persisted lens and refresh', async () => {
+  it('uses locally styled underline tabs with keyboard navigation, persisted lens and refresh', async () => {
     mockGit([])
     const ops = vi.spyOn(api, 'changesOps').mockResolvedValue({ events: [], lastSeq: 0 })
     const updateTab = vi.fn()
@@ -210,12 +210,12 @@ describe('ChangesTab', () => {
       const tabs = container.querySelector<HTMLElement>('[role="tablist"]')!
       const git = lensTab(container, t('changesGitLens'))!
       const session = lensTab(container, t('changesSessionLens'))!
-      expect(tabs.classList.contains('wSkVaW_tabs')).toBe(true)
+      expect(tabs.classList.contains(css.lensTabs!)).toBe(true)
       expect(tabs.getAttribute('aria-label')).toBe(t('changes'))
-      expect(git.classList.contains('wSkVaW_tab')).toBe(true)
+      expect(git.classList.contains(css.lensTab!)).toBe(true)
       const panels = (): HTMLElement[] => [...container.querySelectorAll<HTMLElement>('[role="tabpanel"]')]
       const selected = (button: HTMLButtonElement): void => {
-        expect(button.classList.contains('wSkVaW_tabActive')).toBe(true)
+        expect(button.classList.contains(css.lensTab!)).toBe(true)
         expect(button.getAttribute('aria-selected')).toBe('true')
         expect(button.tabIndex).toBe(0)
         // Both lenses own a panel (they stay mounted and swap `hidden`), so the
@@ -237,7 +237,6 @@ describe('ChangesTab', () => {
       await key(session, 'ArrowRight') // wraps to the first tab
       selected(git)
       expect(document.activeElement).toBe(git)
-      expect(session.classList.contains('wSkVaW_tabActive')).toBe(false)
       expect(session.getAttribute('aria-selected')).toBe('false')
       expect(updateTab).toHaveBeenLastCalledWith('git', { meta: { lens: 'git', previewH: 240 } }, 'session')
       await key(git, 'ArrowLeft') // wraps to the last tab
@@ -253,7 +252,8 @@ describe('ChangesTab', () => {
       await flushEffects()
       expect(ops).toHaveBeenCalledTimes(calls + 1)
       const sheet = readFileSync('src/client/changes/changes.module.css', 'utf8')
-      expect(sheet).toMatch(/\.head :global\(\.wSkVaW_tabs\) \{ gap: 24px; \}/)
+      expect(sheet).not.toContain('wSkVaW_')
+      expect(readFileSync('src/client/changes/ChangesTab.tsx', 'utf8')).not.toContain('wSkVaW_')
     } finally {
       act(() => { root.unmount() })
       container.remove()
