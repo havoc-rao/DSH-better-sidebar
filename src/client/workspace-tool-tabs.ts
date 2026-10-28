@@ -95,6 +95,11 @@ export function syncWorkspaceToolTabs(options: {
         store.seed(key, rows.filter(row => workspace.sessionIds.includes(row.sessionId) && isTool(row.kind))
           .map(row => row.kind as WorkspaceToolKind))
       }
+      // A newly entered empty seat has no user-chosen sidebar presentation to
+      // preserve. Inherited tools must be visible, not opened then immediately
+      // hidden by the new session's default collapsed layout.
+      const revealInherited = lastSession !== sid
+        && !rows.some(row => row.sessionId === sid && row.kind !== 'guide')
       lastSession = sid
       lastWorkspace = key
       const wanted = store.read(key) ?? []
@@ -124,7 +129,7 @@ export function syncWorkspaceToolTabs(options: {
       if (opened) {
         // Keep real content selected, but allow a fresh guide to become a tool.
         if (active && active.kind !== 'guide' && controller.tabsIn(sid).some(tab => tab.id === active.id)) controller.focus(active.id)
-        if (!expanded && controller.isExpanded()) controller.toggleExpanded()
+        if (!expanded && !revealInherited && controller.isExpanded()) controller.toggleExpanded()
         // Host collapse can focus its pane synchronously. Restore the live
         // input now, never in a delayed task that could steal a later user click.
         if (typeof HTMLElement !== 'undefined' && focused instanceof HTMLElement && focused.isConnected) focused.focus({ preventScroll: true })

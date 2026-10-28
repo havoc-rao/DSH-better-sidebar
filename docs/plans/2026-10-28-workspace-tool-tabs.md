@@ -34,6 +34,14 @@ mounted 先于 React store adoption。清单可能与旧保存完全相同而没
 - inventory 的 publish 发生在宿主 TabDomain occurrence 更新之前，订阅回调不调用 commandTarget；只在延迟协调中探测。真实挂载曾捕获该错误，已补针对性测试。
 - 单测扫描额外排除本地 `.pnpm-store` 项目快照；原先快照里的旧 worktree 测试会被重复收集，与本 checkout 无关。
 
+## 2026-10-29 新会话可见性修正
+
+当前真实桌面通过全局新建会话按钮复现：同 workspace 新会话内已存在 files/git，然而 isExpanded() 为 false，面板 aria-hidden=true。手动展开立即显示两个 tab。旧协调器无条件还原新会话默认折叠态；旧 e2e 在创建后调用 expandSidebar，掩盖了用户看到的失败。
+
+修正为首次进入没有非 guide 内容的 seat 时，保留继承 openTab 的展开效果；非空 seat 及同一 seat 后续远端补开仍还原用户折叠态。不同步全部窗口开关，不改宿主。新增单测覆盖新空白/guide seat 可见与用户后续收起不被抢开，e2e 删除新会话后的手动展开。
+
+验证：46 项定向测试通过；完整 298 个文件 / 3490 项通过、17 跳过；typecheck、build、pack 通过；精确 RC 挂载三项（完整 tab sweep、插件重载、workspace 双页面继承）通过。重新加载当前桌面客户端后，实际按钮与 Meta+N 入口均观察到 files/git 在展开面板内直接可见，无须手动展开；宿主会复用已有空白 session，未发送模型消息。
+
 ## 验证
 
 已完成：typecheck；297 个单测文件通过，3484 项通过、17 项跳过；build + pack；引擎检查；新增文件定向 eslint。精确 DSH 0.2.1-rc.1 scratch profile 真实挂载整套通过：15 passed / 4 skipped（5.1 分钟），含 workspace 双页面继承/关闭传播/隔离、tree-scroll 跨会话草稿/滚动保留、页面内插件重载及稳态性能。最终新增定向 44 项通过。稳态 15s 窗口空闲请求为 0、session.cwd 为 0，没有新增常驻轮询。验证只安装到 scratch profile，未改当前用户 profile 或宿主源码；现有 GUI 不自动切换为开发包。

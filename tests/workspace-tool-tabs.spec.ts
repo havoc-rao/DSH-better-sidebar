@@ -153,6 +153,29 @@ describe('syncWorkspaceToolTabs', () => {
     expect(f.controller.focus).toHaveBeenCalledWith('s1-editor')
   })
 
+  it('reveals inherited tools in a newly entered default-collapsed empty session', async () => {
+    const f = fixture([row('s1', 'files'), row('s1', 'git')])
+    f.expanded.set('s2', false)
+    f.start(); await flush()
+    f.mounted.set('s2'); await flush()
+    expect(f.kinds('s2')).toEqual(['files', 'git'])
+    expect(f.controller.isExpanded()).toBe(true)
+    expect(f.controller.toggleExpanded).not.toHaveBeenCalled()
+    // User collapse is respected when subsequent remote opens arrive.
+    f.expanded.set('s2', false)
+    f.store.set('w1', 'git', false); await flush()
+    f.store.set('w1', 'git', true); await flush()
+    expect(f.controller.isExpanded()).toBe(false)
+  })
+
+  it('reveals inherited tools when first opening a guide-only session', async () => {
+    const f = fixture([row('s1', 'guide'), row('s2', 'files')])
+    f.expanded.set('s1', false)
+    f.start(); await flush()
+    expect(f.controller.isExpanded()).toBe(true)
+    expect(f.kinds('s1')).toEqual(['guide', 'files'])
+  })
+
   it('preserves collapse and outside input focus after host synchronous focus effects', async () => {
     const input = document.createElement('input')
     const pane = document.createElement('div')
