@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### Unreleased
+
+- **Workspace 级文件树 / Git 工具页**：同 workspace 会话与同源浏览器新窗口继承原生文件树、Git 页的打开状态；打开/关闭实时传播，后台会话下次上屏时协调。保留当前内容页与侧栏折叠态，不复制文件编辑器、diff、终端、sidechat 或资源地址；Git 草稿仍按会话/checkout 保存，正在执行的 Git 操作与确认框会延迟远端关闭。首次迁移从既有工具页播种，显式关闭不被旧会话复活。不同 workspace 和不同宿主 transport 命名空间隔离。宿主不支持真正后台打开与排序，因此不联动拖拽顺序、不承诺原子无闪烁；文件树展开状态本轮仍按原有会话状态保留。
+
 ### v0.28.1
 
 - 🛡 **并发同键冷读合并（OOM 修复）**：全量重启后会话全部转为 detached，12 条 `/sidebar/*` 路由共享的 cwd 解析会对同一会话各做一次宿主冷观察（整份日志读 + 解码；39MB 级会话 × 44 个并发请求 ≈ 1.7GB → OOM）。现在 `cwdOf()` 把**同一会话 + 同一客户端 cwd 提示**的并发请求合并为一次真实读，其余 await 同一结果；不引入 TTL（宿主本身按持久化 revision 缓存已完成冷读），客户端提示参与 key 以免跨提示串味。`tests/smoke.spec.ts` 新增「12 并发 → 1 次冷读」与「不同提示不合并」两例。

@@ -75,6 +75,8 @@ export default defineConfig({
       // Local dev worktrees (pnpm/DSH-style task branches) may carry stale
       // code against this checkout's node_modules — never collect them.
       '**/.worktrees/**',
+      // pnpm's local project snapshots can resolve to those same stale trees.
+      '**/.pnpm-store/**',
       // Agent scratch worktrees (tmp/worktree/* — full repo copies a previous
       // task left behind) drift from this checkout's code and node_modules in
       // exactly the same way. Never collect them either.
