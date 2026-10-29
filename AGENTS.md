@@ -77,6 +77,7 @@ v0.28.0 正式版沿用现有发布规则进入 npm `latest`，无需修改 work
 - **文件/文件夹图标**：回退链是「具体 `names`/`exts` → catch-all（`exts: []`）→ 宿主 `FileTypeIcon`」；`exts: []` 会接管所有未命中行，只想补几个类型就用 `exts`/`names`。
 - **git 状态轮询只有一条**（`src/client/ui/git-status.ts`，一次抓取 4 个进程）：基线 30 s、慢往返依次退档到停表；**空闲不 `notify`**；`poll: false` 的消费者永不持有定时器。**不要自建第二个轮询器**（细节见该文件头注释）。
 - **稳态开销**：原生 tab 一律 `keepMounted`，挂载过的 body 永久存在（宿主无 LRU）。因此：轮询器 / socket / 观察者按可见性门控（隐藏即停表，重新可见立刻补刷一次，但**不停**事件驱动刷新）；「每会话 / 每资源」的东西全插件单例（引用计数或 leader），绝不按 body 复制；模块级 Map 一律有上限与淘汰（在用项与有在飞请求的键不淘汰）；新增周期调用 `cwdOf()` 前先估最坏成本。`tests/steady-state.spec.tsx` 与 perf lane 守护。
+- **日志一律落 `logs/`**：长输出命令用 `pnpm build:log` / `pnpm test:log`（或 `bash scripts/log-run.sh <name> -- <cmd>`），产出 `logs/<日期>-<name>.log`（头记 command/cwd/git/started，尾记 exit；默认剥离 ANSI）。`logs` 与 `*.log` 已在 `.gitignore`，**不要再往仓库根丢 `*.log`**；`scripts/log-run.sh` 是纯开发侧工具，不进 npm 包（`files` 白名单只含 `install.*`）。
 
 ---
 

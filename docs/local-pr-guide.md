@@ -51,6 +51,24 @@ bash scripts/e2e-mount.sh        # 挂载冒烟（真实 DSH + Chromium）；可
 4. **全量 e2e 一起跑会互相干扰**：14 个 mount/drag/float spec 共享同一个 server 与 workspace，交互类（drag/float）可能误伤。改动只影响 mount 时用 `bash scripts/e2e-mount.sh --grep "mount.e2e"`。
 5. 挂载冒烟结束后确认没有遗留的 daemon 化 `dsh web` 进程（`lsof -nP -iTCP -sTCP:LISTEN` 找 node 进程 kill）。
 
+### 日志归档（`logs/`）
+
+构建 / 测试这类长输出命令，日志一律落到仓库根的 `logs/`，不要丢在仓库根：
+
+```bash
+pnpm build:log        # = bash scripts/log-run.sh build -- pnpm build
+pnpm test:log         # = bash scripts/log-run.sh test -- pnpm test
+make build-log        # 同上（Makefile 只是转发）
+
+# 任意命令：
+bash scripts/log-run.sh <name> -- <command...>
+```
+
+- 产出 `logs/<YYYY-MM-DD>-<name>.log`；同日重名自动追加 `-2`、`-3`，不覆盖旧日志。
+- 文件头记录 `name` / `command` / `cwd` / `git` / `started` / `log`，文件尾记录 `exit`，可直接 grep、可 diff、可整段贴进 issue。
+- 默认剥离 ANSI 颜色转义（`--raw` 保留原样）；退出码透传，CI 语义不变。
+- `logs/` 与 `*.log` 已在 `.gitignore` 里，日志不会进版本库。
+
 ## 3. 推送
 
 ```bash

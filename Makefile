@@ -13,6 +13,9 @@ install: ## 安装依赖（pnpm install）
 build: ## 构建（清 lib/ → tsc → tsdown）
 	pnpm build
 
+build-log: ## 构建并把完整输出归档到 logs/（pnpm build:log）
+	pnpm build:log
+
 typecheck: ## 类型检查（tsc --noEmit）
 	pnpm typecheck
 
@@ -21,6 +24,9 @@ lint: ## 代码检查（eslint .，flat config 最小规则集）
 
 test: ## 单元测试（vitest run）
 	pnpm test
+
+test-log: ## 单元测试并把完整输出归档到 logs/（pnpm test:log）
+	pnpm test:log
 
 check: ## 聚合校验门禁：typecheck → lint → build → test → check:consumer-types（对齐 CI）
 	pnpm typecheck && pnpm lint && pnpm build && pnpm test && pnpm check:consumer-types
@@ -41,4 +47,4 @@ mount-aggregate: ## 聚合双挂载回归：build + pack → pnpm test:mount:agg
 registry: ## 组装 plugin-registry 暂存（registry/，不入库）：build → node scripts/package-registry.mjs
 	pnpm build && node scripts/package-registry.mjs
 
-.PHONY: help install build typecheck lint test check clean pack mount mount-aggregate registry
+.PHONY: help install build build-log typecheck lint test test-log check clean pack mount mount-aggregate registry
