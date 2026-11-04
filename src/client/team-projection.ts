@@ -76,7 +76,11 @@ export function teamProjectionOf(
   rootId: string | undefined,
 ): SidebarTeamProjection | undefined {
   if (rootId === undefined) return undefined
-  return projections?.[rootId]?.values.agentTeam
+  const team = projections?.[rootId]?.values.agentTeam
+  // Snapshots are runtime data: an empty/incomplete projection is not a
+  // board yet. Both arrays are consumed directly by the team UI.
+  if (team == null || !Array.isArray(team.members) || !Array.isArray(team.tasks)) return undefined
+  return team
 }
 
 /**
@@ -98,7 +102,7 @@ export function teamMembersOf(
   live: Readonly<Record<string, SidebarChildLiveView | undefined>>,
   byId: Readonly<Record<string, SidebarSessionSummary | undefined>>,
 ): TeamMemberRow[] {
-  if (team === undefined) return []
+  if (team == null || !Array.isArray(team.members)) return []
   return team.members.map(member => ({
     id: member.id,
     name: member.name,
