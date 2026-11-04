@@ -44,6 +44,17 @@ function summary(id: string, over: Partial<SidebarSessionSummary> = {}): Sidebar
 }
 
 describe('teamProjectionOf', () => {
+  it('hides incomplete runtime projections before the team UI consumes them', () => {
+    for (const value of [null, {}, { tasks: [] }, { members: [] }, { members: null, tasks: [] }, { members: [], tasks: {} }]) {
+      const snapshot = projections('root', value as unknown as SidebarTeamProjection)
+      const board = teamProjectionOf(snapshot, 'root')
+      expect(board).toBeUndefined()
+      expect(teamMembersOf(board, {}, {})).toEqual([])
+    }
+    const empty = team({ members: [], tasks: [] })
+    expect(teamProjectionOf(projections('root', empty), 'root')).toBe(empty)
+  })
+
   it('reads the root session own projection', () => {
     const value = team()
     expect(teamProjectionOf(projections('root', value), 'root')).toBe(value)
@@ -67,6 +78,7 @@ describe('teamMembersOf', () => {
 
   it('answers an empty roster without a team', () => {
     expect(teamMembersOf(undefined, noLive, {})).toEqual([])
+    expect(teamMembersOf({} as SidebarTeamProjection, noLive, {})).toEqual([])
   })
 
   it('carries the durable phase and the member identity through', () => {
