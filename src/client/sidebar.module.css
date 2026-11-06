@@ -371,12 +371,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
-/* The header utilities' bottom-dock toggle cluster: an inline-flex wrapper
-   so the marker element carries its child's box (a display:contents wrapper
-   would leave it rect-less and invisible to visibility probes). */
+/* The host renders its More button AFTER the utilities slot. Slot anchors
+   use display:contents, so this wrapper is a flex item of headerUtilities:
+   order:1 puts only our layout toggle after More (default order:0), next to
+   the right-sidebar corner control. Slot registration order cannot cross More.
+   Keep a real inline-flex box for visibility/geometry probes. */
 .headerToggleCluster {
   display: inline-flex;
   align-items: center;
+  order: 1;
 }
 
 /* The bottom panel's tab strips reserve the strip-end cluster's full width

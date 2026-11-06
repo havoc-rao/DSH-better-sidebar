@@ -267,6 +267,23 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(page.locator('[data-dsh-bottom-toggle]:visible').first()).toBeAttached({ timeout: 30_000 })
   await expect(page.locator('[data-dsh-bottom-panel]')).toBeAttached()
 
+  // Slot order cannot cross the host's hard-coded More button. Verify actual
+  // browser flex geometry through display:contents slot anchors, not DOM order
+  // or private CSS-module hashes: More → bottom layout → right layout.
+  await expect.poll(async () => page.locator('[data-dsh-bottom-toggle]:visible').first().evaluate(bottom => {
+    const utilities = bottom.closest('[data-slot="conversation.session.header.utilities"]')?.parentElement
+    const more = utilities?.querySelectorAll('button')
+    const moreButton = more?.item(more.length - 1)
+    const right = utilities?.parentElement?.querySelector('[data-sidebar-right-expand]')
+    if (!moreButton || !right || moreButton === bottom) return false
+    const m = moreButton.getBoundingClientRect()
+    const b = bottom.getBoundingClientRect()
+    const r = right.getBoundingClientRect()
+    return m.width > 0 && b.width > 0 && r.width > 0
+      && m.right <= b.left && b.right <= r.left
+      && Math.abs(m.y + m.height / 2 - b.y - b.height / 2) < 2
+  }), { message: 'header controls must group layout toggles after More' }).toBe(true)
+
   // The dsh-hotkey DOM contract: the toggle cluster seat exists with the
   // keyword-labelled buttons (bottom + sidebar) inside the panel host. The
   // strip-end cluster renders inside the workbench and is only present while
