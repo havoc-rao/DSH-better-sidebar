@@ -274,6 +274,69 @@ it('the changes tab stacks the commit-model and interface-language settings pane
   })
 })
 
+describe('terminal close deletes the managed process', () => {
+  afterEach(() => { vi.restoreAllMocks() })
+
+  const managed = { id: 'workspace-view:pty-1', type: 'terminal', title: 'zsh', meta: { workspaceTerminalId: 'pty-1' } }
+  const scope = { sessionId: 'origin', cwd: '/workspace' }
+  const close = (ctx = {} as Context) => builtinTabs(ctx).find(tab => tab.id === 'terminal')!.onClose!
+
+  it('deletes a local managed terminal without requiring its view to mount', async () => {
+    const terminate = vi.spyOn(api, 'workspaceTerminalTerminate').mockResolvedValue({ ok: true })
+    close()(managed, scope)
+    await vi.waitFor(() => expect(terminate).toHaveBeenCalledExactlyOnceWith('origin', 'pty-1'))
+  })
+
+  it('routes service close to deletion once, but session switches only retain the terminal', async () => {
+    const terminate = vi.spyOn(api, 'workspaceTerminalTerminate').mockResolvedValue({ ok: true })
+    const { service, store, dispose } = setup()
+    store.setSession('origin')
+    service.openTab({ type: 'terminal', id: managed.id, meta: managed.meta })
+    // createTab owns the id; bind the managed identity on the created row.
+    const state = store.getSnapshot().state!
+    const tab = state.bottomSplits.kind === 'leaf' ? state.bottomSplits.tabs[0]! : undefined
+    expect(tab).toBeDefined()
+    service.updateTab(tab!.id, { meta: managed.meta })
+    store.setSession('other')
+    expect(terminate).not.toHaveBeenCalled()
+    service.closeTab(tab!.id, scope)
+    service.closeTab(tab!.id, scope)
+    await vi.waitFor(() => expect(terminate).toHaveBeenCalledExactlyOnceWith('origin', 'pty-1'))
+    dispose()
+  })
+
+  it('uses the saved provider and captured session, never a matching alternative or local backend', async () => {
+    const local = vi.spyOn(api, 'workspaceTerminalTerminate')
+    const terminate = vi.fn().mockResolvedValue(undefined)
+    const createWorkspaceSource = vi.fn(() => ({ terminate }))
+    const ctx = { betterSidebar: { getTerminalProviders: () => [
+      { id: 'other', match: () => true, createWorkspaceSource: vi.fn() },
+      { id: 'remote', createWorkspaceSource },
+    ] } } as unknown as Context
+    close(ctx)({ ...managed, meta: { ...managed.meta, workspaceTerminalProviderId: 'remote' } }, scope)
+    await vi.waitFor(() => expect(terminate).toHaveBeenCalledExactlyOnceWith('pty-1'))
+    expect(createWorkspaceSource).toHaveBeenCalledExactlyOnceWith('origin', '/workspace')
+    expect(local).not.toHaveBeenCalled()
+  })
+
+  it('reports unavailable providers and rejected deletion without falling back locally', async () => {
+    const local = vi.spyOn(api, 'workspaceTerminalTerminate').mockRejectedValue(new Error('denied'))
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    close()({ ...managed, meta: { ...managed.meta, workspaceTerminalProviderId: 'missing' } }, scope)
+    await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(1))
+    expect(local).not.toHaveBeenCalled()
+    close()(managed, scope)
+    await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(2))
+  })
+
+  it('leaves legacy close frames and the workspace manager untouched', () => {
+    const terminate = vi.spyOn(api, 'workspaceTerminalTerminate')
+    close()({ id: 'terminal:legacy', type: 'terminal', title: 'zsh' }, scope)
+    expect(terminate).not.toHaveBeenCalled()
+    expect(builtinTabs({} as Context).find(tab => tab.id === 'workspace-terminals')?.onClose).toBeUndefined()
+  })
+})
+
 describe('side chat close archives the bound thread', () => {
   const scope = { sessionId: 'parent' }
 

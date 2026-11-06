@@ -39,7 +39,7 @@ export const th: Record<string, string> = {
   workspaceTerminalTerminate: "ยุติกระบวนการ",
   workspaceTerminalOpen: "เปิดมุมมอง",
   workspaceTerminalEmpty: "ไม่มีเทอร์มินัลในพื้นที่ทำงานนี้",
-  workspaceTerminalDetachHint: "การปิดแท็บปิดเฉพาะมุมมอง ใช้ ยุติกระบวนการ เพื่อหยุดเชลล์",
+  workspaceTerminalDetachHint: "การปิดแท็บเทอร์มินัลจะยุติกระบวนการและลบเทอร์มินัล ส่วนการยุบแผงจะไม่ยุติกระบวนการ",
 
   files: 'ไฟล์',
   guideDescFiles: 'เรียกดูแผนผังไฟล์ของเวิร์กสเปซ คลิกเพื่อดูตัวอย่างหรือแก้ไข',

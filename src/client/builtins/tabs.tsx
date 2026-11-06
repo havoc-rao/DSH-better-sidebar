@@ -476,6 +476,22 @@ id: 'terminal',
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
+      // Closing a managed bottom tab is an explicit delete, not a detach.
+      // Keep this in the descriptor so even an unmounted/lazy view is deleted;
+      // ordinary view teardown (session switches, refresh) still only detaches.
+      onClose: (tab, scope) => {
+        const terminalId = workspaceTerminalIdOf(tab)
+        if (terminalId === undefined) return // Legacy views own their close frame.
+        void Promise.resolve().then(() => {
+          const binding = resolveWorkspaceTerminalBinding(
+            terminalServiceOf(ctx), scope.sessionId, scope.cwd,
+            workspaceTerminalProviderOf(tab), workspaceTerminalProviderOf(tab) === undefined,
+          )
+          return binding.source.terminate(terminalId)
+        }).catch(error => {
+          console.error('[dsh-better-sidebar] terminal close/delete failed:', error)
+        })
+      },
       component: (props) => <TerminalTabTransport {...props} />,
     },
     {

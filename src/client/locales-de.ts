@@ -25,7 +25,7 @@ export const de: Record<string, string> = {
   workspaceTerminalTerminate: "Prozess beenden",
   workspaceTerminalOpen: "Ansicht öffnen",
   workspaceTerminalEmpty: "Keine Terminals in diesem Arbeitsbereich",
-  workspaceTerminalDetachHint: "Das Schließen eines Tabs schließt nur die Ansicht. Zum Stoppen der Shell Prozess beenden wählen.",
+  workspaceTerminalDetachHint: "Das Schließen eines Terminal-Tabs beendet den Prozess und löscht das Terminal; das Einklappen des Panels beendet den Prozess nicht.",
 
   files: 'Dateien',
   guideDescFiles: 'Dateibaum des Arbeitsbereichs durchsuchen; Klick öffnet Vorschau oder Editor',

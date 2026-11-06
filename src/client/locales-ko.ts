@@ -31,7 +31,7 @@ export const ko: Record<string, string> = {
   workspaceTerminalTerminate: "프로세스 종료",
   workspaceTerminalOpen: "뷰 열기",
   workspaceTerminalEmpty: "이 작업 공간에 터미널이 없습니다",
-  workspaceTerminalDetachHint: "탭을 닫아도 뷰만 닫힙니다. 셸을 중지하려면 프로세스 종료를 사용하세요.",
+  workspaceTerminalDetachHint: "터미널 탭을 닫으면 프로세스가 종료되고 터미널이 삭제됩니다. 패널을 접어도 프로세스는 종료되지 않습니다.",
 
   files: '파일',
   guideDescFiles: '워크스페이스 파일 트리를 보고 클릭하면 미리보기/편집',

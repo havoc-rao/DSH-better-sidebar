@@ -30,7 +30,7 @@ export const it: Record<string, string> = {
   workspaceTerminalTerminate: "Termina processo",
   workspaceTerminalOpen: "Apri vista",
   workspaceTerminalEmpty: "Nessun terminale in questa area di lavoro",
-  workspaceTerminalDetachHint: "Chiudere una scheda chiude solo la vista. Usa Termina processo per arrestare la shell.",
+  workspaceTerminalDetachHint: "Chiudere una scheda del terminale termina il processo ed elimina il terminale; comprimere il pannello non termina il processo.",
 
   files: 'File',
   guideDescFiles: 'Sfoglia l\'albero del workspace; un clic apre anteprima o editor',

@@ -649,7 +649,8 @@ export function TerminalView(props: {
       const tabStillOpen = store.tabOpen(scope.sessionId, tabId)
       const sessionSwitched = store.getSnapshot().sessionId !== scope.sessionId
       if (terminalId !== undefined) {
-        // Workspace lifetime is explicit API terminate only; all view exits detach.
+        // View teardown only detaches. Explicit tab close separately invokes
+        // the descriptor's terminate API, including for never-mounted views.
         transportHandle?.dispose()
         transportHandle = null
       } else if (transportHandle !== null) {

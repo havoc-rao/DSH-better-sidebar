@@ -41,7 +41,7 @@ export const pl: Record<string, string> = {
   workspaceTerminalTerminate: "Zakończ proces",
   workspaceTerminalOpen: "Otwórz widok",
   workspaceTerminalEmpty: "Brak terminali w tym obszarze roboczym",
-  workspaceTerminalDetachHint: "Zamknięcie karty zamyka tylko widok. Użyj Zakończ proces, aby zatrzymać powłokę.",
+  workspaceTerminalDetachHint: "Zamknięcie karty terminala kończy proces i usuwa terminal; zwinięcie panelu nie kończy procesu.",
 
   files: 'Pliki',
   guideDescFiles: 'Przeglądaj drzewo plików obszaru roboczego; klik otwiera podgląd lub edycję',

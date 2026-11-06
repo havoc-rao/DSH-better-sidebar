@@ -39,7 +39,7 @@ export const vi: Record<string, string> = {
   workspaceTerminalTerminate: "Dừng tiến trình",
   workspaceTerminalOpen: "Mở chế độ xem",
   workspaceTerminalEmpty: "Không có terminal trong không gian này",
-  workspaceTerminalDetachHint: "Đóng thẻ chỉ đóng chế độ xem. Dùng Dừng tiến trình để dừng shell.",
+  workspaceTerminalDetachHint: "Đóng thẻ terminal sẽ kết thúc tiến trình và xóa terminal; thu gọn bảng điều khiển không kết thúc tiến trình.",
 
   files: 'Tệp',
   guideDescFiles: 'Duyệt cây tệp của workspace; bấm để xem trước hoặc chỉnh sửa',

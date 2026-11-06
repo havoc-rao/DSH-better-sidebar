@@ -40,7 +40,7 @@ export const ar: Record<string, string> = {
   workspaceTerminalTerminate: "إنهاء العملية",
   workspaceTerminalOpen: "فتح العرض",
   workspaceTerminalEmpty: "لا توجد طرفيات في مساحة العمل",
-  workspaceTerminalDetachHint: "إغلاق علامة التبويب يغلق العرض فقط. استخدم إنهاء العملية لإيقاف الصدفة.",
+  workspaceTerminalDetachHint: "يؤدي إغلاق علامة تبويب الطرفية إلى إنهاء العملية وحذف الطرفية؛ أما طي اللوحة فلا ينهي العملية.",
 
   files: 'الملفات',
   guideDescFiles: 'استعرض شجرة ملفات مساحة العمل؛ انقر للمعاينة أو التحرير',
