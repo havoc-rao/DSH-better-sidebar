@@ -288,6 +288,7 @@ describe('terminal close deletes the managed process', () => {
   })
 
   it('routes service close to deletion once, but session switches only retain the terminal', async () => {
+    vi.spyOn(api, 'workspaceTerminalList').mockResolvedValue({ terminals: [] })
     const terminate = vi.spyOn(api, 'workspaceTerminalTerminate').mockResolvedValue({ ok: true })
     const { service, store, dispose } = setup()
     store.setSession('origin')
@@ -302,6 +303,58 @@ describe('terminal close deletes the managed process', () => {
     service.closeTab(tab!.id, scope)
     service.closeTab(tab!.id, scope)
     await vi.waitFor(() => expect(terminate).toHaveBeenCalledExactlyOnceWith('origin', 'pty-1'))
+    dispose()
+  })
+
+  it.each(['busy', 'unknown', undefined, 'idle'] as const)('confirms unsafe activity %s before deleting, and preserves cancelled tabs', async activity => {
+    const info = { terminalId: 'pty-1', title: 'zsh', cwd: '/workspace', createdBySessionId: 'origin', createdAt: 0,
+      exited: false, activity, runningCommands: activity === 'busy' ? ['node'] : [] }
+    const list = vi.spyOn(api, 'workspaceTerminalList').mockResolvedValue({ terminals: [info] })
+    const terminate = vi.spyOn(api, 'workspaceTerminalTerminate').mockResolvedValue({ ok: true })
+    const confirm = vi.fn((_message?: string) => false)
+    const original = window.confirm
+    window.confirm = confirm
+    const { service, store, dispose } = setup()
+    try {
+      store.setSession('origin')
+      service.openTab({ type: 'terminal', id: managed.id, meta: managed.meta })
+      const state = store.getSnapshot().state!
+      const tab = state.bottomSplits.kind === 'leaf' ? state.bottomSplits.tabs[0]! : undefined
+      service.updateTab(tab!.id, { meta: managed.meta })
+      service.closeTab(tab!.id)
+      service.closeTab(tab!.id)
+      if (activity === 'idle') {
+        await vi.waitFor(() => expect(terminate).toHaveBeenCalledTimes(1))
+        expect(confirm).not.toHaveBeenCalled()
+      } else {
+        await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
+        expect(store.tabOpen('origin', tab!.id)).toBe(true)
+        expect(terminate).not.toHaveBeenCalled()
+        if (activity === 'busy') expect(confirm.mock.calls[0]?.[0]).toContain('node')
+        await new Promise(resolve => setTimeout(resolve, 0))
+        confirm.mockReturnValue(true)
+        service.closeTab(tab!.id)
+        await vi.waitFor(() => expect(terminate).toHaveBeenCalledTimes(1))
+      }
+      expect(store.tabOpen('origin', tab!.id)).toBe(false)
+      expect(list).toHaveBeenCalledWith('origin', undefined)
+    } finally { window.confirm = original; dispose() }
+  })
+
+  it('keeps the tab and process when checking activity fails', async () => {
+    vi.spyOn(api, 'workspaceTerminalList').mockRejectedValue(new Error('offline'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const terminate = vi.spyOn(api, 'workspaceTerminalTerminate')
+    const { service, store, dispose } = setup()
+    store.setSession('origin')
+    service.openTab({ type: 'terminal', id: managed.id, meta: managed.meta })
+    const state = store.getSnapshot().state!
+    const tab = state.bottomSplits.kind === 'leaf' ? state.bottomSplits.tabs[0]! : undefined
+    service.updateTab(tab!.id, { meta: managed.meta })
+    service.closeTab(tab!.id)
+    await vi.waitFor(() => expect(store.getSnapshot().state?.workspaceTerminalError).toBe('offline'))
+    expect(store.tabOpen('origin', tab!.id)).toBe(true)
+    expect(terminate).not.toHaveBeenCalled()
     dispose()
   })
 
