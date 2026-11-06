@@ -2,7 +2,7 @@
  * The unified changes tab: one tab, two lenses on "what changed?" — Git
  * (repository truth: staged/unstaged files, commit box, history) and the
  * session round (agent truth: every file the model read, wrote, or edited).
- * A 36px header carries the host conversation Tabs and the current
+ * A 36px header carries the locally styled lens tabs and the current
  * lens's refresh action; both lenses preview their selections in a shared
  * resizable bottom pane ({@link DiffPane}), and git targets expand into the
  * dedicated diff tab docked in the workbench's diff pane. The bottom pane is

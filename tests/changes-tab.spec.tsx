@@ -34,6 +34,9 @@ const MAIN = 'C:/repo/main'
 
 /** The unstage artwork the SCM rows draw (the horizontal half of the host's Plus). */
 const MINUS_GLYPH = 'M2 8H14'
+/** The host's own Plus, a document-sprite reference since DSH 0.2.2 (it used
+ *  to be inline `<path>` artwork, so only the sprite id identifies it now). */
+const PLUS_ICON = '#dsw-icon-plus-outline-regular'
 
 /** One synthetic tool/call + tool/result pair (write of one file). */
 function writeEvents(seq: number, path: string): Array<{ type: string; seq: number; time: number; data: Record<string, unknown> }> {
@@ -80,7 +83,7 @@ function mockGit(entries: GitStatusEntry[]): void {
   vi.spyOn(api, 'gitLog').mockResolvedValue([])
 }
 
-/** One lens tab of the header's official conversation Tabs. */
+/** One lens tab rendered by the header's public SegmentedControl. */
 function lensTab(container: HTMLElement, label: string): HTMLButtonElement | undefined {
   return [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
     .find(tab => tab.textContent === label)
@@ -217,6 +220,7 @@ describe('ChangesTab', () => {
       const selected = (button: HTMLButtonElement): void => {
         expect(button.classList.contains(css.lensTab!)).toBe(true)
         expect(button.getAttribute('aria-selected')).toBe('true')
+        expect(button.getAttribute('aria-controls')).toBe(`${button.id}-panel`)
         expect(button.tabIndex).toBe(0)
         // Both lenses own a panel (they stay mounted and swap `hidden`), so the
         // tab points at ITS panel, that panel points back, and exactly one of
@@ -251,6 +255,7 @@ describe('ChangesTab', () => {
       await act(async () => { container.querySelector<HTMLButtonElement>(`button[aria-label="${t('refresh')}"]`)!.click() })
       await flushEffects()
       expect(ops).toHaveBeenCalledTimes(calls + 1)
+      const source = readFileSync('src/client/changes/ChangesTab.tsx', 'utf8')
       const sheet = readFileSync('src/client/changes/changes.module.css', 'utf8')
       expect(sheet).not.toContain('wSkVaW_')
       expect(readFileSync('src/client/changes/ChangesTab.tsx', 'utf8')).not.toContain('wSkVaW_')
@@ -643,13 +648,13 @@ describe('ChangesTab', () => {
       }
       // A stage affordance that drew the unstage glyph is the #941 regression:
       // the two directions must not share artwork (vscode: $(add) vs $(remove)).
-      // Unstage is the horizontal half alone; staging adds the vertical stroke
-      // (the host's Plus) — the two directions must not share one glyph.
+      // Unstage is the plugin's own horizontal half; staging is the host's Plus
+      // sprite — the two directions must not share one glyph.
       const stage = iconOf(t('stage'))
       const unstage = iconOf(t('unstage'))
       expect(unstage).toContain(MINUS_GLYPH)
-      expect(unstage).not.toContain('M8 2V14')
-      expect(stage).toContain('M8 2V14')
+      expect(unstage).not.toContain(PLUS_ICON)
+      expect(stage).toContain(PLUS_ICON)
     } finally {
       act(() => { root.unmount() })
       container.remove()

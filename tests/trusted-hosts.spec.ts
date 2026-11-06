@@ -83,7 +83,7 @@ describe('native Connection admission', () => {
     const mounted = mount(rejection)
     try {
       expect(mounted.routes.map(route => route.path)).toEqual([
-        '/sidebar/api', '/sidebar/upload', '/sidebar/write', '/sidebar/bundle',
+        '/sidebar/api', '/sidebar/sidechat-image', '/sidebar/upload', '/sidebar/write', '/sidebar/bundle',
         '/sidebar/archive', '/sidebar/file', '/sidebar/html',
       ])
       expect(mounted.upgrades.map(route => route.path)).toEqual([

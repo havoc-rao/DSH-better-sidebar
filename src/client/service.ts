@@ -49,6 +49,9 @@ import { createInspectorApi, type InspectorApi } from './inspectors.ts'
 import { createResourceActionRegistry, type ResourceActionRegistry } from './resource-actions.ts'
 export type { ResourceActionContext, ResourceActionDescriptor, FileActivationContext, FileOpenTargetDescriptor, FileDocumentState } from './resource-actions.ts'
 export type { InspectorComponentProps, InspectorDescriptor, InspectorObject, InspectorJson, OpenInspectorSeed, InspectorSnapshot } from './inspectors.ts'
+import { bindSidechatSurfaces, type SidechatSurfaceAdapter } from './sidechat-surface.ts'
+import { armLineEnd } from './line-target.ts'
+export type { SidechatSurface, SidechatSurfaceAdapter } from './sidechat-surface.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -335,6 +338,13 @@ export interface FileViewerProps {
    *  positions the reader there once, on arrival; every other viewer ignores
    *  it. Absent on an ordinary open. */
   line?: number
+  /** The last 1-based line of the landing RANGE, with {@link
+   *  FileViewerProps.line} — a quote chip's click-through carries the quoted
+   *  span, and the text viewer flashes `line..lineEnd` so the span is visible
+   *  at a glance rather than a caret somewhere. It rides the plugin's own
+   *  side channel (`line-target.ts`), not the host's resource parameters,
+   *  which declare `line` only. Absent = a single-line landing. */
+  lineEnd?: number
   /** The viewer reports that it has APPLIED the `line` it was handed (or that
    *  the line does not apply to it), and the host stops handing it out: the
    *  line is one navigation, not a mode of the file. The host has to own that
@@ -739,6 +749,8 @@ export interface BetterSidebarService extends SharedRenderingService, InspectorA
   renderFileViewer(props: FileViewerRenderProps): ReactNode
   /** Actual explorer UI with strict consumer data/operations; feature fileExplorer:v1. */
   renderFileExplorer(props: FileExplorerRenderProps): ReactNode
+  /** Proposed opt-in bridge for settled assistant Markdown in sidechat only. */
+  registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
@@ -853,6 +865,13 @@ export interface BetterSidebarService extends SharedRenderingService, InspectorA
    * `tabsEnabled[id]` entry means enabled — only an explicit `false`
    * disables the type (hidden from the + menu, `openTab` refuses, and
    * derived flows gate on it).
+   *
+   * A `hidden: true` type is ALWAYS enabled: it has no + menu row and no
+   * native guide entry, so the side-card inventory offers no switch for it —
+   * and none of the paths that open it (a diff's "expand to page", a remote
+   * plugin's file open) has a visible state the user could read. The entry is
+   * ignored rather than honoured so a value written by an older build cannot
+   * keep silently refusing those opens (#1009).
    */
   isTabEnabled(id: string): boolean
   /** Whether a file viewer is enabled (absent `viewersEnabled[id]` = enabled). */
@@ -947,8 +966,13 @@ export interface BetterSidebarService extends SharedRenderingService, InspectorA
    * (v0.12.0+) rides to the callback like `closeTab`'s.
    */
   activateTab(tabId: string, scope?: SessionScope): void
-  /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
-  openFile(scope: SessionScope, path: string, title?: string): void
+  /**
+   * Open a file in the sidebar editor of `scope`'s session (title defaults to
+   * the file name). `options.line` lands the viewer on that 1-based source
+   * line (a quote chip's click-through); `options.lineEnd` extends the
+   * landing flash through that line, so the quoted span reads at a glance.
+   */
+  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void
   /**
    * Publish (or clear with `null`) the live Git target of one Git lens
    * instance (v0.20.x). Keyed by an instance owner id so two mounted Git
@@ -1031,7 +1055,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.28.2'
+export const SIDEBAR_SERVICE_VERSION = '0.30.1'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -1418,8 +1442,12 @@ export function createBetterSidebarService(
   }
 
   // The enable switches come from the user's side card prefs (the shared
-  // store the service is bound to): an absent key means enabled.
-  const isTabEnabled = (id: string): boolean => store.getPrefs().tabsEnabled[id] !== false
+  // store the service is bound to): an absent key means enabled. A hidden
+  // type is exempt — it has no side-card card (SideCardSection skips it), so
+  // its prefs entry can only be a leftover from an older build and must not
+  // keep refusing the programmatic opens it exists for (#1009).
+  const isTabEnabled = (id: string): boolean =>
+    tabs.get(id)?.hidden === true || store.getPrefs().tabsEnabled[id] !== false
   const isViewerEnabled = (id: string): boolean => store.getPrefs().viewersEnabled[id] !== false
 
   const matchFileViewer = (path: string, head?: Uint8Array): FileViewerDescriptor | undefined => {
@@ -1892,9 +1920,22 @@ export function createBetterSidebarService(
    *  a third-party type registered with a more specific pattern (a `.drawio`
    *  canvas, say) renders its own tab, and the plugin's editor only takes
    *  files nobody else claims. (This module holds no ctx, so the probe used
-   *  by the tree's own carriers lives in sidebar-file.ts instead.) */
-  const openFile = (scope: SessionScope, path: string, title?: string): void => {
-    openTab({ type: 'editor', title: title ?? baseNameOf(path), path, id: `editor:${path}` }, scope)
+   *  by the tree's own carriers lives in sidebar-file.ts instead.)
+   *
+   *  `options.line` rides the seed's own landing line (#826) and
+   *  `options.lineEnd` arms the landing flash's span through the side channel
+   *  in line-target.ts — the host's resource parameter map declares `line`
+   *  only, and smuggling a second key through host-owned params would work
+   *  exactly until upstream tightened that shape. */
+  const openFile = (scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void => {
+    if (options?.line !== undefined) armLineEnd(path, options.line, options.lineEnd)
+    openTab({
+      type: 'editor',
+      title: title ?? baseNameOf(path),
+      path,
+      id: `editor:${path}`,
+      ...(options?.line === undefined ? {} : { line: options.line }),
+    }, scope)
   }
 
   const service: BetterSidebarService = {
@@ -1905,6 +1946,7 @@ export function createBetterSidebarService(
     ...resources,
     ...data,
     dispose: () => { terminalSubscriptions.dispose(); resources.dispose(); data.dispose() },
+    registerSidechatSurfaceAdapter: adapter => registerSidechatSurfaceAdapter(adapter),
     registerTab,
     registerFileViewer,
     registerFileIcon,
@@ -1944,6 +1986,7 @@ export function createBetterSidebarService(
     nativePathTabs: () => surface?.pathTabs?.() ?? [],
     clearUnread: clearUnreadFor,
   }
+  const registerSidechatSurfaceAdapter = bindSidechatSurfaces(service)
   return service
 }
 
