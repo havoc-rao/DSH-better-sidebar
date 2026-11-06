@@ -12,7 +12,9 @@
  * Registration goes through `slots.inject` because the declaration may not be
  * on the ledger yet at plugin activation (the ui-conversation parent entry
  * declares it); the callback re-runs if the declaration collapses and is
- * re-declared. `order: 10` places the button after the host's own utilities.
+ * re-declared. `order: 10` sorts within the utilities slot only. The host's
+ * More button follows that entire slot; headerToggleCluster's CSS flex order
+ * places our layout toggle after More, next to the native right-sidebar toggle.
  */
 import type { Context } from '../../context-types.ts'
 import type { SidebarStore } from '../state.ts'

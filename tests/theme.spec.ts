@@ -98,6 +98,18 @@ describe('effectiveTokenValue', () => {
 // jsdom has no file:// import.meta.url; vitest runs from the repo root.
 const ROOT = process.cwd()
 
+describe('session header layout-toggle grouping', () => {
+  it('orders only the bottom toggle after the host More button without private host selectors', () => {
+    const source = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
+    const cluster = source.match(/^\.headerToggleCluster\s*\{([^}]+)\}/m)?.[1]
+    expect(cluster).toMatch(/order:\s*1\s*;/)
+    expect(cluster).toContain('display: inline-flex')
+    expect(cluster).not.toMatch(/position:\s*(absolute|fixed)/)
+    expect(source).not.toContain(':global(.headerUtilities')
+    expect(source).not.toContain(':global(.headerMenuButton')
+  })
+})
+
 describe('Git lens switcher chrome', () => {
   it('owns button resets, bounded layout and accessible active/focus states', () => {
     const source = readFileSync(resolve(ROOT, 'src/client/changes/changes.module.css'), 'utf8')
