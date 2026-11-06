@@ -40,7 +40,8 @@ import { api, type GitStatusEntry, type GitStatusResult, type SessionScope } fro
 import { createResourceDataService, type ResourceDataService } from './resource-data.ts'
 export type { ResourceTextRead, ResourceTextWriteResult, ResourceStrictDiff, WorktreeRef, ResourceDataSource, DocumentProviderDescriptor, ResourceDataOptions, ResourceDataErrorCode, ResourceWriteBaseline, ResourceProviderMetadata, ResourceCapabilities, ResourceTextReadResult, ResourceTextWriteOutcome } from './resource-data.ts'
 export { ResourceDataError } from './resource-data.ts'
-import { openWorkspaceTerminal, resolveWorkspaceTerminalBinding, updateTerminalSession, workspaceTerminalViewId } from './workspace-terminals.ts'
+import { openWorkspaceTerminal, resolveWorkspaceTerminalBinding, updateTerminalSession, workspaceTerminalViewId, workspaceTerminalIdOf, workspaceTerminalProviderOf } from './workspace-terminals.ts'
+import { t } from './locales.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import type { TerminalProviderDescriptor } from './terminal-source.ts'
 import type { GitProviderDescriptor } from './git-source.ts'
@@ -885,7 +886,10 @@ export interface BetterSidebarService extends SharedRenderingService, InspectorA
    */
   openTab(seed: OpenTabSeed, scope?: SessionScope): void
   /**
-   * Close a tab by id (fires descriptor.onClose). An unknown tab id is a
+   * Close a tab by id (fires descriptor.onClose). Managed bottom terminals
+   * first check their source's status asynchronously; busy/unknown shells
+   * require confirmation, and cancellation/check failure leaves the tab open.
+   * An unknown tab id is a
    * strict no-op (no state churn, no callbacks). `scope` (v0.12.0+) rides
    * to the callback (its optional cwd included); absent, the callback gets
    * `{ sessionId }` of the active session.
@@ -1718,8 +1722,44 @@ export function createBetterSidebarService(
     else store.reduceFor(sessionId, reducer)
   }
 
-  const closeTab = (tabId: string, scope?: SessionScope): void => {
+  // One status check/confirmation per tab, shared by every bottom close entry.
+  const pendingTerminalCloses = new Set<string>()
+  const closeTab = (tabId: string, scope?: SessionScope, confirmedTerminal?: SidebarTab): void => {
     const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+    const state = sessionId === undefined ? undefined : store.getSessionStates().get(sessionId)
+    const candidate = state === undefined ? undefined : leafWithTab(state.bottomSplits, tabId)?.tabs.find(tab => tab.id === tabId)
+    if (confirmedTerminal !== undefined && candidate !== confirmedTerminal) return
+    const terminalId = candidate?.type === 'terminal' ? workspaceTerminalIdOf(candidate) : undefined
+    if (terminalId !== undefined && confirmedTerminal === undefined && sessionId !== undefined) {
+      const key = `${sessionId}::${tabId}`
+      if (pendingTerminalCloses.has(key)) return
+      pendingTerminalCloses.add(key)
+      const capturedTab = candidate!
+      const capturedScope = scope ?? { sessionId, cwd: sessionCwd?.(sessionId) }
+      void Promise.resolve().then(async () => {
+        const providerId = workspaceTerminalProviderOf(capturedTab)
+        const binding = resolveWorkspaceTerminalBinding({ getTerminalProviders } as BetterSidebarService,
+          sessionId, capturedScope.cwd, providerId, providerId === undefined)
+        const { terminals } = await binding.source.list()
+        const info = terminals.find(info => info.terminalId === terminalId)
+        // Unknown is not proof of idle; old providers must be safe too.
+        const needsConfirmation = info !== undefined && !info.exited && info.activity !== 'exited'
+          && (info.activity !== 'idle' || (info.runningCommands?.length ?? 0) > 0)
+        const current = store.getSessionStates().get(sessionId)
+        if (current === undefined || leafWithTab(current.bottomSplits, tabId)?.tabs.find(tab => tab.id === tabId) !== capturedTab) return
+        if (needsConfirmation && (typeof window.confirm !== 'function' || !window.confirm(
+          `${t('workspaceTerminalTerminate')} · ${info.title}\n${info.runningCommands?.join(', ') || t(info.activity === 'busy' ? 'workspaceTerminalRunning' : 'workspaceTerminalUnknown')}\n${t('workspaceTerminalTerminateConfirm')}`,
+        ))) return
+        closeTab(tabId, capturedScope, capturedTab)
+      }).catch(error => {
+        // A failed status check must not silently destroy a potentially busy PTY.
+        updateTerminalSession(store, sessionId, state => ({ ...state,
+          workspaceTerminalError: error instanceof Error ? error.message : String(error),
+        }))
+        console.error('[dsh-better-sidebar] terminal close status check failed:', error)
+      }).finally(() => { pendingTerminalCloses.delete(key) })
+      return
+    }
     if (surface !== undefined && sessionId !== undefined) {
       const closedNative = surface.close(sessionId, tabId)
       if (closedNative !== undefined) {
