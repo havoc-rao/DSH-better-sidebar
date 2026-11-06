@@ -37,7 +37,7 @@ export const id: Record<string, string> = {
   workspaceTerminalTerminate: "Hentikan proses",
   workspaceTerminalOpen: "Buka tampilan",
   workspaceTerminalEmpty: "Tidak ada terminal di ruang kerja ini",
-  workspaceTerminalDetachHint: "Menutup tab hanya menutup tampilan. Gunakan Hentikan proses untuk menghentikan shell.",
+  workspaceTerminalDetachHint: "Menutup tab terminal akan menghentikan proses dan menghapus terminal; menciutkan panel tidak menghentikan proses.",
 
   files: 'Berkas',
   guideDescFiles: 'Telusuri pohon berkas workspace; klik untuk pratinjau atau edit',

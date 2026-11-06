@@ -39,7 +39,7 @@ export const tr: Record<string, string> = {
   workspaceTerminalTerminate: "İşlemi sonlandır",
   workspaceTerminalOpen: "Görünümü aç",
   workspaceTerminalEmpty: "Bu çalışma alanında terminal yok",
-  workspaceTerminalDetachHint: "Sekmeyi kapatmak yalnızca görünümü kapatır. Kabuğu durdurmak için İşlemi sonlandır seçeneğini kullanın.",
+  workspaceTerminalDetachHint: "Terminal sekmesini kapatmak işlemi sonlandırır ve terminali siler; paneli daraltmak işlemi sonlandırmaz.",
 
   files: 'Dosyalar',
   guideDescFiles: 'Çalışma alanı dosya ağacına göz atın; tıklayınca önizleme veya düzenleme açılır',

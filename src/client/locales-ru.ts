@@ -35,7 +35,7 @@ export const ru: Record<string, string> = {
   workspaceTerminalTerminate: "Завершить процесс",
   workspaceTerminalOpen: "Открыть вид",
   workspaceTerminalEmpty: "В этом пространстве нет терминалов",
-  workspaceTerminalDetachHint: "Закрытие вкладки закрывает только вид. Чтобы остановить оболочку, выберите Завершить процесс.",
+  workspaceTerminalDetachHint: "Закрытие вкладки терминала завершает процесс и удаляет терминал; сворачивание панели не завершает процесс.",
 
   files: 'Файлы',
   guideDescFiles: 'Дерево файлов рабочей области: клик открывает просмотр или редактор',

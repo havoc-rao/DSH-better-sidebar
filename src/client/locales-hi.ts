@@ -39,7 +39,7 @@ export const hi: Record<string, string> = {
   workspaceTerminalTerminate: "प्रक्रिया समाप्त करें",
   workspaceTerminalOpen: "दृश्य खोलें",
   workspaceTerminalEmpty: "इस कार्यस्थान में कोई टर्मिनल नहीं",
-  workspaceTerminalDetachHint: "टैब बंद करने से केवल दृश्य बंद होता है। शेल रोकने के लिए प्रक्रिया समाप्त करें चुनें।",
+  workspaceTerminalDetachHint: "टर्मिनल टैब बंद करने से प्रक्रिया समाप्त हो जाती है और टर्मिनल हटा दिया जाता है; पैनल समेटने से प्रक्रिया समाप्त नहीं होती।",
 
   files: 'फ़ाइलें',
   guideDescFiles: 'वर्कस्पेस फ़ाइल ट्री देखें; क्लिक करने पर प्रीव्यू या संपादन खुलता है',

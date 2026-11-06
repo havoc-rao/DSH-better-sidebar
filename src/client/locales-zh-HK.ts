@@ -54,7 +54,7 @@ export const zhHK: Record<string, string> = {
   workspaceTerminalTerminate: "結束程序",
   workspaceTerminalOpen: "開啟檢視",
   workspaceTerminalEmpty: "本工作區暫無終端",
-  workspaceTerminalDetachHint: "關閉分頁僅關閉檢視；停止 shell 請使用「結束程序」。",
+  workspaceTerminalDetachHint: "關閉終端分頁會結束程序並刪除終端；摺疊面板不會結束程序。",
 
   files: '檔案',
   guideDescFiles: '瀏覽工作區檔案樹，點開即可預覽或編輯',

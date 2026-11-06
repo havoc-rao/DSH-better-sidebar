@@ -38,7 +38,7 @@ export const ja: Record<string, string> = {
   workspaceTerminalTerminate: 'プロセスを終了',
   workspaceTerminalOpen: 'ビューを開く',
   workspaceTerminalEmpty: 'このワークスペースにターミナルはありません',
-  workspaceTerminalDetachHint: 'タブを閉じてもビューのみ閉じます。シェルを停止するには「プロセスを終了」を使用してください。',
+  workspaceTerminalDetachHint: 'ターミナルのタブを閉じるとプロセスが終了し、ターミナルが削除されます。パネルを折りたたんでもプロセスは終了しません。',
   files: 'ファイル',
   guideDescFiles: 'ワークスペースのファイルツリーを閲覧し、クリックでプレビュー／編集',
   guideDescGit: 'Git の変更と今回のセッションのファイル変更を 1 つのタブに',

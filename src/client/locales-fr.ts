@@ -32,7 +32,7 @@ export const fr: Record<string, string> = {
   workspaceTerminalTerminate: "Arrêter le processus",
   workspaceTerminalOpen: "Ouvrir la vue",
   workspaceTerminalEmpty: "Aucun terminal dans cet espace de travail",
-  workspaceTerminalDetachHint: "Fermer un onglet ferme seulement sa vue. Utilisez Arrêter le processus pour arrêter le shell.",
+  workspaceTerminalDetachHint: "Fermer un onglet de terminal arrête le processus et supprime le terminal ; replier le panneau n’arrête pas le processus.",
 
   files: 'Fichiers',
   guideDescFiles: 'Parcourir l\'arborescence du workspace ; un clic ouvre l\'aperçu ou l\'édition',

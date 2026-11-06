@@ -22,7 +22,7 @@ export const sv: Record<string, string> = {
   workspaceTerminalTerminate: "Avsluta process",
   workspaceTerminalOpen: "Öppna vy",
   workspaceTerminalEmpty: "Inga terminaler i arbetsytan",
-  workspaceTerminalDetachHint: "Att stänga en flik stänger bara vyn. Använd Avsluta process för att stoppa skalet.",
+  workspaceTerminalDetachHint: "Om du stänger en terminalflik avslutas processen och terminalen tas bort; om du fäller ihop panelen avslutas inte processen.",
 
   files: 'Filer',
   guideDescFiles: 'Bläddra i arbetsytans filträd; klick öppnar förhandsvisning eller redigering',

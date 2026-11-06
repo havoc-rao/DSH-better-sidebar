@@ -22,7 +22,7 @@ export const pt: Record<string, string> = {
   workspaceTerminalTerminate: "Encerrar processo",
   workspaceTerminalOpen: "Abrir visualização",
   workspaceTerminalEmpty: "Nenhum terminal neste workspace",
-  workspaceTerminalDetachHint: "Fechar uma aba fecha apenas a visualização. Use Encerrar processo para parar o shell.",
+  workspaceTerminalDetachHint: "Fechar uma aba do terminal encerra o processo e exclui o terminal; recolher o painel não encerra o processo.",
 
   files: 'Arquivos',
   guideDescFiles: 'Navegue pela árvore do workspace; um clique abre a pré-visualização ou a edição',

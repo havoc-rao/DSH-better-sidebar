@@ -37,7 +37,7 @@ export const nl: Record<string, string> = {
   workspaceTerminalTerminate: "Proces beëindigen",
   workspaceTerminalOpen: "Weergave openen",
   workspaceTerminalEmpty: "Geen terminals in deze werkruimte",
-  workspaceTerminalDetachHint: "Een tab sluiten sluit alleen de weergave. Gebruik Proces beëindigen om de shell te stoppen.",
+  workspaceTerminalDetachHint: "Het sluiten van een terminaltabblad beëindigt het proces en verwijdert de terminal; het inklappen van het paneel beëindigt het proces niet.",
 
   files: 'Bestanden',
   guideDescFiles: 'Blader door de bestandsboom van de workspace; klik opent voorbeeld of editor',
