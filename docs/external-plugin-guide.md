@@ -1453,6 +1453,9 @@ return <LegacyRemoteFileTab />
 
 `service.renderFileExplorer(props)` **直接挂载现有 TreePanel + FileTree**：包含搜索/刷新/排序工具栏、真实目录行/折叠、多选、右键、创建/重命名/删除/拖拽与上传 overlay，而非复制近似 UI。`FileTree` 继续使用可选 `fileTreeUi` v2 framework；该服务缺席时仍用 sidebar 原有树实现。本仓库没有 `fileTreeSectionSource` 注册机制；此接口是组件级严格数据源 seat，与 document provider / file activation 分工独立。
 
+- **Git 变更树走同一套框架**：Changes 页的 merge / staged / unstaged 三组各自是一棵 `renderFileTree` 树（组头仍是插件自有 chrome：sticky 表头、计数胶囊、整组 stage-all），所以文件树与变更树共用缩进引导线（祖先整线悬停高亮、引导带点击折叠）、chevron 折收过场与选中 wash。行内容与展开状态仍由本插件注入，行身份钩子 `data-dir` / `data-path` 挂在注入的 label 上（框架不透传 `data-*`）。
+- **右键行菜单要求提供方声明 `rowContextMenu` 能力位**：菜单经行模型的 `onContextMenu` 透传打开，而旧提供方的 DOM 透传白名单里没有这个属性——它会**静默丢弃**，菜单无声消失。因此变更树只在 `svc.capabilities?.includes('rowContextMenu') === true` 时接框架，否则整体回退内置行（不做「一半走框架、一半丢右键」的部分降级）。
+
 ```tsx
 if (service.features.includes('fileExplorer:v1')) {
   return service.renderFileExplorer({

@@ -306,6 +306,35 @@
   .row:not(:hover):not(:focus-within) .rowAction { opacity: 1; }
 }
 
+/* ── The changes tree on the fileTreeUi v2 framework ──────────────────────
+   When the optional provider is present (and declares rowContextMenu) the
+   provider's FileTree owns the row chrome — guides, chevron, fold animation,
+   hover and selected wash, actions-slot visibility. These rules only restate
+   this tab's own content inside the injected slots, so both render paths
+   read the same: the file row's name + path pair, the 20px action box, and
+   the previewed row's 2px accent marker (the built-in rows carry it on
+   `[data-selected]`, the framework exposes `selected` instead). */
+.treeFileLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.treeRow .rowAction { width: 20px; height: 20px; }
+
+.treeRowSelected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
+}
+
 /* ── Message draft (inside Changes) ─────────────────────────────────────── */
 
 .gitMoreMenu { max-width: min(360px, calc(100vw - 24px)); }
