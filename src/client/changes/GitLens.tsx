@@ -7,7 +7,7 @@
  * UI semantics reference: VS Code 76f9f309edc0682f4ef9465be8d12af754b87236,
  * extensions/git and src/vs/workbench/contrib/scm (not a runtime dependency).
  */
-import { createElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { createElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutlineRegular, IconChevronRightOutlineRegular,
   IconCloseFillRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconEllipsisOutlineRegular,
@@ -35,6 +35,11 @@ import {
   useGitStatus, type GitFileStatus, type GitTone, type StatusTone,
 } from '../ui/index.ts'
 import { buildChangeTree, sumLineCounts, type ChangeDir, type ChangeFile, type ChangeNode } from './change-tree.ts'
+import { useFileTreeUi } from '../file-tree-ui.ts'
+// Type-only: the client-bundle purity gate forbids value-importing the
+// provider package (the whole module is erased at build time; the runtime
+// handle is the optional `fileTreeUi` service seat, see ../file-tree-ui.ts).
+import type { FileTreeRowModel, GuideColumn, TreeGuideGrid } from 'dsh-file-tree-ui/client-contract'
 import diffCss from '../diff/diff.module.css' 
 import css from './changes.module.css'
 
@@ -403,6 +408,23 @@ export function GitLens(props: GitLensProps) {
   const { scope, onOpenFile, onPreview, selectedRef, visible, active = visible, ctx } = props
 
   const service = props.service ?? ctx?.get('betterSidebar')
+  /**
+   * The optional fileTreeUi v2 framework (provider: dsh-file-tree-ui) the
+   * changes tree renders through — the same framework the explorer uses, so
+   * both trees in this panel share one row language (guides with the
+   * ancestor hover highlight, chevron + fold animation, the selected wash).
+   *
+   * Gated on the provider's `rowContextMenu` capability, not just on the
+   * service: these rows own a right-click menu, and an older provider
+   * silently drops a model's `onContextMenu` — the menu would disappear with
+   * no diagnostic. Without the capability the built-in rows below render
+   * exactly as before (right-click included).
+   */
+  const fileTreeUi = useFileTreeUi()
+  const treeFramework = fileTreeUi !== undefined
+    && fileTreeUi.capabilities?.includes('rowContextMenu') === true
+    ? fileTreeUi
+    : undefined
   const [ownerId] = useState(() => `git-lens:${++nextGitLensOwner}`)
   const gitSource = useGitSource(ctx, scope)
   const gitApi = gitSource ?? api
@@ -1001,13 +1023,14 @@ export function GitLens(props: GitLensProps) {
     repoRoot,
   })
 
-  /** Whether a worktree row is the one currently previewed. */
-  const isPreviewedWorktree = (path: string, staged: boolean): boolean => {
+  /** Whether a worktree row is the one currently previewed. Stable: it is
+   *  read while the framework row models are built (and memoized). */
+  const isPreviewedWorktree = useCallback((path: string, staged: boolean): boolean => {
     if (selectedRef === null || selectedRef.kind !== 'worktree') return false
     return selectedRef.path === path && selectedRef.staged === staged
       && (selectedRef.worktree ?? '') === (selectedWorktree ?? '')
       && (selectedRef.repoRoot ?? '') === (repoRoot ?? '')
-  }
+  }, [selectedRef, selectedWorktree, repoRoot])
 
   const entries = snapshot?.entries ?? NO_ENTRIES
   // The CONTENT of the answer decides whether the tree must be rebuilt; the
@@ -1099,11 +1122,18 @@ export function GitLens(props: GitLensProps) {
   const stagePath = useCallback((path: string, staged: boolean, merge = false): void => {
     rowActions.current.stage(path, staged, merge)
   }, [])
+  /** Open the file-row menu at a viewport corner. Split from the event form
+   *  below because a KEYBOARD trigger (ContextMenu / Shift+F10) has no cursor
+   *  point — the browser reports 0,0 for it, and the framework rows route the
+   *  two triggers through different props. */
+  const openRowMenuAt = useCallback((node: ChangeFile, staged: boolean, x: number, y: number): void => {
+    setFileMenu({ path: node.path, staged, untracked: isUntrackedStatus(node.status), x, y })
+  }, [])
   const openRowMenu = useCallback((event: MouseEvent, node: ChangeFile, staged: boolean): void => {
     event.preventDefault()
     event.stopPropagation()
-    setFileMenu({ path: node.path, staged, untracked: isUntrackedStatus(node.status), x: event.clientX, y: event.clientY })
-  }, [])
+    openRowMenuAt(node, staged, event.clientX, event.clientY)
+  }, [openRowMenuAt])
 
   /** Indent the content, not its container: hover and selection stay full-width. */
   const renderFile = (node: ChangeFile, staged: boolean, depth = 0): ReactNode => (
@@ -1206,7 +1236,174 @@ export function GitLens(props: GitLensProps) {
     </div>
   )
 
-  const renderGroup = (id: string, label: string, rows: readonly GitStatusEntry[], nodes: readonly ChangeNode[], staged: boolean, merge = false): ReactNode => {
+  // ── fileTreeUi v2 service path: the changes tree ────────────────────────
+  // The same framework the explorer renders through (provider:
+  // dsh-file-tree-ui). The provider owns the tree chrome — container and
+  // subtrees, indent guides with the ancestor hover highlight, chevron + fold
+  // interaction and animations, the row slots' visibility, the selected wash;
+  // this lens keeps building the row models, injects every row's content
+  // (artwork, name, path, porcelain badge, line counts, the stage control)
+  // and owns all state DATA: per-row `expanded` + `onToggle` from the same
+  // `collapsed` set the built-in rows read, `selected` from the previewed
+  // ref, and the business actions themselves. The built-in rows above stay
+  // byte-for-byte the pre-v2 shape for the fallback path.
+  //
+  // ONE framework root per group, not one for the whole list: the group
+  // headers stay consumer-owned — their sticky band, count pill, `data-group`
+  // hook and whole-subtree stage action are this tab's own chrome, and the
+  // framework has no row variant for a band like that.
+
+  /** This tree's guide geometry: the panel's 12px indent step, first stroke
+   *  5px past the 12px base inset — exactly where the built-in
+   *  `IndentGuides` draw (17, 29, 41 …), so switching paths does not move a
+   *  single line. */
+  const treeGrid: TreeGuideGrid = { basePx: 17, stepPx: 12 }
+  /** Fixed 28px rows: the tab's row height (the built-in `.row` is 28px) and
+   *  the framework's fold animation needs a fixed height. Inline so no
+   *  stylesheet cascade can win. */
+  const treeRowStyle: CSSProperties = {
+    minHeight: 28, height: 28, paddingTop: 0, paddingBottom: 0, paddingRight: 6,
+  }
+  /** The group+side row key — the SAME key `collapsed` is stored under (and
+   *  the built-in rows compute), so a fold survives a flip between the two
+   *  render paths. */
+  const treeRowKey = (path: string, staged: boolean, merge: boolean): string =>
+    `${merge ? 'm' : staged ? 's' : 'u'}:${path}`
+
+  /** One directory as a framework row: its subtree is the `children` forest
+   *  (the framework gates it on `expanded` and animates the fold), and its
+   *  own guide column lets a click on the band below fold it — the same
+   *  affordance the explorer has. */
+  const treeDirRow = (
+    node: ChangeDir, staged: boolean, merge: boolean, depth: number, ancestors: readonly GuideColumn[],
+  ): FileTreeRowModel => {
+    const key = treeRowKey(node.path, staged, merge)
+    const open = !collapsed.has(key)
+    const toggle = (): void => { toggleDir(key) }
+    const columns: GuideColumn[] = [...ancestors, { id: key, onToggle: toggle }]
+    return {
+      key: `dir:${key}`,
+      role: 'button',
+      tabIndex: 0,
+      expanded: open,
+      onToggle: toggle,
+      indentPx: depth * 12 + 8,
+      style: treeRowStyle,
+      className: css.treeRow,
+      guideColumns: ancestors,
+      junction: open,
+      leading: folderGlyph(node.path, open),
+      // The row's identity hooks ride the injected label (the framework's DOM
+      // passthrough has no data-* attributes).
+      label: <span className={css.dirName} data-dir={node.path} title={node.path}>{node.name}</span>,
+      actions: (
+        <IconButton size="sm" className={css.rowAction} disabled={busy || suggesting}
+          label={staged ? t('unstageAll') : t('stageAll')}
+          icon={staged ? MINUS_ICON : <IconPlusOutlineRegular size={12} />}
+          onClick={(event) => { event.stopPropagation(); stagePath(node.path, staged, merge) }} />
+      ),
+      onClick: toggle,
+      onKeyDown: (event) => {
+        if (event.target !== event.currentTarget || event.repeat) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          event.stopPropagation()
+          toggle()
+        }
+      },
+      children: node.children.map(child => child.kind === 'dir'
+        ? treeDirRow(child, staged, merge, depth + 1, columns)
+        : treeFileRow(child, staged, depth + 1, columns)),
+    }
+  }
+
+  /** One changed file as a framework row: preview on click/Enter, the row
+   *  menu on right-click (and on the keyboard menu key), the porcelain badge
+   *  + line counts in the trailing slot, the stage control in the actions
+   *  slot (a sibling of the row's hit area — it stops propagation, so it can
+   *  never preview). */
+  const treeFileRow = (
+    node: ChangeFile, staged: boolean, depth: number, ancestors: readonly GuideColumn[],
+  ): FileTreeRowModel => {
+    const key = treeRowKey(node.path, staged, false)
+    const selected = isPreviewedWorktree(node.path, staged)
+    return {
+      key: `file:${key}`,
+      role: 'button',
+      tabIndex: 0,
+      // The framework inserts a 12px chevron + 6px gap only for folders;
+      // reserve the same gutter for leaves so sibling artwork and labels
+      // share columns (the explorer's rule, same 18px).
+      indentPx: depth * 12 + 8 + 18,
+      style: treeRowStyle,
+      className: selected ? `${css.treeRow} ${css.treeRowSelected}` : css.treeRow,
+      guideColumns: ancestors,
+      selected,
+      leading: fileGlyph(node.path),
+      label: (
+        <span className={css.treeFileLabel}>
+          <span className={css.rowName} data-path={node.path} title={node.path}>{node.name}</span>
+          <span className={css.rowPath}>{node.path.slice(0, -node.name.length).replace(/[\\/]+$/, '') || '/'}</span>
+        </span>
+      ),
+      trailing: (
+        <>
+          <StatusBadge tone={BADGE_TONE[node.status.tone]} title={node.path}>{node.status.letter}</StatusBadge>
+          <LineCounts counts={node.counts} />
+        </>
+      ),
+      actions: (
+        <IconButton size="sm" className={css.rowAction} disabled={busy || suggesting}
+          label={staged ? t('unstage') : t('stage')}
+          icon={staged ? MINUS_ICON : <IconPlusOutlineRegular size={12} />}
+          onClick={(event) => { event.stopPropagation(); stagePath(node.path, staged) }} />
+      ),
+      onClick: () => { previewFile(node, staged) },
+      onContextMenu: (event) => { openRowMenu(event, node, staged) },
+      onKeyDown: (event) => {
+        if (event.target !== event.currentTarget || event.repeat) return
+        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+          event.preventDefault()
+          // A keyboard trigger has no cursor point; the browser's own
+          // contextmenu event reports 0,0 for it too.
+          openRowMenuAt(node, staged, 0, 0)
+          return
+        }
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          event.stopPropagation()
+          previewFile(node, staged)
+        }
+      },
+    }
+  }
+
+  /** One group's row forest. */
+  const buildTreeRows = (nodes: readonly ChangeNode[], staged: boolean, merge: boolean): FileTreeRowModel[] =>
+    nodes.map(node => node.kind === 'dir'
+      ? treeDirRow(node, staged, merge, 0, [])
+      : treeFileRow(node, staged, 0, []))
+
+  /**
+   * The three groups' forests, rebuilt only when something a row actually
+   * SHOWS moved. This is the same contract the memoized built-in rows keep
+   * (`FileRow`'s own doc: a status poll that answered the same change list
+   * must not re-resolve a single icon) — the trees are content-keyed, so an
+   * idle poll hands back the very same node objects and this memo holds.
+   */
+  const treeRows = useMemo(() => {
+    if (treeFramework === undefined) return undefined
+    return {
+      merge: buildTreeRows(mergeTree, false, true),
+      staged: buildTreeRows(stagedTree, true, false),
+      unstaged: buildTreeRows(unstagedTree, false, false),
+    }
+    // Every input the row builders read is listed; the builders themselves
+    // are recreated per render on purpose (they close over those inputs).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [treeFramework, mergeTree, stagedTree, unstagedTree, collapsed, busy, suggesting, isPreviewedWorktree, fileGlyph, folderGlyph])
+
+  const renderGroup = (id: 'merge' | 'staged' | 'unstaged', label: string, rows: readonly GitStatusEntry[], nodes: readonly ChangeNode[], staged: boolean, merge = false): ReactNode => {
     if (rows.length === 0) return null
     const key = `group:${id}`
     const open = !collapsed.has(key)
@@ -1225,7 +1422,20 @@ export function GitLens(props: GitLensProps) {
             onClick={() => { stageAll(staged, merge) }} />
           <span className={css.countPill} data-count={rows.length}>{rows.length}</span>
         </div>
-        {open && renderTree(nodes, staged, merge)}
+        {open && (treeFramework !== undefined && treeRows !== undefined
+          /*
+           * The v2 path: the provider's FileTree framework owns this group's
+           * container, guides, fold interaction and row chrome; the models
+           * above carry the content and the state data. treeKey isolates the
+           * group's guide-hover seat from its siblings'.
+           */
+          ? treeFramework.renderFileTree({
+            treeKey: `git-changes:${id}`,
+            rows: treeRows[id],
+            grid: treeGrid,
+            className: css.tree,
+          })
+          : renderTree(nodes, staged, merge))}
       </div>
     )
   }
