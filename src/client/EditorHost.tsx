@@ -6,6 +6,8 @@
  * a path (the seeded "Files" home) renders an empty-state hint instead of
  * the viewer loading flow; that path-less window IS the file explorer.
  *
+ * With an existing native docked split, ordinary opens first target the other
+ * pane, retaining this window and its draft. Otherwise:
  * The chrome depends on the `editorExplorer` mode (read reactively so
  * toggling it re-renders without a reload):
  * - merged (in-place): tree click / path-input Enter switch the CURRENT
@@ -35,6 +37,7 @@ import { clearEditorDirty, isEditorDirty, setEditorDirty } from './editor-dirty.
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { openClaimedNativeFile, openSidebarFile } from './sidebar-file.ts'
+import { openFileInOtherPane } from './native/file-pane.ts'
 import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
 import { fileOpKey, useFileOpStream } from './ops-stream.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
@@ -143,6 +146,7 @@ export function EditorHost(props: {
   onReferenceFile: (path: string, isDir: boolean) => void
 }) {
   const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile } = props
+  const rootRef = useRef<HTMLDivElement>(null)
   const visible = props.visible !== false
   const path = tab.path ?? ''
   const title = tab.title
@@ -292,6 +296,9 @@ export function EditorHost(props: {
    * file, so the editor keeps exactly its previous behavior.
    */
   const openFile = (absolute: string): void => {
+    // An existing split takes priority over merged-mode retargeting: preserve
+    // this explorer (and any draft) while the host opens/reveals the resource.
+    if (openFileInOtherPane(ctx, scope.sessionId, rootRef.current, scope.cwd, absolute)) return
     if (inPlace) {
       // A native tab type claims the file: it opens elsewhere and THIS editor
       // keeps its draft, so there is nothing to confirm.
@@ -642,7 +649,7 @@ export function EditorHost(props: {
   // at the folder instead of the session cwd.
   if (treeOnly || folderRoot !== undefined) {
     return (
-      <div className={css.editor}>
+      <div ref={rootRef} className={css.editor}>
         <TreePanel
           full
           visible={visible}
@@ -672,7 +679,7 @@ export function EditorHost(props: {
   }
 
   return (
-    <div className={css.editor}>
+    <div ref={rootRef} className={css.editor}>
       <FileViewerHeader>
         <EditorPathInput key={path} path={path} cwd={scope.cwd} onOpen={openFile} />
         {!showEmpty && !isDir && <ResourceActions service={service} readContext={() => ({

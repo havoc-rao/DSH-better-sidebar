@@ -4,6 +4,8 @@
 
 ### Unreleased
 
+- **Files 分栏打开优化**：已有原生分栏时，从文件树、文件搜索或路径输入框打开文件，优先落到 Files 所在栏的另一栏，不再就地替换文件树；保留宿主文件类型认领与已有文件去重，不自动创建分栏。单栏、浮窗及显式右键打开操作保持原行为。
+
 - **Git 变更树改用与文件树同一套树框架**：Changes 页的 merge / staged / unstaged 三组现在经可选的 `fileTreeUi` v2 服务（提供方 `dsh-file-tree-ui`）渲染，与文件树共用缩进引导线（祖先整线悬停高亮、点击引导带折叠）、chevron 折收过场和选中 wash；行内容（图标、名称/路径、porcelain 徽标、行数、stage/unstage 按钮）与展开状态仍由插件注入，组头（sticky 表头、计数胶囊、整组暂存）保持不变。
   - 需要提供方声明 `rowContextMenu` 能力位（右键行菜单经行模型的 `onContextMenu` 透传）；未声明或未安装时自动回退到原内置行，右键菜单不受影响。
   - 🧪 测试：新增 `tests/git-changes-tree-service.spec.tsx`（6 例：框架渲染与行模型、框架折收过场、右键菜单 + stage 不触发预览、点击/Enter 预览、缺能力位回退、无提供方回退）；既有 git / 文件树 spec 全绿。

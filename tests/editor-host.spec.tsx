@@ -427,6 +427,36 @@ describe('EditorHost (files window)', () => {
     }
   })
 
+  it('an existing native split takes priority over in-place mode and preserves Files', () => {
+    const { store, ctx, homeTab } = setup()
+    store.setPrefs({ ...store.getPrefs(), editorExplorer: true })
+    const openResource = vi.fn()
+    const originalGet = ctx.get.bind(ctx)
+    ctx.get = ((name: string) => name === 'sidebarRight'
+      ? { openResource, mounted: { getSnapshot: () => sessionId } }
+      : originalGet(name as never)) as typeof ctx.get
+    const { container, unmount } = mountHost(ctx, store, homeTab)
+    const owner = document.createElement('div')
+    owner.dataset.sidebarRightSession = sessionId
+    const source = document.createElement('div')
+    source.dataset.dockkitPane = 'files-pane'
+    const other = document.createElement('div')
+    other.dataset.dockkitPane = 'editor-pane'
+    owner.append(source, other)
+    document.body.append(owner)
+    source.append(container)
+    try {
+      typeAndCommit(container.querySelector('input')!, '/tmp/a.ts')
+      expect(homeTab().path).toBeUndefined()
+      expect(openResource).toHaveBeenCalledExactlyOnceWith(
+        `dsh-resource://file/session/${sessionId}/a.ts`, { paneId: 'editor-pane' },
+      )
+    } finally {
+      unmount()
+      owner.remove()
+    }
+  })
+
   it('in-place mode: switching files confirms before dropping an unsaved draft', () => {
     const { store, ctx } = setup()
     const service = ctx.betterSidebar
