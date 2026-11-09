@@ -1111,7 +1111,7 @@ registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
 | `toggle.bottomPanel` | `ctrl+j` | 与 `BottomDockToggle` 共用 `toggleBottomPanelAction` reducer，不直接创建终端；展开后的自动终端偏好仍由原 owner effect 决定 |
 | `toggle.terminal` | `{mac:'ctrl+\u0060',default:'ctrl+\u0060'}`（显式保留 Control） | 展开并激活现有底部终端；无视图时按工作区终端策略复用/获取，聚焦仅限本 workbench 的可见终端 |
 | `toggle.terminalFullscreen` | `ctrl+shift+j` | 调用与 strip 最大化按钮完全相同的局部回调，不使用浏览器 Fullscreen API |
-| `open.git` | `ctrl+shift+g` | 走本插件 `openTab({type:'git'})`，包含原生栏/无栏兜底 |
+| `open.git` | `ctrl+shift+g` | 优先激活当前会话任一分栏已打开的 Git 页并聚焦所属 pane；多个 Git 页优先当前激活页，否则选择库存中的首个。没有时才走 `openTab({type:'git'})`，包含无栏底部兜底；不改变显式新建或普通 `openTab` 的分栏语义 |
 | `open.sideChat` | `alt+e` | 走本插件 `openTab({type:'sidechat'})` 的线程 factory |
 | `open.subagent` | 未绑定（`null`） | 走本插件 `openTab({type:'subagent'})` |
 

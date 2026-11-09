@@ -3,6 +3,7 @@ import type { BetterSidebarService } from './service.ts'
 import { activateTab, allLeaves, type SidebarStore } from './state.ts'
 import { registerBottomPanelHotkey, type HotkeyActionRegistry } from './bottom-panel-action.ts'
 import { ensureBottomTerminal } from './workspace-terminals.ts'
+import { revealToolShortcut, type ToolShortcutController } from './tool-shortcut.ts'
 
 interface WorkbenchControls {
   toggleFullscreen(): void
@@ -15,12 +16,22 @@ export function attachWorkbenchControls(store: SidebarStore, owner: WorkbenchCon
   return () => { if (controls.get(store) === owner) controls.delete(store) }
 }
 
-export function registerSidebarHotkeys(registry: HotkeyActionRegistry, store: SidebarStore, service: BetterSidebarService, cwdOf?: (sessionId: string) => string | undefined): () => void {
+export function registerSidebarHotkeys(registry: HotkeyActionRegistry, store: SidebarStore, service: BetterSidebarService, cwdOf?: (sessionId: string) => string | undefined, nativeOf?: () => ToolShortcutController | undefined): () => void {
   const disposers: Array<() => void> = []
   const ready = (): boolean => store.getSnapshot().sessionId !== undefined && store.getSnapshot().state !== undefined
   const canOpen = (type: string): boolean => ready() && service.getTab(type) !== undefined && service.isTabEnabled(type)
   const open = (type: string): boolean => {
     if (!canOpen(type)) return false
+    if (type === 'git') {
+      const { sessionId, state } = store.getSnapshot()
+      if (revealToolShortcut(nativeOf?.(), sessionId!, 'git')) return true
+      const leaf = allLeaves(state!.bottomSplits).find(leaf => leaf.tabs.some(tab => tab.type === 'git'))
+      const tab = leaf?.tabs.find(tab => tab.type === 'git')
+      if (leaf && tab) {
+        store.reduce(state => ({ ...activateTab(state, leaf.id, tab.id), bottomOpen: true }))
+        return true
+      }
+    }
     service.openTab({ type })
     return true
   }
@@ -61,6 +72,6 @@ export function installSidebarHotkeys(ctx: Context, store: SidebarStore, service
   ctx.inject(['hotkey'], scope => {
     const registry = scope.get('hotkey') as HotkeyActionRegistry | undefined
     if (typeof registry?.registerAction !== 'function') return
-    scope.effect(() => registerSidebarHotkeys(registry, store, service, id => ctx.sessions.list.getSnapshot().byId[id]?.cwd), 'dsh-better-sidebar: owner hotkey actions')
+    scope.effect(() => registerSidebarHotkeys(registry, store, service, id => ctx.sessions.list.getSnapshot().byId[id]?.cwd, () => ctx.get('sidebarRight') as unknown as ToolShortcutController | undefined), 'dsh-better-sidebar: owner hotkey actions')
   })
 }
