@@ -26,6 +26,8 @@ export type { FileExplorerPicker, FileExplorerPickerRow, FileExplorerPickerInter
 import { renderFileViewer, type FileViewerRenderProps } from './FileViewer.tsx'
 export type { FileViewerRenderProps } from './FileViewer.tsx'
 import { sharedRendering, type SharedRenderingService } from './rendering.tsx'
+import { createEditorExtensionsRegistry, type EditorExtensionsV1 } from './editor-extensions.ts'
+export type { EditorExtensionsV1, EditorExtensionDescriptor, EditorExtensionContext, EditorExtensionRuntime, EditorExtensionSnapshot, EditorGitSnapshot } from './editor-extensions.ts'
 export type { MarkdownRenderProps, MarkdownCopyLabels, CodeEditorRenderProps, CodeRendering, SharedRenderingService } from './rendering.tsx'
 import type { Context } from '../context-types.ts'
 import {
@@ -744,6 +746,8 @@ export interface GitCommitActionDescriptor {
  * The registry service published as `ctx.betterSidebar`.
  */
 export interface BetterSidebarService extends SharedRenderingService, InspectorApi, ResourceActionRegistry, Omit<ResourceDataService, 'dispose'> {
+  /** Owner-scoped extensions installed with the regular editor's own CM runtime. */
+  readonly editorExtensions: EditorExtensionsV1
   /** Controlled file chrome/content slot (feature fileViewerChrome:v1).
    * No IO, viewer selection, document registration or navigation is performed. */
   renderFileViewer(props: FileViewerRenderProps): ReactNode
@@ -1134,6 +1138,7 @@ export const SIDEBAR_FEATURES = [
   'textDocuments:v1',
   'strictGitDiff:v1',
   'sharedRendering:v1',
+  'editorExtensions:v1',
   'fileViewerChrome:v1',
   'fileExplorer:v1',
   'fileExplorerPicker:v1',
@@ -1938,14 +1943,16 @@ export function createBetterSidebarService(
     }, scope)
   }
 
+  const editorExtensions = createEditorExtensionsRegistry()
   const service: BetterSidebarService = {
+    editorExtensions,
     renderFileViewer: (props) => renderFileViewer(service, props),
     renderFileExplorer: (props) => renderFileExplorer(service, props),
     ...sharedRendering,
     ...inspectors,
     ...resources,
     ...data,
-    dispose: () => { terminalSubscriptions.dispose(); resources.dispose(); data.dispose() },
+    dispose: () => { editorExtensions.dispose(); terminalSubscriptions.dispose(); resources.dispose(); data.dispose() },
     registerSidechatSurfaceAdapter: adapter => registerSidechatSurfaceAdapter(adapter),
     registerTab,
     registerFileViewer,

@@ -65,6 +65,21 @@ import type { SidebarPrefs } from 'dsh-better-sidebar/client/service'
 import type { Context as VendoredContext } from '@deepseek-ai/cordis'
 
 declare const ctx: { betterSidebar: BetterSidebarService }
+const editorOwner = new AbortController()
+const releaseEditor = ctx.betterSidebar.editorExtensions.register(editorOwner.signal, {
+  id: 'consumer:editor',
+  create(context) {
+    const snapshot = context.getSnapshot()
+    const runtime = context.runtime
+    return runtime.EditorView.updateListener.of(update => {
+      const git = context.getGitSnapshot(update.state)
+      void snapshot.document.generation
+      void git.accuracy
+    })
+  },
+})
+releaseEditor()
+editorOwner.abort()
 const tab: TabDescriptor = {
   id: 'x:tab',
   title: 'X',

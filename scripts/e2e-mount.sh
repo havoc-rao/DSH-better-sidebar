@@ -71,6 +71,11 @@ e2e_write_profile "$PROFILE_DIR"
 # 步骤 2：官方 CLI 安装 tarball + bundle 协调（真实挂载路径）
 say "执行 dsh plugin --profile web add file:$TARBALL ..."
 $DSH_CMD plugin --profile web add "file:$TARBALL"
+# Optional independent editor consumer: only the scratch profile is mutated.
+if [ -n "${EDITOR_VISUALS_TARBALL:-}" ]; then
+  say "安装独立 editor visuals 消费插件：$EDITOR_VISUALS_TARBALL"
+  $DSH_CMD plugin --profile web add "file:$EDITOR_VISUALS_TARBALL"
+fi
 
 # 步骤 3：校验挂载生效（dsh.profile.bundles 含 dsh-better-sidebar）
 if ! node -e '

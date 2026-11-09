@@ -578,6 +578,10 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     pane.locator('.cm-editor').first(),
     'the plugin editor must render the seeded file inside the native tab',
   ).toBeVisible({ timeout: 30_000 })
+  if (process.env.EDITOR_VISUALS_TARBALL) {
+    await expect(pane.locator('.cm-editor .cm-dsh-minimap').first(),
+      'independent consumer must install through the public bridge with the lazy CM runtime').toBeAttached({ timeout: 30_000 })
+  }
   // Find-in-file (Cmd/Ctrl+F): the plain-text tab is a code viewer with no
   // edit toggle — the editor is mounted in its "preview" (read-mostly)
   // surface, which must search too. The extension rides the SHARED base

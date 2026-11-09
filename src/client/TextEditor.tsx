@@ -24,6 +24,7 @@ import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownDelegateProv
 import { markdownTextProps } from './markdown-labels.tsx'
 import {
   applyGitLineKinds,
+  editorGitSnapshot,
   CmGitGutterCompartment,
   useEditorGitGutter,
   type GitGutterHost,
@@ -35,6 +36,8 @@ import { rewriteLocalImageUrls } from './markdown-images.ts'
 import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
+import { bindEditorExtensions } from './cm-editor-extensions.ts'
+import type { EditorExtensionSnapshot } from './editor-extensions.ts'
 import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
 import { clearDraftBackup, flushDraftBackups, readDraftBackup, registerDraftSource, scheduleDraftBackup } from './editor-draft-backup.ts'
 import { flashQuoteLines, quoteFlashField, quoteFlashHighlight } from './quote-flash.ts'
@@ -54,6 +57,8 @@ import { localeSignature, t } from './locales.ts'
 import { HTML_IFRAME_SANDBOX } from './html-preview.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
+
+let editorGeneration = 0
 
 /** Previewable files (rendered output vs source editing). */
 type ViewMode = 'preview' | 'edit'
@@ -226,6 +231,18 @@ export function TextEditor(props: FileViewerProps) {
   /** The file is above the editable threshold: the viewer renders the
    *  read-only paged preview and no editor at all. */
   const readOnly = largeFile !== undefined
+  const extensionBinding = useRef<ReturnType<typeof bindEditorExtensions> | null>(null)
+  const extensionDocument = useRef<EditorExtensionSnapshot['document'] | null>(null)
+  const extensionMetadata = useMemo(() => ({
+    visible: props.visible !== false && !(mode === 'preview' && (markdown || html || jsonl)),
+    readOnly,
+    mode: 'regular' as const,
+    theme: { id: dark ? 'dark' : 'light', dark },
+  }), [props.visible, mode, markdown, html, jsonl, readOnly, dark])
+  useEffect(() => {
+    const document = extensionDocument.current
+    if (document !== null) extensionBinding.current?.update({ document, ...extensionMetadata })
+  }, [extensionMetadata])
   /** The uncommitted-change gutter (issue #212): the `code` viewer only,
    *  gated by ONE boolean setting (on by default). Nothing else — no
    *  end-of-line author widget, no badges, no animation. Read reactively
@@ -487,6 +504,12 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
+    const document = { sessionId: scope.sessionId, cwd: scope.cwd ?? '', path, generation: String(++editorGeneration) }
+    extensionDocument.current = document
+    const extensionApi = ctx.betterSidebar?.editorExtensions
+    const binding = extensionApi === undefined ? null : bindEditorExtensions(extensionApi, view,
+      { document, ...extensionMetadata }, editorGitSnapshot)
+    extensionBinding.current = binding
     const releaseDraft = registerDraftSource(scope.sessionId, path, () => viewRef.current?.state.doc.toString() ?? null)
     if (restored !== null) {
       setDirty(true)
@@ -513,6 +536,9 @@ export function TextEditor(props: FileViewerProps) {
       // (the only reader of its text) is still alive.
       flushDraftBackups()
       releaseDraft()
+      binding?.dispose()
+      extensionBinding.current = null
+      extensionDocument.current = null
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
@@ -724,9 +750,9 @@ export function TextEditor(props: FileViewerProps) {
   // (a reconfigured state field starts empty).
   useEffect(() => {
     const view = viewRef.current
-    if (view === null) return
+    if (view === null || props.visible === false) return
     applyGitLineKinds(view, gitKinds)
-  }, [gitKinds, gitGutterEnabled, content, path])
+  }, [gitKinds, gitGutterEnabled, content, path, props.visible])
 
   // The editor may have been display:none while previewing; re-measure when
   // it becomes visible again (CodeMirror sizes itself on reveal). A mode

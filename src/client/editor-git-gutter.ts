@@ -27,7 +27,7 @@
  *    the pre-commit line answering the next hover.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { RangeSet, Compartment, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
+import { RangeSet, Compartment, MapMode, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { EditorView, GutterMarker, gutter, gutterLineClass, hoverTooltip, type Tooltip } from '@codemirror/view'
 import { api, type GitBlameLine, type SessionScope } from './api.ts'
 import { parseUnifiedDiff, unifiedSegments } from './diff/rows.ts'
@@ -56,7 +56,43 @@ const GIT_BAR_CLASS: Record<GitLineKind, string> = {
 /** Structural class of the bar gutter (also the DOM hook tests query). */
 export const GIT_BAR_GUTTER_CLASS = 'cm-dsh-git-gutter'
 
-const EMPTY_KINDS: ReadonlyMap<number, GitLineKind> = new Map()
+/** Copy on publication; expose no mutator (Object.freeze alone cannot freeze a Map). */
+function immutableGitLines(source: ReadonlyMap<number, GitLineKind>): ReadonlyMap<number, GitLineKind> {
+  const copy = new Map(source)
+  const lines: ReadonlyMap<number, GitLineKind> = Object.freeze({
+    size: copy.size,
+    get: (line: number) => copy.get(line),
+    has: (line: number) => copy.has(line),
+    entries: () => copy.entries(),
+    keys: () => copy.keys(),
+    values: () => copy.values(),
+    [Symbol.iterator]: () => copy[Symbol.iterator](),
+    forEach: (callback: (kind: GitLineKind, line: number, map: ReadonlyMap<number, GitLineKind>) => void, thisArg?: unknown) => {
+      copy.forEach((kind, line) => { callback.call(thisArg, kind, line, lines) })
+    },
+  })
+  return lines
+}
+
+/** Hook placeholder/failure sentinel, never an authoritative empty Git result. */
+const EMPTY_KINDS = immutableGitLines(new Map())
+const CLEAN_KINDS = immutableGitLines(new Map())
+
+type GitSnapshot = {
+  readonly lines: ReadonlyMap<number, GitLineKind>
+  readonly accuracy: 'head' | 'provisional' | 'unavailable'
+}
+
+const UNAVAILABLE_GIT_SNAPSHOT: GitSnapshot = Object.freeze({ lines: EMPTY_KINDS, accuracy: 'unavailable' })
+
+function gitSnapshot(source: ReadonlyMap<number, GitLineKind>, accuracy: GitSnapshot['accuracy'], previous: GitSnapshot): GitSnapshot {
+  const unchanged = source.size === previous.lines.size
+    && [...source].every(([line, kind]) => previous.lines.get(line) === kind)
+  const lines = unchanged ? previous.lines : immutableGitLines(source)
+  return lines === previous.lines && accuracy === previous.accuracy
+    ? previous
+    : Object.freeze({ lines, accuracy })
+}
 
 /**
  * The changed NEW-side lines of a `git diff` patch, as line number → class.
@@ -108,17 +144,66 @@ export function addedLineKinds(lineCount: number): Map<number, GitLineKind> {
 
 const setGitLineKinds = StateEffect.define<ReadonlyMap<number, GitLineKind>>()
 
-/** The changed lines of the open buffer (empty while the file is clean). */
-const gitLineKindsField = StateField.define<ReadonlyMap<number, GitLineKind>>({
-  create: () => EMPTY_KINDS,
+/** One snapshot shared by the gutter and external editor visuals. */
+const gitLineKindsField = StateField.define<GitSnapshot>({
+  create: () => UNAVAILABLE_GIT_SNAPSHOT,
   update: (value, transaction) => {
     let next = value
+    if (transaction.docChanged) {
+      const mapped = new Map<number, GitLineKind>()
+      const before = transaction.startState.doc
+      const after = transaction.newDoc
+      // Follow the old line's text, not its number. Deleted text must not
+      // lend its marker to an unrelated surviving line.
+      for (const [line, kind] of value.lines) {
+        if (line < 1 || line > before.lines) continue
+        const oldLine = before.line(line)
+        const pos = transaction.changes.mapPos(oldLine.from, 1,
+          oldLine.length === 0 ? MapMode.TrackDel : MapMode.TrackAfter)
+        if (pos !== null) mapped.set(after.lineAt(pos).number, kind)
+      }
+      // Typing is provisional, with no extra diff or status request.
+      transaction.changes.iterChanges((fromA, toA, fromB, toB) => {
+        const first = after.lineAt(fromB)
+        const last = after.lineAt(toB)
+        const wholeLineDeletion = fromB === toB && fromA < toA
+          && fromA === before.lineAt(fromA).from && toA === before.lineAt(toA).from
+        if (wholeLineDeletion) {
+          const anchor = Math.max(1, first.number - 1)
+          if (!mapped.has(anchor)) mapped.set(anchor, 'del')
+          return
+        }
+        // An insertion ending at an old line's start leaves that line alone.
+        const endsBeforeOldLine = toB > fromB && toB === last.from && toA === before.lineAt(toA).from
+        const end = endsBeforeOldLine ? last.number - 1 : last.number
+        for (let line = first.number; line <= end; line += 1) {
+          const insertedLine = fromA === toA && after.line(line).from >= fromB
+            && after.line(line).to < toB
+          const extraLine = line - first.number > before.lineAt(toA).number - before.lineAt(fromA).number
+          const editedAddition = line === first.number && value.lines.get(before.lineAt(fromA).number) === 'add'
+          mapped.set(line, mapped.get(line) === 'add' || editedAddition || insertedLine || extraLine ? 'add' : 'mod')
+        }
+      })
+      next = gitSnapshot(mapped, 'provisional', value)
+    }
+    // Explicit Git results describe the resulting document, even when the
+    // same transaction also edits text. Never promote undo to HEAD accuracy.
     for (const effect of transaction.effects) {
-      if (effect.is(setGitLineKinds)) next = effect.value
+      if (effect.is(setGitLineKinds)) {
+        // A missing/failed answer cannot erase edits already mapped locally.
+        next = effect.value === EMPTY_KINDS
+          ? next.accuracy === 'provisional' ? next : UNAVAILABLE_GIT_SNAPSHOT
+          : gitSnapshot(effect.value, 'head', next)
+      }
     }
     return next
   },
 })
+
+/** Pure read of this state's exact gutter map; absent Git has a stable answer. */
+export function editorGitSnapshot(state: EditorState): GitSnapshot {
+  return state.field(gitLineKindsField, false) ?? UNAVAILABLE_GIT_SNAPSHOT
+}
 
 /** Marker carrying the line-number ink; `gutterLineClass` copies its class
  *  onto every gutter element of that line (numbers included). */
@@ -155,9 +240,9 @@ class GitBarMarker extends GutterMarker {
 }
 
 /** The per-line classes of the line-number gutter (one entry per line). */
-const gitLineNumberClasses = gutterLineClass.compute([gitLineKindsField], (state: EditorState) => {
+const gitLineNumberClasses = gutterLineClass.compute(['doc', gitLineKindsField], (state: EditorState) => {
   const ranges = []
-  for (const [line, kind] of state.field(gitLineKindsField)) {
+  for (const [line, kind] of editorGitSnapshot(state).lines) {
     if (line < 1 || line > state.doc.lines) continue
     ranges.push(new GitNumberMarker(kind).range(state.doc.line(line).from))
   }
@@ -168,7 +253,7 @@ const gitLineNumberClasses = gutterLineClass.compute([gitLineKindsField], (state
 const gitBarGutter = gutter({
   class: `${css.editorGitBarGutter ?? ''} ${GIT_BAR_GUTTER_CLASS}`,
   lineMarker: (view, block) => {
-    const kind = view.state.field(gitLineKindsField).get(view.state.doc.lineAt(block.from).number)
+    const kind = editorGitSnapshot(view.state).lines.get(view.state.doc.lineAt(block.from).number)
     return kind === undefined ? null : new GitBarMarker(kind)
   },
   lineMarkerChange: update => update.startState.field(gitLineKindsField) !== update.state.field(gitLineKindsField),
@@ -216,7 +301,9 @@ export function gitGutterExtensions(host: GitGutterHost | null): Extension[] {
   return [gitLineKindsField, gitLineNumberClasses, gitBarGutter, gitGutterTheme, hoverTooltip(source, { hoverTime: 250 })]
 }
 
-/** Push one change set into a live view (no-op without the extensions). */
+/** Push one change set into a live view (no-op without the extensions).
+ * The hook's empty placeholder sentinel means unavailable; an explicit empty
+ * map from a successful Git answer still means HEAD-accurate and clean. */
 export function applyGitLineKinds(view: EditorView, kinds: ReadonlyMap<number, GitLineKind>): void {
   if (!view.state.field(gitLineKindsField, false)) return
   view.dispatch({ effects: setGitLineKinds.of(kinds) })
@@ -338,6 +425,10 @@ export function useEditorGitGutter(options: EditorGitGutterOptions): ReadonlyMap
   const entry = active ? status.statusOf(path) : undefined
   const [kinds, setKinds] = useState<ReadonlyMap<number, GitLineKind>>(EMPTY_KINDS)
   const refresh = status.refresh
+  // Absence from a complete successful repository status is a clean answer;
+  // absence from a pending/failed/non-repository/truncated status is unknown.
+  const unavailable = !active || status.snapshot === null || !status.snapshot.isRepo || status.error
+  const clean = !unavailable && !status.snapshot?.truncated
 
   /**
    * One event-driven re-read when the gutter's question changes: a DIFFERENT
@@ -363,8 +454,8 @@ export function useEditorGitGutter(options: EditorGitGutterOptions): ReadonlyMap
     // the enabled branch would never run and the next hover would be answered
     // with the pre-commit line (the '[Not Committed Yet]' placeholder too).
     forgetBlame(scope.sessionId, path)
-    if (!active || entry === undefined) {
-      setKinds(EMPTY_KINDS)
+    if (unavailable || entry === undefined) {
+      setKinds(clean ? CLEAN_KINDS : EMPTY_KINDS)
       return undefined
     }
     let cancelled = false
@@ -377,7 +468,7 @@ export function useEditorGitGutter(options: EditorGitGutterOptions): ReadonlyMap
       () => { if (!cancelled) setKinds(EMPTY_KINDS) },
     )
     return () => { cancelled = true }
-  }, [active, scope, path, content, revision, entry])
+  }, [scope, path, content, revision, entry, clean, unavailable])
 
   return kinds
 }

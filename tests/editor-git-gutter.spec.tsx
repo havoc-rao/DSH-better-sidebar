@@ -18,9 +18,10 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElement, type ReactNode } from 'react'
+import { createElement, useEffect, type ReactNode } from 'react'
 import { act } from 'react-dom/test-utils'
-import { EditorState } from '@codemirror/state'
+import { EditorState, type StateEffect } from '@codemirror/state'
+import { history, undo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
 import type { GitStatusResult, SessionScope } from '../src/client/api.ts'
 
@@ -47,6 +48,8 @@ import { renderRoot, setupReactAct } from './test-utils.ts'
 import {
   addedLineKinds,
   applyGitLineKinds,
+  editorGitSnapshot,
+  CmGitGutterCompartment,
   forgetBlame,
   GIT_BAR_GUTTER_CLASS,
   GIT_LINE_CLASS,
@@ -57,6 +60,7 @@ import {
   type GitLineKind,
 } from '../src/client/editor-git-gutter.ts'
 import { TextEditor } from '../src/client/TextEditor.tsx'
+import { createEditorExtensionsRegistry } from '../src/client/editor-extensions.ts'
 import { attachLocale } from '../src/client/locales.ts'
 import { invalidateGitStatus } from '../src/client/ui/git-status.ts'
 import { createSidebarStore } from '../src/client/state.ts'
@@ -98,7 +102,7 @@ function patch(path: string, hunks: string): string {
 }
 
 /** The mapping as a sorted array, for readable assertions. */
-function entries(kinds: Map<number, GitLineKind>): Array<[number, GitLineKind]> {
+function entries(kinds: ReadonlyMap<number, GitLineKind>): Array<[number, GitLineKind]> {
   return [...kinds.entries()].sort((left, right) => left[0] - right[0])
 }
 
@@ -188,6 +192,175 @@ describe('git diff → changed lines', () => {
   it('marks every line of an untracked file as added', () => {
     expect(entries(addedLineKinds(3))).toEqual([[1, 'add'], [2, 'add'], [3, 'add']])
     expect(entries(addedLineKinds(0))).toEqual([])
+  })
+})
+
+describe('shared Git snapshot (real CodeMirror transactions)', () => {
+  const host = { scope: { sessionId: 'snapshot', cwd: '/p' }, path: '/p/a.ts' }
+
+  function createView(doc = 'one\ntwo\nthree\nfour') {
+    let effects: readonly StateEffect<unknown>[] = []
+    const view = new EditorView({
+      state: EditorState.create({ doc, extensions: [gitGutterExtensions(host), history()] }),
+      parent: document.body,
+      dispatchTransactions: (transactions, target) => {
+        effects = transactions.flatMap(transaction => transaction.effects)
+        target.update(transactions)
+      },
+    })
+    return { view, effects: () => effects }
+  }
+
+  it('returns stable unavailable snapshots for absent and newly installed fields', () => {
+    const bare = EditorState.create({ doc: 'one' })
+    const absent = editorGitSnapshot(bare)
+    expect(absent).toEqual({ lines: expect.anything(), accuracy: 'unavailable' })
+    expect(absent.lines.size).toBe(0)
+    expect(editorGitSnapshot(bare.update({ changes: { from: 0, insert: 'x' } }).state)).toBe(absent)
+    const compartment = new CmGitGutterCompartment()
+    let state = EditorState.create({ extensions: compartment.of(host) })
+    expect(editorGitSnapshot(state)).toBe(absent)
+    state = state.update({ effects: compartment.reconfigure(null) }).state
+    expect(editorGitSnapshot(state)).toBe(absent)
+  })
+
+  it('publishes immutable authoritative copies and keeps identity on metadata updates', () => {
+    const { view } = createView()
+    try {
+      const input = new Map<number, GitLineKind>([[2, 'mod']])
+      applyGitLineKinds(view, input)
+      const snapshot = editorGitSnapshot(view.state)
+      expect(snapshot.accuracy).toBe('head')
+      expect(entries(snapshot.lines)).toEqual([[2, 'mod']])
+      input.set(3, 'add')
+      expect(entries(snapshot.lines)).toEqual([[2, 'mod']])
+      expect(Object.isFrozen(snapshot)).toBe(true)
+      expect(Object.isFrozen(snapshot.lines)).toBe(true)
+      expect('set' in snapshot.lines).toBe(false)
+      const callback = vi.fn()
+      snapshot.lines.forEach(callback)
+      expect(callback).toHaveBeenCalledWith('mod', 2, snapshot.lines)
+      view.dispatch({ selection: { anchor: 1 } })
+      view.dispatch({})
+      expect(editorGitSnapshot(view.state)).toBe(snapshot)
+      applyGitLineKinds(view, new Map([[2, 'mod']]))
+      expect(editorGitSnapshot(view.state)).toBe(snapshot)
+      view.dispatch({ changes: { from: view.state.doc.line(2).from + 1, insert: 'x' } })
+      expect(editorGitSnapshot(view.state).accuracy).toBe('provisional')
+      expect(editorGitSnapshot(view.state).lines).toBe(snapshot.lines)
+      applyGitLineKinds(view, new Map())
+      expect(editorGitSnapshot(view.state).accuracy).toBe('head')
+      expect(editorGitSnapshot(view.state).lines.size).toBe(0)
+    } finally { view.destroy() }
+  })
+
+  it('maps insertion and gutter ink in the same transaction without mutating old snapshots', () => {
+    const { view } = createView()
+    try {
+      applyGitLineKinds(view, new Map([[2, 'mod'], [4, 'add']]))
+      const before = editorGitSnapshot(view.state)
+      const startState = view.state
+      const transaction = startState.update({ changes: { from: startState.doc.line(2).from, insert: 'inserted\n' } })
+      // No React effect or follow-up dispatch is needed to read the mapped map.
+      const mapped = editorGitSnapshot(transaction.state)
+      expect(mapped.accuracy).toBe('provisional')
+      expect(entries(mapped.lines)).toEqual([[2, 'add'], [3, 'mod'], [5, 'add']])
+      view.dispatch(transaction)
+      expect(editorGitSnapshot(view.state)).toBe(mapped)
+      expect(view.dom.querySelectorAll(`.${GIT_LINE_CLASS.mod}`)).not.toHaveLength(0)
+      expect(entries(before.lines)).toEqual([[2, 'mod'], [4, 'add']])
+      expect(editorGitSnapshot(startState)).toBe(before)
+      expect(gitDiffHead).not.toHaveBeenCalled()
+      expect(gitStatus).not.toHaveBeenCalled()
+    } finally { view.destroy() }
+  })
+
+  it('drops deleted text markers, shifts surviving markers and anchors whole-line deletion', () => {
+    const { view } = createView()
+    try {
+      applyGitLineKinds(view, new Map([[2, 'add'], [4, 'mod']]))
+      view.dispatch({ changes: { from: view.state.doc.line(2).from, to: view.state.doc.line(3).from } })
+      expect(editorGitSnapshot(view.state).accuracy).toBe('provisional')
+      expect(entries(editorGitSnapshot(view.state).lines)).toEqual([[1, 'del'], [3, 'mod']])
+      view.dispatch({ changes: { from: 0, to: view.state.doc.line(2).from } })
+      expect(entries(editorGitSnapshot(view.state).lines)).toEqual([[1, 'del'], [2, 'mod']])
+    } finally { view.destroy() }
+  })
+
+  it('keeps edits of additions added and undo provisional until an explicit Git effect', () => {
+    const { view, effects } = createView()
+    try {
+      applyGitLineKinds(view, new Map([[2, 'add']]))
+      const headEffects = effects()
+      view.dispatch({ changes: { from: view.state.doc.line(2).from + 1, insert: 'x' } })
+      expect(editorGitSnapshot(view.state).accuracy).toBe('provisional')
+      expect(entries(editorGitSnapshot(view.state).lines)).toEqual([[2, 'add']])
+      expect(undo(view)).toBe(true)
+      expect(view.state.doc.toString()).toBe('one\ntwo\nthree\nfour')
+      expect(editorGitSnapshot(view.state).accuracy).toBe('provisional')
+      view.dispatch({ changes: { from: 0, insert: 'new\n' }, effects: headEffects })
+      expect(editorGitSnapshot(view.state).accuracy).toBe('head')
+      // The explicit answer already uses resulting-document coordinates.
+      expect(entries(editorGitSnapshot(view.state).lines)).toEqual([[2, 'add']])
+    } finally { view.destroy() }
+  })
+})
+
+describe('hook Git availability accuracy', () => {
+  let latestKinds: ReadonlyMap<number, GitLineKind>
+  function Probe({ view, id }: { view: EditorView; id: string }): ReactNode {
+    const kinds = useEditorGitGutter({
+      enabled: true, visible: true, scope: { sessionId: id, cwd: '/p' },
+      path: '/p/a.ts', content: 'one\ntwo', revision: 0,
+    })
+    latestKinds = kinds
+    useEffect(() => { applyGitLineKinds(view, kinds) }, [view, kinds])
+    return null
+  }
+
+  it.each([
+    { name: 'non-repository', status: { isRepo: false, entries: [] }, accuracy: 'unavailable' },
+    { name: 'clean repository', status: { isRepo: true, root: '/p', entries: [] }, accuracy: 'head' },
+    { name: 'truncated status', status: { isRepo: true, root: '/p', entries: [], truncated: true }, accuracy: 'unavailable' },
+    { name: 'failed status', status: null, accuracy: 'unavailable' },
+    { name: 'failed diff', status: { isRepo: true, root: '/p', entries: [{ path: 'a.ts', xy: ' M' }] }, accuracy: 'unavailable' },
+  ])('does not mistake $name for an authoritative empty diff', async ({ name, status, accuracy }) => {
+    let settleStatus!: (result: GitStatusResult) => void
+    let failStatus!: (error: Error) => void
+    gitStatus.mockReturnValue(new Promise<GitStatusResult>((resolve, reject) => {
+      settleStatus = resolve
+      failStatus = reject
+    }))
+    gitDiffHead.mockRejectedValue(new Error('diff failed'))
+    const view = new EditorView({
+      state: EditorState.create({ doc: 'one\ntwo', extensions: gitGutterExtensions({
+        scope: { sessionId: `availability-${name}`, cwd: '/p' }, path: '/p/a.ts',
+      }) }),
+      parent: document.body,
+    })
+    const mounted = renderRoot(createElement(Probe, { view, id: `availability-${name}` }))
+    try {
+      // The hook's first EMPTY_KINDS publication must remain unavailable.
+      expect(editorGitSnapshot(view.state).accuracy).toBe('unavailable')
+      await act(async () => {
+        if (status === null) failStatus(new Error('status failed'))
+        else settleStatus(status)
+        for (let round = 0; round < 8; round += 1) await Promise.resolve()
+      })
+      expect(editorGitSnapshot(view.state).accuracy).toBe(accuracy)
+      expect(editorGitSnapshot(view.state).lines.size).toBe(0)
+      expect(gitDiffHead).toHaveBeenCalledTimes(name === 'failed diff' ? 1 : 0)
+      if (name === 'failed diff') {
+        view.dispatch({ changes: { from: 0, insert: 'local\n' } })
+        const provisional = editorGitSnapshot(view.state)
+        applyGitLineKinds(view, latestKinds)
+        expect(editorGitSnapshot(view.state)).toBe(provisional)
+        expect(provisional.accuracy).toBe('provisional')
+      }
+    } finally {
+      mounted.unmount()
+      view.destroy()
+    }
   })
 })
 
@@ -304,6 +477,33 @@ describe('TextEditor wiring (code viewer only, one switch)', () => {
       for (let round = 0; round < 5; round += 1) await Promise.resolve()
     })
   }
+
+  it('binds real TextEditor views and publishes visibility without recreating the buffer', async () => {
+    const editorExtensions = createEditorExtensionsRegistry()
+    const owner = new AbortController()
+    const snapshots: boolean[] = []
+    let generation = ''
+    editorExtensions.register(owner.signal, { id: 'wiring', create(context) {
+      generation = context.getSnapshot().document.generation
+      return context.runtime.ViewPlugin.fromClass(class {
+        constructor() { snapshots.push(context.getSnapshot().visible) }
+        update() { snapshots.push(context.getSnapshot().visible) }
+      })
+    } })
+    const props = viewerProps({ ctx: { betterSidebar: { editorExtensions } } as unknown as FileViewerProps['ctx'] })
+    const mounted = renderRoot(createElement(TextEditor, props))
+    try {
+      await flushStatus()
+      expect(generation).not.toBe('')
+      expect(snapshots).toContain(true)
+      const dom = mounted.container.querySelector('.cm-editor')
+      act(() => { mounted.root.render(createElement(TextEditor, { ...props, visible: false })) })
+      await flushStatus()
+      expect(snapshots.at(-1)).toBe(false)
+      expect(mounted.container.querySelector('.cm-editor')).toBe(dom)
+      owner.abort()
+    } finally { mounted.unmount(); editorExtensions.dispose() }
+  })
 
   it('never prefetches blame for the mounted code view (hover is the only trigger)', async () => {
     gitStatus.mockResolvedValue(MODIFIED_COMMITTED)
