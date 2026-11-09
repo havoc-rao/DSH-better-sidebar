@@ -1,5 +1,5 @@
 /** Workspace-local UI terminals. Deliberately separate from session/tab legacy PTYs. */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import type { IPty } from 'node-pty'
@@ -57,6 +57,10 @@ interface Handle {
   promptAt?: number
   integrationReason?: string
   hookState?: 'busy' | 'awaiting-prompt' | 'idle'
+  /** A direct shell -c process, never an idle interactive shell to reclaim/reuse. */
+  commandProcess?: boolean
+  /** Bounded with this retained terminal; removed by terminate/prune/dispose. */
+  operation?: { id: string; fingerprint: string }
 }
 export interface WorkspaceTerminalLifecycleOptions {
   now?: () => number
@@ -103,6 +107,9 @@ export async function resolveTerminalWorkspace(ctx: Context, sessionId: string):
 
 export class WorkspaceTerminalManager {
   private readonly terminals = new Map<string, Handle>()
+  /** Admission ledger prevents terminated operations from replaying within the
+   * token validity window. Expired tokens are rejected, never run again. */
+  private readonly runOperations = new Map<string, number>()
   private readonly locks = new Map<string, Promise<unknown>>()
   private readonly now: () => number
   private readonly probe: (pid: number, promptProven?: boolean) => Promise<TerminalActivityResult>
@@ -166,6 +173,73 @@ export class WorkspaceTerminalManager {
   private hooksValid(handle: Handle): boolean { return !!handle.integration && !handle.integrationReason && !!handle.hookState }
 
   create(workspace: LocalTerminalWorkspace, sessionId: string, title?: string, shell = this.shell, args: string[] = [], shellIntegration = false): WorkspaceTerminalInfo {
+    return this.spawn(workspace, sessionId, title, shell, args, shellIntegration)
+  }
+
+  /** Explicit execution always allocates a new process; command is argv, never PTY input. */
+  run(workspace: LocalTerminalWorkspace, sessionId: string, command: string, title?: string, shell = this.shell, args: string[] = [], operationId?: string): WorkspaceTerminalInfo {
+    if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
+    let operation: Handle['operation']
+    let operationKey: string | undefined
+    let operationExpiresAt = 0
+    if (operationId !== undefined) {
+      const match = /^(\d{1,16}):([\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})$/i.exec(operationId)
+      if (!match || !Number.isSafeInteger(Number(match[1]))) {
+        throw new SidebarError('bad-request', 'operationId must be timestamp:UUID', 400)
+      }
+      operation = { id: operationId, fingerprint: createHash('sha256').update(JSON.stringify([command, title ?? null])).digest('hex') }
+      operationKey = JSON.stringify([workspace.key, sessionId, operationId])
+      this.pruneExited()
+      const existing = [...this.terminals.values()].find(handle => handle.workspaceKey === workspace.key
+        && handle.info.createdBySessionId === sessionId && handle.operation?.id === operationId)
+      if (existing) {
+        if (existing.operation!.fingerprint !== operation.fingerprint) {
+          throw new SidebarError('conflict', 'operationId already used with a different command or title', 409)
+        }
+        return { ...existing.info }
+      }
+      const now = this.now(), issuedAt = Number(match[1])
+      if (issuedAt > now + 60_000 || now - issuedAt >= EXIT_RETENTION) {
+        throw new SidebarError('conflict', 'operationId expired or clock invalid; execution was not repeated', 409)
+      }
+      for (const [key, expiresAt] of this.runOperations) if (expiresAt <= now) this.runOperations.delete(key)
+      if (this.runOperations.has(operationKey)) {
+        throw new SidebarError('conflict', 'operation terminal is no longer retained; execution was not repeated', 409)
+      }
+      if (this.runOperations.size >= this.maxGlobal * 4) {
+        throw new SidebarError('pty-error', 'terminal-operation-history-limit: retry later with a new operation', 400)
+      }
+      operationExpiresAt = issuedAt + EXIT_RETENTION
+    }
+    if (!command.trim() || command.includes('\0') || Buffer.byteLength(command, 'utf8') > 32 * 1024) {
+      throw new SidebarError('bad-request', 'command must be non-empty, NUL-free and at most 32768 UTF-8 bytes', 400)
+    }
+    // node-pty's Windows backend serializes argv into a CreateProcess command
+    // line. cmd /c and PowerShell -Command have different parsing/quoting from
+    // POSIX -c; do not guess or fall back to writing into an interactive shell.
+    if (process.platform === 'win32') {
+      throw new SidebarError('pty-error', 'terminal-run-unsupported: direct command execution is not supported on Windows', 400)
+    }
+    const executable = resolveShellExecutable(shell)
+    if (!/^(?:sh|bash|zsh|dash|ash|ksh|ksh93|mksh|fish)$/.test(shellDisplayName(executable))) {
+      throw new SidebarError('pty-error', 'terminal-run-unsupported: configured shell has no supported -c command contract', 400)
+    }
+    // Login / rc configuration is preserved, but interactive, stdin, script and
+    // existing command modes could consume/alter the command argument. Reject
+    // ambiguous configurations rather than silently overriding them.
+    const startup = shellSpawnArgs(args)
+    if (startup.some(arg => !/^(?:-[lrf]+|--login|--norc|--noprofile|--no-config)$/.test(arg))) {
+      throw new SidebarError('pty-error', 'terminal-run-unsupported: shell arguments must be non-interactive startup flags (-l, -r, -f, --login, --norc, --noprofile, --no-config)', 400)
+    }
+    if (operationKey !== undefined) this.runOperations.set(operationKey, operationExpiresAt)
+    try { return this.spawn(workspace, sessionId, title, executable, [...startup, '-c', command], false, true, operation) }
+    catch (error) {
+      if (operationKey !== undefined) this.runOperations.delete(operationKey)
+      throw error
+    }
+  }
+
+  private spawn(workspace: LocalTerminalWorkspace, sessionId: string, title: string | undefined, shell: string, args: string[], shellIntegration: boolean, commandProcess = false, operation?: Handle['operation']): WorkspaceTerminalInfo {
     if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
     // Synchronous create remains compatible; expired exited records need no process probe.
     this.pruneExited()
@@ -201,10 +275,11 @@ export class WorkspaceTerminalManager {
     const info: WorkspaceTerminalInfo = {
       terminalId: `terminal:${randomUUID()}`, title: title ?? shellDisplayName(shell), cwd: workspace.cwd,
       createdBySessionId: sessionId, createdAt: this.now(), exited: false,
-      activity: 'unknown', activityReason: integrationReason ?? (integration ? 'shell-integration-awaiting-prompt' : 'not-yet-probed'), attachedViews: 0, pinned: false,
+      activity: commandProcess ? 'busy' : 'unknown', activityReason: commandProcess ? 'command-process-running' : integrationReason ?? (integration ? 'shell-integration-awaiting-prompt' : 'not-yet-probed'), attachedViews: 0, pinned: false,
+      ...(commandProcess ? { commandStartedAt: this.now() } : {}),
     }
     const handle: Handle = { info, workspaceKey: workspace.key, pty, output: Buffer.alloc(0), cursor: 0, sockets: new Set(), disposers: [], revision: 0,
-      integration, integrationReason, parser: integration ? new ZshMarkerParser(integration.token) : undefined }
+      integration, integrationReason, commandProcess, operation, parser: integration ? new ZshMarkerParser(integration.token) : undefined }
     this.terminals.set(info.terminalId, handle)
     handle.disposers.push(pty.onData(data => {
       if (!handle.parser) { this.append(handle, data); return }
@@ -253,6 +328,11 @@ export class WorkspaceTerminalManager {
       info.activity = 'exited'
       info.activityReason = 'process-exited'
       info.exitCode = exitCode
+      if (commandProcess) {
+        info.commandFinishedAt = info.exitedAt
+        info.commandExitCode = exitCode
+        info.commandDurationMs = Math.max(0, info.exitedAt - info.commandStartedAt!)
+      }
       integration?.dispose()
       this.append(handle, `\r\n[process exited with code ${exitCode}]\r\n`)
       for (const socket of handle.sockets) socket.close(1000, 'terminal-exited')
@@ -271,7 +351,7 @@ export class WorkspaceTerminalManager {
   async ensure(workspace: LocalTerminalWorkspace, sessionId: string, shell = this.shell, args: string[] = [], shellIntegration = false): Promise<WorkspaceTerminalInfo> {
     return this.serial(workspace.key, async () => {
       if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
-      const handles = () => [...this.terminals.values()].filter(h => h.workspaceKey === workspace.key && !h.info.exited)
+      const handles = () => [...this.terminals.values()].filter(h => h.workspaceKey === workspace.key && !h.info.exited && !h.commandProcess)
       const live = handles()
       const existing = live.find(h => h.reservedBy === sessionId)
         ?? live.find(h => h.info.createdBySessionId === sessionId)
@@ -315,7 +395,7 @@ export class WorkspaceTerminalManager {
   }
 
   private async refresh(handle: Handle): Promise<boolean> {
-    if (this.disposed || handle.info.exited) return false
+    if (this.disposed || handle.info.exited || handle.commandProcess) return false
     const revision = handle.revision
     const generation = (handle.probeGeneration ?? 0) + 1
     handle.probeGeneration = generation
@@ -447,7 +527,7 @@ export class WorkspaceTerminalManager {
         handle.idleSince = undefined
         handle.promptAt = undefined
         handle.info.lastInputAt = this.now()
-        if (!this.hooksValid(handle)) {
+        if (!handle.commandProcess && !this.hooksValid(handle)) {
           delete handle.info.runningCommands
           handle.info.activity = 'unknown'
           handle.info.activityReason = 'input-since-probe'
@@ -463,7 +543,7 @@ export class WorkspaceTerminalManager {
     handle.idleSince = undefined
     handle.promptAt = undefined
     handle.info.lastOutputAt = this.now()
-    if (!handle.info.exited && !this.hooksValid(handle)) {
+    if (!handle.info.exited && !handle.commandProcess && !this.hooksValid(handle)) {
       delete handle.info.runningCommands
       handle.info.activity = 'unknown'
       handle.info.activityReason = 'output-since-probe'
@@ -490,6 +570,7 @@ export class WorkspaceTerminalManager {
       state.listeners.clear()
     }
     this.subscriptions.clear()
+    this.runOperations.clear()
     for (const [id, handle] of this.terminals) this.terminate({ key: handle.workspaceKey, cwd: handle.info.cwd }, id)
   }
 }
@@ -501,6 +582,24 @@ export function buildWorkspaceTerminalApi(ctx: Context, manager: WorkspaceTermin
     return { sessionId, workspace: await resolveTerminalWorkspace(ctx, sessionId) }
   }
   return {
+    'workspace-terminal.run': async (payload: unknown) => {
+      const command = requireString(payload, 'command')
+      const raw = payload as { title?: unknown; cwd?: unknown; operationId?: unknown }
+      if (Object.prototype.hasOwnProperty.call(raw, 'cwd')) {
+        throw new SidebarError('bad-request', 'cwd is not accepted; workspace comes from the session header', 400)
+      }
+      if (raw.title !== undefined && (typeof raw.title !== 'string' || raw.title.length > 256 || raw.title.includes('\0'))) {
+        throw new SidebarError('bad-request', 'title must be a NUL-free string of at most 256 characters', 400)
+      }
+      if (raw.operationId !== undefined && typeof raw.operationId !== 'string') {
+        throw new SidebarError('bad-request', 'operationId must be timestamp:UUID', 400)
+      }
+      const { sessionId, workspace } = await workspaceOf(payload)
+      if (!manager) throw new SidebarError('pty-error', 'pty-deps-missing', 503)
+      const config = overrides()
+      // No ensure/acquire or interactive input, including when other PTYs are busy.
+      return manager.run(workspace, sessionId, command, raw.title as string | undefined, config.shell, config.shellArgs, raw.operationId as string | undefined)
+    },
     'workspace-terminal.create': async (payload: unknown) => {
       const { sessionId, workspace } = await workspaceOf(payload)
       if (!manager) throw new SidebarError('pty-error', 'pty-deps-missing', 503)

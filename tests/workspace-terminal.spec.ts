@@ -394,6 +394,11 @@ it('mounted POST API inherits trust fence and validates workspace on create/list
   try {
     expect((await invoke('workspace-terminal.create', { sessionId: 'a' }, 'evil.test')).status).toBe(403)
     expect(mock.spawn).not.toHaveBeenCalled()
+    expect((await invoke('workspace-terminal.run', { sessionId: 'a', command: 'echo safe' }, 'evil.test')).status).toBe(403)
+    expect(mock.spawn).not.toHaveBeenCalled()
+    expect((await invoke('workspace-terminal.run', { sessionId: 'a', command: 'pwd', cwd: foreign })).status).toBe(400)
+    expect((await invoke('workspace-terminal.run', { sessionId: 'missing', command: 'pwd' })).status).toBe(400)
+    expect(mock.spawn).not.toHaveBeenCalled()
     const created = await invoke('workspace-terminal.create', { sessionId: 'a', title: 'UI', cwd: foreign })
     expect(created.status).toBe(200)
     const info = created.body.value
@@ -409,5 +414,15 @@ it('mounted POST API inherits trust fence and validates workspace on create/list
     expect((await invoke('workspace-terminal.cleanup', { sessionId: 'b' })).body.value).toEqual({ removed: 0 })
     expect((await invoke('workspace-terminal.terminate', { sessionId: 'foreign', terminalId: info.terminalId })).status).toBe(403)
     expect((await invoke('workspace-terminal.terminate', { sessionId: 'b', terminalId: info.terminalId })).body.value).toEqual({ ok: true })
+    const command = 'printf "mounted command\\n"'
+    const run = await invoke('workspace-terminal.run', { sessionId: 'a', command })
+    if (process.platform === 'win32') {
+      expect(run.status).toBe(400)
+      expect(run.body.error.message).toContain('not supported on Windows')
+    } else {
+      expect(run.status).toBe(200)
+      expect(run.body.value).toMatchObject({ cwd, createdBySessionId: 'a', activity: 'busy' })
+      expect(mock.spawn.mock.calls.at(-1)![1]).toEqual(expect.arrayContaining(['-c', command]))
+    }
   } finally { cleanup.forEach(f => f()) }
 })
