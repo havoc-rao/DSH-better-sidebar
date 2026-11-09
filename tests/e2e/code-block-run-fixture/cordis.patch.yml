@@ -1,0 +1,3 @@
+- insert:
+    - id: fixture-code-block-run
+      name: dsh-e2e-code-block-run-fixture

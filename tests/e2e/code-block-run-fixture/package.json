@@ -1,0 +1,7 @@
+{
+  "name": "dsh-e2e-code-block-run-fixture",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "index.mjs",
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

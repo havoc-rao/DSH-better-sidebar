@@ -68,6 +68,12 @@ trap e2e_cleanup EXIT
 PROFILE_DIR="$DSH_HOME/profiles/web"
 e2e_write_profile "$PROFILE_DIR"
 
+# Optional deterministic chat fixture for the Run action lane; scratch profile only.
+if [ -n "${CODE_BLOCK_RUN_FIXTURE:-}" ]; then
+  say "安装代码块 Run 专项数据 fixture（仅 scratch profile）"
+  $DSH_CMD plugin --profile web add "file:$ROOT/tests/e2e/code-block-run-fixture"
+fi
+
 # 步骤 2：官方 CLI 安装 tarball + bundle 协调（真实挂载路径）
 say "执行 dsh plugin --profile web add file:$TARBALL ..."
 $DSH_CMD plugin --profile web add "file:$TARBALL"
