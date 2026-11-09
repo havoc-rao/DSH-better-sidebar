@@ -783,6 +783,32 @@ describe('SideChatView queue, echo and model picker', () => {
     unmount()
   })
 
+  it.each(['metaKey', 'ctrlKey'] as const)('leaves %s+Alt+Enter to the host instead of sending a side chat', async modifier => {
+    eventsValue = EARLY_EVENTS
+    promptHold = new Promise<void>(() => {})
+    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
+    await act(async () => {})
+    act(() => { typeComposer(container, 'keep this draft') })
+    const input = container.querySelector<HTMLTextAreaElement>('textarea')!
+    const observed = vi.fn()
+    window.addEventListener('keydown', observed)
+    try {
+      const event = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', [modifier]: true, altKey: true, bubbles: true, cancelable: true })
+      await act(async () => { input.dispatchEvent(event) })
+      expect(event.defaultPrevented).toBe(false)
+      expect(observed).toHaveBeenCalledOnce()
+      expect(input.value).toBe('keep this draft')
+      expect(container.textContent ?? '').not.toContain('发送中…')
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      await act(async () => { input.dispatchEvent(enter) })
+      expect(enter.defaultPrevented).toBe(true)
+      expect(container.textContent ?? '').toContain('发送中…')
+    } finally {
+      window.removeEventListener('keydown', observed)
+      unmount()
+    }
+  })
+
   it('echoes a sent message immediately, with the busy send button and the thinking spinner', async () => {
     // Nothing has been produced yet: the spinner must appear on its own.
     eventsValue = EARLY_EVENTS

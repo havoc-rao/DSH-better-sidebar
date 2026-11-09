@@ -861,7 +861,7 @@ function EditorPathInput(props: { path: string; cwd: string | undefined; onOpen:
       spellCheck={false}
       onChange={(event) => { setValue(event.target.value) }}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') {
+        if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
           event.preventDefault()
           commit()
         } else if (event.key === 'Escape') {

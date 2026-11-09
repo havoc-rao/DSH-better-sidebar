@@ -11,6 +11,32 @@ import { setupReactAct } from './test-utils.ts'
 setupReactAct()
 
 describe('DiffRows inline syntax rendering', () => {
+  it.each(['metaKey', 'ctrlKey'] as const)('does not open a diff row for %s+Alt+Enter', modifier => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const onOpenRow = vi.fn()
+    const received = vi.fn()
+    window.addEventListener('keydown', received)
+    try {
+      act(() => { root.render(createElement(DiffRows, {
+        segments: [{ kind: 'hunk', rows: [{ kind: 'add', newLine: 1, text: 'added' }] }], onOpenRow,
+      })) })
+      const row = container.querySelector<HTMLElement>('[data-kind="add"]')!
+      const fullscreen = new KeyboardEvent('keydown', { key: 'Enter', [modifier]: true, altKey: true, bubbles: true, cancelable: true })
+      act(() => { row.dispatchEvent(fullscreen) })
+      expect(fullscreen.defaultPrevented).toBe(false)
+      expect(received).toHaveBeenCalledOnce()
+      expect(onOpenRow).not.toHaveBeenCalled()
+      act(() => { row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) })
+      expect(onOpenRow).toHaveBeenCalledExactlyOnceWith(1)
+    } finally {
+      window.removeEventListener('keydown', received)
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
   it.each([
     {
       name: 'colored tokens around a changed number',

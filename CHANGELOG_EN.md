@@ -6,6 +6,8 @@
 
 ### Unreleased
 
+- **Keep sidebar fullscreen shortcuts reachable inside tabs**: file/Git rows, tasks, diffs and path inputs only consume their own plain Enter/Space gestures. Modified combinations remain available to the host; Cmd/Ctrl+Alt+Enter no longer opens files, toggles folders, sends side chats or commits Git changes accidentally. Plain Enter and the commit shortcut retain their normal behavior.
+
 - **Independent editor visuals integration**: the new `editorExtensions:v1` bridge lets `dsh-editor-visuals` provide a minimap and subtle Git line backgrounds without duplicating rendering inside better-sidebar. The host supplies the exact CodeMirror runtime, visibility and shared Git line snapshots; registration and removal preserve editor state and add no Git polling. Install the consumer plugin separately; without it the editor remains unchanged.
 
 ### v0.30.1

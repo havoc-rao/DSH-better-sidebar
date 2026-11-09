@@ -533,6 +533,23 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const fileRow = pane.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
   await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the plugin's explorer`).toHaveCount(1, { timeout: 30_000 })
 
+  // A focused tree row must leave Primary+Alt+Enter to the host's fullscreen
+  // dispatcher, rather than opening the file and swallowing the key locally.
+  const fullscreenControl = page.locator('[data-sidebar-right-mode]:visible').first()
+  if (await fullscreenControl.getAttribute('aria-keyshortcuts') !== null) {
+    const modeBefore = await fullscreenControl.getAttribute('data-sidebar-right-mode')
+    const fullscreenChord = await page.evaluate(() => /Mac|iPhone|iPad/i.test(navigator.platform) ? 'Meta+Alt+Enter' : 'Control+Alt+Enter')
+    await fileRow.focus()
+    await fileRow.press(fullscreenChord)
+    await expect(fullscreenControl).toHaveAttribute('data-sidebar-right-mode', modeBefore === 'fullscreen' ? 'push' : 'fullscreen')
+    await fileRow.press(fullscreenChord)
+    await expect(fullscreenControl).toHaveAttribute('data-sidebar-right-mode', modeBefore!)
+    console.log('SIDEBAR-FULLSCREEN keyboard round trip verified')
+  } else {
+    test.info().annotations.push({ type: 'fullscreen-shortcut-unavailable', description: 'This host does not advertise the native fullscreen keyboard command; only mount coverage ran.' })
+    console.log('SIDEBAR-FULLSCREEN host has no advertised keyboard command; round trip not exercised')
+  }
+
   // Long names truncate within the narrow panel instead of widening the
   // tree. Reference actions overlay the row without squeezing its label.
   // Verify actual geometry here; jsdom cannot exercise layout.

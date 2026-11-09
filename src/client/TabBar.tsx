@@ -265,7 +265,7 @@ export function TabBar(props: {
                 onActivate(tab.id)
               }}
               onKeyDown={(event) => {
-                if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+                if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || (event.key !== 'Enter' && event.key !== ' ')) return
                 event.preventDefault()
                 onActivate(tab.id)
               }}

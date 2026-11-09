@@ -150,7 +150,7 @@ export function TasksTree(props: TasksTreeProps): ReactNode {
   }, [focusAt, onToggleCollapse])
 
   const activateOnKey = (event: KeyboardEvent, action: () => void): void => {
-    if (event.key === 'Enter' || event.key === ' ') {
+    if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault()
       event.stopPropagation()
       action()

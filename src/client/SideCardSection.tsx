@@ -330,7 +330,7 @@ function TypedRow(props: {
           onChange={event => { setDraft(event.currentTarget.value) }}
           onBlur={commit}
           onKeyDown={event => {
-            if (event.key === 'Enter') event.currentTarget.blur()
+            if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) event.currentTarget.blur()
           }}
         />
         {toggle.unit !== undefined && <span className={css.suffix}>{toggle.unit}</span>}
@@ -363,7 +363,7 @@ function CssDraft(props: {
       onChange={event => { setDraft(event.currentTarget.value) }}
       onBlur={() => { onCommit(draft) }}
       onKeyDown={event => {
-        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) event.currentTarget.blur()
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) event.currentTarget.blur()
       }}
     />
   )
@@ -609,7 +609,7 @@ function PatternsRow(props: {
           spellCheck={false}
           onChange={event => { setDraft(event.currentTarget.value) }}
           onKeyDown={event => {
-            if (event.key === 'Enter') {
+            if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
               event.preventDefault()
               commitAdd()
             }

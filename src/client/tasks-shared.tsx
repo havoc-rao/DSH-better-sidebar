@@ -275,7 +275,7 @@ export function TaskLine(props: {
         props.onOpenTask(primary.id, event.currentTarget)
       }}
       onKeyDown={(event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return
+        if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || (event.key !== 'Enter' && event.key !== ' ')) return
         event.preventDefault()
         event.stopPropagation()
         props.onOpenTask(primary.id, event.currentTarget)

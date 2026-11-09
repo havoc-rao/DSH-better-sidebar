@@ -1305,7 +1305,7 @@ export function GitLens(props: GitLensProps) {
       onClick: toggle,
       onKeyDown: (event) => {
         if (event.target !== event.currentTarget || event.repeat) return
-        if (event.key === 'Enter' || event.key === ' ') {
+        if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'Enter' || event.key === ' ')) {
           event.preventDefault()
           event.stopPropagation()
           toggle()
@@ -1369,7 +1369,7 @@ export function GitLens(props: GitLensProps) {
           openRowMenuAt(node, staged, 0, 0)
           return
         }
-        if (event.key === 'Enter' || event.key === ' ') {
+        if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'Enter' || event.key === ' ')) {
           event.preventDefault()
           event.stopPropagation()
           previewFile(node, staged)
@@ -1542,7 +1542,7 @@ export function GitLens(props: GitLensProps) {
                     onChange={event => { writeDraft(event.currentTarget.value); setActionError(null) }}
                     onKeyDown={event => {
                       if (event.nativeEvent.isComposing) return
-                      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); commit() }
+                      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key === 'Enter') { event.preventDefault(); commit() }
                       if ((event.ctrlKey || event.metaKey) && (event.key === 'g' || event.key === 'G')) {
                         event.preventDefault(); void suggestMessage()
                       }

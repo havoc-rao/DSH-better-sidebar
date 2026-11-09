@@ -35,7 +35,7 @@ export function GitActionBar(props: {
           value={owner.commitMessage} disabled={owner.busy}
           onChange={event => { owner.setCommitMessage(event.target.value) }}
           onKeyDown={event => {
-            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && props.canCommit) {
+            if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key === 'Enter' && props.canCommit) {
               event.preventDefault()
               props.commit()
             }

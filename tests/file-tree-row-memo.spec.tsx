@@ -55,7 +55,7 @@ interface Harness {
   unmount: () => void
 }
 
-async function mountTree(): Promise<Harness> {
+async function mountTree(onToggle = vi.fn(), onOpenFile = vi.fn()): Promise<Harness> {
   const container = document.createElement('div')
   document.body.append(container)
   const root: Root = createRoot(container)
@@ -65,8 +65,8 @@ async function mountTree(): Promise<Harness> {
       cwd: '/tmp',
       expanded: [],
       revealed: [],
-      onToggle: () => {},
-      onOpenFile: () => {},
+      onToggle,
+      onOpenFile,
       onReferenceFile: () => {},
       refreshTick: 0,
       onUploadRequest: () => {},
@@ -105,6 +105,36 @@ afterEach(() => {
 })
 
 describe('FileTree row memoization', () => {
+  it.each([
+    ['file', 'a.ts', 'ctrlKey'],
+    ['file', 'a.ts', 'metaKey'],
+    ['directory', 'sub', 'ctrlKey'],
+    ['directory', 'sub', 'metaKey'],
+  ] as const)('leaves %s row %s %s+Alt+Enter to the host shortcut dispatcher', async (_kind, name, modifier) => {
+    const onToggle = vi.fn()
+    const onOpenFile = vi.fn()
+    harness = await mountTree(onToggle, onOpenFile)
+    const row = rowByName(harness.container, name)
+    act(() => { row.focus() })
+    const received: KeyboardEvent[] = []
+    const captureAtWindow = (event: KeyboardEvent): void => { received.push(event) }
+    window.addEventListener('keydown', captureAtWindow)
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter', code: 'Enter', bubbles: true, cancelable: true,
+      altKey: true, [modifier]: true,
+    })
+    try {
+      act(() => { row.dispatchEvent(event) })
+      expect(received).toEqual([event])
+      expect(event.defaultPrevented).toBe(false)
+      expect(onToggle).not.toHaveBeenCalled()
+      expect(onOpenFile).not.toHaveBeenCalled()
+      expect(harness.container.querySelector('[data-dsh-selected="true"]')).toBeNull()
+    } finally {
+      window.removeEventListener('keydown', captureAtWindow)
+    }
+  })
+
   it('re-renders only the toggled row on a Ctrl+click selection change', async () => {
     harness = await mountTree()
     fileIcons.length = 0

@@ -1576,7 +1576,7 @@ export function SideChatView(props: {
             addImages(files)
           }}
           onKeyDown={event => {
-            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+            if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.nativeEvent.isComposing) return
             event.preventDefault()
             void handleSend()
           }}

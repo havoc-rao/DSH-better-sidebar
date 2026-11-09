@@ -83,6 +83,44 @@ afterEach(() => {
 })
 
 describe('Git action bar common mutations and overflow', () => {
+  it.each(['ctrlKey', 'metaKey'] as const)('leaves %s+Alt+Enter in the commit textarea to host fullscreen', async (modifier) => {
+    mockApi()
+    const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
+    const container = await mount()
+    const input = container.querySelector<HTMLTextAreaElement>('[data-message-box] textarea')!
+    act(() => { input.focus() })
+    const received: KeyboardEvent[] = []
+    const captureAtWindow = (event: KeyboardEvent): void => { received.push(event) }
+    window.addEventListener('keydown', captureAtWindow)
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter', code: 'Enter', [modifier]: true, altKey: true,
+      bubbles: true, cancelable: true,
+    })
+    try {
+      await act(async () => { input.dispatchEvent(event) })
+      await flush()
+      expect(commit).not.toHaveBeenCalled()
+      expect(event.defaultPrevented).toBe(false)
+      expect(received).toEqual([event])
+    } finally {
+      window.removeEventListener('keydown', captureAtWindow)
+    }
+  })
+
+  it('still commits with unmodified Ctrl+Enter in the commit textarea', async () => {
+    mockApi()
+    const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
+    const container = await mount()
+    const input = container.querySelector<HTMLTextAreaElement>('[data-message-box] textarea')!
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter', code: 'Enter', ctrlKey: true, bubbles: true, cancelable: true,
+    })
+    await act(async () => { input.dispatchEvent(event) })
+    await flush()
+    expect(event.defaultPrevented).toBe(true)
+    expect(commit).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'test commit', LINKED)
+  })
+
   it('Push uses the selected linked checkout and the live session scope', async () => {
     mockApi()
     const push = vi.spyOn(api, 'gitPush').mockResolvedValue({ ok: true })

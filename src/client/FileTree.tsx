@@ -308,7 +308,7 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
       onClick={(event) => { actions.activate(event, entry.path, false) }}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         if (event.target !== event.currentTarget || event.repeat || isLikelyImeKey(event.nativeEvent)) return
-        if (event.key === 'Enter' || event.key === ' ') {
+        if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'Enter' || event.key === ' ')) {
           event.preventDefault()
           event.stopPropagation()
           actions.activate(event, entry.path, false)
@@ -407,7 +407,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
       onClick={(event) => { actions.activate(event, entry.path, true, chain) }}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         if (event.target !== event.currentTarget || event.repeat || isLikelyImeKey(event.nativeEvent)) return
-        if (event.key === 'Enter' || event.key === ' ') {
+        if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'Enter' || event.key === ' ')) {
           event.preventDefault()
           event.stopPropagation()
           actions.activate(event, entry.path, true, chain)
@@ -2413,7 +2413,7 @@ if (isDir) {
           setRenaming(prev => prev === null ? prev : { ...prev, value: event.target.value })
         }}
         onKeyDown={(event) => {
-          if (isLikelyImeKey(event)) return
+          if (isLikelyImeKey(event) || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
           if (event.key === 'Enter') {
             event.preventDefault()
             commitRename(renaming?.path ?? entry.path, renaming?.value ?? '', entry.isDir)
@@ -2444,7 +2444,7 @@ if (isDir) {
           setNewFolder(prev => prev === null ? prev : { ...prev, value: event.target.value })
         }}
         onKeyDown={(event) => {
-          if (isLikelyImeKey(event)) return
+          if (isLikelyImeKey(event) || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
           if (event.key === 'Enter') {
             event.preventDefault()
             commitNewFolder(dir, newFolder?.value ?? '')
@@ -2482,7 +2482,7 @@ if (isDir) {
             setNewFile(prev => prev === null ? prev : { ...prev, value: event.target.value })
           }}
           onKeyDown={(event) => {
-            if (isLikelyImeKey(event)) return
+            if (isLikelyImeKey(event) || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
             if (event.key === 'Enter') {
               event.preventDefault()
               commitNewFile(dir, newFile?.value ?? '')
@@ -2774,7 +2774,7 @@ dragging={draggingPath === entry.path}
             )
             return
           }
-          if (event.key === 'Enter' || event.key === ' ') {
+          if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'Enter' || event.key === ' ')) {
             event.preventDefault()
             event.stopPropagation()
             handleActivate(event, entry.path, isDir)

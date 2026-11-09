@@ -196,7 +196,7 @@ export function DiffRows({ segments, lang, resolveFold, onOpenRow }: DiffRowsPro
           }
         } : undefined}
         onKeyDown={openable ? (event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
+          if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'Enter' || event.key === ' ')) {
             event.preventDefault()
             openRow()
           }
