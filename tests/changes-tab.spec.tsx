@@ -258,7 +258,7 @@ describe('ChangesTab', () => {
       const source = readFileSync('src/client/changes/ChangesTab.tsx', 'utf8')
       const sheet = readFileSync('src/client/changes/changes.module.css', 'utf8')
       expect(sheet).not.toContain('wSkVaW_')
-      expect(readFileSync('src/client/changes/ChangesTab.tsx', 'utf8')).not.toContain('wSkVaW_')
+      expect(source).not.toContain('wSkVaW_')
     } finally {
       act(() => { root.unmount() })
       container.remove()
