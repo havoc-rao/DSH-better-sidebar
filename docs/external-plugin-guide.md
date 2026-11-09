@@ -57,6 +57,20 @@
 
 ---
 
+### 编辑器扩展桥接（`editorExtensions:v1`）
+
+`ctx.betterSidebar.editorExtensions` 提供 `{ version: 1, register(owner: AbortSignal, { id, create(context) }): dispose }`。ID 在存活期间唯一，重复注册抛错；owner 已终止则不注册，abort / dispose 幂等卸载。服务卸载清理所有 owner。无消费插件时内置编辑器行为不变。
+
+`create` 只在内置 `TextEditor` 的 regular CodeMirror view 上调用，可异步返回扩展。每个 view / 注册拥有独立 Compartment；卸载、过期异步结果不会重建 editor 或覆盖文档、history、selection、search。大文件 streaming 不创建 CM view；外部自定义 viewer 和 `renderCodeEditor` 不会被隐式注入。
+
+工厂上下文（精确类型见 `src/client/editor-extensions.ts`，从 service 类型入口导出）：
+
+- `runtime`：目标 lazy chunk 同实例的 `EditorView / ViewPlugin / Decoration / StateEffect / StateField / Compartment`。消费包必须使用该 runtime，不另带 CodeMirror 实现，避免 Extension 实例冲突。
+- `getSnapshot()`：稳定不可变快照，包含 `document: {sessionId,cwd,path,generation}`、`visible/readOnly/mode/theme: {id,dark}`。buffer 重建换 generation；隐藏 tab 和 Markdown/HTML/JSONL 的渲染预览不视为源码可见。元数据更新先发布快照再 dispatch 空事务；目前 theme id 表达 dark/light，CSS 皮肤令牌由 DOM 继承。
+- `getGitSnapshot(state)`：纯读同一 gutter field，`{ lines: ReadonlyMap<number,'add'|'mod'|'del'>, accuracy: 'head'|'provisional'|'unavailable' }`。权威 diff 为 head，输入映射为 provisional，无 field 为 unavailable。开关与数据源沿用内置 Git gutter；消费包不另起 Git 请求、diff 或轮询。临时标记不是逐键精确 HEAD diff，后续显式 Git 刷新校正。
+
+独立 `dsh-editor-visuals` 包通过此接口注册 minimap 与 Git 行背景，better-sidebar 本体不包含这两项绘制实现。安装必须单独通过 profile/bundle；仅升级 better-sidebar 不会自动安装消费包。独立包缺桥接时安全 no-op。所有视觉值使用宿主 token，owner 应在 Cordis effect 清理时 abort；动态选项更新先 dispose 再 register。
+
 ## 1. 总览：你能扩展什么
 
 better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：

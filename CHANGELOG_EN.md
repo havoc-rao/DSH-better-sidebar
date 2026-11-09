@@ -4,6 +4,10 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- **Independent editor visuals integration**: the new `editorExtensions:v1` bridge lets `dsh-editor-visuals` provide a minimap and subtle Git line backgrounds without duplicating rendering inside better-sidebar. The host supplies the exact CodeMirror runtime, visibility and shared Git line snapshots; registration and removal preserve editor state and add no Git polling. Install the consumer plugin separately; without it the editor remains unchanged.
+
 ### v0.30.1
 
 - 🎯 **The "Side card" settings row no longer shows two icons**: the plugin still assumed the settings navigation had no icon channel, so it hid the fallback gear with CSS and painted its own glyph. The shell has long since exposed a `settings.section.icon` slot addressed by section id, and it now wraps the nav icon in a span — the stale `> svg:first-child` rule stopped hiding the fallback, so both glyphs rendered side by side. The row now contributes its icon **through the slot**, and the marker + CSS-mask apparatus is gone (along with a document-wide MutationObserver).
