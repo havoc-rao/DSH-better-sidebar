@@ -545,6 +545,8 @@ export const ar: Record<string, string> = {
   codeBlockTitle: 'كتلة التعليمات البرمجية',
   codeBlockWrap: 'التفاف الأسطر',
   codeBlockUnwrap: 'بدون التفاف للأسطر',
+  codeBlockRun: 'تشغيل في طرفية منفصلة',
+  codeBlockStarting: 'جارٍ بدء الطرفية…',
   sideChatBlockWindow: '{shown} من {total} سطرًا',
   sideChatConnDisconnected: 'انقطع الاتصال',
   sideChatConnConnecting: 'جارٍ إعادة الاتصال…',

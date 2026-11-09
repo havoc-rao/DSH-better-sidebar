@@ -544,6 +544,8 @@ export const hi: Record<string, string> = {
   codeBlockTitle: 'कोड ब्लॉक',
   codeBlockWrap: 'पंक्तियाँ लपेटें',
   codeBlockUnwrap: 'पंक्तियाँ न लपेटें',
+  codeBlockRun: 'अलग टर्मिनल में चलाएँ',
+  codeBlockStarting: 'टर्मिनल शुरू हो रहा है…',
   sideChatBlockWindow: 'कुल {total} में से {shown} पंक्तियाँ',
   sideChatConnDisconnected: 'कनेक्शन टूट गया',
   sideChatConnConnecting: 'फिर से कनेक्ट हो रहा है…',

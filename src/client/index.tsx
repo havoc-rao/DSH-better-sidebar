@@ -40,6 +40,7 @@ import { bindGitGraph, unbindGitGraph } from './git-lens-graph.ts'
 import { bindGitSourceSeat, unbindGitSourceSeat } from './git-source.ts'
 import { registerQuoteSource } from './selection-quote.ts'
 import { IconSideCardNav } from './icons.tsx'
+import { CodeBlockRunAction, type CodeBlockRunOwnerProps } from './code-block-run.tsx'
 import type { SettingsSectionIconOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
@@ -636,6 +637,14 @@ export function apply(ctx: Context): void {
       },
       'dsh-better-sidebar: IME composition guard',
     )
+
+    // The host owns code/source/session identity; no DOM discovery or mutation.
+    ctx.slots.inject('markdown.code.actions', () => ctx.slots.register({
+      name: 'markdown.code.actions',
+      id: 'better-sidebar.run',
+      order: 100,
+    }, (props: Omit<CodeBlockRunOwnerProps, 'sessionId'> & { sessionId?: string }) => props.sessionId === undefined
+      ? null : createElement(CodeBlockRunAction, { ...props, sessionId: props.sessionId, store: sidebarStore, ctx })))
 
     // The settings nav icon, contributed through the shell's own slot. The
     // contract addresses an icon by the section id (an unmatched id never

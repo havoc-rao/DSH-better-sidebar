@@ -60,6 +60,28 @@ describe('default terminal acquisition', () => {
     expect(allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)[0]!.meta)
       .toMatchObject({ workspaceTerminalId: 'new' })
   })
+  it.each(['own', 'foreign'] as const)('does not acquire a %s direct command process as a reusable shell', async owner => {
+    const { store, service, sessionId } = fixture()
+    const command = { ...info, terminalId: 'command', createdBySessionId: owner === 'own' ? sessionId : 'other',
+      activity: 'busy' as const, activityReason: 'command-process-running' }
+    vi.spyOn(api, 'workspaceTerminalList').mockResolvedValue({ terminals: [command] })
+    const ensure = vi.spyOn(api, 'workspaceTerminalEnsure').mockResolvedValue(info)
+    await ensureBottomTerminal(store, service, sessionId)
+    expect(ensure).toHaveBeenCalledExactlyOnceWith(sessionId)
+    expect(allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)[0]!.meta)
+      .toMatchObject({ workspaceTerminalId: info.terminalId })
+  })
+  it('prefers an existing interactive shell over the session own direct command process', async () => {
+    const { store, service, sessionId } = fixture()
+    vi.spyOn(api, 'workspaceTerminalList').mockResolvedValue({ terminals: [
+      { ...info, terminalId: 'command', createdBySessionId: sessionId, activityReason: 'command-process-running' }, info,
+    ] })
+    const ensure = vi.spyOn(api, 'workspaceTerminalEnsure')
+    await ensureBottomTerminal(store, service, sessionId)
+    expect(ensure).not.toHaveBeenCalled()
+    expect(allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)[0]!.meta)
+      .toMatchObject({ workspaceTerminalId: info.terminalId })
+  })
   it('never falls back to local on remote ensure errors', async () => {
     const { store, service, sessionId } = fixture()
     const local = vi.spyOn(api, 'workspaceTerminalEnsure')

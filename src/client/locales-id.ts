@@ -542,6 +542,8 @@ export const id: Record<string, string> = {
   codeBlockTitle: 'Blok kode',
   codeBlockWrap: 'Bungkus baris',
   codeBlockUnwrap: 'Jangan bungkus baris',
+  codeBlockRun: 'Jalankan di terminal terpisah',
+  codeBlockStarting: 'Memulai terminal…',
   sideChatBlockWindow: '{shown} dari {total} baris',
   sideChatConnDisconnected: 'Koneksi terputus',
   sideChatConnConnecting: 'Menyambung ulang…',

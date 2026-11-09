@@ -544,6 +544,8 @@ export const tr: Record<string, string> = {
   codeBlockTitle: 'Kod bloğu',
   codeBlockWrap: 'Satırları kaydır',
   codeBlockUnwrap: 'Satırları kaydırma',
+  codeBlockRun: 'Ayrı bir terminalde çalıştır',
+  codeBlockStarting: 'Terminal başlatılıyor…',
   sideChatBlockWindow: '{total} satırdan {shown} satır',
   sideChatConnDisconnected: 'Bağlantı koptu',
   sideChatConnConnecting: 'Yeniden bağlanıyor…',

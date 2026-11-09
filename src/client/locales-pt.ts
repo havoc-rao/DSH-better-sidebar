@@ -527,6 +527,8 @@ export const pt: Record<string, string> = {
   codeBlockTitle: 'Bloco de código',
   codeBlockWrap: 'Quebrar linhas',
   codeBlockUnwrap: 'Não quebrar linhas',
+  codeBlockRun: 'Executar em um terminal separado',
+  codeBlockStarting: 'Iniciando terminal…',
   sideChatBlockWindow: '{shown} de {total} linhas',
   sideChatConnDisconnected: 'Conexão perdida',
   sideChatConnConnecting: 'Reconectando…',

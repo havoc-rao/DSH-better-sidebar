@@ -530,6 +530,8 @@ export const de: Record<string, string> = {
   codeBlockTitle: 'Codeblock',
   codeBlockWrap: 'Zeilen umbrechen',
   codeBlockUnwrap: 'Zeilen nicht umbrechen',
+  codeBlockRun: 'In einem separaten Terminal ausführen',
+  codeBlockStarting: 'Terminal wird gestartet…',
   sideChatBlockWindow: '{shown} von {total} Zeilen',
   sideChatConnDisconnected: 'Verbindung verloren',
   sideChatConnConnecting: 'Verbinde neu…',

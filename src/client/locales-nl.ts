@@ -542,6 +542,8 @@ export const nl: Record<string, string> = {
   codeBlockTitle: 'Codeblok',
   codeBlockWrap: 'Regels afbreken',
   codeBlockUnwrap: 'Regels niet afbreken',
+  codeBlockRun: 'Uitvoeren in een aparte terminal',
+  codeBlockStarting: 'Terminal wordt gestart…',
   sideChatBlockWindow: '{shown} van {total} regels',
   sideChatConnDisconnected: 'Verbinding verbroken',
   sideChatConnConnecting: 'Opnieuw verbinden…',

@@ -541,6 +541,8 @@ export const ja: Record<string, string> = {
   codeBlockTitle: 'コードブロック',
   codeBlockWrap: '折り返しを有効にする',
   codeBlockUnwrap: '折り返しを無効にする',
+  codeBlockRun: '別のターミナルで実行',
+  codeBlockStarting: 'ターミナルを起動中…',
   sideChatBlockWindow: '全 {total} 行中 {shown} 行を表示',
   sideChatConnDisconnected: '接続が切断されました。クリックで再接続',
   sideChatConnConnecting: '再接続中…',

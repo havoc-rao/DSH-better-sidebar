@@ -536,6 +536,8 @@ export const ko: Record<string, string> = {
   codeBlockTitle: '코드 블록',
   codeBlockWrap: '줄 바꿈',
   codeBlockUnwrap: '줄 바꿈 해제',
+  codeBlockRun: '별도 터미널에서 실행',
+  codeBlockStarting: '터미널 시작 중…',
   sideChatBlockWindow: '전체 {total}줄 중 {shown}줄 표시',
   sideChatConnDisconnected: '연결이 끊겼습니다',
   sideChatConnConnecting: '다시 연결 중…',

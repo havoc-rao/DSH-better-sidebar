@@ -101,8 +101,9 @@ export function ensureBottomTerminal(
     // older idle-only acquisition policy. Existing shells never need creation.
     const { terminals } = await binding.source.list()
     if (hasTerminal()) return
-    const info = terminals.find(terminal => !terminal.exited && terminal.createdBySessionId === sessionId)
-      ?? terminals.find(terminal => !terminal.exited)
+    const liveShells = terminals.filter(terminal => !terminal.exited && terminal.activityReason !== 'command-process-running')
+    const info = liveShells.find(terminal => terminal.createdBySessionId === sessionId)
+      ?? liveShells[0]
       ?? await (binding.source.ensure?.() ?? binding.source.create())
     if (hasTerminal()) return
     openWorkspaceTerminal(store, sessionId, info, binding.providerId)

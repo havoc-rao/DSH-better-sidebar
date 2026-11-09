@@ -527,6 +527,8 @@ export const sv: Record<string, string> = {
   codeBlockTitle: 'Kodblock',
   codeBlockWrap: 'Radbrytning',
   codeBlockUnwrap: 'Ingen radbrytning',
+  codeBlockRun: 'Kör i en separat terminal',
+  codeBlockStarting: 'Startar terminal…',
   sideChatBlockWindow: '{shown} av {total} rader',
   sideChatConnDisconnected: 'Anslutningen bröts',
   sideChatConnConnecting: 'Ansluter igen…',

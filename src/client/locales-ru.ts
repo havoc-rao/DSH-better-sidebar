@@ -542,6 +542,8 @@ export const ru: Record<string, string> = {
   codeBlockTitle: 'Блок кода',
   codeBlockWrap: 'Переносить строки',
   codeBlockUnwrap: 'Не переносить строки',
+  codeBlockRun: 'Выполнить в отдельном терминале',
+  codeBlockStarting: 'Запуск терминала…',
   sideChatBlockWindow: '{shown} из {total} строк',
   sideChatConnDisconnected: 'Соединение потеряно',
   sideChatConnConnecting: 'Переподключение…',

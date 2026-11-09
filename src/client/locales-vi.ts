@@ -544,6 +544,8 @@ export const vi: Record<string, string> = {
   codeBlockTitle: 'Khối mã',
   codeBlockWrap: 'Ngắt dòng',
   codeBlockUnwrap: 'Không ngắt dòng',
+  codeBlockRun: 'Chạy trong terminal riêng',
+  codeBlockStarting: 'Đang khởi động terminal…',
   sideChatBlockWindow: '{shown} trong {total} dòng',
   sideChatConnDisconnected: 'Mất kết nối',
   sideChatConnConnecting: 'Đang kết nối lại…',
