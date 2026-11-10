@@ -6,6 +6,8 @@
 
 ### Unreleased
 
+- **Quick-expand single-child folder chains in Files**: explicitly opening a folder continues through levels containing exactly one visible directory, counting files too and waiting for asynchronous listings. Files, multiple entries, empty/truncated listings and load failures stop the walk. Collapsing cancels it; refreshes and background updates never start one. No files are opened automatically, and sorting, selection and directory structure stay unchanged. Symlinked folders are never followed and a chain stops at a safety depth cap, so a self-referential link cannot cause unbounded expansion or a request storm.
+
 - **Prepare a new shell after terminal exit**: visible managed terminals make one automatic Start New attempt through their original backend after confirmed natural exit, without rerunning code blocks or restoring tasks. Creation shows progress; failure exposes a warning and manual retry. The attempt is retained on the tab to prevent loops across remounts. Disconnects, access denial, explicit termination and missing terminals remain manual. The new shell replaces the view; the old command transcript remains in its retained terminal record.
 
 - **Fix local code-block Run being blocked by unrelated remote plugins**: Run checks terminal-provider ownership against the code block's own session and working directory instead of blocking whenever any provider is registered. Matching providers report that code-block execution is unsupported, without falling back to local execution. Ownership and launch failures now emit Console diagnostics without deliberately logging command source.

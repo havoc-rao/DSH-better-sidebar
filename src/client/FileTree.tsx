@@ -8,7 +8,8 @@
  * the refresh affordance — a `refreshTick` bump wipes the level cache so the
  * visible set reloads. Chains of dirs holding exactly one real dir child each
  * fold into one breadcrumb row (`a/b/c`, VSCode "compact folders"); clicking
- * the row toggles the whole chain.
+ * the row toggles the whole chain. Explicit expansion also follows singleton
+ * directory listings after loading, without starting walks on refresh/watch.
  *
  * Selection (VS Code semantics, no modifier = the old click semantics
  * untouched): Ctrl/Cmd+click toggles a row and sets the anchor, Shift+click
@@ -54,7 +55,7 @@ import {
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, SidebarApiError, type FsEntry, type FsLevel, type SessionScope } from './api.ts'
-import { compactChain, compactLoadTargets } from './file-tree-compact.ts'
+import { compactChain, compactLoadTargets, MAX_COMPACT_DEPTH } from './file-tree-compact.ts'
 import { DEFAULT_FILE_TREE_SORT, sortEntries, type FileTreeSort } from './file-tree-sort.ts'
 import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
@@ -96,6 +97,20 @@ interface LevelData {
   error?: string
   /** The host capped this level's listing (a huge directory). */
   truncated?: boolean
+}
+
+/**
+ * One user-initiated quick-expand gesture in flight: the singleton-directory
+ * chain a plain expand walks down, plus the scope/tick/exclude it was armed
+ * under (any change cancels it). Cache arrivals advance the walk; nothing
+ * else starts one.
+ */
+interface QuickExpandWalk {
+  /** Chain so far, head first; grows as singleton directory children appear. */
+  paths: string[]
+  token: object
+  refreshTick: number
+  excludeKey: string
 }
 
 /** Root label: the last path segment (mirror of the host rootLabel). */
@@ -650,7 +665,7 @@ export function FileTree(props: {
     activationTokenRef.current = activationToken
     return () => { if (activationTokenRef.current === activationToken) activationTokenRef.current = {} }
   }, [activationToken])
-  const { onToggle, onReferenceFile } = props
+  const { onReferenceFile } = props
   const fileTreeUi = useFileTreeUi()
   // Framework hover seats are keyed across the whole page, including CMD
   // pickers alongside native/parked explorers. Never share a constant key.
@@ -1553,6 +1568,89 @@ export function FileTree(props: {
       })
   }
 
+  // Quick-expand walks exist ONLY for explicit expand gestures. Cache arrivals
+  // advance a walk, but refresh/watch/reveal never create one. A Map (not one
+  // slot) because two folders can be opened before either listing lands — a
+  // single slot would silently drop the first gesture.
+  const quickExpandRef = useRef(new Map<string, QuickExpandWalk>())
+  const toggleDirectory = useCallback((path: string, chain?: readonly FsEntry[]): void => {
+    const links = chain !== undefined && chain.length > 0 ? chain.map(link => link.path) : [path]
+    const open = links.some(link => expandedSetRef.current.has(link))
+    if (open) {
+      // A collapse cancels only gestures that run THROUGH this chain (or below
+      // it): closing an unrelated folder must not drop a pending walk.
+      for (const [head, walk] of quickExpandRef.current) {
+        if (walk.paths.some(link => links.some(collapsed => isWithinWorkspace(collapsed, link)))) {
+          quickExpandRef.current.delete(head)
+        }
+      }
+    } else {
+      // A re-click on the same head re-arms it: its old paths are stale.
+      quickExpandRef.current.set(path, {
+        paths: [...links],
+        token: activationTokenRef.current,
+        refreshTick: propsRef.current.refreshTick,
+        excludeKey: (propsRef.current.exclude ?? []).join('\0'),
+      })
+    }
+    for (const link of links) {
+      if (expandedSetRef.current.has(link) === open) propsRef.current.onToggle(link)
+    }
+  }, [])
+
+  useEffect(() => {
+    const walks = quickExpandRef.current
+    if (walks.size === 0) return
+    // Two walks may reach the same child in one pass; toggling it twice in the
+    // same render would expand then immediately collapse it.
+    const toggledNow = new Set<string>()
+    for (const [head, walk] of [...walks]) {
+      if (walk.token !== activationToken || walk.refreshTick !== refreshTick
+        || walk.excludeKey !== excludeKey || visible === false || hidden === true
+        || walk.paths.some(path => !expanded.includes(path))) {
+        walks.delete(head)
+        continue
+      }
+      let path = walk.paths[walk.paths.length - 1]!
+      let done = false
+      while (!done) {
+        const level = data[path]
+        // An expanded, unloaded level is fetched by the visible-set loader.
+        // Wait for its answer; no separate request/retry loop is needed here.
+        if (level === undefined || (level.entries === undefined && level.error === undefined)) break
+        if (level.error !== undefined || level.truncated === true) { done = true; break }
+        // Safety valves shared with compact folding (file-tree-compact.ts): a
+        // chain never exceeds the render cap, and a symlink child is never
+        // followed — a self-referential link would mint a NEW path per level,
+        // so the cycle guard below would never trip and the walk would keep
+        // POSTing until the OS path limit.
+        if (walk.paths.length >= MAX_COMPACT_DEPTH) { done = true; break }
+        // Use the SAME visible entries as the tree: exclusions already happened
+        // at the source; picker filtering hides only nonmatching files.
+        const picker = propsRef.current.picker
+        const entries = (level.entries ?? []).filter(entry => picker === undefined || entry.isDir
+          || entry.path.toLocaleLowerCase().includes(picker.query.trim().toLocaleLowerCase()))
+        const child = entries.length === 1 ? entries[0] : undefined
+        if (child === undefined || !child.isDir || child.isSymlink === true || child.broken === true
+          || walk.paths.includes(child.path)) {
+          done = true
+          break
+        }
+        walk.paths.push(child.path)
+        if (!expanded.includes(child.path)) {
+          if (!toggledNow.has(child.path)) {
+            toggledNow.add(child.path)
+            propsRef.current.onToggle(child.path)
+          }
+          // Wait for the controlled `expanded` to come back, then continue.
+          break
+        }
+        path = child.path
+      }
+      if (done) walks.delete(head)
+    }
+  }, [data, expanded, activationToken, refreshTick, excludeKey, visible, hidden])
+
   // ── Stable row actions ─────────────────────────────────────────────────
   const handleActivate = useCallback((event: ActivateModifiers, path: string, isDir: boolean, chain?: readonly FsEntry[]): void => {
     const picker = propsRef.current.picker
@@ -1564,7 +1662,7 @@ export function FileTree(props: {
         queueMicrotask(() => { acceptPending.current = false })
       }
       picker.onSelect(path, isDir)
-      if (isDir) propsRef.current.onToggle(path)
+      if (isDir) toggleDirectory(path)
       else if (event.key === 'Enter') picker.onAccept(path, false)
       return
     }
@@ -1582,15 +1680,9 @@ export function FileTree(props: {
     }
     // Plain click: the original semantics, plus dropping any selection.
     clearSelection()
-if (isDir) {
-      // A folded row toggles the WHOLE chain: expanding every link is what makes
-      // the tail's children render, and collapsing every link is the only way to
-      // close a chain an earlier expansion (before the fold formed) left open.
-      const links = chain !== undefined && chain.length > 0 ? chain.map(link => link.path) : [path]
-      const open = links.some(link => expandedSetRef.current.has(link))
-      for (const link of links) {
-        if (expandedSetRef.current.has(link) === open) propsRef.current.onToggle(link)
-      }
+    if (isDir) {
+      // Keep compact-folder collapse semantics; only an expand starts a walk.
+      toggleDirectory(path, chain)
     } else {
       const live = propsRef.current
       if (live.service?.dispatchFileActivation === undefined) { live.onOpenFile(path); return }
@@ -1615,7 +1707,7 @@ if (isDir) {
         }
       })()
     }
-  }, [clearSelection, selectRange, toggleSelect])
+  }, [clearSelection, selectRange, toggleSelect, toggleDirectory])
 
   const handleContextMenu = useCallback((event: { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void }, path: string, isDir: boolean): void => {
     event.preventDefault()
@@ -2322,9 +2414,9 @@ if (isDir) {
     acceptPending.current = true
     queueMicrotask(() => { acceptPending.current = false })
     live.picker.onSelect(selected.path, selected.isDir)
-    if (selected.isDir) live.onToggle(selected.path)
+    if (selected.isDir) toggleDirectory(selected.path)
     else live.picker.onAccept(selected.path, false)
-  }, [])
+  }, [toggleDirectory])
   const bindPicker = picker?.bind
   useEffect(() => {
     if (picker === undefined) return
@@ -2656,7 +2748,7 @@ dragging={draggingPath === entry.path}
   const treeGuideColumns = (ancestors: string[]): GuideColumn[] =>
     ancestors.map((dir, index) => ({
       id: dir,
-      onToggle: index === 0 ? () => {} : () => { if (picker !== undefined) picker.onSelect(dir, true); onToggle(dir) },
+      onToggle: index === 0 ? () => {} : () => { if (picker !== undefined) picker.onSelect(dir, true); toggleDirectory(dir) },
     }))
 
   /** The @-reference affordance (or the transient copied label) for the
@@ -2806,7 +2898,7 @@ dragging={draggingPath === entry.path}
         // renders its loading node inside the fold like the built-in path.
         ...(isDir ? {
           expanded: isOpen,
-          onToggle: () => { if (picker !== undefined) picker.onSelect(entry.path, true); onToggle(entry.path) },
+          onToggle: () => { if (picker !== undefined) picker.onSelect(entry.path, true); toggleDirectory(entry.path) },
           children: buildLevelRows(entry.path, depth + 1, treeRoot),
         } : {}),
       }
