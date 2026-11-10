@@ -4,6 +4,13 @@
 
 ### Unreleased
 
+- **Git 页顶部改成只读的「检出」选择器，切换分支与查看分支彻底分开**：此前顶部 chips 只列容器 workspace 发现的多个仓库根，linked worktree 只能从「更多操作 → 工作树」进入；而底部分支按钮点一下就是 `git checkout`，很容易把「看特性分支的状态」误当成「切过去」。现在同一行同时列出当前仓库的 linked checkouts（分支名，当前项高亮）与多仓库根，点击只重新绑定页面作用域（status / diff / 提交图一起跟进），**不执行 git checkout**；底部分支按钮改为显式的「切换检出」，点分支先弹二次确认，确认后才可能共享分支或贮藏冲突改动。
+  - 影响面：agent-weave 这类把 linked worktree 放在 `tmp/<项目>/branch/<名字>`（cwd 下第 4 层）的布局，不再依赖仓库根发现深度（旧上限为 cwd 下 3 层），选择器直接读 `git worktree list`，多深的 worktree 都能看到。
+  - 🧪 测试：`tests/git-view-worktree.spec.tsx` 新增 1 例（点 chip 只切换查看对象、`gitCheckout` 零调用；分支切换失败改走确认框）；`tests/git-repo-switcher.spec.tsx` 新增 1 例（多仓库根 + 多检出共用一行，两组 chips 各自高亮、点击只换 scope）。
+
+- **Git 切换分支不再被其它工作树占用挡住**：分支菜单是仓库级清单，选中一个已被另一个 worktree 检出的分支时，git 原本会以 `fatal: '<branch>' is already used by worktree at …` 直接失败。确认后的显式切换会带 `--ignore-other-worktrees` 继续执行，两个检出共享同一分支；完成后面板顶部提示对方 checkout 的路径，明确另一个会话的工作树已跟着该分支走。若切换被本地改动挡住（git 报 “Your local changes … would be overwritten”），只把**与目标分支有差异的那些路径**（含未跟踪文件）按 pathspec 贮藏为 `dsh: switch to <branch>` 后继续切换，工作区其余改动不动，面板提示贮藏的文件数并说明 `git stash pop` 可恢复；全程不丢改动。未被占用的分支、无冲突的切换行为不变，其它 git 拒绝（分支不存在、进行中的 merge/rebase 等）仍原样报错。
+  - 🧪 测试：`tests/git-worktree.spec.ts` 新增 2 例（git 自身先拒绝、强制切换后两个检出同为该分支、普通切换不产生 `forcedFrom`；只贮藏与目标分支冲突的路径、无关改动留在工作区、stash 带 `dsh: switch to main` 标记）；`tests/git-scm.spec.tsx` 新增 2 例（提示内容含对方路径并在下一次普通切换后清掉；贮藏提示给出文件数与恢复方式）。
+
 - **Files 快速展开单子目录链**：主动展开目录后，按当前展示的全部条目逐层判断，只有唯一子目录时继续展开；异步目录加载完成后继续，遇文件、多条目、空目录、截断或加载失败即停止。中途收起会取消本次展开，刷新与后台更新不会自行启动；不自动打开文件，也不改变排序、选择或目录结构。软链接目录不跟随、超深单链在安全上限处停止，避免自引用链接造成无界展开与请求风暴。
 
 - **终端退出后自动准备新 shell**：可见受管终端确认自然退出后，自动尝试一次原绑定源的“启动新终端”；不重跑代码块或恢复旧任务。启动中显示进度，失败才展示警告供手动重试；尝试标记随 tab 保留，切换会话或重新挂载不会形成重建循环。普通断线、权限拒绝、明确终止和丢失仍需人工处理。新 shell 替换当前视图，原命令输出仍保留在旧终端记录中。

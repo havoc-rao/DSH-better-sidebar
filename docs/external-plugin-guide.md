@@ -1578,7 +1578,7 @@ if (typeof sidebar?.getWorkspaceTerminalSummary === 'function') {
 }
 ```
 
-- **`gitSource`**：`registerGitProvider(descriptor)`——git 数据源注入槽（lens / 文件树着色 / diff tab 的读与写都经 provider 路由）。
+- **`gitSource`**：`registerGitProvider(descriptor)`——git 数据源注入槽（lens / 文件树着色 / diff tab 的读与写都经 provider 路由）。`gitCheckout` 的返回类型是 `GitCheckoutResult`（`{ ok: true; forcedFrom?: string; stashedFiles?: string[] }`）：`forcedFrom` 只在**该分支已被另一个工作树检出**时出现，表示本次切换按 `--ignore-other-worktrees` 与那个检出共享了分支，值即对方路径；`stashedFiles` 只在**本地改动会阻止切换**时出现，表示宿主已把这些路径（含未跟踪）按 pathspec 贮藏（`dsh: switch to <branch>`）后才完成切换，从未丢弃。provider 返回 `{ ok: true }` 仍然合法（不会产生提示）。
 - **`inspectors` / `resourceActions:v1` / `fileOpenTargets:v1` / `textDocuments:v1` / `strictGitDiff:v1` / `sharedRendering:v1`**：资源 Inspector、资源操作承载面、文件打开认领（`dispatchFileActivation`）、文档数据 API、严格 Git diff、共享渲染接口。
 - **`panelFlags` / `planDiff`**：`getSnapshot()` 的 `bottomOpen` / `panelOpen` 平面字段（dsh-hotkey 契约）与 `openTab({type:'diff', diff:{kind:'proposed',…}})`。
 - **标题栏让位机制保留**（官方已删）：`titleBarScheme` / `titleBarPresetId` / `titleBarCompat` / `titleBarStripPx` + shell-presets / titlebar-strip；`customCss` 在 `custom` 方案下应用。
