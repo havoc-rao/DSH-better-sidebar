@@ -31,7 +31,7 @@
  *   frame schedules a 0-ms close; a park frame marks the pty as parked; a
  *   bare socket drop gets the host's reconnect grace.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -41,7 +41,7 @@ import { ONE_DARK, ONE_LIGHT } from './one-dark-palette.ts'
 import { openWhenSized } from './open-when-sized.ts'
 import { api, type SessionScope, type TerminalDepsStatus } from './api.ts'
 import { sidebarWsUrl } from './ws-url.ts'
-import { agentUuidOf, isAgentTabId, type SidebarStore } from './state.ts'
+import { agentUuidOf, allLeaves, isAgentTabId, patchTab, type SidebarStore } from './state.ts'
 import { isDarkScheme, subscribeColorScheme, effectiveTokenValue, tokenValue } from './theme.ts'
 import { resolveTerminalFont } from './terminal-font.ts'
 import {
@@ -61,7 +61,7 @@ import { TerminalBlockOverlay } from './TerminalBlockOverlay.tsx'
 import type { Context } from '../context-types.ts'
 import { TerminalWaitBanner } from './TerminalWaitBanner.tsx'
 import type { TerminalConnectionState, TerminalTransport, TerminalTransportHandle } from './terminal-transport.ts'
-import { restartWorkspaceTerminal, updateTerminalSession } from './workspace-terminals.ts'
+import { isWorkspaceTerminalRestarting, restartWorkspaceTerminal, updateTerminalSession } from './workspace-terminals.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive unreasoned failures before showing the error banner. */
@@ -160,7 +160,13 @@ export function TerminalView(props: {
   const [accessDenied, setAccessDenied] = useState<string | null>(null)
   const [fatal, setFatal] = useState<string | null>(null)
   const [closedReason, setClosedReason] = useState<'exited' | 'terminated' | 'missing' | null>(null)
-  const [restarting, setRestarting] = useState(false)
+  const subscribeRestart = useCallback((listener: () => void) => store.subscribe(listener), [store])
+  const restartSnapshot = useCallback(() => isWorkspaceTerminalRestarting(store, scope.sessionId, tabId), [store, scope.sessionId, tabId])
+  const sharedRestarting = useSyncExternalStore(subscribeRestart, restartSnapshot, restartSnapshot)
+  const [localRestarting, setRestarting] = useState(false)
+  const restarting = sharedRestarting || localRestarting
+  const errorSnapshot = useCallback(() => store.getSessionStates().get(scope.sessionId)?.workspaceTerminalError, [store, scope.sessionId])
+  const restartError = useSyncExternalStore(subscribeRestart, errorSnapshot, errorSnapshot)
   const restartPending = useRef(false)
   // An async create may outlive this view; only its captured store scope may
   // still be updated, never the state of a new mount/terminal identity.
@@ -260,6 +266,27 @@ export function TerminalView(props: {
       if (mountGeneration.current === generation) setRestarting(false)
     }
   }
+
+  // One automatic replacement per persisted tab, not an exit/create loop.
+  // A hidden view waits until it is visible; uncertain disconnects, missing
+  // terminals and explicit termination still require a user's decision.
+  const autoStartAttempted = useRef(false)
+  const restartRef = useRef(restart)
+  restartRef.current = restart
+  useEffect(() => {
+    if (!visible || closedReason !== 'exited' || accessDenied !== null || terminalId === undefined
+      || (transport !== undefined && workspaceBinding === undefined) || autoStartAttempted.current) return
+    const state = store.getSessionStates().get(scope.sessionId)
+    const tab = state === undefined ? undefined : allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).find(tab => tab.id === tabId)
+    if (tab === undefined || (tab.meta as { terminalAutoStartAttempted?: boolean } | undefined)?.terminalAutoStartAttempted) return
+    autoStartAttempted.current = true
+    // Persist the attempt on the view, surviving session switches/remounts and
+    // failed shell startups. New explicit tabs get their own single attempt.
+    updateTerminalSession(store, scope.sessionId, state => patchTab(state, tabId, {
+      meta: { ...(tab.meta as Record<string, unknown>), terminalAutoStartAttempted: true },
+    }))
+    void restartRef.current()
+  }, [visible, closedReason, accessDenied, terminalId, transport, workspaceBinding, store, scope.sessionId, tabId])
 
   useEffect(() => {
     const generation = ++mountGeneration.current
@@ -693,16 +720,17 @@ export function TerminalView(props: {
       {depsFatal !== null && (
         <TerminalDepsBanner deps={depsFatal} onRetry={() => { setDepsFatal(null); connectRef.current?.() }} />
       )}
-      {closedReason !== null && (
+      {closedReason !== null && !restarting && (
         <div className={css.terminalBanner}>
           {t(closedReason === 'exited' ? 'terminalViewExited' : closedReason === 'terminated' ? 'terminalViewTerminated' : 'terminalViewMissing')}
-          {fatal !== null && <div role="alert">{`${t('terminalError')}: ${fatal}`}</div>}
+          {(fatal ?? restartError) !== undefined && (fatal ?? restartError) !== null && <div role="alert">{`${t('terminalError')}: ${fatal ?? restartError}`}</div>}
           {(terminalId !== undefined && (transport === undefined || workspaceBinding !== undefined)) && <button type="button" className={css.terminalRetry} disabled={restarting}
             onClick={() => { void restart() }}>
             {t('terminalViewStartNew')}
           </button>}
         </div>
       )}
+      {restarting && <div className={css.terminalBanner} role="status">{t('terminalViewCreating')}</div>}
       {accessDenied !== null && (
         <div className={css.terminalBanner} role="alert">
           {t('terminalViewForbidden')}

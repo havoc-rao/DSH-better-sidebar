@@ -440,6 +440,7 @@ describe('workspace terminal client', () => {
     vi.spyOn(api, 'workspaceTerminalCreate').mockImplementation(() => new Promise(done => { resolve = done }))
     const terminate = vi.spyOn(api, 'workspaceTerminalTerminate').mockRejectedValue(new Error('cleanup failed'))
     const pending = restartWorkspaceTerminal(store, 'A', originalId, info.terminalId)
+    await Promise.resolve()
     store.reduce(state => ({ ...state, bottomSplits: { ...allLeaves(state.bottomSplits)[0]!, tabs: tabs(store).map(tab => ({ ...tab, meta: { workspaceTerminalId: 'terminal:other' } })) } }))
     resolve({ ...info, terminalId: 'terminal:orphan' })
     await expect(pending).rejects.toThrow('cleanup failed')

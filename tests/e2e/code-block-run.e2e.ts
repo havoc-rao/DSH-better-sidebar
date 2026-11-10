@@ -23,6 +23,7 @@ test('code-block Run opens an isolated workspace terminal without sending chat',
   const chatWrites: string[] = []
   let terminalOutput = ''
   let terminalId: string | undefined
+  let replacementId: string | undefined
   page.on('pageerror', error => pageErrors.push(String(error)))
   page.on('request', req => {
     const path = new URL(req.url()).pathname
@@ -56,6 +57,7 @@ test('code-block Run opens an isolated workspace terminal without sending chat',
     expect(runRequests).toHaveLength(0)
     const conversation = page.locator('[data-slot="conversation.chat.flow"]').filter({ hasText: 'Run fixture command:' }).first()
     const messagesBefore = await conversation.textContent()
+    const replacementWait = page.waitForResponse(response => new URL(response.url()).pathname === '/sidebar/api/workspace-terminal.create')
     const responseWait = page.waitForResponse(response => new URL(response.url()).pathname === '/sidebar/api/workspace-terminal.run')
     await run.click()
     const response = await responseWait
@@ -76,12 +78,19 @@ test('code-block Run opens an isolated workspace terminal without sending chat',
     await expect.poll(() => terminalOutput, { timeout: 30_000 }).toContain(`RUN_CWD=${realpathSync(WORKSPACE)}`)
     await expect.poll(() => terminalOutput, { timeout: 30_000 }).toContain('RUN_OUTPUT_OK')
     await expect.poll(() => terminalOutput, { timeout: 30_000 }).toContain('[process exited with code 0]')
-    await expect(terminal).toHaveAttribute('data-terminal-state', 'closed')
+    const replacementResponse = await replacementWait
+    const replacementBody = await replacementResponse.json() as { ok: boolean; value: { terminalId: string; cwd: string } }
+    expect(replacementBody).toMatchObject({ ok: true, value: { cwd: realpathSync(WORKSPACE) } })
+    replacementId = replacementBody.value.terminalId
+    expect(replacementId).not.toBe(terminalId)
+    await expect(terminal).toHaveAttribute('data-terminal-state', 'connected')
+    await expect(panel.getByRole('button', { name: /^(Start new terminal|启动新终端)$/ })).toHaveCount(0)
     await expect(conversation).toHaveText(messagesBefore ?? '')
     expect(chatWrites).toEqual([])
     expect(runRequests).toHaveLength(1)
     expect(pageErrors).toEqual([])
   } finally {
+    if (replacementId !== undefined) await api.post(sidebarApi('workspace-terminal.terminate'), { data: { sessionId: SESSION_ID, terminalId: replacementId } })
     if (terminalId !== undefined) await api.post(sidebarApi('workspace-terminal.terminate'), { data: { sessionId: SESSION_ID, terminalId } })
     await api.dispose()
   }

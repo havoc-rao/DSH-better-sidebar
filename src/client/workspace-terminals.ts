@@ -121,7 +121,33 @@ export function ensureBottomTerminal(
  * Creation uses the captured session's authoritative workspace cwd, not shell cwd.
  * If the view disappeared (or was rebound) while creating, release the new pty.
  * Cleanup failures intentionally reject so callers can surface them. */
-export async function restartWorkspaceTerminal(
+const pendingRestarts = new WeakMap<SidebarStore, Map<string, Promise<boolean>>>()
+const restartKey = (sessionId: string, tabId: string) => JSON.stringify([sessionId, tabId])
+export function isWorkspaceTerminalRestarting(store: SidebarStore, sessionId: string, tabId: string): boolean {
+  return pendingRestarts.get(store)?.has(restartKey(sessionId, tabId)) ?? false
+}
+export function restartWorkspaceTerminal(
+  store: SidebarStore, sessionId: string, tabId: string, previousTerminalId: string,
+  binding?: WorkspaceTerminalBinding,
+): Promise<boolean> {
+  let pending = pendingRestarts.get(store)
+  if (pending === undefined) { pending = new Map(); pendingRestarts.set(store, pending) }
+  const key = restartKey(sessionId, tabId)
+  const existing = pending.get(key)
+  if (existing !== undefined) return existing
+  const task = Promise.resolve().then(() => performWorkspaceTerminalRestart(store, sessionId, tabId, previousTerminalId, binding))
+    .catch((error: unknown) => {
+      updateTerminalSession(store, sessionId, state => ({ ...state, workspaceTerminalError: error instanceof Error ? error.message : String(error) }))
+      throw error
+    }).finally(() => {
+      pending.delete(key)
+      updateTerminalSession(store, sessionId, state => ({ ...state }))
+    })
+  pending.set(key, task)
+  updateTerminalSession(store, sessionId, state => ({ ...state, workspaceTerminalError: undefined }))
+  return task
+}
+async function performWorkspaceTerminalRestart(
   store: SidebarStore, sessionId: string, tabId: string, previousTerminalId: string,
   binding?: WorkspaceTerminalBinding,
 ): Promise<boolean> {
