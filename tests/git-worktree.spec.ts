@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { parseWorktreeList, resolveWorktree, runGit, status, worktrees } from '../src/git.ts'
+import { checkout, parseWorktreeList, resolveWorktree, runGit, status, worktrees } from '../src/git.ts'
 import { removeTree } from './temp-tree.ts'
 
 const IDENTITY = {
@@ -99,6 +99,88 @@ describe('linked Git worktrees', () => {
       await expect(resolveWorktree(main, agentPath)).rejects.toThrow('unknown linked worktree')
     } finally {
       try { git(main, ['worktree', 'remove', '--force', agent]) } catch { /* fixture may not be fully initialized */ }
+      removeTree(root)
+    }
+  })
+
+  it('shares a branch another worktree holds instead of letting git refuse the switch', async () => {
+    // The SCM panel's branch menu is repo-wide, so a branch checked out in the
+    // primary checkout is still listed while a linked checkout is selected.
+    // git answers `fatal: '<branch>' is already used by worktree at ...`; the
+    // explicit switch must win by sharing the branch, and the host must name
+    // the other checkout so the UI can say which session it now follows.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-worktree-switch-'))
+    const main = join(root, 'main')
+    const linked = join(root, 'linked')
+    const linkedPath = (): string => realpathSync.native(linked)
+    try {
+      git(root, ['init', '-q', main])
+      git(main, ['checkout', '-q', '-b', 'main'])
+      writeFileSync(join(main, 'tracked.txt'), 'base\n')
+      git(main, ['add', '-A'])
+      git(main, ['commit', '-q', '-m', 'base'])
+      git(main, ['worktree', 'add', '-q', '-b', 'feat', linked])
+
+      // Whatever the locale, plain git refuses: this is the fatal the panel
+      // used to hand to the user as a dead end.
+      expect(() => git(linked, ['checkout', 'main'])).toThrow()
+
+      // The panel targets the LINKED checkout through `cwd` (the host route
+      // resolves the selected worktree before calling in); `selected` here is
+      // the child-repository selector, not a worktree target.
+      const shared = await checkout(linkedPath(), 'main')
+      expect(resolve(shared.forcedFrom ?? '')).toBe(resolve(realpathSync.native(main)))
+      expect(git(linked, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('main')
+      // Both checkouts now point at the SAME branch — that is the accepted
+      // cost of an explicit switch.
+      expect(git(main, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('main')
+
+      // No occupancy ⇒ no flag and no report: the plain switch is unchanged.
+      const plain = await checkout(linkedPath(), 'feat')
+      expect(plain.forcedFrom).toBeUndefined()
+      expect(git(linked, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('feat')
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('stashes only the changes that block a switch, and keeps the rest', async () => {
+    // `git checkout main` refuses with "Your local changes ... would be
+    // overwritten" when a dirty path also differs on the target branch. The
+    // panel's switch is explicit, so those exact paths are stashed first — the
+    // work is preserved (and recoverable), never discarded — and the rest of
+    // the working tree is left alone.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-worktree-stash-'))
+    const repo = join(root, 'repo')
+    const read = (name: string): string => readFileSync(join(repo, name), 'utf8')
+    try {
+      git(root, ['init', '-q', repo])
+      git(repo, ['checkout', '-q', '-b', 'main'])
+      writeFileSync(join(repo, 'colliding.txt'), 'main\n')
+      writeFileSync(join(repo, 'other.txt'), 'base\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'base'])
+      git(repo, ['checkout', '-q', '-b', 'feat'])
+      writeFileSync(join(repo, 'colliding.txt'), 'feat\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'feat'])
+
+      // Dirty on BOTH branches' spelling: `colliding.txt` differs between
+      // branches, `other.txt` does not.
+      writeFileSync(join(repo, 'colliding.txt'), 'local feat\n')
+      writeFileSync(join(repo, 'other.txt'), 'local other\n')
+      expect(() => git(repo, ['checkout', 'main'])).toThrow()
+
+      const outcome = await checkout(repo, 'main')
+      expect(outcome.stashedFiles).toEqual(['colliding.txt'])
+      expect(outcome.forcedFrom).toBeUndefined()
+      expect(git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('main')
+      // The blocking edit left the tree (it is in the stash), the unrelated
+      // edit is untouched.
+      expect(read('colliding.txt')).toBe('main\n')
+      expect(read('other.txt')).toBe('local other\n')
+      expect(git(repo, ['stash', 'list'])).toContain('dsh: switch to main')
+    } finally {
       removeTree(root)
     }
   })

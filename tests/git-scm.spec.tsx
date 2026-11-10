@@ -42,6 +42,13 @@ const write = async (box: HTMLTextAreaElement, value: string): Promise<void> => 
 const enter = async (box: HTMLTextAreaElement): Promise<void> => {
   await act(async () => { box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true })) })
 }
+/** The checkout confirm dialog's primary button (Modal portals to the body). */
+const confirmSwitch = async (): Promise<void> => {
+  const button = [...document.querySelectorAll<HTMLButtonElement>('button')]
+    .find(candidate => candidate.textContent === t('gitSwitchConfirm'))
+  if (button === undefined) throw new Error('checkout confirm button not found')
+  await click(button)
+}
 async function mount(readStatus: (scope: SessionScope) => GitStatusResult) {
   vi.spyOn(api, 'gitStatus').mockImplementation(async scope => readStatus(scope))
   vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: CWD, branch: 'main', current: true, changes: 2 }])
@@ -298,10 +305,78 @@ it('checks out a plain branch and refreshes placeholder, resources, graph and fo
     const feature = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent === 'feature')!
     await click(feature)
     await flush()
+    // The footer branch menu is the ONE checkout gesture: it asks first.
+    const checkoutBeforeConfirm = checkout.mock.calls.length
+    expect(checkoutBeforeConfirm).toBe(0)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    await confirmSwitch()
+    await flush()
     expect(checkout).toHaveBeenCalledExactlyOnceWith({ sessionId: 'scm-A', cwd: CWD }, 'feature', CWD)
     expect(input(view.container).placeholder).toBe('Message (Ctrl+Enter to commit on "feature")')
     expect(view.container.querySelectorAll('[data-group]')).toHaveLength(0)
     expect(view.container.querySelector('[data-git-footer]')!.textContent).toContain('2↓ 0↑')
     expect(vi.mocked(api.gitGraph).mock.calls.length).toBeGreaterThan(graphCalls)
+  } finally { view.unmount() }
+})
+
+it('names the other checkout when a branch switch had to share its branch', async () => {
+  // The host no longer lets `fatal: '<branch>' is already used by worktree`
+  // end the gesture: it shares the branch and returns the colliding checkout.
+  // The lens must SAY so — that checkout's working tree now follows the same
+  // branch — and the line belongs to that ONE switch, not the whole scope.
+  let snapshot = tracked()
+  const sharedWith = `${CWD}/../agent-weave`
+  const checkout = vi.spyOn(api, 'gitCheckout').mockImplementation(async (_scope, branch) => {
+    snapshot = { ...tracked(), branch }
+    return { ok: true, forcedFrom: sharedWith }
+  })
+  const view = await mount(() => snapshot)
+  const openBranches = async (): Promise<void> => {
+    await click(view.container.querySelector<HTMLButtonElement>('[data-git-footer] button[aria-haspopup="menu"]')!)
+  }
+  const pick = async (name: string): Promise<void> => {
+    const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent === name)!
+    await click(item)
+    await flush()
+    await confirmSwitch()
+    await flush()
+  }
+  try {
+    await openBranches()
+    await pick('feature')
+    expect(checkout).toHaveBeenCalledExactlyOnceWith({ sessionId: 'scm-A', cwd: CWD }, 'feature', CWD)
+    const warn = view.container.querySelector('[data-kind="warn"]')
+    expect(warn).not.toBeNull()
+    expect(warn!.textContent).toBe(t('gitCheckoutShared', { branch: 'feature', path: sharedWith }))
+
+    // A later, unforced switch clears it: the warning is about one gesture.
+    checkout.mockResolvedValueOnce({ ok: true })
+    await openBranches()
+    await pick('main')
+    expect(view.container.querySelector('[data-kind="warn"]')).toBeNull()
+  } finally { view.unmount() }
+})
+
+it('says how many blocking local changes were stashed to complete a switch', async () => {
+  // `git checkout` refuses when local changes would be overwritten. The host
+  // stashes ONLY those paths and reports them; the lens must say how many and
+  // how to bring them back, rather than looking like a clean switch.
+  let snapshot = tracked()
+  const stashed = ['apps/web/README.md', 'apps/web/src/App.vue']
+  vi.spyOn(api, 'gitCheckout').mockImplementation(async (_scope, branch) => {
+    snapshot = { ...tracked(), branch }
+    return { ok: true, stashedFiles: stashed }
+  })
+  const view = await mount(() => snapshot)
+  try {
+    await click(view.container.querySelector<HTMLButtonElement>('[data-git-footer] button[aria-haspopup="menu"]')!)
+    const feature = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent === 'feature')!
+    await click(feature)
+    await flush()
+    await confirmSwitch()
+    await flush()
+    const warns = view.container.querySelectorAll('[data-kind="warn"]')
+    expect(warns).toHaveLength(1)
+    expect(warns[0]!.textContent).toBe(t('gitCheckoutStashed', { count: stashed.length, branch: 'feature' }))
   } finally { view.unmount() }
 })

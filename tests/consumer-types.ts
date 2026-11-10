@@ -28,6 +28,7 @@ import type {
   GitCommitActionDescriptor,
   GitCommitActionProps,
   GitCommitTarget,
+  GitCheckoutResult,
   GitDataSource,
   GitOkResult,
   GitProviderDescriptor,
@@ -207,9 +208,10 @@ const gitProvider: GitProviderDescriptor = {
 }
 const gitSource: GitDataSource | undefined = undefined
 const gitOk: GitOkResult = { ok: true }
+const gitForced: GitCheckoutResult = { ok: true, forcedFrom: '/repo/main' }
 const disposeGit: () => void = service.registerGitProvider(gitProvider)
 const gitProviders: readonly GitProviderDescriptor[] = service.getGitProviders()
-void gitSource; void gitOk; void disposeGit; void gitProviders
+void gitSource; void gitOk; void gitForced; void disposeGit; void gitProviders
 
 /** gitGraph v1 framework consumption (soft join, provider dsh-git-graph):
  *  type-only cross-package contract; the consumer holds the literal service

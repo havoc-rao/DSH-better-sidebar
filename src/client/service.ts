@@ -73,7 +73,7 @@ export type {
 export type { SessionScope } from './api.ts'
 export type { SidebarPrefs } from '../prefs-shared.ts'
 export type { TerminalProviderDescriptor } from './terminal-source.ts'
-export type { GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
+export type { GitCheckoutResult, GitDataSource, GitOkResult, GitProviderDescriptor } from './git-source.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
 export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select' | 'patterns'

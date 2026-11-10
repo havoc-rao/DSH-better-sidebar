@@ -22,6 +22,19 @@ import type { ResourceReadOptions, ResourceStrictDiff, WorktreeRef } from './res
 /** A successful git mutation ({ok:true}, mirror of the host route's shape). */
 export interface GitOkResult { ok: true }
 
+/** A successful branch switch ({@link GitDataSource.gitCheckout}).
+ *  `forcedFrom` is set only when the branch was already checked out in ANOTHER
+ *  worktree: the switch shared the branch with that checkout (git's
+ *  `--ignore-other-worktrees`) and `forcedFrom` names it, so the UI can say
+ *  which session's working tree now follows the same branch.
+ *  `stashedFiles` lists local changes that would have blocked the switch: they
+ *  were stashed (never discarded) before the checkout, so the UI can say how
+ *  to restore them. */
+export interface GitCheckoutResult extends GitOkResult {
+  forcedFrom?: string
+  stashedFiles?: string[]
+}
+
 /**
  * The git data source a matching provider hands to the git surfaces: a
  * shadow of the host `api.git*` route surface — every method has the host
@@ -59,7 +72,7 @@ export interface GitDataSource {
   gitCommit(scope: SessionScope, message: string, worktree?: string): Promise<GitOkResult>
   /** Optional for existing providers. Missing capability disables Push; never falls back to local git. */
   gitPush?(scope: SessionScope, worktree?: string): Promise<GitOkResult>
-  gitCheckout(scope: SessionScope, branch: string, worktree?: string): Promise<GitOkResult>
+  gitCheckout(scope: SessionScope, branch: string, worktree?: string): Promise<GitCheckoutResult>
   gitDiscard(scope: SessionScope, path: string, worktree?: string): Promise<GitOkResult>
   gitRevert(scope: SessionScope, hash: string, worktree?: string): Promise<GitOkResult>
   gitCherryPick(scope: SessionScope, hash: string, worktree?: string): Promise<GitOkResult>

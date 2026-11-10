@@ -1091,13 +1091,88 @@ export async function branches(cwd: string, selected?: string): Promise<{ curren
   return { current, names: current !== '' && !names.includes(current) ? [current, ...names] : names }
 }
 
+/** A branch switch.
+ *  `forcedFrom` names the OTHER checkout that already had the branch checked
+ *  out — the switch shared the branch with it (`--ignore-other-worktrees`).
+ *  `stashedFiles` lists the local changes that would have blocked the switch;
+ *  they were stashed first (never discarded) so the switch could proceed. */
+export interface GitCheckoutOutcome {
+  forcedFrom?: string
+  stashedFiles?: string[]
+}
+
+/** Paths whose LOCAL changes make `git checkout <branch>` refuse: the dirty
+ *  set (worktree, index and untracked) intersected with the paths that differ
+ *  between HEAD and the target branch. Computed with `-z` name listings, so
+ *  no localized stderr is parsed and odd file names stay intact. */
+async function blockingLocalChanges(root: string, branch: string): Promise<string[]> {
+  const target = await runGit(root, ['rev-parse', '--verify', `refs/heads/${branch}`]).catch(() => '')
+  if (target.trim() === '') return []
+  const [unstaged, staged, untracked] = await Promise.all([
+    runGit(root, ['diff', '--name-only', '-z']),
+    runGit(root, ['diff', '--cached', '--name-only', '-z']),
+    runGit(root, ['ls-files', '--others', '--exclude-standard', '-z']),
+  ])
+  const dirty = new Set([...unstaged.split('\0'), ...staged.split('\0'), ...untracked.split('\0')].filter(path => path !== ''))
+  if (dirty.size === 0) return []
+  // Fully qualified: a branch name can begin with `-`, and this listing must
+  // never be parsed as options (same reasoning as `--end-of-options`).
+  const between = await runGit(root, ['diff', '--name-only', '-z', 'HEAD', `refs/heads/${branch}`])
+  return between.split('\0').filter(path => path !== '' && dirty.has(path))
+}
+
 /** Switch to an existing branch.
  *  `--end-of-options` precedes the operand: without it a caller-supplied
  *  branch beginning with `-` is parsed as an OPTION, so `-f` force-discarded
  *  the worktree changes and `--work-tree=…` redirected the checkout. Same
- *  guard as show / commitDiff / revert / cherryPick (4100e16). */
-export async function checkout(cwd: string, branch: string, selected?: string): Promise<void> {
-  await runGit(await repoRoot(cwd, selected), ['checkout', '--end-of-options', branch])
+ *  guard as show / commitDiff / revert / cherryPick (4100e16).
+ *
+ *  Two refusals are resolved instead of surfaced, because the panel's switch
+ *  is an explicit user gesture:
+ *
+ *  1. A branch another worktree already holds ("fatal: '<branch>' is already
+ *     used by worktree at …") — `--ignore-other-worktrees` shares the branch;
+ *     the colliding checkout is read from `git worktree list` BEFORE the
+ *     switch (no localized stderr parsing) and returned for the UI to name.
+ *  2. Local changes git would overwrite — those exact paths are stashed
+ *     (pathspec-limited, untracked included, labelled `dsh: switch to
+ *     <branch>`) and the switch continues. Nothing is discarded: the stash is
+ *     recoverable with `git stash pop` in that checkout.
+ *
+ *  Every other refusal (unknown branch, operation in progress) surfaces
+ *  verbatim. */
+export async function checkout(cwd: string, branch: string, selected?: string): Promise<GitCheckoutOutcome> {
+  const root = await repoRoot(cwd, selected)
+  const identity = pathIdentity(root)
+  // Already there: a no-op switch must not stash anything (the client skips
+  // this case, but the route is reachable on its own).
+  if (await currentBranch(root).then(current => current === branch).catch(() => false)) return {}
+  // A failed listing must not block the switch itself: fall back to a plain
+  // checkout, whose own refusal is the accurate answer.
+  const occupied = await listedWorktrees(root)
+    .then(entries => entries.find(entry => entry.branch === branch && pathIdentity(entry.path) !== identity))
+    .catch(() => undefined)
+  const blocking = await blockingLocalChanges(root, branch).catch((): string[] => [])
+  if (blocking.length > 0) {
+    await runGit(root, ['stash', 'push', '-u', '-m', `dsh: switch to ${branch}`, '--', ...blocking])
+  }
+  try {
+    await runGit(root, [
+      'checkout',
+      ...(occupied === undefined ? [] : ['--ignore-other-worktrees']),
+      '--end-of-options',
+      branch,
+    ])
+  } catch (error) {
+    // The switch failed for a reason the stash cannot fix: put the work back
+    // rather than leaving the user with a silent stash.
+    if (blocking.length > 0) await runGit(root, ['stash', 'pop', '-q']).catch(() => undefined)
+    throw error
+  }
+  return {
+    ...(occupied === undefined ? {} : { forcedFrom: occupied.path }),
+    ...(blocking.length === 0 ? {} : { stashedFiles: blocking }),
+  }
 }
 
 /** Recent commit history (newest first). Default: lazily pageable via

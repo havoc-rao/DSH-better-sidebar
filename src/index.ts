@@ -1062,8 +1062,9 @@ function buildApi(
     },
     'git.checkout': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
-      await git.checkout(cwd, requireString(payload, 'branch'), selectedRepoOf(payload))
-      return { ok: true }
+      // `forcedFrom` is present only when the branch was already checked out
+      // in another worktree and the switch shared it with that checkout.
+      return { ok: true, ...await git.checkout(cwd, requireString(payload, 'branch'), selectedRepoOf(payload)) }
     },
     'git.graph': async (payload) => {
       const { cwd } = await gitCwdOf(payload)

@@ -167,9 +167,13 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       expect(container.textContent).not.toContain('Main checkout commit')
       expect(branch).toHaveBeenCalledWith(expect.anything(), AGENT)
       expect(graph).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ count: 50 }), AGENT, expect.anything())
-      // The repo / worktree pickers moved into More Actions (#944); the only
-      // select left is the Graph section's own branch filter.
+      // The repo / worktree pickers now ALSO sit in the read-only chip row
+      // (branch labels, current one active); the only <select> left is the
+      // Graph section's own branch filter, and More keeps its inventory list.
       expect([...container.querySelectorAll('select')]).toHaveLength(1)
+      const chips = [...container.querySelectorAll<HTMLButtonElement>('[data-scm-worktree]')]
+      expect(chips.map(chip => chip.textContent)).toEqual(['main', 'agent'])
+      expect(chips.map(chip => chip.getAttribute('data-active'))).toEqual([null, 'true'])
       const options = openMoreSubmenu(container, t('worktree'))
       expect(options.map(button => button.textContent)).toEqual(['main · main (0)', 'agent · agent (1)'])
       await act(async () => { options[0]!.click() })
@@ -185,6 +189,46 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       // narrowing" (undefined) or by its own path depending on how it was
       // chosen — the rows above are the real evidence.
       expect([undefined, MAIN]).toContain(graph.mock.calls.at(-1)?.[2])
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
+  it('switches the inspected checkout from the chips without running git checkout', async () => {
+    // The chip row answers "whose status am I looking at?" — it must stay a
+    // read-only scope change. `git checkout` belongs to the footer branch menu
+    // (and its confirm dialog), never to a chip click.
+    vi.spyOn(api, 'gitWorktrees').mockResolvedValue(inventories)
+    vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
+    const branch = vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
+      current: target === AGENT ? 'agent' : 'main',
+      names: target === AGENT ? ['agent'] : ['main'],
+    }))
+    vi.spyOn(api, 'gitGraph').mockImplementation(async (_scope, _options, target) => graphFor(target))
+    const checkout = vi.spyOn(api, 'gitCheckout').mockResolvedValue({ ok: true })
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      mountGit(root)
+      await flushEffects()
+
+      // The dirty linked checkout is auto-selected, so ITS chip is active.
+      const chips = [...container.querySelectorAll<HTMLButtonElement>('[data-scm-worktree]')]
+      expect(chips.map(chip => chip.textContent)).toEqual(['main', 'agent'])
+      expect(container.querySelector('[data-scm-checkouts]')).not.toBeNull()
+      expect(chips[1]!.getAttribute('data-active')).toBe('true')
+
+      await act(async () => { chips[0]!.click() })
+      await flushEffects()
+
+      expect(branchButton(container).textContent).toBe('main*')
+      expect(container.textContent).toContain('main-change.ts')
+      expect(branch).toHaveBeenLastCalledWith(expect.anything(), MAIN)
+      // The whole point: inspecting another checkout never touches the worktree.
+      expect(checkout).not.toHaveBeenCalled()
     } finally {
       act(() => { root.unmount() })
       container.remove()
@@ -276,7 +320,8 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       expect(worktrees.mock.calls.length).toBe(listingsBefore + 1)
       // The shared status follows the same selection.
       expect(status.mock.calls.at(-1)![0]).toMatchObject({ sessionId: 'session', cwd: WS, repoRoot: REPO_B })
-      expect(branchButton(container).title).toBe(`${t('branch')}: b-main*`)
+      // The footer control is a CHECKOUT action now, and its tooltip says so.
+      expect(branchButton(container).title).toBe(`${t('gitSwitchTitle')}: b-main*`)
       expect(container.querySelector('[data-path="b-change.ts"]')).not.toBeNull()
       expect(container.querySelector('[data-path="a-change.ts"]')).toBeNull()
       // Explicit repo selection keeps that repo's PRIMARY checkout, even with
@@ -287,7 +332,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
 
       await chooseMoreOption(container, t('gitRepository'), 'a')
-      expect(branchButton(container).title).toBe(`${t('branch')}: a-main*`)
+      expect(branchButton(container).title).toBe(`${t('gitSwitchTitle')}: a-main*`)
       expect(container.querySelector('[data-path="a-change.ts"]')).not.toBeNull()
       expect(container.querySelector('[data-path="b-change.ts"]')).toBeNull()
     } finally {
@@ -476,6 +521,11 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       act(() => { branchButton(container).click() })
       expect([...document.querySelectorAll('[role="menuitem"]')].map(item => item.textContent)).toEqual(['main', 'feature'])
       await act(async () => { menuItem('feature').click() })
+      await flushEffects()
+      // The footer branch menu is the ONE checkout gesture: confirm first.
+      const confirm = [...document.querySelectorAll<HTMLButtonElement>('button')]
+        .find(button => button.textContent === t('gitSwitchConfirm'))!
+      await act(async () => { confirm.click() })
       await flushEffects()
 
       const banner = [...container.querySelectorAll<HTMLElement>('[role="alert"]')]

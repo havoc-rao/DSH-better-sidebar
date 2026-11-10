@@ -144,11 +144,17 @@ export function withCommitDraft(
   return next
 }
 
-/** The pending destructive action (discard / revert / cherry-pick), gated by a confirm dialog. */
+/** The pending action behind a confirm dialog: the destructive ones (discard /
+ *  revert / cherry-pick) and the explicit checkout switch. */
 interface ConfirmState {
   title: string
   description: string
   confirmLabel: string
+  /** Red confirm styling. Destructive actions set it; a branch switch does not. */
+  danger?: boolean
+  /** Run outside `runAction`. The checkout owns its own lock / busy / banner
+   *  channel, and `runAction` would hold that lock against it. */
+  direct?: boolean
   onConfirm: () => Promise<unknown>
 }
 
@@ -542,6 +548,13 @@ export function GitLens(props: GitLensProps) {
   const [actionError, setActionError] = useState<string | null>(null)
   /** The lens-level error banner (refresh / branch switch / history paging). */
   const [viewError, setViewError] = useState<string | null>(null)
+  /** A branch switch that had to SHARE the branch with another checkout: the
+   *  warn line names that checkout so the user knows which session it is now
+   *  entangled with (the other worktree keeps following the same branch). */
+  const [sharedBranch, setSharedBranch] = useState<{ branch: string; path: string } | null>(null)
+  /** A branch switch whose blocking local changes were stashed to get through:
+   *  the warn line says how many and how to bring them back. */
+  const [stashedSwitch, setStashedSwitch] = useState<{ branch: string; files: readonly string[] } | null>(null)
 
   /** The open file-row context menu (cursor position for the portaled Menu). */
   const [fileMenu, setFileMenu] = useState<FileMenuState | null>(null)
@@ -652,6 +665,8 @@ export function GitLens(props: GitLensProps) {
     setBranchNames([])
     setGraphRefresh(value => value + 1)
     setActionError(null)
+    setSharedBranch(null)
+    setStashedSwitch(null)
     setFileMenu(null)
     setHistoryMenu(null)
     setConfirm(null)
@@ -975,10 +990,21 @@ export function GitLens(props: GitLensProps) {
     const generation = scopeGen.current
     setBusy(true)
     setViewError(null)
+    setSharedBranch(null)
+    setStashedSwitch(null)
     try {
-      await gitApi.gitCheckout(gitScopeNow(), branch, selectedWorktree)
+      const result = await gitApi.gitCheckout(gitScopeNow(), branch, selectedWorktree)
       invalidateGitStatus(scope.sessionId)
-      if (generation === scopeGen.current) await refresh(false)
+      if (generation === scopeGen.current) {
+        // The host resolves both refusals instead of failing: "already used by
+        // worktree" shares the branch (naming the other checkout), and local
+        // changes git would overwrite are stashed (naming the restore command).
+        if (result.forcedFrom !== undefined) setSharedBranch({ branch, path: result.forcedFrom })
+        if (result.stashedFiles !== undefined && result.stashedFiles.length > 0) {
+          setStashedSwitch({ branch, files: result.stashedFiles })
+        }
+        await refresh(false)
+      }
     } catch (reason) {
       if (generation === scopeGen.current) setViewError(`${t('checkoutError')}: ${errorMessage(reason)}`)
     } finally {
@@ -987,6 +1013,24 @@ export function GitLens(props: GitLensProps) {
         setBusy(false)
       }
     }
+  }
+
+  /** The footer branch menu is the ONE place that changes the working tree, so
+   *  it always asks first: the switch may share the branch with another
+   *  worktree and may stash local changes that block it. Read-only inspection
+   *  is the checkout chips above, which never run git. */
+  const requestCheckout = (branch: string): void => {
+    if (branch === (snapshot?.branch ?? '') || actionLock.current !== null) return
+    const target = selectedWorktree !== undefined
+      ? baseName(selectedWorktree)
+      : baseName(primaryWorktree ?? repoRoot ?? snapshot?.root ?? scope.cwd ?? '')
+    runConfirmed({
+      title: t('gitSwitchTitle'),
+      description: t('gitSwitchDesc', { branch, checkout: target }),
+      confirmLabel: t('gitSwitchConfirm'),
+      direct: true,
+      onConfirm: () => checkout(branch),
+    })
   }
 
   /** Run one destructive operation after the confirm dialog, then refresh. */
@@ -998,6 +1042,10 @@ export function GitLens(props: GitLensProps) {
     const pending = confirm
     if (pending === null) return
     setConfirm(null)
+    if (pending.direct === true) {
+      void pending.onConfirm()
+      return
+    }
     void runAction(pending.onConfirm)
   }
 
@@ -1445,30 +1493,64 @@ export function GitLens(props: GitLensProps) {
       {/* Changes and Graph scroll together; only the branch/sync footer docks. */}
       <div className={css.gitScroll} data-git-scroll>
         {viewError !== null && <Notice kind="error" role="alert">{viewError}</Notice>}
+        {/* Forced branch switches are allowed (the switch always wins), but the
+            other checkout now follows the same branch — never silently. */}
+        {sharedBranch !== null && <Notice kind="warn" role="status">
+          {t('gitCheckoutShared', { branch: sharedBranch.branch, path: sharedBranch.path })}
+        </Notice>}
+        {stashedSwitch !== null && <Notice kind="warn" role="status">
+          {t('gitCheckoutStashed', { count: stashedSwitch.files.length, branch: stashedSwitch.branch })}
+        </Notice>}
 
         {snapshot === null && status.loading && <Notice kind="loading" tone="page">{t('loading')}</Notice>}
         {snapshot === null && !status.loading && status.error && <Notice kind="error" tone="page">{t('error')}</Notice>}
         {snapshot !== null && !isRepo && <Notice kind="empty" tone="page">{t('notRepo')}</Notice>}
         {snapshot?.truncated === true && <Notice kind="warn">{t('statusTruncated')}</Notice>}
 
-        {/* A container workspace can hold several independent repositories, and
-            every view below is pinned to ONE of them — without this row the
-            panel silently shows the first root, so nothing on screen says the
-            others exist. The switcher is not a second source of truth:
-            `repoChoices` comes from the status snapshot, `chooseRepo` re-pins
-            the scope (reads, writes, graph) to the clicked root. */}
-        {isRepo && repoChoices.length > 1 && (
-          <div className={css.repoSwitcher} data-scm-repos role="group" aria-label={t('gitRepository')}>
-            {repoChoices.map(root => {
-              const isActive = sameRepoRoot(root, repoRoot ?? snapshot?.root)
-              return (
-                <button key={root} type="button" className={css.repoChip} data-scm-repo={root}
-                  data-active={isActive ? 'true' : undefined} aria-pressed={isActive} title={root}
-                  disabled={busy || suggesting} onClick={() => { chooseRepo(root) }}>
-                  {baseName(root)}
-                </button>
-              )
-            })}
+        {/* One read-only CHECKOUT selector. Two axes share the row because they
+            answer one question — "whose status is this tab showing?":
+              • repositories — a container workspace holds several independent
+                roots (`repoChoices` from the status snapshot);
+              • working trees — the selected repository's linked checkouts
+                (`git worktree list`, branch labels), which the old ⋯ → 工作树
+                submenu alone exposed (#952 follow-up).
+            Clicking re-pins the scope only: `chooseRepo` / `chooseWorktree`
+            never run git checkouts, so inspecting a feature checkout is safe.
+            The footer branch button is the ONE checkout gesture and asks first. */}
+        {isRepo && (repoChoices.length > 1 || worktrees.length > 1) && (
+          <div className={css.repoSwitcher} data-scm-checkouts role="group" aria-label={t('gitCheckout')}>
+            {repoChoices.length > 1 && (
+              <div className={css.checkoutGroup} data-scm-repos role="group" aria-label={t('gitRepository')}>
+                {repoChoices.map(root => {
+                  const isActive = sameRepoRoot(root, repoRoot ?? snapshot?.root)
+                  return (
+                    <button key={root} type="button" className={css.repoChip} data-scm-repo={root}
+                      data-active={isActive ? 'true' : undefined} aria-pressed={isActive} title={root}
+                      disabled={busy || suggesting} onClick={() => { chooseRepo(root) }}>
+                      {baseName(root)}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {worktrees.length > 1 && (
+              <div className={css.checkoutGroup} data-scm-worktrees role="group" aria-label={t('worktree')}>
+                {worktrees.map(entry => {
+                  const isActive = selectedWorktree === undefined
+                    ? entry.current
+                    : sameRepoRoot(entry.path, selectedWorktree)
+                  return (
+                    <button key={entry.path} type="button" className={css.repoChip}
+                      data-scm-worktree={entry.path} data-active={isActive ? 'true' : undefined}
+                      aria-pressed={isActive} title={`${entry.path} (${entry.changes})`}
+                      disabled={busy || suggesting}
+                      onClick={() => { if (!isActive) chooseWorktree(entry.path) }}>
+                      {entry.branch || t('gitDetached')}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -1603,14 +1685,14 @@ export function GitLens(props: GitLensProps) {
           <Menu open={branchOpen} onClose={() => { setBranchOpen(false) }} portal compact side="top" autoFocus
             className={css.branchMenu}
             anchor={<button type="button" className={css.branchButton} aria-haspopup="menu" aria-expanded={branchOpen}
-              title={`${t('branch')}: ${branchLabel}${branchMarkers}`} disabled={busy || suggesting}
+              title={`${t('gitSwitchTitle')}: ${branchLabel}${branchMarkers}`} disabled={busy || suggesting}
               onClick={() => { setBranchOpen(open => !open) }}>
               <IconBranchOutlineRegular size={14} /><span>{branchLabel}{branchMarkers}</span>
             </button>}
             items={branchNames.length === 0 ? [{ id: 'none', label: t('gitBranchesUnavailable'), disabled: true }]
               : branchNames.map(name => ({ id: name, label: name, disabled: busy || suggesting }))}
             selectedId={branch}
-            onSelect={name => { setBranchOpen(false); void checkout(name) }} />
+            onSelect={name => { setBranchOpen(false); requestCheckout(name) }} />
           <button type="button" className={css.syncButton} aria-label={syncLabel} title={syncLabel}
             disabled={!canSync} onClick={sync}>
             <IconRefreshOutlineRegular size={11} />
@@ -1664,6 +1746,7 @@ export function GitLens(props: GitLensProps) {
               title: t('discardTitle'),
               description: t('discardDesc', { path: target.path }),
               confirmLabel: t('discard'),
+              danger: true,
               onConfirm: () => gitApi.gitDiscard(gitScopeNow(), target.path, selectedWorktree),
             })
             return
@@ -1719,6 +1802,7 @@ export function GitLens(props: GitLensProps) {
               title: t('revertTitle'),
               description: t('revertDesc', { subject: target.entry.subject }),
               confirmLabel: t('revertCommit'),
+              danger: true,
               onConfirm: () => gitApi.gitRevert(gitScopeNow(), target.entry.hashFull, selectedWorktree),
             })
             return
@@ -1728,6 +1812,7 @@ export function GitLens(props: GitLensProps) {
               title: t('cherryPickTitle'),
               description: t('cherryPickDesc', { subject: target.entry.subject }),
               confirmLabel: t('cherryPickCommit'),
+              danger: true,
               onConfirm: () => gitApi.gitCherryPick(gitScopeNow(), target.entry.hashFull, selectedWorktree),
             })
           }
@@ -1746,7 +1831,7 @@ export function GitLens(props: GitLensProps) {
         description={confirm?.description ?? ''}
         confirmLabel={confirm?.confirmLabel ?? ''}
         cancelLabel={t('cancel')}
-        danger
+        danger={confirm?.danger === true}
         busy={busy}
         onConfirm={confirmPending}
         onClose={() => { setConfirm(null) }}

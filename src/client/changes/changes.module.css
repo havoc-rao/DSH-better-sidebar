@@ -83,6 +83,20 @@
   scrollbar-width: none;
 }
 .repoSwitcher::-webkit-scrollbar { display: none; }
+/* Two chip groups share the one scroller: repositories first, then the
+   selected repository's linked checkouts, split by a hairline (no extra row,
+   no second scroller). */
+.checkoutGroup {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.checkoutGroup + .checkoutGroup {
+  padding-left: 6px;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+}
 .repoChip {
   flex: none;
   max-width: 160px;

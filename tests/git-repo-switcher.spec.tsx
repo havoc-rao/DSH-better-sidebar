@@ -41,15 +41,15 @@ const snapshot = (root: string, repositories: string[]): GitStatusResult =>
   ({ isRepo: true, branch: 'main', root, entries: [], repositories })
 
 /** Mount the lens over a mocked host; `scopes` records every status request. */
-async function mount(options: { sessionId: string; repositories?: string[] }) {
+async function mount(options: { sessionId: string; repositories?: string[]; worktrees?: { path: string; branch: string; current: boolean; changes: number }[] }) {
   const scopes: SessionScope[] = []
   const repositories = options.repositories ?? [CWD, ADMIN, DOCS]
   vi.spyOn(api, 'gitStatus').mockImplementation(async scope => {
     scopes.push(scope)
     return snapshot(scope.repoRoot ?? CWD, repositories)
   })
-  vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: CWD, branch: 'main', current: true, changes: 0 }])
-  vi.spyOn(api, 'gitBranch').mockResolvedValue({ current: 'main', names: ['main'] })
+  vi.spyOn(api, 'gitWorktrees').mockResolvedValue(options.worktrees ?? [{ path: CWD, branch: 'main', current: true, changes: 0 }])
+  const branches = vi.spyOn(api, 'gitBranch').mockResolvedValue({ current: 'main', names: ['main'] })
   vi.spyOn(api, 'gitCommitModel').mockResolvedValue({ pinned: false })
   vi.spyOn(api, 'gitGraph').mockResolvedValue({
     isRepo: true, root: CWD, entries: [], branches: [], hasMore: false, snapshot: 'one',
@@ -60,7 +60,7 @@ async function mount(options: { sessionId: string; repositories?: string[] }) {
   )
   await flush()
   await flush()
-  return { ...view, scopes }
+  return { ...view, scopes, branches }
 }
 
 it('lists every discovered repository and re-pins the scope to the clicked chip', async () => {
@@ -95,6 +95,37 @@ it('folds separator, trailing slash and case when marking the current checkout',
   const buttons = chips(view.container)
   expect(buttons.map(button => button.dataset.scmRepo)).toEqual(['C:\\WORK\\', ADMIN])
   expect(buttons.map(button => button.getAttribute('data-active'))).toEqual(['true', null])
+})
+
+it('shares the read-only row with the current repository checkout chips', async () => {
+  // A container workspace with several roots AND several linked checkouts: one
+  // scroller, two groups. Repo chips keep [data-scm-repo]; checkout chips carry
+  // [data-scm-worktree] and the branch name. Both are scope changes, never
+  // checkouts (the footer branch menu owns that gesture, behind a confirm).
+  const view = await mount({
+    sessionId: 'scm-repos-checkouts',
+    worktrees: [
+      { path: CWD, branch: 'main', current: true, changes: 0 },
+      { path: 'C:/work-feat', branch: 'feat', current: false, changes: 2 },
+    ],
+  })
+  const row = view.container.querySelector('[data-scm-checkouts]')!
+  expect(row.querySelector('[data-scm-repos]')).not.toBeNull()
+  const worktreeChips = [...row.querySelectorAll<HTMLButtonElement>('[data-scm-worktree]')]
+  expect(worktreeChips.map(chip => chip.textContent)).toEqual(['main', 'feat'])
+  // The dirty linked checkout is auto-selected on the first pass, so ITS chip
+  // starts active; the primary chip is the inactive one.
+  expect(worktreeChips.map(chip => chip.getAttribute('data-active'))).toEqual([null, 'true'])
+  expect(worktreeChips[1]!.title).toBe('C:/work-feat (2)')
+
+  await click(worktreeChips[0]!)
+  await flush()
+  await flush()
+  expect(view.branches.mock.calls.map(call => call[1])).toContain('C:/work')
+  expect(chips(view.container).map(button => button.getAttribute('data-active'))).toEqual(['true', null, null])
+  const liveWorktrees = [...view.container.querySelectorAll<HTMLButtonElement>('[data-scm-worktree]')]
+  expect(liveWorktrees.map(chip => chip.textContent)).toEqual(['main', 'feat'])
+  expect(liveWorktrees.map(chip => chip.getAttribute('data-active'))).toEqual(['true', null])
 })
 
 it('renders no switcher for a single-repository workspace', async () => {

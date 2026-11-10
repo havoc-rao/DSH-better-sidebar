@@ -635,7 +635,10 @@ export const api = {
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
-    call<{ ok: true }>('git.checkout', gitPayload(scope, worktree, { branch })),
+    // `forcedFrom`: the branch was already checked out in that other worktree,
+    // so the switch shared it instead of failing. `stashedFiles`: local changes
+    // that would have been overwritten were stashed to let the switch through.
+    call<{ ok: true; forcedFrom?: string; stashedFiles?: string[] }>('git.checkout', gitPayload(scope, worktree, { branch })),
   /** Read-only topological history; stale cursors require a fresh first page. */
   gitGraph: (scope: SessionScope, options: GitGraphOptions = {}, worktree?: string, signal?: AbortSignal) =>
     call<GitGraphResult>('git.graph', gitPayload(scope, worktree, { ...options }), signal),
