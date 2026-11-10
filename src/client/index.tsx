@@ -22,6 +22,7 @@ import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { installSidebarHotkeys } from './hotkey-actions.ts'
+import { installLayoutCommands } from './layout-commands.ts'
 import { installDeleteDialogHotkeys } from './ui/delete-dialog-hotkeys.tsx'
 import { installFileTreeHotkeys } from './file-tree-hotkeys.ts'
 import { BottomDockEntry } from './sidebar/BottomDockEntry.tsx'
@@ -277,6 +278,7 @@ export function apply(ctx: Context): void {
   // The business plugin owns both the binding and its effect. dsh-hotkey
   // only dispatches registered actions; it never opens terminals for us.
   installSidebarHotkeys(ctx, sidebarStore, service)
+  installLayoutCommands(ctx)
   installDeleteDialogHotkeys(ctx)
   installFileTreeHotkeys(ctx)
   // The desktop-shell shortcut bridge (the deepseek-harness Electron app):
