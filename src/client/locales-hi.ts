@@ -546,6 +546,7 @@ export const hi: Record<string, string> = {
   codeBlockUnwrap: 'पंक्तियाँ न लपेटें',
   codeBlockRun: 'अलग टर्मिनल में चलाएँ',
   codeBlockStarting: 'टर्मिनल शुरू हो रहा है…',
+  codeBlockProviderUnsupported: 'वर्तमान कार्यक्षेत्र का टर्मिनल प्रदाता {name} अभी कोड ब्लॉक चलाने का समर्थन नहीं करता; इस कंप्यूटर पर कुछ भी निष्पादित नहीं किया गया।',
   sideChatBlockWindow: 'कुल {total} में से {shown} पंक्तियाँ',
   sideChatConnDisconnected: 'कनेक्शन टूट गया',
   sideChatConnConnecting: 'फिर से कनेक्ट हो रहा है…',

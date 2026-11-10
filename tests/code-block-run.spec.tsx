@@ -10,6 +10,9 @@ import { allLeaves, createSidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 setupReactAct()
+function context(service: ReturnType<typeof createBetterSidebarService>, byId = { A: { cwd: '/local/a' }, B: { cwd: '/remote/b' } }): Context {
+  return { betterSidebar: service, sessions: { list: { getSnapshot: () => ({ byId }) } } } as unknown as Context
+}
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear() })
 it('accepts completed shell source only, not prompts, console transcripts or other code', () => {
   expect(isRunnableShellBlock('bash', 'printf hello\nprintf world', false)).toBe(true)
@@ -25,7 +28,7 @@ it('starts once on click and opens its captured session even after navigation', 
   const run = vi.spyOn(api, 'workspaceTerminalRun').mockImplementation(() => new Promise(resolve => { finish = resolve }))
   const root = renderRoot(createElement(CodeBlockRunAction, {
     source: 'echo hello', lang: 'bash', streaming: false, sessionId: 'A', store,
-    ctx: { betterSidebar: service } as Context,
+    ctx: context(service),
   }))
   expect(run).not.toHaveBeenCalled()
   await act(async () => { root.container.querySelector('button')!.click(); root.container.querySelector('button')!.click() })
@@ -41,7 +44,7 @@ it('starts once on click and opens its captured session even after navigation', 
 it('hides the action for streaming source and disabled terminals', () => {
   const store = createSidebarStore(); store.setSession('A')
   const service = createBetterSidebarService(store)
-  const props = { source: 'echo hello', lang: 'sh', streaming: true, sessionId: 'A', store, ctx: { betterSidebar: service } as Context }
+  const props = { source: 'echo hello', lang: 'sh', streaming: true, sessionId: 'A', store, ctx: context(service) }
   const root = renderRoot(createElement(CodeBlockRunAction, props))
   expect(root.container.querySelector('button')).toBeNull()
   act(() => { store.setPrefs({ ...store.getPrefs(), tabsEnabled: { ...store.getPrefs().tabsEnabled, terminal: false } }) })
@@ -52,13 +55,16 @@ it('hides the action for streaming source and disabled terminals', () => {
 it('reports launch failure without opening an unrelated terminal', async () => {
   const store = createSidebarStore(); store.setSession('A')
   const service = createBetterSidebarService(store)
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(api, 'workspaceTerminalRun').mockRejectedValue(new Error('workspace quota reached'))
   const root = renderRoot(createElement(CodeBlockRunAction, {
-    source: 'echo hello', lang: 'sh', streaming: false, sessionId: 'A', store, ctx: { betterSidebar: service } as Context,
+    source: 'echo hello', lang: 'sh', streaming: false, sessionId: 'A', store, ctx: context(service),
   }))
   await act(async () => { root.container.querySelector('button')!.click() })
   expect(root.container.querySelector('[role="alert"]')?.textContent).toBe('workspace quota reached')
   expect(store.getSessionState('A')!.workspaceTerminalError).toBe('workspace quota reached')
+  expect(diagnostic).toHaveBeenCalledWith('[dsh-better-sidebar] code-block Run failed:', { sessionId: 'A', message: 'workspace quota reached' })
+  expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('echo hello')
   expect(root.container.querySelector('button')!.disabled).toBe(false)
   root.unmount()
 })
@@ -67,7 +73,7 @@ it('reuses the operation identity after an ambiguous network failure', async () 
   const service = createBetterSidebarService(store)
   const run = vi.spyOn(api, 'workspaceTerminalRun').mockRejectedValue(new Error('connection lost'))
   const root = renderRoot(createElement(CodeBlockRunAction, {
-    source: 'echo hello', lang: 'sh', streaming: false, sessionId: 'A', store, ctx: { betterSidebar: service } as Context,
+    source: 'echo hello', lang: 'sh', streaming: false, sessionId: 'A', store, ctx: context(service),
   }))
   await act(async () => { root.container.querySelector('button')!.click() })
   await act(async () => { root.container.querySelector('button')!.click() })
@@ -79,14 +85,52 @@ it('reuses the operation identity after an ambiguous network failure', async () 
 it('never falls through a remote terminal provider to local execution', async () => {
   const store = createSidebarStore(); store.setSession('A')
   const service = createBetterSidebarService(store)
-  service.registerTerminalProvider({ id: 'remote', match: () => true, createTransport: () => undefined })
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const match = vi.fn(() => true)
+  service.registerTerminalProvider({ id: 'remote', match, createTransport: () => undefined })
   const run = vi.spyOn(api, 'workspaceTerminalRun')
   const root = renderRoot(createElement(CodeBlockRunAction, {
     source: 'echo hello', lang: 'sh', streaming: false, sessionId: 'A', store,
-    ctx: { betterSidebar: service } as Context,
+    ctx: context(service),
   }))
   await act(async () => { root.container.querySelector('button')!.click() })
   expect(run).not.toHaveBeenCalled()
-  expect(root.container.querySelector('[role="alert"]')).not.toBeNull()
+  expect(match).toHaveBeenCalledWith('A', '/local/a', 'terminal:workspace-management')
+  expect(root.container.querySelector('[role="alert"]')?.textContent).toContain('remote')
+  expect(root.container.querySelector('[role="alert"]')?.textContent).not.toBe('终端连接失败')
+  expect(diagnostic).toHaveBeenCalled()
+  root.unmount()
+})
+it('runs local source with an unrelated provider using the block owner, not the selected session', async () => {
+  const store = createSidebarStore(); store.setSession('A'); store.setSession('B')
+  const service = createBetterSidebarService(store)
+  const match = vi.fn((_sessionId: string, cwd: string | undefined) => cwd?.startsWith('/remote/') === true)
+  service.registerTerminalProvider({ id: 'remote', match, createTransport: () => undefined })
+  const run = vi.spyOn(api, 'workspaceTerminalRun').mockResolvedValue({ terminalId: 'terminal:local', title: 'Run', cwd: '/local/a', createdBySessionId: 'A', createdAt: 1, exited: false })
+  const root = renderRoot(createElement(CodeBlockRunAction, {
+    source: 'echo hello', lang: 'sh', streaming: false, sessionId: 'A', store, ctx: context(service),
+  }))
+  await act(async () => { root.container.querySelector('button')!.click() })
+  expect(match).toHaveBeenCalledExactlyOnceWith('A', '/local/a', 'terminal:workspace-management')
+  expect(run).toHaveBeenCalledExactlyOnceWith('A', 'echo hello', undefined, expect.any(String))
+  expect(root.container.querySelector('[role="alert"]')).toBeNull()
+  expect(store.getSessionState('A')!.bottomOpen).toBe(true)
+  expect(allLeaves(store.getSessionState('B')!.bottomSplits).flatMap(leaf => leaf.tabs)).toHaveLength(0)
+  root.unmount()
+})
+it('fails closed and reports a throwing ownership matcher without local execution', async () => {
+  const store = createSidebarStore(); store.setSession('A')
+  const service = createBetterSidebarService(store)
+  service.registerTerminalProvider({ id: 'broken', match: () => { throw new Error('ownership unavailable') }, createTransport: () => undefined })
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const run = vi.spyOn(api, 'workspaceTerminalRun')
+  const root = renderRoot(createElement(CodeBlockRunAction, {
+    source: 'echo secret', lang: 'sh', streaming: false, sessionId: 'A', store, ctx: context(service),
+  }))
+  await act(async () => { root.container.querySelector('button')!.click() })
+  expect(run).not.toHaveBeenCalled()
+  expect(root.container.querySelector('[role="alert"]')?.textContent).toBe('ownership unavailable')
+  expect(root.container.querySelector('button')!.disabled).toBe(false)
+  expect(diagnostic).toHaveBeenCalledWith('[dsh-better-sidebar] code-block Run failed:', { sessionId: 'A', message: 'ownership unavailable' })
   root.unmount()
 })

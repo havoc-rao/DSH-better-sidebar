@@ -546,6 +546,7 @@ export const th: Record<string, string> = {
   codeBlockUnwrap: 'ไม่ตัดบรรทัด',
   codeBlockRun: 'เรียกใช้ในเทอร์มินัลแยก',
   codeBlockStarting: 'กำลังเริ่มเทอร์มินัล…',
+  codeBlockProviderUnsupported: 'ผู้ให้บริการเทอร์มินัล {name} ในพื้นที่ทำงานปัจจุบันยังไม่รองรับการเรียกใช้บล็อกโค้ด และไม่ได้เรียกใช้สิ่งใดบนคอมพิวเตอร์เครื่องนี้',
   sideChatBlockWindow: '{shown} จาก {total} บรรทัด',
   sideChatConnDisconnected: 'การเชื่อมต่อขาดหาย',
   sideChatConnConnecting: 'กำลังเชื่อมต่อใหม่…',

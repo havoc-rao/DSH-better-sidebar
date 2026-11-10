@@ -546,6 +546,7 @@ export const tr: Record<string, string> = {
   codeBlockUnwrap: 'Satırları kaydırma',
   codeBlockRun: 'Ayrı bir terminalde çalıştır',
   codeBlockStarting: 'Terminal başlatılıyor…',
+  codeBlockProviderUnsupported: 'Geçerli çalışma alanındaki {name} terminal sağlayıcısı henüz kod bloklarını çalıştırmayı desteklemiyor; bu bilgisayarda hiçbir şey çalıştırılmadı.',
   sideChatBlockWindow: '{total} satırdan {shown} satır',
   sideChatConnDisconnected: 'Bağlantı koptu',
   sideChatConnConnecting: 'Yeniden bağlanıyor…',

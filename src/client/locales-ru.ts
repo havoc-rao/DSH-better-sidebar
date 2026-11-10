@@ -544,6 +544,7 @@ export const ru: Record<string, string> = {
   codeBlockUnwrap: 'Не переносить строки',
   codeBlockRun: 'Выполнить в отдельном терминале',
   codeBlockStarting: 'Запуск терминала…',
+  codeBlockProviderUnsupported: 'Поставщик терминала {name} в текущем рабочем пространстве пока не поддерживает запуск блоков кода; на этом компьютере ничего не выполнялось.',
   sideChatBlockWindow: '{shown} из {total} строк',
   sideChatConnDisconnected: 'Соединение потеряно',
   sideChatConnConnecting: 'Переподключение…',

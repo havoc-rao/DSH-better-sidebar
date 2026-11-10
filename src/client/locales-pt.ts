@@ -529,6 +529,7 @@ export const pt: Record<string, string> = {
   codeBlockUnwrap: 'Não quebrar linhas',
   codeBlockRun: 'Executar em um terminal separado',
   codeBlockStarting: 'Iniciando terminal…',
+  codeBlockProviderUnsupported: 'O provedor de terminal {name} do espaço de trabalho atual ainda não oferece suporte à execução de blocos de código; nada foi executado neste computador.',
   sideChatBlockWindow: '{shown} de {total} linhas',
   sideChatConnDisconnected: 'Conexão perdida',
   sideChatConnConnecting: 'Reconectando…',

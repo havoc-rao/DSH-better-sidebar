@@ -529,6 +529,7 @@ export const sv: Record<string, string> = {
   codeBlockUnwrap: 'Ingen radbrytning',
   codeBlockRun: 'Kör i en separat terminal',
   codeBlockStarting: 'Startar terminal…',
+  codeBlockProviderUnsupported: 'Terminalleverantören {name} i den aktuella arbetsytan stöder ännu inte körning av kodblock; inget har körts på den här datorn.',
   sideChatBlockWindow: '{shown} av {total} rader',
   sideChatConnDisconnected: 'Anslutningen bröts',
   sideChatConnConnecting: 'Ansluter igen…',

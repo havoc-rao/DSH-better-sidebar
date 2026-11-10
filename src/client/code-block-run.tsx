@@ -46,23 +46,30 @@ export function CodeBlockRunAction({ source, lang, streaming, sessionId, store, 
       disabled={starting}
       onClick={() => {
         if (pending.current) return
-        // A remote terminal backend must never accidentally execute on the host.
-        if (ctx.betterSidebar.getTerminalProviders().length > 0) {
-          setError(t('terminalError'))
-          return
-        }
         pending.current = true
         setStarting(true)
         setError(undefined)
         if (operation.current?.sessionId !== sessionId || operation.current.source !== source) {
           operation.current = { sessionId, source, id: `${Date.now()}:${crypto.randomUUID()}` }
         }
-        void api.workspaceTerminalRun(sessionId, source, undefined, operation.current.id).then(info => {
+        void Promise.resolve().then(() => {
+          // Registry presence is not ownership: unrelated providers must not
+          // disable local workspaces. Resolve against the block's own session,
+          // never the currently selected sidebar session. A throwing matcher
+          // fails closed rather than risking execution on the wrong backend.
+          const cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
+          const provider = ctx.betterSidebar.getTerminalProviders()
+            .find(provider => provider.match(sessionId, cwd, 'terminal:workspace-management'))
+          if (provider !== undefined) throw new Error(t('codeBlockProviderUnsupported', { name: provider.id }))
+          return api.workspaceTerminalRun(sessionId, source, undefined, operation.current!.id)
+        }).then(info => {
           operation.current = undefined
           openWorkspaceTerminal(store, sessionId, info)
           updateTerminalSession(store, sessionId, state => ({ ...state, workspaceTerminalError: undefined }))
         }).catch((reason: unknown) => {
           const message = reason instanceof Error ? reason.message : String(reason)
+          // Do not log source: commands may contain credentials or other secrets.
+          console.error('[dsh-better-sidebar] code-block Run failed:', { sessionId, message })
           setError(message)
           updateTerminalSession(store, sessionId, state => ({ ...state, workspaceTerminalError: message }))
         }).finally(() => { pending.current = false; setStarting(false) })

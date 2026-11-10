@@ -539,6 +539,7 @@ export const fr: Record<string, string> = {
   codeBlockUnwrap: 'Ne pas retourner à la ligne',
   codeBlockRun: 'Exécuter dans un terminal séparé',
   codeBlockStarting: 'Démarrage du terminal…',
+  codeBlockProviderUnsupported: 'Le fournisseur de terminal {name} de cet espace de travail ne prend pas encore en charge l’exécution des blocs de code ; rien n’a été exécuté sur cet ordinateur.',
   sideChatBlockWindow: '{shown} sur {total} lignes',
   sideChatConnDisconnected: 'Connexion perdue',
   sideChatConnConnecting: 'Reconnexion…',

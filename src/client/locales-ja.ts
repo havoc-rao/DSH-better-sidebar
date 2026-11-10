@@ -543,6 +543,7 @@ export const ja: Record<string, string> = {
   codeBlockUnwrap: '折り返しを無効にする',
   codeBlockRun: '別のターミナルで実行',
   codeBlockStarting: 'ターミナルを起動中…',
+  codeBlockProviderUnsupported: '現在のワークスペースのターミナルプロバイダー {name} は、コードブロックの実行にまだ対応していません。このコンピューターでは実行されていません。',
   sideChatBlockWindow: '全 {total} 行中 {shown} 行を表示',
   sideChatConnDisconnected: '接続が切断されました。クリックで再接続',
   sideChatConnConnecting: '再接続中…',

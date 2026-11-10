@@ -547,6 +547,7 @@ export const ar: Record<string, string> = {
   codeBlockUnwrap: 'بدون التفاف للأسطر',
   codeBlockRun: 'تشغيل في طرفية منفصلة',
   codeBlockStarting: 'جارٍ بدء الطرفية…',
+  codeBlockProviderUnsupported: 'موفر الطرفية {name} في مساحة العمل الحالية لا يدعم تشغيل كتل التعليمات البرمجية بعد؛ لم يتم التنفيذ على هذا الجهاز.',
   sideChatBlockWindow: '{shown} من {total} سطرًا',
   sideChatConnDisconnected: 'انقطع الاتصال',
   sideChatConnConnecting: 'جارٍ إعادة الاتصال…',

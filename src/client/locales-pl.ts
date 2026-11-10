@@ -548,6 +548,7 @@ export const pl: Record<string, string> = {
   codeBlockUnwrap: 'Bez zawijania wierszy',
   codeBlockRun: 'Uruchom w osobnym terminalu',
   codeBlockStarting: 'Uruchamianie terminala…',
+  codeBlockProviderUnsupported: 'Dostawca terminala {name} w bieżącym obszarze roboczym nie obsługuje jeszcze uruchamiania bloków kodu; nic nie zostało wykonane na tym komputerze.',
   sideChatBlockWindow: '{shown} z {total} wierszy',
   sideChatConnDisconnected: 'Połączenie utracone',
   sideChatConnConnecting: 'Łączenie ponownie…',

@@ -544,6 +544,7 @@ export const id: Record<string, string> = {
   codeBlockUnwrap: 'Jangan bungkus baris',
   codeBlockRun: 'Jalankan di terminal terpisah',
   codeBlockStarting: 'Memulai terminal…',
+  codeBlockProviderUnsupported: 'Penyedia terminal {name} di ruang kerja saat ini belum mendukung eksekusi blok kode; tidak ada yang dijalankan di komputer ini.',
   sideChatBlockWindow: '{shown} dari {total} baris',
   sideChatConnDisconnected: 'Koneksi terputus',
   sideChatConnConnecting: 'Menyambung ulang…',

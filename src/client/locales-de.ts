@@ -532,6 +532,7 @@ export const de: Record<string, string> = {
   codeBlockUnwrap: 'Zeilen nicht umbrechen',
   codeBlockRun: 'In einem separaten Terminal ausführen',
   codeBlockStarting: 'Terminal wird gestartet…',
+  codeBlockProviderUnsupported: 'Der Terminalanbieter {name} im aktuellen Arbeitsbereich unterstützt das Ausführen von Codeblöcken noch nicht; auf diesem Computer wurde nichts ausgeführt.',
   sideChatBlockWindow: '{shown} von {total} Zeilen',
   sideChatConnDisconnected: 'Verbindung verloren',
   sideChatConnConnecting: 'Verbinde neu…',

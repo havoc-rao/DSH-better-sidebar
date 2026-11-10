@@ -546,6 +546,7 @@ export const vi: Record<string, string> = {
   codeBlockUnwrap: 'Không ngắt dòng',
   codeBlockRun: 'Chạy trong terminal riêng',
   codeBlockStarting: 'Đang khởi động terminal…',
+  codeBlockProviderUnsupported: 'Nhà cung cấp terminal {name} trong không gian làm việc hiện tại chưa hỗ trợ chạy khối mã; không có gì được thực thi trên máy tính này.',
   sideChatBlockWindow: '{shown} trong {total} dòng',
   sideChatConnDisconnected: 'Mất kết nối',
   sideChatConnConnecting: 'Đang kết nối lại…',

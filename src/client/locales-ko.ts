@@ -538,6 +538,7 @@ export const ko: Record<string, string> = {
   codeBlockUnwrap: '줄 바꿈 해제',
   codeBlockRun: '별도 터미널에서 실행',
   codeBlockStarting: '터미널 시작 중…',
+  codeBlockProviderUnsupported: '현재 작업 공간의 터미널 제공자 {name}은(는) 아직 코드 블록 실행을 지원하지 않습니다. 이 컴퓨터에서는 실행되지 않았습니다.',
   sideChatBlockWindow: '전체 {total}줄 중 {shown}줄 표시',
   sideChatConnDisconnected: '연결이 끊겼습니다',
   sideChatConnConnecting: '다시 연결 중…',

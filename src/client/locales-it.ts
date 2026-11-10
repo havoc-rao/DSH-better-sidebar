@@ -537,6 +537,7 @@ export const it: Record<string, string> = {
   codeBlockUnwrap: 'Nessun a capo',
   codeBlockRun: 'Esegui in un terminale separato',
   codeBlockStarting: 'Avvio del terminale…',
+  codeBlockProviderUnsupported: 'Il provider del terminale {name} dell’area di lavoro corrente non supporta ancora l’esecuzione dei blocchi di codice; nulla è stato eseguito su questo computer.',
   sideChatBlockWindow: '{shown} di {total} righe',
   sideChatConnDisconnected: 'Connessione persa',
   sideChatConnConnecting: 'Riconnessione…',

@@ -561,6 +561,7 @@ export const zhMO: Record<string, string> = {
   codeBlockUnwrap: '取消自動換行',
   codeBlockRun: '在獨立終端執行',
   codeBlockStarting: '正在啟動終端…',
+  codeBlockProviderUnsupported: '目前工作區的終端提供方 {name} 暫不支援程式碼區塊執行；未在本機執行。',
   sideChatBlockWindow: '共 {total} 行 · 顯示 {shown} 行',
   sideChatConnDisconnected: '連線已中斷',
   sideChatConnConnecting: '正在重新連線…',
