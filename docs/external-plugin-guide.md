@@ -1117,6 +1117,14 @@ registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
 
 hotkey 只负责注册、监听、匹配、冲突、禁用及用户改键，不读取底部业务状态、不查找按钮、不调用终端 adapter。通过 `ctx.inject(['hotkey'])` 和注入 scope 的 effect 管理注册/释放；部分注册失败会回滚，disposer 幂等。无运行时跨插件 import 或必需依赖。缺少服务时按钮仍正常工作，但不另设默认全局监听；原全屏默认监听已移除，避免绕过改键/禁用或双触发。`open.files` / `toggle.rightPanel` 不由本次接入认领（宿主 native owner 边界）。没有添加全局 Arrow/Enter 导航；局部组件继续自行处理可访问性，不劫持终端输入。
 
+### CMD 显式布局命令
+
+可选 `ctx.commandPalette` 提供时，better-sidebar 在注入子 scope 注册 `better-sidebar.layout.code`（切换为代码阅读布局 / Code Layout）及 `better-sidebar.layout.equal`（均分两栏 / Equal Columns）。无默认全局快捷键，无运行时跨插件导入；卸载/服务失效时仅撤销自身贡献。
+
+CODE 从当前 mounted 会话的公开 tab 库存及 pane DOM 标记选择 Files 所在的 docked pane，执行前重新校验并调用宿主公开 `sidebarRight.applyLayoutPreset({ preset: 'code', navigationPaneId, navigationWidthPx: 240 })`。均分仅调用 `{ preset: 'equal' }`。宿主负责几何约束、持久化与一次撤销；插件不写私有 store、不覆盖 CSS、不模拟拖动。没有 Files、浮窗、过窄或收起等情况明确失败；收起时提示先展开，宽度不足时提示扩大/全屏，不自动替用户全屏。缺少宿主 API 时命令显示不可用，不提供旧宿主兼容写入层。
+
+布局仅在显式执行时改变；打开文件、切换 tab、快捷键 reveal 和用户拖动都不自动重新应用。CODE 可在宿主允许时由单栏创建阅读栏；equal 不创建分栏。Palette 的默认 context 为空，本命令不假设其保存 Session，而是在执行时从宿主 mounted 库存重新解析当前目标。
+
 ### 终端管理与安全回收
 
 工作区终端管理页展示活动状态、连接数、最近输入/输出时间，支持「保留」开关与「清理安全候选」。本地列表通过工作区级 `/sidebar/ws/workspace-terminals?sessionId=…` 订阅完整元数据快照（`{revision, terminals}`）：连接即同步，创建、命令生命周期、退出、连接数与保留状态变化即时推送，连续输入/输出元数据合并推送；不附着 PTY 输出视图、不增加 `attachedViews`。断线退避重连并重新同步；tab 或浏览器页面隐藏时释放订阅，恢复可见重新获取快照。不支持订阅的第三方源保留 10 秒列表轮询；手动刷新与管理操作仍可显式列举。有连接（包括隐藏 tab）、已保留、运行中或状态未知的终端不自动结束；关闭 bottom 终端标签（标签 ×、关闭菜单及关闭快捷键）会调用其原绑定源的 `terminate(terminalId)`，终止进程并删除工作区记录，不再仅断连保留；关闭前通过原绑定源 `list()` 检查当前状态：运行中、存在 `runningCommands` 或状态未知（包括旧式源未提供 activity）的存活终端必须二次确认，展示已知程序名；取消保留标签和进程。明确空闲、已退出或已不存在的终端无需确认；检查失败保留标签并报告错误，连续关闭共用一次在飞检查。确认后才删除，即使终端已保留也会执行，其他已挂接视图会收到终止通知。折叠 bottom、切换会话、刷新页面或组件卸载仍只断连，不终止进程。管理页的显式「终止」仍需确认；关闭管理页本身不会删除任何终端。活动时间不等于空闲证明，清理按钮也不是强制杀进程。

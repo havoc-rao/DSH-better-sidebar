@@ -6,6 +6,8 @@
 
 ### Unreleased
 
+- **Code Layout in CMD**: new Code Layout and Equal Columns commands explicitly apply native sidebar layout presets. The host constrains, persists and records undo for the roughly 240px Files navigation column; opening files or switching tabs never reapplies the preset. Requires the new host layout API and command-palette. Collapsed, narrow or missing Files targets report a clear failure instead of pretending the layout changed.
+
 - **Reuse tool tabs across panes from shortcuts**: the Git shortcut reveals the existing Git page in its original pane in the current session instead of creating another page beside it. It opens a page only when none exists; normal opens and explicit new tabs are unchanged. Matching Files shortcut behavior is supplied by dsh-hotkey.
 
 - **Keep sidebar fullscreen shortcuts reachable inside tabs**: file/Git rows, tasks, diffs and path inputs only consume their own plain Enter/Space gestures. Modified combinations remain available to the host; Cmd/Ctrl+Alt+Enter no longer opens files, toggles folders, sends side chats or commits Git changes accidentally. Plain Enter and the commit shortcut retain their normal behavior.
