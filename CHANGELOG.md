@@ -4,6 +4,8 @@
 
 ### Unreleased
 
+- **CMD 经典三栏布局**：新增“经典三栏布局：两侧最窄，中间展开”，可搜索 `classic`、`width` 或“三栏”。对已有三个停靠窗格，左右各收至宿主允许的最小宽度，剩余空间全部给中间；不要求 Files、不改变内容，也不自动全屏。需要支持 classic 预设的新版宿主；分栏数不符、收起或空间不足时明确提示。
+
 - **Git 页顶部改成只读的「检出」选择器，切换分支与查看分支彻底分开**：此前顶部 chips 只列容器 workspace 发现的多个仓库根，linked worktree 只能从「更多操作 → 工作树」进入；而底部分支按钮点一下就是 `git checkout`，很容易把「看特性分支的状态」误当成「切过去」。现在同一行同时列出当前仓库的 linked checkouts（分支名，当前项高亮）与多仓库根，点击只重新绑定页面作用域（status / diff / 提交图一起跟进），**不执行 git checkout**；底部分支按钮改为显式的「切换检出」，点分支先弹二次确认，确认后才可能共享分支或贮藏冲突改动。
   - 影响面：agent-weave 这类把 linked worktree 放在 `tmp/<项目>/branch/<名字>`（cwd 下第 4 层）的布局，不再依赖仓库根发现深度（旧上限为 cwd 下 3 层），选择器直接读 `git worktree list`，多深的 worktree 都能看到。
   - 🧪 测试：`tests/git-view-worktree.spec.tsx` 新增 1 例（点 chip 只切换查看对象、`gitCheckout` 零调用；分支切换失败改走确认框）；`tests/git-repo-switcher.spec.tsx` 新增 1 例（多仓库根 + 多检出共用一行，两组 chips 各自高亮、点击只换 scope）。

@@ -2,7 +2,7 @@
 import type { Context } from '../context-types.ts'
 import { isZh } from './locales.ts'
 
-type Preset = 'code' | 'equal'
+type Preset = 'code' | 'equal' | 'classic'
 interface Source<T> { getSnapshot(): T; subscribe(listener: () => void): () => void }
 export interface LayoutController {
   mounted: Source<string | undefined>
@@ -29,6 +29,7 @@ const copy = {
   narrow: ['侧栏宽度不足，请先全屏或扩大侧栏', 'Expand or fullscreen the sidebar before applying this layout'],
   collapsed: ['请先展开侧栏再调整布局', 'Expand the sidebar before changing its layout'],
   twoPanes: ['均分布局需要两个已存在的分栏', 'Equal Columns requires two existing panes'],
+  threePanes: ['经典三栏布局需要三个已存在的分栏', 'Classic three-column layout requires three existing panes'],
 } as const
 function text(key: keyof typeof copy): string { return copy[key][isZh() ? 0 : 1] }
 
@@ -59,15 +60,19 @@ export function registerLayoutCommands(palette: LayoutPalette, controllerOf: () 
   }
   const release = (): void => { for (const dispose of disposers.splice(0).reverse()) dispose() }
   try {
-    for (const preset of ['code', 'equal'] as const) {
-      const titles = preset === 'code' ? { zh: '切换为代码阅读布局', en: 'Code Layout' } : { zh: '均分两栏', en: 'Equal Columns' }
+    for (const preset of ['code', 'equal', 'classic'] as const) {
+      const titles = preset === 'code' ? { zh: '切换为代码阅读布局', en: 'Code Layout' }
+        : preset === 'equal' ? { zh: '均分两栏', en: 'Equal Columns' }
+          : { zh: '经典三栏布局：两侧最窄，中间展开', en: 'Classic three-column layout' }
       disposers.push(palette.registerCommand({
         id: `better-sidebar.layout.${preset}`,
         describe: () => {
           const disabledReason = check(preset)
           return { title: isZh() ? titles.zh : titles.en, localizedTitles: titles,
             pluginTag: { id: 'better-sidebar', title: 'Sidebar', localizedTitles: { zh: '侧栏', en: 'Sidebar' } },
-            aliases: preset === 'code' ? ['CODE', '代码模式', '阅读布局', 'layout'] : ['equal', '50:50', '均分', 'layout'],
+            aliases: preset === 'code' ? ['CODE', '代码模式', '阅读布局', 'layout']
+              : preset === 'equal' ? ['equal', '50:50', '均分', 'layout']
+                : ['classic', 'three columns', '经典', '三栏', '两侧最窄', '中间展开', 'width', 'layout'],
             ...(disabledReason === undefined ? {} : { disabledReason }),
           }
         },
@@ -84,7 +89,8 @@ export function registerLayoutCommands(palette: LayoutPalette, controllerOf: () 
           const result = controller.applyLayoutPreset({ preset, ...(navigationPaneId === undefined ? {} : { navigationPaneId, navigationWidthPx: 240 }) })
           if (result.status === 'applied') return { kind: 'completed' }
           const message = result.reason === 'too-narrow' ? text('narrow') : result.reason === 'collapsed' ? text('collapsed')
-            : result.reason === 'requires-two-panes' ? text('twoPanes') : text('blocked')
+            : result.reason === 'requires-two-panes' ? text('twoPanes')
+              : result.reason === 'requires-three-panes' ? text('threePanes') : text('blocked')
           return { kind: 'failed', message }
         } },
       }))

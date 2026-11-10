@@ -1119,9 +1119,9 @@ hotkey 只负责注册、监听、匹配、冲突、禁用及用户改键，不�
 
 ### CMD 显式布局命令
 
-可选 `ctx.commandPalette` 提供时，better-sidebar 在注入子 scope 注册 `better-sidebar.layout.code`（切换为代码阅读布局 / Code Layout）及 `better-sidebar.layout.equal`（均分两栏 / Equal Columns）。无默认全局快捷键，无运行时跨插件导入；卸载/服务失效时仅撤销自身贡献。
+可选 `ctx.commandPalette` 提供时，better-sidebar 在注入子 scope 注册 `better-sidebar.layout.code`（切换为代码阅读布局 / Code Layout）、`better-sidebar.layout.equal`（均分两栏 / Equal Columns）及 `better-sidebar.layout.classic`（经典三栏布局：两侧最窄，中间展开 / Classic three-column layout）。无默认全局快捷键，无运行时跨插件导入；卸载/服务失效时仅撤销自身贡献。
 
-CODE 从当前 mounted 会话的公开 tab 库存及 pane DOM 标记选择 Files 所在的 docked pane，执行前重新校验并调用宿主公开 `sidebarRight.applyLayoutPreset({ preset: 'code', navigationPaneId, navigationWidthPx: 240 })`。均分仅调用 `{ preset: 'equal' }`。宿主负责几何约束、持久化与一次撤销；插件不写私有 store、不覆盖 CSS、不模拟拖动。没有 Files、浮窗、过窄或收起等情况明确失败；收起时提示先展开，宽度不足时提示扩大/全屏，不自动替用户全屏。缺少宿主 API 时命令显示不可用，不提供旧宿主兼容写入层。
+CODE 从当前 mounted 会话的公开 tab 库存及 pane DOM 标记选择 Files 所在的 docked pane，执行前重新校验并调用宿主公开 `sidebarRight.applyLayoutPreset({ preset: 'code', navigationPaneId, navigationWidthPx: 240 })`。均分仅调用 `{ preset: 'equal' }`。经典三栏仅调用 `{ preset: 'classic' }`，要求已有三个停靠窗格；左右各取宿主测得的最小允许宽度，全部余量给中间，不要求 Files，也不由插件猜测像素宽度。可搜索 `classic`、`width`、`三栏`、`两侧最窄`；数量不符或空间不足时明确失败，不创建、关闭或替换内容。宿主负责几何约束、持久化与一次撤销；插件不写私有 store、不覆盖 CSS、不模拟拖动。没有 Files、浮窗、过窄或收起等情况明确失败；收起时提示先展开，宽度不足时提示扩大/全屏，不自动替用户全屏。缺少宿主 API 时命令显示不可用，不提供旧宿主兼容写入层。
 
 布局仅在显式执行时改变；打开文件、切换 tab、快捷键 reveal 和用户拖动都不自动重新应用。CODE 可在宿主允许时由单栏创建阅读栏；equal 不创建分栏。Palette 的默认 context 为空，本命令不假设其保存 Session，而是在执行时从宿主 mounted 库存重新解析当前目标。
 
