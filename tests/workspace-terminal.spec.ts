@@ -422,7 +422,9 @@ it('mounted POST API inherits trust fence and validates workspace on create/list
     } else {
       expect(run.status).toBe(200)
       expect(run.body.value).toMatchObject({ cwd, createdBySessionId: 'a', activity: 'busy' })
-      expect(mock.spawn.mock.calls.at(-1)![1]).toEqual(expect.arrayContaining(['-c', command]))
+      expect(mock.spawn.mock.calls.at(-1)![1]).toContain('-i')
+      expect(mock.spawn.mock.calls.at(-1)![1]).not.toContain('-c')
+      expect(mock.spawn.mock.calls.at(-1)![1]).not.toContain(command)
     }
   } finally { cleanup.forEach(f => f()) }
 })

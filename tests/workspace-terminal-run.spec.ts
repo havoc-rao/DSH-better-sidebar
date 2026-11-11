@@ -1,6 +1,6 @@
-/** Explicit command runs use fresh direct-command PTYs, authoritative cwd and retained replay; never shell input. */
+/** Run uses one fresh persistent interactive PTY, authoritative cwd and retained replay; never startup input. */
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -30,13 +30,19 @@ afterEach(() => {
   for (const path of dirs.splice(0)) rmSync(path, { recursive: true, force: true })
   vi.restoreAllMocks()
 })
+function emitStart(nodePty: { spawn: { mock: { calls: unknown[][] } } }, pty: MockPty, index = 0) {
+  const call = nodePty.spawn.mock.calls[index] as [string, string[]]
+  const token = /633;dsh;([a-f0-9]+);/.exec(readFileSync(call[1][1]!, 'utf8'))![1]
+  pty.events.emit('data', `\x1b]633;dsh;${token};start\x07`)
+  return token
+}
 function setup(cap = 8) {
   const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'sidebar-run-'))); dirs.push(cwd)
   const processes: MockPty[] = []
   const nodePty = { spawn: vi.fn(() => { const pty = new MockPty(); processes.push(pty); return pty }) }
   let now = 100
   const probe = vi.fn(async () => ({ activity: 'idle' as const, reason: 'fixture' }))
-  const manager = new WorkspaceTerminalManager('/bin/sh', nodePty as unknown as NodePtyModule, cap, 64, 1024, { now: () => now, probe })
+  const manager = new WorkspaceTerminalManager('/bin/bash', nodePty as unknown as NodePtyModule, cap, 64, 1024, { now: () => now, probe })
   managers.push(manager)
   const ctx = { sessions: { get: (id: string) => id === 'missing' ? undefined : { header: { cwd } } }, get: () => undefined }
   return { cwd, processes, nodePty, manager, ctx, probe, setNow: (value: number) => { now = value } }
@@ -141,17 +147,20 @@ posix('direct workspace command execution', () => {
     ])
     expect(new Set([existing.terminalId, first.terminalId, second.terminalId]).size).toBe(3)
     expect(nodePty.spawn).toHaveBeenCalledTimes(3)
-    expect(nodePty.spawn.mock.calls[1]).toEqual(['/bin/sh', ['-l', '-c', command], expect.objectContaining({ cwd: workspace.cwd })])
-    expect(first).toMatchObject({ title: 'Selected command', cwd: workspace.cwd, createdBySessionId: 'one', commandStartedAt: 100, activity: 'busy' })
+    const call = nodePty.spawn.mock.calls[1] as unknown as [string, string[], { cwd: string }]
+    expect(call).toEqual(['/bin/bash', ['--rcfile', expect.any(String), '-i'], expect.objectContaining({ cwd: workspace.cwd })])
+    expect(readFileSync(join(call[1][1]!, '..', 'command'), 'utf8')).toBe(command)
+    expect(first).toMatchObject({ title: 'Selected command', cwd: workspace.cwd, createdBySessionId: 'one', activity: 'busy' })
     for (const pty of processes) expect(pty.write).not.toHaveBeenCalled()
     expect((await manager.ensure(workspace, 'one')).terminalId).toBe(existing.terminalId)
   })
 
   it('retains output, terminal identity and completion details after exit for replay', async () => {
-    const { ctx, manager, processes, setNow } = setup()
+    const { ctx, manager, processes, setNow, nodePty } = setup()
     const workspace = await resolveTerminalWorkspace(ctx as never, 'one')
     const api = buildWorkspaceTerminalApi(ctx as never, manager)
     const info = await api['workspace-terminal.run']({ sessionId: 'one', command: 'printf result; exit 7' })
+    emitStart(nodePty, processes[0]!)
     processes[0]!.events.emit('data', 'result')
     expect(manager.list(workspace)[0]).toMatchObject({ activity: 'busy', activityReason: 'command-process-running' })
     setNow(250)
@@ -179,11 +188,25 @@ posix('direct workspace command execution', () => {
     expect((await manager.ensure(workspace, 'one')).terminalId).not.toBe(command.terminalId)
   })
 
-  it('honors configured shell and safe startup args, without interactive integration', async () => {
-    const { ctx, manager, nodePty } = setup()
-    const api = buildWorkspaceTerminalApi(ctx as never, manager, () => ({ shell: '/bin/bash', shellArgs: ['--noprofile', '--norc'], shellIntegration: true }))
-    await api['workspace-terminal.run']({ sessionId: 'one', command: 'echo config' })
-    expect(nodePty.spawn.mock.calls[0]).toEqual(['/bin/bash', ['--noprofile', '--norc', '-c', 'echo config'], expect.objectContaining({ env: process.env })])
+  it('completes initial command independently, retaining the same shell, replay and later exit metadata', async () => {
+    const { ctx, manager, nodePty, processes, setNow } = setup()
+    const workspace = await resolveTerminalWorkspace(ctx as never, 'one')
+    const info = manager.run(workspace, 'one', 'printf initial; false')
+    const call = nodePty.spawn.mock.calls[0] as unknown as [string, string[]]
+    const token = emitStart(nodePty, processes[0]!)
+    setNow(250)
+    const marker = `\x1b]633;dsh;${token};end;1\x07`
+    processes[0]!.events.emit('data', `initial${marker.slice(0, 15)}`)
+    processes[0]!.events.emit('data', `${marker.slice(15)}prompt> `)
+    expect(manager.list(workspace)[0]).toMatchObject({ exited: false, commandExitCode: 1, commandFinishedAt: 250, commandDurationMs: 150 })
+    expect(manager.readOutput(workspace, info.terminalId).data).toBe('initialprompt> ')
+    expect(existsSync(call[1][1]!)).toBe(false)
+    expect((await manager.ensure(workspace, 'one')).terminalId).toBe(info.terminalId)
+    setNow(500)
+    processes[0]!.events.emit('exit', { exitCode: 0 })
+    expect(manager.list(workspace)[0]).toMatchObject({ exited: true, exitCode: 0, commandExitCode: 1, commandFinishedAt: 250 })
+    expect(nodePty.spawn).toHaveBeenCalledOnce()
+    expect(processes[0]!.write).not.toHaveBeenCalled()
   })
 
   it.each([['-i'], ['-ic'], ['-c', 'other'], ['script.sh'], ['--'], ['-s'], ['-File', 'init.ps1']])('rejects ambiguous shell startup arguments %j', async (...args) => {
@@ -196,7 +219,7 @@ posix('direct workspace command execution', () => {
   it('rejects unknown shell command semantics instead of falling back to input', async () => {
     const { ctx, manager, nodePty } = setup()
     const api = buildWorkspaceTerminalApi(ctx as never, manager, () => ({ shell: process.execPath }))
-    await expect(api['workspace-terminal.run']({ sessionId: 'one', command: 'echo safe' })).rejects.toThrow('no supported -c')
+    await expect(api['workspace-terminal.run']({ sessionId: 'one', command: 'echo safe' })).rejects.toThrow('requires bash or zsh')
     expect(nodePty.spawn).not.toHaveBeenCalled()
   })
 
@@ -204,7 +227,20 @@ posix('direct workspace command execution', () => {
     const { ctx, manager, nodePty } = setup()
     const command = ' ' + 'x'.repeat(32766) + '\n'
     await buildWorkspaceTerminalApi(ctx as never, manager)['workspace-terminal.run']({ sessionId: 'one', command })
-    expect(nodePty.spawn.mock.calls[0]).toEqual(['/bin/sh', ['-l', '-c', command], expect.any(Object)])
+    const call = nodePty.spawn.mock.calls[0] as unknown as [string, string[]]
+    expect(readFileSync(join(call[1][1]!, '..', 'command'), 'utf8')).toBe(command)
+  })
+
+  it('does not invent command completion when startup config exits before start marker', async () => {
+    const { ctx, manager, processes } = setup()
+    const workspace = await resolveTerminalWorkspace(ctx as never, 'one')
+    manager.run(workspace, 'one', 'never reached')
+    processes[0]!.events.emit('exit', { exitCode: 0 })
+    const info = manager.list(workspace)[0]!
+    expect(info.exited).toBe(true)
+    expect(info.commandStartedAt).toBeUndefined()
+    expect(info.commandFinishedAt).toBeUndefined()
+    expect(info.commandExitCode).toBeUndefined()
   })
 
   it('does not retain phantom records when native spawn fails', async () => {
@@ -266,7 +302,7 @@ describe('workspace run input boundary', () => {
     if (process.platform === 'win32') await expect(api['workspace-terminal.run']({ sessionId: 'cold', command: 'pwd' })).rejects.toThrow('not supported on Windows')
     else {
       expect((await api['workspace-terminal.run']({ sessionId: 'cold', command: 'pwd' })).cwd).toBe(cwd)
-      expect(nodePty.spawn.mock.calls[0]).toEqual(['/bin/sh', ['-l', '-c', 'pwd'], expect.objectContaining({ cwd })])
+      expect(nodePty.spawn.mock.calls[0]).toEqual(['/bin/bash', ['--rcfile', expect.any(String), '-i'], expect.objectContaining({ cwd })])
     }
     expect(close).toHaveBeenCalledOnce()
   })

@@ -11,6 +11,7 @@ import { armPtyResizeGate, tryResizePty } from './agent-pty.ts'
 import { requireString, SidebarError } from './wire.ts'
 import { probeTerminalActivity, type TerminalActivityResult } from './terminal-activity.ts'
 import { prepareZshIntegration, ZshMarkerParser, type ZshIntegration } from './zsh-integration.ts'
+import { prepareTerminalRun, type TerminalRunBootstrap } from './workspace-terminal-run.ts'
 
 export interface WorkspaceTerminalInfo {
   terminalId: string
@@ -57,8 +58,11 @@ interface Handle {
   promptAt?: number
   integrationReason?: string
   hookState?: 'busy' | 'awaiting-prompt' | 'idle'
-  /** A direct shell -c process, never an idle interactive shell to reclaim/reuse. */
+  /** Initial Run is protected until completion; afterward this is a normal shell. */
   commandProcess?: boolean
+  bootstrap?: TerminalRunBootstrap
+  runParser?: ZshMarkerParser
+  runStarted?: boolean
   /** Bounded with this retained terminal; removed by terminate/prune/dispose. */
   operation?: { id: string; fingerprint: string }
 }
@@ -176,7 +180,7 @@ export class WorkspaceTerminalManager {
     return this.spawn(workspace, sessionId, title, shell, args, shellIntegration)
   }
 
-  /** Explicit execution always allocates a new process; command is argv, never PTY input. */
+  /** Explicit Run always allocates one new interactive shell; never writes PTY input. */
   run(workspace: LocalTerminalWorkspace, sessionId: string, command: string, title?: string, shell = this.shell, args: string[] = [], operationId?: string): WorkspaceTerminalInfo {
     if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
     let operation: Handle['operation']
@@ -214,32 +218,23 @@ export class WorkspaceTerminalManager {
     if (!command.trim() || command.includes('\0') || Buffer.byteLength(command, 'utf8') > 32 * 1024) {
       throw new SidebarError('bad-request', 'command must be non-empty, NUL-free and at most 32768 UTF-8 bytes', 400)
     }
-    // node-pty's Windows backend serializes argv into a CreateProcess command
-    // line. cmd /c and PowerShell -Command have different parsing/quoting from
-    // POSIX -c; do not guess or fall back to writing into an interactive shell.
+    // No robust startup-only bootstrap is implemented for Windows shells;
+    // never guess quoting semantics or fall back to interactive PTY injection.
     if (process.platform === 'win32') {
       throw new SidebarError('pty-error', 'terminal-run-unsupported: direct command execution is not supported on Windows', 400)
     }
     const executable = resolveShellExecutable(shell)
-    if (!/^(?:sh|bash|zsh|dash|ash|ksh|ksh93|mksh|fish)$/.test(shellDisplayName(executable))) {
-      throw new SidebarError('pty-error', 'terminal-run-unsupported: configured shell has no supported -c command contract', 400)
-    }
-    // Login / rc configuration is preserved, but interactive, stdin, script and
-    // existing command modes could consume/alter the command argument. Reject
-    // ambiguous configurations rather than silently overriding them.
-    const startup = shellSpawnArgs(args)
-    if (startup.some(arg => !/^(?:-[lrf]+|--login|--norc|--noprofile|--no-config)$/.test(arg))) {
-      throw new SidebarError('pty-error', 'terminal-run-unsupported: shell arguments must be non-interactive startup flags (-l, -r, -f, --login, --norc, --noprofile, --no-config)', 400)
-    }
+    const bootstrap = prepareTerminalRun(executable, args, command)
     if (operationKey !== undefined) this.runOperations.set(operationKey, operationExpiresAt)
-    try { return this.spawn(workspace, sessionId, title, executable, [...startup, '-c', command], false, true, operation) }
+    try { return this.spawn(workspace, sessionId, title, executable, bootstrap.args, false, true, operation, bootstrap) }
     catch (error) {
+      bootstrap.dispose()
       if (operationKey !== undefined) this.runOperations.delete(operationKey)
       throw error
     }
   }
 
-  private spawn(workspace: LocalTerminalWorkspace, sessionId: string, title: string | undefined, shell: string, args: string[], shellIntegration: boolean, commandProcess = false, operation?: Handle['operation']): WorkspaceTerminalInfo {
+  private spawn(workspace: LocalTerminalWorkspace, sessionId: string, title: string | undefined, shell: string, args: string[], shellIntegration: boolean, commandProcess = false, operation?: Handle['operation'], bootstrap?: TerminalRunBootstrap): WorkspaceTerminalInfo {
     if (this.disposed) throw new SidebarError('pty-error', 'terminal-manager-disposed', 503)
     // Synchronous create remains compatible; expired exited records need no process probe.
     this.pruneExited()
@@ -268,7 +263,7 @@ export class WorkspaceTerminalManager {
     let pty: IPty
     try {
       pty = this.nodePty.spawn(executable, integration ? ['-i'] : shellSpawnArgs(args), {
-        name: 'xterm-256color', cols: 80, rows: 24, cwd: workspace.cwd, env: integration?.env ?? { ...process.env },
+        name: 'xterm-256color', cols: 80, rows: 24, cwd: workspace.cwd, env: bootstrap?.env ?? integration?.env ?? { ...process.env },
       })
     } catch (error) { integration?.dispose(); throw error }
     armPtyResizeGate(pty)
@@ -276,12 +271,33 @@ export class WorkspaceTerminalManager {
       terminalId: `terminal:${randomUUID()}`, title: title ?? shellDisplayName(shell), cwd: workspace.cwd,
       createdBySessionId: sessionId, createdAt: this.now(), exited: false,
       activity: commandProcess ? 'busy' : 'unknown', activityReason: commandProcess ? 'command-process-running' : integrationReason ?? (integration ? 'shell-integration-awaiting-prompt' : 'not-yet-probed'), attachedViews: 0, pinned: false,
-      ...(commandProcess ? { commandStartedAt: this.now() } : {}),
+
     }
     const handle: Handle = { info, workspaceKey: workspace.key, pty, output: Buffer.alloc(0), cursor: 0, sockets: new Set(), disposers: [], revision: 0,
-      integration, integrationReason, commandProcess, operation, parser: integration ? new ZshMarkerParser(integration.token) : undefined }
+      integration, integrationReason, commandProcess, operation, bootstrap,
+      runParser: bootstrap ? new ZshMarkerParser(bootstrap.token) : undefined,
+      parser: integration ? new ZshMarkerParser(integration.token) : undefined }
     this.terminals.set(info.terminalId, handle)
     handle.disposers.push(pty.onData(data => {
+      if (handle.runParser) {
+        handle.runParser.feed(data, text => this.append(handle, text), (kind, exitCode) => {
+          if (kind === 'start' && !handle.runStarted) {
+            handle.runStarted = true
+            info.commandStartedAt = this.now()
+            return
+          }
+          if (kind !== 'end' || !handle.commandProcess || !handle.runStarted) return
+          const now = this.now()
+          info.commandFinishedAt = now; info.commandExitCode = exitCode
+          info.commandDurationMs = Math.max(0, now - info.commandStartedAt!)
+          handle.commandProcess = false
+          bootstrap?.dispose()
+          handle.revision++; handle.idleSince = undefined
+          info.activity = 'unknown'; info.activityReason = 'run-completed-awaiting-probe'
+          this.notify(handle.workspaceKey)
+        })
+        return
+      }
       if (!handle.parser) { this.append(handle, data); return }
       // All bytes invalidate cleanup proof, even partial markers; presentation is
       // separately driven by valid hooks, never by echo/background output.
@@ -328,12 +344,13 @@ export class WorkspaceTerminalManager {
       info.activity = 'exited'
       info.activityReason = 'process-exited'
       info.exitCode = exitCode
-      if (commandProcess) {
+      if (handle.commandProcess && handle.runStarted) {
         info.commandFinishedAt = info.exitedAt
         info.commandExitCode = exitCode
         info.commandDurationMs = Math.max(0, info.exitedAt - info.commandStartedAt!)
       }
       integration?.dispose()
+      bootstrap?.dispose()
       this.append(handle, `\r\n[process exited with code ${exitCode}]\r\n`)
       for (const socket of handle.sockets) socket.close(1000, 'terminal-exited')
       this.notify(handle.workspaceKey)
@@ -479,6 +496,7 @@ export class WorkspaceTerminalManager {
     for (const disposable of handle.disposers) disposable.dispose()
     if (!handle.info.exited) { try { handle.pty.kill() } catch { /* already gone */ } }
     handle.integration?.dispose()
+    handle.bootstrap?.dispose()
     this.notify(handle.workspaceKey)
   }
 

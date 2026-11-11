@@ -42,9 +42,11 @@ function mount(terminalId?: string, tabId = 'workspace-view:terminal:abc', visib
   if (visible) store.reduce(state => ({ ...state, bottomOpen: true }))
   function Harness() {
     useSyncExternalStore(listener => store.subscribe(listener), () => store.getSnapshot())
-    const tab = tabs(store).find(tab => tab.id === tabId)
-    return tab === undefined ? null : createElement(TerminalView, { ctx: {} as Context,
-      scope: { sessionId: 'B', cwd: '/work' }, tabId, terminalId: workspaceTerminalIdOf(tab), store, visible: visible && store.getSnapshot().state!.bottomOpen })
+    return createElement('div', null, allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs.map(tab =>
+      createElement('div', { key: tab.id, hidden: leaf.active !== tab.id }, createElement(TerminalView, { ctx: {} as Context,
+        scope: { sessionId: 'B', cwd: '/work' }, tabId: tab.id, terminalId: workspaceTerminalIdOf(tab), store,
+        visible: visible && store.getSnapshot().state!.bottomOpen && leaf.active === tab.id }))))
+    )
   }
   const rendered = renderRoot(createElement(Harness))
   return { ...rendered, store, tabId, socket: Socket.instances[0]! }
@@ -213,7 +215,10 @@ describe('workspace terminal view lifetime', () => {
     await act(async () => { root.container.querySelector<HTMLButtonElement>('button')!.click() })
     expect(source.create).toHaveBeenCalledOnce()
     expect(local).not.toHaveBeenCalled()
-    expect(tabs(store)[0]!.meta).toMatchObject({ workspaceTerminalId: 'term-new', workspaceTerminalProviderId: 'remote' })
+    expect(tabs(store)).toHaveLength(2)
+    expect(tabs(store)[0]).toMatchObject({ id: tabId, title: 'remote', meta: { workspaceTerminalId: 'term-old', workspaceTerminalProviderId: 'remote' } })
+    expect(tabs(store)[1]!.meta).toMatchObject({ workspaceTerminalId: 'term-new', workspaceTerminalProviderId: 'remote', terminalAutoStartAttempted: true })
+    expect(xterms.instances[0]!.dispose).not.toHaveBeenCalled()
     act(() => store.reduce(state => closeTab(state, allLeaves(state.bottomSplits)[0]!.id, tabId)))
     root.unmount()
     expect(handle.dispose).toHaveBeenCalledOnce()
@@ -287,7 +292,7 @@ describe('workspace terminal view lifetime', () => {
     expect(view.container.textContent).toContain(reason === 'terminal-exited' ? t('terminalViewExited') : reason === 'terminal-terminated' ? t('terminalViewTerminated') : t('terminalViewForbidden'))
     act(() => view.root.unmount())
   })
-  it.each([[1000, 'terminal-terminated', 'terminalViewTerminated'], [1000, 'terminal-exited', 'terminalViewExited'], [1008, 'terminal-not-found', 'terminalViewMissing']] as const)('explicitly restarts %s %s into the same tab with a new socket', async (code, reason, key) => {
+  it.each([[1000, 'terminal-terminated', 'terminalViewTerminated'], [1008, 'terminal-not-found', 'terminalViewMissing']] as const)('explicitly restarts %s %s into the same tab with a new socket', async (code, reason, key) => {
     const create = vi.spyOn(api, 'workspaceTerminalCreate').mockResolvedValue(replacement)
     const view = mount('terminal:abc')
     act(() => { view.socket.onmessage?.({ data: 'old history' }); view.socket.onclose?.({ code, reason }) })
@@ -306,6 +311,29 @@ describe('workspace terminal view lifetime', () => {
     expect(new URL(Socket.instances[1]!.url).searchParams.get('terminalId')).toBe(replacement.terminalId)
     expect(view.container.textContent).not.toContain(t(key))
     act(() => view.root.unmount())
+  })
+  it('manually opens a new shell after natural exit while retaining the original tab and xterm history', async () => {
+    const create = vi.spyOn(api, 'workspaceTerminalCreate').mockResolvedValue(replacement)
+    const run = vi.spyOn(api, 'workspaceTerminalRun')
+    const view = mount('terminal:abc')
+    const original = xterms.instances[0]!
+    act(() => { view.socket.onmessage?.({ data: 'RUN_OUTPUT_OK' }); view.socket.onclose?.({ code: 1000, reason: 'terminal-exited' }) })
+    expect(create).not.toHaveBeenCalled()
+    await act(async () => { view.container.querySelector<HTMLButtonElement>('button')!.click() })
+    expect(create).toHaveBeenCalledExactlyOnceWith('B')
+    expect(run).not.toHaveBeenCalled()
+    expect(tabs(view.store)).toHaveLength(2)
+    expect(tabs(view.store)[0]).toMatchObject({ id: view.tabId, title: 'shell', meta: { workspaceTerminalId: 'terminal:abc' } })
+    expect(tabs(view.store)[1]).toMatchObject({ title: replacement.title, meta: { workspaceTerminalId: replacement.terminalId, terminalAutoStartAttempted: true } })
+    expect(tabs(view.store)[1]!.id).not.toBe(view.tabId)
+    expect(allLeaves(view.store.getSnapshot().state!.bottomSplits)[0]!.active).toBe(tabs(view.store)[1]!.id)
+    expect(Socket.instances).toHaveLength(2)
+    expect(new URL(Socket.instances[1]!.url).searchParams.get('terminalId')).toBe(replacement.terminalId)
+    expect(xterms.instances[0]).toBe(original)
+    expect(original.write).toHaveBeenCalledWith('RUN_OUTPUT_OK')
+    expect(original.dispose).not.toHaveBeenCalled()
+    expect(xterms.instances[1]!.write).not.toHaveBeenCalled()
+    view.unmount()
   })
   it('preserves the closed reason on failure and permits a second attempt', async () => {
     const create = vi.spyOn(api, 'workspaceTerminalCreate').mockRejectedValueOnce(new Error('quota')).mockResolvedValueOnce(replacement)
@@ -390,13 +418,26 @@ describe('workspace terminal view lifetime', () => {
     const create = vi.spyOn(api, 'workspaceTerminalCreate').mockResolvedValue(replacement)
     const run = vi.spyOn(api, 'workspaceTerminalRun')
     const view = mount('terminal:abc', undefined, true)
-    await act(async () => { view.socket.onclose?.({ code: 1000, reason: 'terminal-exited' }) })
+    const original = xterms.instances[0]!
+    await act(async () => { view.socket.onmessage?.({ data: 'RUN_OUTPUT_OK' }); view.socket.onclose?.({ code: 1000, reason: 'terminal-exited' }) })
     expect(create).toHaveBeenCalledExactlyOnceWith('B')
     expect(run).not.toHaveBeenCalled()
-    expect(workspaceTerminalIdOf(tabs(view.store)[0]!)).toBe(replacement.terminalId)
+    expect(tabs(view.store)).toHaveLength(2)
+    expect(tabs(view.store)[0]).toMatchObject({ id: view.tabId, title: 'shell', meta: { workspaceTerminalId: 'terminal:abc' } })
+    const fresh = tabs(view.store)[1]!
+    expect(fresh).toMatchObject({ title: replacement.title, meta: { workspaceTerminalId: replacement.terminalId, terminalAutoStartAttempted: true } })
+    expect(fresh.id).not.toBe(view.tabId)
+    expect(allLeaves(view.store.getSnapshot().state!.bottomSplits)[0]!.active).toBe(fresh.id)
     expect(Socket.instances).toHaveLength(2)
+    act(() => Socket.instances[1]!.onopen?.())
+    expect(view.container.querySelectorAll('[data-terminal-state="connected"]')).toHaveLength(1)
+    expect(original.write).toHaveBeenCalledWith('RUN_OUTPUT_OK')
+    expect(original.dispose).not.toHaveBeenCalled()
+    expect(xterms.instances[0]).toBe(original)
     await act(async () => { Socket.instances[1]!.onclose?.({ code: 1000, reason: 'terminal-exited' }); vi.advanceTimersByTime(60_000) })
     expect(create).toHaveBeenCalledOnce()
+    expect(run).not.toHaveBeenCalled()
+    expect(tabs(view.store)).toHaveLength(2)
     expect(view.container.textContent).toContain(t('terminalViewExited'))
     view.unmount()
   })
@@ -446,7 +487,9 @@ describe('workspace terminal view lifetime', () => {
     expect(remounted.container.querySelector('button')).toBeNull()
     expect(remounted.container.querySelector('[role="status"]')?.textContent).toBe(t('terminalViewCreating'))
     await act(async () => { finish(replacement) })
-    expect(workspaceTerminalIdOf(tabs(view.store)[0]!)).toBe(replacement.terminalId)
+    expect(tabs(view.store)).toHaveLength(2)
+    expect(tabs(view.store)[0]).toMatchObject({ id: view.tabId, title: 'shell', meta: { workspaceTerminalId: 'terminal:abc' } })
+    expect(tabs(view.store)[1]!.meta).toMatchObject({ workspaceTerminalId: replacement.terminalId, terminalAutoStartAttempted: true })
     expect(create).toHaveBeenCalledOnce()
     remounted.unmount()
   })
@@ -460,12 +503,15 @@ describe('workspace terminal view lifetime', () => {
     expect(create).toHaveBeenCalledOnce()
     view.unmount()
   })
-  it('automatically replaces an exited managed remote via its original provider only', async () => {
+  it('automatically opens a new tab for an exited managed remote via its original provider only', async () => {
     const view = mountExternal()
     await act(async () => { view.session.onClosed?.('exited') })
     expect(view.source.create).toHaveBeenCalledOnce()
     expect(view.localCreate).not.toHaveBeenCalled()
-    expect(tabs(view.store)[0]!.meta).toMatchObject({ workspaceTerminalId: replacement.terminalId, workspaceTerminalProviderId: 'remote' })
+    expect(tabs(view.store)).toHaveLength(2)
+    expect(tabs(view.store)[0]).toMatchObject({ id: 'external-view', title: 'remote', meta: { workspaceTerminalId: 'remote-old', workspaceTerminalProviderId: 'remote' } })
+    expect(tabs(view.store)[1]!.meta).toMatchObject({ workspaceTerminalId: replacement.terminalId, workspaceTerminalProviderId: 'remote', terminalAutoStartAttempted: true })
+    expect(xterms.instances[0]!.dispose).not.toHaveBeenCalled()
     view.unmount()
   })
   it('preserves legacy and agent close-frame semantics', () => {

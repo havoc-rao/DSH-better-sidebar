@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { registerLayoutCommands, installLayoutCommands, type LayoutController, type LayoutPalette } from '../src/client/layout-commands.ts'
+import { registerLayoutCommands, installLayoutCommands, type LayoutController, type LayoutPalette } from '../src/client/layout-commands/index.ts'
 import type { Context } from '../src/context-types.ts'
 
 function setup() {
@@ -32,13 +32,28 @@ describe('explicit sidebar layout CMD contributions', () => {
     release(); release()
     expect(h.commands.size).toBe(0); expect(h.listeners.size).toBe(0)
   })
+  it('leads every title with the pane count the preset applies to', () => {
+    const h = setup(); registerLayoutCommands(h.palette, () => h.controller)
+    const titles = ['code', 'equal', 'classic'].map(preset => h.commands.get(`better-sidebar.layout.${preset}`)!.describe().localizedTitles)
+    expect(titles[0]!.zh.startsWith('两栏 · ')).toBe(true)
+    expect(titles[1]!.zh.startsWith('两栏 · ')).toBe(true)
+    expect(titles[2]!.zh.startsWith('三栏 · ')).toBe(true)
+    expect(titles[0]!.en.startsWith('2 panes · ')).toBe(true)
+    expect(titles[1]!.en.startsWith('2 panes · ')).toBe(true)
+    expect(titles[2]!.en.startsWith('3 panes · ')).toBe(true)
+    for (const [index, preset] of ['code', 'equal', 'classic'].entries()) {
+      const { title, localizedTitles } = h.commands.get(`better-sidebar.layout.${preset}`)!.describe()
+      expect([localizedTitles.zh, localizedTitles.en]).toContain(title)
+      expect(title).toBe(titles[index]![title === localizedTitles.zh ? 'zh' : 'en'])
+    }
+  })
   it('applies the classic three-column preset without requiring Files or passing guessed widths', () => {
     const h = setup(); registerLayoutCommands(h.palette, () => h.controller)
     h.rows.splice(0)
     document.body.replaceChildren()
     const descriptor = h.commands.get('better-sidebar.layout.classic')!.describe()
-    expect(descriptor.localizedTitles.zh).toContain('经典三栏')
-    expect(descriptor.aliases).toEqual(expect.arrayContaining(['classic', 'width', '三栏']))
+    expect(descriptor.localizedTitles.zh).toContain('经典布局')
+    expect(descriptor.aliases).toEqual(expect.arrayContaining(['classic', 'width', '三栏', '3 panes']))
     expect(descriptor.disabledReason).toBeUndefined()
     expect(h.run('classic')).toEqual({ kind: 'completed' })
     expect(h.controller.applyLayoutPreset).toHaveBeenCalledExactlyOnceWith({ preset: 'classic' })

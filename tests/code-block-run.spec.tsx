@@ -39,6 +39,8 @@ it('starts once on click and opens its captured session even after navigation', 
   expect(allLeaves(store.getSessionState('B')!.bottomSplits).flatMap(leaf => leaf.tabs)).toHaveLength(0)
   expect(allLeaves(store.getSessionState('A')!.bottomSplits).flatMap(leaf => leaf.tabs).some(tab => (tab.meta as { workspaceTerminalId?: string } | undefined)?.workspaceTerminalId === 'terminal:run')).toBe(true)
   expect(store.getSessionState('A')!.bottomOpen).toBe(true)
+  expect(allLeaves(store.getSessionState('A')!.bottomSplits).flatMap(leaf => leaf.tabs)[0]!.meta)
+    .toMatchObject({ workspaceTerminalId: 'terminal:run', terminalAutoStartAttempted: true })
   root.unmount()
 })
 it('hides the action for streaming source and disabled terminals', () => {
@@ -117,6 +119,25 @@ it('runs local source with an unrelated provider using the block owner, not the 
   expect(store.getSessionState('A')!.bottomOpen).toBe(true)
   expect(allLeaves(store.getSessionState('B')!.bottomSplits).flatMap(leaf => leaf.tabs)).toHaveLength(0)
   root.unmount()
+})
+it('marks an already exited Run atomically so mounting its log cannot create a successor', async () => {
+  const store = createSidebarStore(); store.setSession('A')
+  const service = createBetterSidebarService(store)
+  const create = vi.spyOn(api, 'workspaceTerminalCreate')
+  vi.spyOn(api, 'workspaceTerminalRun').mockResolvedValue({ terminalId: 'terminal:exited', title: 'Run', cwd: '/local/a', createdBySessionId: 'A', createdAt: 1, exited: true, exitCode: 7 })
+  const flags: unknown[] = []
+  const unsubscribe = store.subscribe(() => {
+    const tab = allLeaves(store.getSessionState('A')!.bottomSplits).flatMap(leaf => leaf.tabs).find(tab => (tab.meta as { workspaceTerminalId?: string } | undefined)?.workspaceTerminalId === 'terminal:exited')
+    if (tab) flags.push((tab.meta as { terminalAutoStartAttempted?: boolean }).terminalAutoStartAttempted)
+  })
+  const root = renderRoot(createElement(CodeBlockRunAction, {
+    source: 'exit 7', lang: 'sh', streaming: false, sessionId: 'A', store, ctx: context(service),
+  }))
+  await act(async () => { root.container.querySelector('button')!.click() })
+  expect(flags.length).toBeGreaterThan(0)
+  expect(flags.every(value => value === true)).toBe(true)
+  expect(create).not.toHaveBeenCalled()
+  unsubscribe(); root.unmount()
 })
 it('fails closed and reports a throwing ownership matcher without local execution', async () => {
   const store = createSidebarStore(); store.setSession('A')

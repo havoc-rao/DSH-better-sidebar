@@ -64,7 +64,9 @@ export function CodeBlockRunAction({ source, lang, streaming, sessionId, store, 
           return api.workspaceTerminalRun(sessionId, source, undefined, operation.current!.id)
         }).then(info => {
           operation.current = undefined
-          openWorkspaceTerminal(store, sessionId, info)
+          // Install the no-successor flag atomically with the tab, including
+          // fast commands that explicitly exit before their view mounts.
+          openWorkspaceTerminal(store, sessionId, info, undefined, true)
           updateTerminalSession(store, sessionId, state => ({ ...state, workspaceTerminalError: undefined }))
         }).catch((reason: unknown) => {
           const message = reason instanceof Error ? reason.message : String(reason)

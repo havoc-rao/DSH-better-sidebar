@@ -22,17 +22,25 @@ test('code-block Run opens an isolated workspace terminal without sending chat',
   const runRequests: Array<Record<string, unknown>> = []
   const chatWrites: string[] = []
   let terminalOutput = ''
+  const outputByTerminal = new Map<string, string>()
   let terminalId: string | undefined
-  let replacementId: string | undefined
+  const createRequests: string[] = []
   page.on('pageerror', error => pageErrors.push(String(error)))
   page.on('request', req => {
     const path = new URL(req.url()).pathname
     if (path === '/sidebar/api/workspace-terminal.run') runRequests.push(req.postDataJSON() as Record<string, unknown>)
+    if (path === '/sidebar/api/workspace-terminal.create') createRequests.push(path)
     if (req.method() === 'POST' && /^\/api\/session\/(?:prompt|send|submit)/.test(path)) chatWrites.push(path)
   })
   page.on('websocket', socket => {
-    if (new URL(socket.url()).pathname !== '/sidebar/ws/terminal') return
-    socket.on('framereceived', event => { terminalOutput += typeof event.payload === 'string' ? event.payload : event.payload.toString('utf8') })
+    const url = new URL(socket.url())
+    if (url.pathname !== '/sidebar/ws/terminal') return
+    const id = url.searchParams.get('terminalId') ?? ''
+    socket.on('framereceived', event => {
+      const output = typeof event.payload === 'string' ? event.payload : event.payload.toString('utf8')
+      terminalOutput += output
+      outputByTerminal.set(id, (outputByTerminal.get(id) ?? '') + output)
+    })
   })
   try {
     mkdirSync(WORKSPACE, { recursive: true })
@@ -57,11 +65,10 @@ test('code-block Run opens an isolated workspace terminal without sending chat',
     expect(runRequests).toHaveLength(0)
     const conversation = page.locator('[data-slot="conversation.chat.flow"]').filter({ hasText: 'Run fixture command:' }).first()
     const messagesBefore = await conversation.textContent()
-    const replacementWait = page.waitForResponse(response => new URL(response.url()).pathname === '/sidebar/api/workspace-terminal.create')
     const responseWait = page.waitForResponse(response => new URL(response.url()).pathname === '/sidebar/api/workspace-terminal.run')
     await run.click()
     const response = await responseWait
-    const body = await response.json() as { ok: boolean; value?: { terminalId: string; cwd: string; createdBySessionId: string }; error?: unknown }
+    const body = await response.json() as { ok: boolean; value?: { terminalId: string; title: string; cwd: string; createdBySessionId: string }; error?: unknown }
     // Keep actual host errors (including posix_spawnp/PTY sandbox refusals) in
     // the report, rather than skipping or faking a successful terminal.
     expect(body, JSON.stringify(body)).toMatchObject({ ok: true, value: { cwd: realpathSync(WORKSPACE), createdBySessionId: SESSION_ID } })
@@ -72,25 +79,38 @@ test('code-block Run opens an isolated workspace terminal without sending chat',
     }])
     const panel = page.locator('[data-dsh-bottom-panel]')
     await expect(panel).toBeVisible({ timeout: 30_000 })
-    const terminal = panel.locator('[data-dsh-bottom-terminal]').last()
-    await expect(terminal).toBeVisible({ timeout: 30_000 })
-    await expect(terminal.locator('.xterm-screen')).toBeVisible()
+    const terminals = panel.locator('[data-dsh-bottom-terminal]')
+    await expect(terminals.first()).toBeAttached({ timeout: 30_000 })
     await expect.poll(() => terminalOutput, { timeout: 30_000 }).toContain(`RUN_CWD=${realpathSync(WORKSPACE)}`)
     await expect.poll(() => terminalOutput, { timeout: 30_000 }).toContain('RUN_OUTPUT_OK')
-    await expect.poll(() => terminalOutput, { timeout: 30_000 }).toContain('[process exited with code 0]')
-    const replacementResponse = await replacementWait
-    const replacementBody = await replacementResponse.json() as { ok: boolean; value: { terminalId: string; cwd: string } }
-    expect(replacementBody).toMatchObject({ ok: true, value: { cwd: realpathSync(WORKSPACE) } })
-    replacementId = replacementBody.value.terminalId
-    expect(replacementId).not.toBe(terminalId)
+    await expect(terminals).toHaveCount(1)
+    const terminal = terminals.first()
+    await expect(terminal).toBeVisible()
     await expect(terminal).toHaveAttribute('data-terminal-state', 'connected')
-    await expect(panel.getByRole('button', { name: /^(Start new terminal|启动新终端)$/ })).toHaveCount(0)
+    await expect(terminal.locator('.xterm-rows')).toContainText('RUN_OUTPUT_OK')
+    // Completion is a shell-command event, NOT a PTY exit. Wait for its
+    // authoritative metadata before sending the next input into the same PTY.
+    await expect.poll(async () => {
+      const response = await api.post(sidebarApi('workspace-terminal.list'), { data: { sessionId: SESSION_ID } })
+      const result = await response.json() as { value: { terminals: Array<{ terminalId: string; exited: boolean; commandExitCode?: number }> } }
+      return result.value.terminals.find(info => info.terminalId === terminalId)
+    }).toMatchObject({ terminalId, exited: false, commandExitCode: 0 })
+    const screen = await terminal.locator('.xterm-screen').elementHandle()
+    await terminal.locator('.xterm-helper-textarea').focus()
+    await page.keyboard.type("printf 'INTERACTIVE_%s\\n' STILL_ALIVE")
+    await page.keyboard.press('Enter')
+    await expect.poll(() => outputByTerminal.get(terminalId!) ?? '').toContain('INTERACTIVE_STILL_ALIVE')
+    await expect(terminal.locator('.xterm-rows')).toContainText('INTERACTIVE_STILL_ALIVE')
+    await expect(terminal.locator('.xterm-rows')).toContainText('RUN_OUTPUT_OK')
+    expect(await screen!.evaluate(node => node.isConnected)).toBe(true)
+    await expect(terminals).toHaveCount(1)
+    expect(createRequests).toEqual([])
+    expect(terminalOutput).not.toContain('[process exited with code')
     await expect(conversation).toHaveText(messagesBefore ?? '')
     expect(chatWrites).toEqual([])
     expect(runRequests).toHaveLength(1)
     expect(pageErrors).toEqual([])
   } finally {
-    if (replacementId !== undefined) await api.post(sidebarApi('workspace-terminal.terminate'), { data: { sessionId: SESSION_ID, terminalId: replacementId } })
     if (terminalId !== undefined) await api.post(sidebarApi('workspace-terminal.terminate'), { data: { sessionId: SESSION_ID, terminalId } })
     await api.dispose()
   }

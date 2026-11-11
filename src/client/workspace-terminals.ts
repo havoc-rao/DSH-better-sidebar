@@ -61,7 +61,7 @@ export function workspaceTerminalViewId(terminalId: string, providerId?: string)
   return `workspace-view:${providerId ? `${encodeURIComponent(providerId)}:` : ''}${terminalId}`
 }
 
-export function openWorkspaceTerminal(store: SidebarStore, sessionId: string, info: WorkspaceTerminalInfo, providerId?: string): void {
+export function openWorkspaceTerminal(store: SidebarStore, sessionId: string, info: WorkspaceTerminalInfo, providerId?: string, suppressAutoStart = false): void {
   updateTerminalSession(store, sessionId, state => {
     const existing = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
       .find(tab => workspaceTerminalIdOf(tab) === info.terminalId && workspaceTerminalProviderOf(tab) === providerId)
@@ -69,7 +69,8 @@ export function openWorkspaceTerminal(store: SidebarStore, sessionId: string, in
       id: workspaceTerminalViewId(info.terminalId, providerId), type: 'terminal', title: info.title,
       meta: { workspaceTerminalId: info.terminalId, ...(providerId === undefined ? {} : { workspaceTerminalProviderId: providerId }) },
     }
-    return { ...openTabInBottomPane(state, tab), bottomOpen: true }
+    const opened = suppressAutoStart ? { ...tab, meta: { ...(tab.meta as Record<string, unknown>), terminalAutoStartAttempted: true } } : tab
+    return { ...openTabInBottomPane(state, opened), bottomOpen: true }
   })
 }
 
@@ -117,7 +118,8 @@ export function ensureBottomTerminal(
   return task
 }
 
-/** Replace exactly this view's binding, never reopen a closed tab or migrate peers.
+/** Preserve an exited transcript in its tab when requested; otherwise replace
+ * exactly this view's binding. Never reopen a closed tab or migrate peers.
  * Creation uses the captured session's authoritative workspace cwd, not shell cwd.
  * If the view disappeared (or was rebound) while creating, release the new pty.
  * Cleanup failures intentionally reject so callers can surface them. */
@@ -128,14 +130,14 @@ export function isWorkspaceTerminalRestarting(store: SidebarStore, sessionId: st
 }
 export function restartWorkspaceTerminal(
   store: SidebarStore, sessionId: string, tabId: string, previousTerminalId: string,
-  binding?: WorkspaceTerminalBinding,
+  binding?: WorkspaceTerminalBinding, preserveHistory = false,
 ): Promise<boolean> {
   let pending = pendingRestarts.get(store)
   if (pending === undefined) { pending = new Map(); pendingRestarts.set(store, pending) }
   const key = restartKey(sessionId, tabId)
   const existing = pending.get(key)
   if (existing !== undefined) return existing
-  const task = Promise.resolve().then(() => performWorkspaceTerminalRestart(store, sessionId, tabId, previousTerminalId, binding))
+  const task = Promise.resolve().then(() => performWorkspaceTerminalRestart(store, sessionId, tabId, previousTerminalId, binding, preserveHistory))
     .catch((error: unknown) => {
       updateTerminalSession(store, sessionId, state => ({ ...state, workspaceTerminalError: error instanceof Error ? error.message : String(error) }))
       throw error
@@ -149,7 +151,7 @@ export function restartWorkspaceTerminal(
 }
 async function performWorkspaceTerminalRestart(
   store: SidebarStore, sessionId: string, tabId: string, previousTerminalId: string,
-  binding?: WorkspaceTerminalBinding,
+  binding?: WorkspaceTerminalBinding, preserveHistory = false,
 ): Promise<boolean> {
   const original = store.getSessionStates().get(sessionId)
   if (original === undefined || !store.tabOpen(sessionId, tabId)
@@ -166,6 +168,16 @@ async function performWorkspaceTerminalRestart(
       .find(tab => tab.id === tabId && workspaceTerminalIdOf(tab) === previousTerminalId && workspaceTerminalProviderOf(tab) === providerId)
     if (tab === undefined || !store.tabOpen(sessionId, tabId)) return state
     bound = true
+    if (preserveHistory) {
+      // Keep the exited process and its xterm reachable under the original tab.
+      // The successor is an independent shell, never a new log binding for it.
+      const successor: SidebarTab = {
+        id: workspaceTerminalViewId(info.terminalId, providerId), type: 'terminal', title: info.title,
+        meta: { workspaceTerminalId: info.terminalId, terminalAutoStartAttempted: true,
+          ...(providerId === undefined ? {} : { workspaceTerminalProviderId: providerId }) },
+      }
+      return { ...openTabInBottomPane(state, successor), workspaceTerminalError: undefined }
+    }
     return { ...patchTab(state, tabId, { title: info.title, meta: {
       ...(tab.meta as Record<string, unknown>), workspaceTerminalId: info.terminalId,
       workspaceTerminalExited: info.exited, workspaceTerminalExitCode: info.exitCode,

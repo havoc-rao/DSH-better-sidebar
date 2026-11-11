@@ -433,6 +433,22 @@ describe('workspace terminal client', () => {
     openWorkspaceTerminal(store, 'A', fresh)
     expect(tabs(store)).toHaveLength(2)
   })
+  it('keeps the captured transcript while opening a successor after navigation', async () => {
+    const { store } = fixture(); openWorkspaceTerminal(store, 'A', info)
+    const originalTab = tabs(store)[0]!
+    let finish!: (value: WorkspaceTerminalInfo) => void
+    vi.spyOn(api, 'workspaceTerminalCreate').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const pending = restartWorkspaceTerminal(store, 'A', originalTab.id, info.terminalId, undefined, true)
+    await Promise.resolve()
+    store.setSession('B')
+    finish({ ...info, terminalId: 'terminal:successor' })
+    expect(await pending).toBe(true)
+    expect(tabs(store)).toHaveLength(0)
+    const owned = allLeaves(store.getSessionStates().get('A')!.bottomSplits).flatMap(leaf => leaf.tabs)
+    expect(owned).toHaveLength(2)
+    expect(owned.find(tab => tab.id === originalTab.id)).toEqual(originalTab)
+    expect(owned.find(tab => tab.id !== originalTab.id)!.meta).toMatchObject({ workspaceTerminalId: 'terminal:successor', terminalAutoStartAttempted: true })
+  })
   it('releases a stale replacement after concurrent rebind and exposes cleanup failures', async () => {
     const { store } = fixture(); openWorkspaceTerminal(store, 'A', info)
     const originalId = tabs(store)[0]!.id

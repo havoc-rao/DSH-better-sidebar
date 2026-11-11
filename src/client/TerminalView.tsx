@@ -255,7 +255,7 @@ export function TerminalView(props: {
     setRestarting(true)
     setFatal(null)
     try {
-      await restartWorkspaceTerminal(store, scope.sessionId, tabId, terminalId, workspaceBinding)
+      await restartWorkspaceTerminal(store, scope.sessionId, tabId, terminalId, workspaceBinding, closedReason === 'exited')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       // Keep failures observable even when a session switch unmounted the view.

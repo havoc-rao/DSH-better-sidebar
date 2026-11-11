@@ -503,7 +503,8 @@ export const api = {
     call<ResourceTextWriteResult>('document.write', scopePayload(scope, { path, content, expectedContent: condition.expectedContent, authority: 'host-local' })),
   gitDiffStrict: (scope: SessionScope, ref: WorktreeRef, options?: { signal?: AbortSignal }) =>
     call<ResourceStrictDiff>('git.diff-strict', scopePayload(scope, { ref, authority: 'host-local' }), options?.signal),
-  /** Fresh workspace PTY; timestamp:UUID operationId makes transport retries safe.
+  /** Fresh persistent interactive workspace shell; execute initial source once.
+   * timestamp:UUID operationId makes transport retries safe.
    * New ids expire after ten minutes; retained operations remain queryable. */
   workspaceTerminalRun: (sessionId: string, command: string, title?: string, operationId?: string) =>
     call<WorkspaceTerminalInfo>('workspace-terminal.run', { sessionId, command, ...(title === undefined ? {} : { title }), ...(operationId === undefined ? {} : { operationId }) }),
